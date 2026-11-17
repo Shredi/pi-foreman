@@ -22,7 +22,7 @@ Status legend of a session's glyph (the hc status of its terminal first, then ra
 
 A click on an agent row focuses its pane. The footer reads "N agents · k need you". An **Open PRs** section at the bottom lists
 PRs no agent works on, one chip row per repo: the `openPrs` field of radar when the installed pi-foreman provides it, else only
-the tracked PRs of sessions that have ended or joined no agent. It is hidden when empty. With `radar.openPrs.enabled` (user or
+the tracked PRs of sessions that have ended or joined no agent. It is hidden when empty. A repository row shows at most 5 PRs, then a `+k more` element (its tooltip lists the hidden numbers; a click opens the repository's pull request list). A PR's hover card is built when the pointer rests on its chip, not for every chip on every render. A row that fails to build falls back to the repository name and `N PRs`. There is no total cap on repository groups. With `radar.openPrs.enabled` (user or
 overlay config, on by default) radar also lists your open PRs, those with your review requested and those of configured bot
 authors inside a configured scope; the header shows the age of that list ("updated 12m ago"), and a PR that an agent row
 already shows is not repeated. See `docs/herdr.md#open-prs`.

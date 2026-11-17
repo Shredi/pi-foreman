@@ -23,6 +23,7 @@ const PRS_EVERY_MS = 30000; // `foreman prs poll` starts this long after its pre
 const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given up
 const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
 const PRESS_MS = 1500; // a clicked element shows its pending state this long (the 1 s timer then redraws it)
+const OPEN_PR_CAP = 5; // PR chips per repository row of Open PRs; the rest is one "+k more" element
 // exec `timeout` (ms) per job; the Promise.race watchdogs stay as the backstop for an app that ignores the option (Herdr app 0.1.13)
 const T_RADAR = 30000;
 const T_PRS = 600000; // the cap of exec
@@ -128,6 +129,8 @@ export default class ForemanAgents extends View {
     this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
     this.failed = new Set(); // keys of runs whose last try failed: one error notice per failure, not per retry
     this.pressed = new Map(); // element id -> when it was clicked: the next render shows it pending (visible feedback, same frame)
+    this.seenChips = new Set();
+    this.hotCard = null; // id of the PR chip the pointer rests on: the only chip whose hover card is built
     this.poll(cx);
     this.pollPrs(cx, Date.now());
     cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); this.unpress(cx); });
@@ -425,11 +428,16 @@ export default class ForemanAgents extends View {
     const onMove = (e, cx) => guard(() => {
       // The size is the one render stored (this.vp); a live read from the handler refreshes it after a resize when the host allows it.
       const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
-      if (!b || !pos || !loc || !vp) return;
-      const { anchor, maxH } = placeCardBox({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
-      this.cardAnchor ??= new Map();
-      this.cardMaxH ??= new Map();
-      if (this.cardAnchor.get(id) !== anchor || this.cardMaxH.get(id) !== maxH) { this.cardAnchor.set(id, anchor); this.cardMaxH.set(id, maxH); cx.notify?.(); }
+      // The pointer rests on this chip: its card is built by the render that follows (the chip id is stable across data changes).
+      let redraw = this.hotCard !== id;
+      this.hotCard = id;
+      if (b && pos && loc && vp) {
+        const { anchor, maxH } = placeCardBox({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
+        this.cardAnchor ??= new Map();
+        this.cardMaxH ??= new Map();
+        if (this.cardAnchor.get(id) !== anchor || this.cardMaxH.get(id) !== maxH) { this.cardAnchor.set(id, anchor); this.cardMaxH.set(id, maxH); redraw = true; }
+      }
+      if (redraw) cx.notify?.();
     }, undefined);
     // The tooltip names the state in words (the dot's colours); the hover card adds the details.
     const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
@@ -440,10 +448,12 @@ export default class ForemanAgents extends View {
         cx.stop_propagation?.();
         guard(() => notify({ title: "No link for this pull request", body: `#${pr.number} has no page address yet.`, level: "info" }));
       }));
+    this.seenChips?.add(id);
     // The id carries a hash of the card's content: a card is not reused when its content changed.
+    // Only the hot chip builds its card (cardView is about 15 elements, each one host call); the others hold an empty element.
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
       .anchor(this.cardAnchor?.get(id) ?? "top_center")
-      .trigger(trigger).content(guard(() => this.cardView(t, c, this.cardMaxH?.get(id)), div().child("")));
+      .trigger(trigger).content(this.hotCard === id ? (guard(() => this.cardView(t, c, this.cardMaxH?.get(id)), null) ?? div()) : div());
   }
 
   // The hover card of a PR: title, description excerpt, conflict line, the jobs grouped failed / running / passed.
@@ -647,19 +657,51 @@ export default class ForemanAgents extends View {
       .when(kids, (el) => el.content(this.childBody(t, items, 8)));
   }
 
-  // "Open PRs": PRs no agent works on, one row per repo.
+  // "Open PRs": PRs no agent works on, one row per repo. A row shows at most OPEN_PR_CAP chips, then "+k more". A row that fails to
+  // build is replaced by a plain row (its name and count), so one repository does not take the section down.
   openPrRows(t, groups, age = "") {
     if (!groups.length) return [];
     const rows = [h_flex().id("op-head").px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
       .child(div().text_color(t.dim).child("Open PRs"))
       .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
-    for (const g of groups) {
-      rows.push(h_flex().id(`op-${g.repo}`).pl(8).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
-        .child(div().text_color(t.dim).truncate().max_w(140).child(g.repo))
-        .children(g.prs.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`)))
-        .children(g.prs.filter((p) => p.title).slice(0, 1).map((p) => div().min_w(0).truncate().text_color(t.dim).child(p.title))));
-    }
+    for (const g of groups) rows.push(guard(() => this.openPrRow(t, g), null) ?? this.openPrRowFallback(t, g));
     return rows;
+  }
+
+  openPrRow(t, g) {
+    const hidden = g.prs.slice(OPEN_PR_CAP);
+    return h_flex().id(`op-${g.repo}`).pl(8).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
+      .child(div().text_color(t.dim).truncate().max_w(140).child(g.repo))
+      .children(g.prs.slice(0, OPEN_PR_CAP).map((p) => this.prChip(t, p, p.href, `op-${g.repo}`)))
+      .when(hidden.length > 0, (el) => el.child(this.openPrMore(t, g, hidden)))
+      .children(g.prs.filter((p) => p.title).slice(0, 1).map((p) => div().min_w(0).truncate().text_color(t.dim).child(p.title)));
+  }
+
+  // "+k more": the PRs past the cap. Its tooltip lists their numbers; a click opens the repository's pull list on the host of a
+  // hidden PR's page, or says there is no link when none of them has a page address (as a chip with no page does).
+  openPrMore(t, g, hidden) {
+    const id = `op-more-${g.repo}`;
+    const numbers = hidden.map((p) => `#${p.number}`).join(", ");
+    const page = hidden.map((p) => p.href).find((u) => isSafeHttpsUrl(u));
+    const origin = page ? guard(() => new URL(page).origin, "") : "";
+    return h_flex().id(id).flex_none().h(18).px(6).items_center().rounded(9).border(1).border_color(t.border).bg(t.raised)
+      .text_size(10.5).text_color(t.muted).cursor_pointer()
+      .hover((el) => el.border_color(t.working).text_color(t.foreground))
+      .tooltip(numbers)
+      .on_click((_e, cx) => {
+        cx.stop_propagation?.();
+        if (origin) this.openUrl(`${origin}/${g.repo}/pulls`, cx);
+        else guard(() => notify({ title: "No link for these pull requests", body: `${numbers} have no page address yet.`, level: "info" }));
+      })
+      .child(`+${hidden.length} more`);
+  }
+
+  // The plain row of a repository whose row failed to build: its name and how many PRs it has.
+  openPrRowFallback(t, g) {
+    const n = Array.isArray(g?.prs) ? g.prs.length : 0;
+    return h_flex().id(`op-${g?.repo}`).pl(8).pr(8).py(2).flex_none().items_center().gap_x(5).text_size(11)
+      .child(div().text_color(t.dim).truncate().max_w(140).child(String(g?.repo ?? "")))
+      .child(div().text_color(t.dim).child(`${n} ${n === 1 ? "PR" : "PRs"}`));
   }
 
   render(cx) {
@@ -671,6 +713,7 @@ export default class ForemanAgents extends View {
     this.terms = all;
     const shown = guard(() => focused()?.agent, null);
     this.shown = shown;
+    this.seenChips = new Set(); // the PR chips this render draws (see prChipRaw)
     const spaceList = guard(() => (this.sample ? SAMPLE.spaces : spaces()), []);
     // The window's measurements are legal from render by contract (typings.rs), so the hover-card placement reads the size here.
     this.vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
@@ -801,6 +844,8 @@ export default class ForemanAgents extends View {
     const footer = h_flex().flex_none().items_center().h(26).px(14).text_size(10.5).text_color(t.dim)
       .child(`${list.length} agents · ${needs} need you`);
 
+    // A hot chip this render did not draw is no longer hot: its card is not built any more.
+    if (this.hotCard !== null && !this.seenChips.has(this.hotCard)) this.hotCard = null;
     const body = [title];
     if (list.length === 0) body.push(empty);
     body.push(scroller, footer);
