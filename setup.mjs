@@ -641,6 +641,14 @@ export function npmCiReason(root) {
   }
 }
 
+/** True for npm 11.9.0 up to (not including) 11.13.0: `allow-git=root` there refuses the project's own git dependencies (EALLOWGIT). False for anything else, also unparsable input. */
+export function npmAllowGitBroken(version) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? "").trim());
+  if (!m) return false;
+  const [major, minor] = [Number(m[1]), Number(m[2])];
+  return major === 11 && minor >= 9 && minor < 13;
+}
+
 function entrySource(e) {
   if (typeof e === "string") return e;
   if (isObj(e) && typeof e.source === "string") return e.source;
@@ -1128,6 +1136,13 @@ async function main(argv) {
   const ciReason = opts.remove || !fs.existsSync(path.join(ROOT, ".git")) ? null : npmCiReason(ROOT);
   if (ciReason) {
     say(`  package-lock.json: node_modules ${ciReason === "missing" ? "missing" : "older than the lock"}, ${dry ? "would run" : "running"} npm ci in ${ROOT}`);
+    const npmVer = spawnSync(WIN ? "npm.cmd" : "npm", ["--version"], { cwd: ROOT, encoding: "utf8", shell: WIN, windowsHide: true });
+    const npmVersion = !npmVer.error && npmVer.status === 0 ? String(npmVer.stdout).trim() : "";
+    if (npmAllowGitBroken(npmVersion)) {
+      const why = `npm ${npmVersion} has a bug: with allow-git=root it refuses git dependencies the project names itself (EALLOWGIT), so npm ci cannot work. Fix: install npm 11.13 or later (\`npm install -g npm@latest\`), or Node 24.16+ / 26.1+. See docs/install.md#npm-stops-with-eallowgit`;
+      if (!dry) throw new Fatal(why);
+      say(`  would stop: ${why}`);
+    }
     if (!dry) {
       const r = spawnSync(WIN ? "npm.cmd" : "npm", ["ci"], { cwd: ROOT, stdio: "inherit", shell: WIN, windowsHide: true });
       if (r.error || r.status !== 0) throw new Fatal(`npm ci failed${r.error ? `: ${r.error.message}` : ` (exit ${r.status})`}. Fix it and run \`foreman setup\` again.`);
