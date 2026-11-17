@@ -296,6 +296,43 @@ class WorktreeRemoveTest(SafeOpsCase):
         self.failed(self.op("worktree_remove", config={"baseBranch": "no-such-branch"}, path=wt), "base_branch_unknown")
 
 
+class NonGitWorkspaceTest(SafeOpsCase):
+    """Without git, move and copy are limited to the request cwd (any folder); the other ops still need a git work tree."""
+
+    def setUp(self):
+        super().setUp()
+        self.plain = os.path.join(self.tmp, "plain")
+        os.mkdir(self.plain)
+
+    def test_move_and_copy_work_inside_the_folder(self):
+        self.write("a.txt", "x", base=self.plain)
+        self.write("d/y.txt", "y", base=self.plain)
+        res = self.op("move", cwd=self.plain, src="a.txt", dst="b.txt")
+        self.assertEqual(res["action"], "rename_file", res)
+        self.assertFalse(os.path.exists(os.path.join(self.plain, "a.txt")))
+        self.assertEqual(Path(self.plain, "b.txt").read_text("utf-8"), "x")
+        res = self.op("copy", cwd=self.plain, src="d", dst="d2")
+        self.assertEqual(res["action"], "copy_dir", res)
+        self.assertEqual(Path(self.plain, "d2", "y.txt").read_text("utf-8"), "y")
+        res = self.op("move", cwd=self.plain, src="d2", dst="d3")
+        self.assertEqual(res["action"], "rename_dir", res)
+
+    def test_a_path_outside_the_folder_and_an_existing_destination_are_refused(self):
+        self.write("a.txt", "x", base=self.plain)
+        self.write("b.txt", "keep", base=self.plain)
+        self.write("other.txt", "o", base=self.tmp)
+        self.failed(self.op("move", cwd=self.plain, src="a.txt", dst="../out.txt"), "outside_workspace")
+        self.failed(self.op("copy", cwd=self.plain, src="a.txt", dst=os.path.join(self.tmp, "out.txt")), "outside_workspace")
+        self.failed(self.op("copy", cwd=self.plain, src="../other.txt", dst="c.txt"), "outside_workspace")
+        self.failed(self.op("move", cwd=self.plain, src="a.txt", dst="b.txt"), "dst_exists")
+        self.failed(self.op("move", cwd=self.plain, src="a.txt", dst=".git/a.txt"), "inside_git_dir")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "out.txt")))
+        self.assertEqual(Path(self.plain, "b.txt").read_text("utf-8"), "keep")
+
+    def test_the_other_ops_still_need_git(self):
+        self.failed(self.op("status", cwd=self.plain), "not_a_git_repo")
+
+
 class OpsConfigTest(unittest.TestCase):
     """safety.ops in the project layer: copyMaxBytes may only go down; the loosening keys are ignored."""
 

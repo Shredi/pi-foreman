@@ -198,7 +198,12 @@ class Paths(object):
         # src_roots: extra realpath'd roots a copy source may sit under (the foreman's own handoff dirs, R12 item 10)
         cwd = req.get("cwd")
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
-        self.root = workspace_root(cwd)
+        try:
+            self.root = workspace_root(cwd)
+        except Precondition as exc:
+            if exc.name != "not_a_git_repo":
+                raise
+            self.root = os.path.realpath(cwd)  # no git: the session working folder (any folder) is the root; every other limit stays
         src_full, src_parent, src_name = resolve_arg(cwd, args.get("src"), "src")
         dst_full, dst_parent, dst_name = resolve_arg(cwd, args.get("dst"), "dst")
         if has_git_component(args["src"]) or has_git_component(args["dst"]):
