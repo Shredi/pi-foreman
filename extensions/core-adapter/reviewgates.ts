@@ -58,15 +58,24 @@ export function gatesVerdict(g: ReviewGates, roots: readonly string[] | null, ve
   return next;
 }
 
+/** A high-stakes FAIL was just written (`after`, from `before`): each entry now at FAIL records whether its PASS stood before the verdict; an entry that was revised or never passed stays open at the clear. */
+export function gatesMarkStood(before: ReviewGates, after: ReviewGates): ReviewGates {
+  const next: ReviewGates = { ...after };
+  for (const [k, e] of Object.entries(after)) {
+    if (e !== before[k] && e.last === "fail" && before[k] && stands(before[k])) next[k] = { ...e, stoodAtFail: true };
+  }
+  return next;
+}
+
 /**
- * A high-stakes FAIL (set at `failAt` on `keys`, null = every entry; no `failAt`: an old run, any FAIL entry) was cleared by a normal PASS: each of those entries still holding that FAIL (last verdict FAIL at `failAt`, no work since)
+ * A high-stakes FAIL (set at `failAt` on `keys`, null = every entry; no `failAt`: an old run, any FAIL entry) was cleared by a normal PASS: each of those entries still holding that FAIL (last verdict FAIL at `failAt`, no work since, and a PASS that stood before the FAIL: `stoodAtFail`)
  * passes too. An entry that took a later verdict or a revision is left as it is.
  */
 export function gatesClearFail(g: ReviewGates, keys: string | null, failAt: number | undefined, now: number, runId?: string): ReviewGates {
   const next: ReviewGates = { ...g };
   for (const k of keys === null ? Object.keys(g) : [keys]) {
     const e = g[k];
-    if (e && e.last === "fail" && !e.revised && (failAt === undefined || e.failAt === failAt)) next[k] = onReviewVerdicts(e, ["pass"], now, runId);
+    if (e && e.last === "fail" && !e.revised && e.stoodAtFail && (failAt === undefined || e.failAt === failAt)) next[k] = onReviewVerdicts(e, ["pass"], now, runId);
   }
   return next;
 }

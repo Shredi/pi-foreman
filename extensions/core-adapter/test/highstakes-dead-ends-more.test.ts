@@ -25,7 +25,7 @@ test("a FAIL saved and loaded back keeps its gate key and time: a later PASS sti
   const fail = back.openFail()!;
   assert.equal(fail.gateKey, "/w/a");
   assert.equal(fail.failAt, 7);
-  const failed = onReviewVerdicts(initialReviewGate(), ["fail"], 7, "r0");
+  const failed = { ...onReviewVerdicts(initialReviewGate(), ["fail"], 7, "r0"), stoodAtFail: true }; // a PASS stood there before the FAIL
   const g = gatesClearFail({ "/w/a": failed, "/w/b": failed }, fail.gateKey ?? null, fail.failAt, 10, "r2");
   assert.equal(g["/w/a"]!.last, "pass");
   assert.equal(g["/w/b"]!.last, "fail");

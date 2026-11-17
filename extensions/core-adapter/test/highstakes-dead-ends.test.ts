@@ -62,7 +62,7 @@ test("clearBy: a PASS on the FAIL head itself clears and opens that head; anothe
 });
 
 test("gatesClearFail: the FAIL's entry passes when nothing happened there since; a revised entry stays open; null keys pass every entry that still carries it; no failAt: an old run", () => {
-  const fail = onReviewVerdicts(initialReviewGate(), ["fail"], 7, "r0");
+  const fail = { ...onReviewVerdicts(initialReviewGate(), ["fail"], 7, "r0"), stoodAtFail: true }; // a PASS stood there before the FAIL
   const g = { "/w/a": fail, "/w/b": onReviewVerdicts(initialReviewGate(), ["pass"], 3, "r1"), "": fail };
   const one = gatesClearFail(g, "/w/a", 7, 10, "r2");
   assert.equal(one["/w/a"]!.last, "pass");

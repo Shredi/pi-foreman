@@ -49,7 +49,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { combined, gateOf, gatesClearFail, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
+import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -1448,7 +1448,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!r || !verdict) return;
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
-    if (verdict === "fail") s.reviewGates = gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId);
+    if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
     s.reviewSync = s.reviewSync.then(async () => {
       const dir = r.cwd ?? root;
       const h = await reviewedHeadVia(start, trees, dir, await headOf(dir));
