@@ -125,9 +125,13 @@ function queryPowerShell(exe) {
  * `PI_FOREMAN_TEST_PS_EDITIONS` ("pwsh,powershell") and `PI_FOREMAN_TEST_PS_POLICY` ("pwsh=Restricted,powershell=RemoteSigned") are test seams, read only when set.
  * `query` false (a removal) reads no policy and takes both editions, so a block is stripped wherever it is; Documents is resolved the same way as for the write.
  * `PI_FOREMAN_TEST_PS_DOCUMENTS` is a third test seam: it replaces the Documents folder.
+ * Git Bash counts as present when `findGitBash` finds it, `~/.bashrc` exists, `<GIT_INSTALL_ROOT>\bin\bash.exe` exists (a scoop install) or `shellPath` (the user setting) names an existing file.
  */
-export function windowsResumeContext(home, { env = process.env, query = true } = {}) {
-  const gitBash = Boolean(findGitBash({ env })) || fs.existsSync(path.join(home, ".bashrc"));
+export function windowsResumeContext(home, { env = process.env, query = true, shellPath = "", exists = fs.existsSync, pathApi = process.platform === "win32" ? path.win32 : path } = {}) {
+  const installRoot = envGet(env, "GIT_INSTALL_ROOT");
+  const gitBash = Boolean(findGitBash({ env })) || exists(path.join(home, ".bashrc"))
+    || Boolean(installRoot && exists(pathApi.join(installRoot, "bin", "bash.exe")))
+    || (isSetting(shellPath) && exists(shellPath));
   const pwsh = findPwsh({ env });
   let editions = [...(pwsh ? ["pwsh"] : []), "powershell"];
   let documents = path.join(home, "Documents");
@@ -1213,10 +1217,17 @@ async function main(argv) {
     const home = process.env.PI_FOREMAN_HOME || os.homedir();
     const sandboxed = !process.env.PI_FOREMAN_HOME && agentDir !== path.join(os.homedir(), ".pi", "agent");
     const bin = path.join(ROOT, "bin", "foreman");
+    const userShellPath = () => {
+      try {
+        return readJsonObject(path.join(agentDir, "settings.json")).shellPath;
+      } catch {
+        return "";
+      }
+    };
     const lines = async () => {
       const gone = remove || opts.noResumeHook;
       const base = { home, shell: process.env.SHELL ?? "", bin, dry, remove: gone };
-      const win = platform === "win32" ? { platform, cli: path.join(ROOT, "extensions", "core-adapter", "paneresume-cli.ts"), ...windowsResumeContext(home, { query: !gone }) } : {};
+      const win = platform === "win32" ? { platform, cli: path.join(ROOT, "extensions", "core-adapter", "paneresume-cli.ts"), ...windowsResumeContext(home, { query: !gone, shellPath: userShellPath() }) } : {};
       return (await import("./setup/resume-hook.mjs")).applyResumeHook({ ...base, ...win });
     };
     if (remove || opts.noResumeHook) {
