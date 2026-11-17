@@ -151,7 +151,7 @@ export function repoNameOf(mainCheckout: string, platform: string = process.plat
 
 // ------------------------------------------------------------------ the resolver
 
-/** Same compilation as permoverlay.ts `wildcardRegExp` (`*` crosses `/`, `?` is one char); kept local so this module stays free of that import (a test pins the two together). */
+/** Same compilation as glob.ts `wildcardRegExp` (`*` crosses `/`, `?` is one char); kept local so this module stays free of that import (a test pins the two together). */
 export function globRegExp(pattern: string, ignoreCase: boolean): RegExp {
   const escaped = pattern
     .replace(/\\/g, "/")
@@ -441,7 +441,7 @@ export function sessionRootInputs(cwd: string, rawSetting: unknown, opts: Resolv
     if (!top) return {};
     const main = mainCheckoutOf(top);
     if (!main) return {};
-    // a session in a linked worktree (a round, a child) keeps `<ws>.worktrees` as its owned root but its overlay still blocks the custom root's siblings
+    // a session in a linked worktree (a round, a child) keeps `<ws>.worktrees` as its owned root but its gate still blocks the custom root's siblings
     const linked = (realOrNull(top) ?? top) !== (realOrNull(main) ?? main);
     const r = resolveWorktreeRoot(main, rawSetting, opts);
     if (r.error) return linked ? {} : { notice: `pi-foreman: ${r.error.message}; using the default worktree layout (${r.spelled}).` };

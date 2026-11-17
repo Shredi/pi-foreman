@@ -6,7 +6,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ownedRoots } from "../owned.ts";
-import { buildOverlayRules, readBaseline } from "../permoverlay.ts";
 import { checkWaitPath, parseStart } from "../wait.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -20,8 +19,8 @@ const outside = path.join(root, "outside");
 for (const d of [ws, handoff, artifacts, path.join(wtDir, "b1"), outside, path.join(agentDir, "pi-foreman", "state")]) fs.mkdirSync(d, { recursive: true });
 execFileSync("git", ["init", "-q", ws]);
 fs.symlinkSync(outside, path.join(handoff, "escape"), "dir");
-const overlay = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir);
-const base = { cwd: ws, home: root, agentDir, platform: process.platform, overlay };
+const roots = { worktree: ws, scratch: [], tmp: [], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true, agentDir, home: root, pkgRoot: PKG } as never;
+const base = { cwd: ws, home: root, agentDir, platform: process.platform, roots };
 const owned = ownedRoots({ agentDir, workspaceRoot: ws, tmpRoot: os.tmpdir() }).readWrite;
 
 test("wait: owned dirs are refused by default and accepted with `owned`", () => {

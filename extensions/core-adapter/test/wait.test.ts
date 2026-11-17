@@ -5,7 +5,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOverlayRules, readBaseline } from "../permoverlay.ts";
 import { causeOfCustom } from "../usage.ts";
 import { checkRunId, checkWaitPath, Governor, parseStart, resolveBin, resolveGh, WaitRuntime, wakeMessage } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
@@ -19,8 +18,8 @@ const outside = path.join(root, "outside");
 for (const d of [ws, path.join(ws, ".workflow"), path.join(ws, ".git"), path.join(agentDir, "pi-foreman", "state", "wait"), outside]) fs.mkdirSync(d, { recursive: true });
 execFileSync("git", ["init", "-q", ws]);
 fs.symlinkSync(outside, path.join(ws, "out-link"), "dir");
-const overlay = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir);
-const bound = { cwd: ws, home: root, agentDir, platform: process.platform, overlay };
+const roots = { worktree: ws, scratch: [], tmp: [], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true, agentDir, home: root, pkgRoot: PKG } as never;
+const bound = { cwd: ws, home: root, agentDir, platform: process.platform, roots };
 const LIMITS: WaitLimits = { batchWindowSeconds: 300, maxSeconds: 86400, maxActive: 2, ci: true };
 
 test("wait: file path bound (workspace, .workflow, state/wait allowed; escapes and protected refused)", () => {
@@ -32,7 +31,7 @@ test("wait: file path bound (workspace, .workflow, state/wait allowed; escapes a
     assert.ok("error" in r && r.error.includes("refused"), p);
   }
   assert.match((checkWaitPath(".git/HEAD", bound) as { error: string }).error, /write protection/);
-  assert.match((checkWaitPath("a.txt", { ...bound, overlay: null }) as { error: string }).error, /baseline is unreadable/);
+  assert.match((checkWaitPath("a.txt", { ...bound, roots: null }) as { error: string }).error, /gate roots are unavailable/);
 });
 
 test("wait: runId validation and kind arguments", () => {

@@ -8,17 +8,13 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { dropBase, loadBase } from "./_r31c-base.ts";
 import { classify, effectCtx, SAFE_CLASSES } from "../effects.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
 import type { BashRules } from "../timeoutallow.ts";
 import { netUrlOk } from "../netread.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const PKG = path.resolve(here, "..", "..", "..");
 const posix = process.platform !== "win32";
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r31c-net-")));
 after(() => rmTestTmp(w));
@@ -151,26 +147,6 @@ test("R4.5 a network read never composes with a user-allowed program, a write or
   assert.equal(allow("gh pr list && npm test"), null);
   assert.equal(allow("cd . && gh pr list | wc -l"), "net-read");
   assert.equal(allow("gh pr list | sed -n 1p"), "net-read");
-});
-
-test("R4.6 / R4.7 the child overlay: a read-only worktree child may run a network read, not write", { skip: !posix }, () => {
-  const baseline = readBaseline(PKG)!;
-  const ag = path.join(w, "home", ".pi", "agent");
-  const rules2 = buildOverlayRules(baseline, {}, {}, ag, repo, undefined, false);
-  const ctx = { cwd: repo, home: path.join(w, "home"), platform: process.platform, role: "child" as const, scratch: kid, roundReadRoots: [repo], roundRoots: [] as string[] };
-  let why = "";
-  const kind = (command: string): string => {
-    const d = checkToolCall(rules2, "bash", { command }, ctx);
-    why = (d as { reason?: string } | null)?.reason ?? "";
-    return d?.kind ?? "pass";
-  };
-  assert.notEqual(kind("gh pr view 1"), "deny", why);
-  assert.notEqual(kind("curl -sS https://e.example/x"), "deny", why);
-  assert.notEqual(kind("gh pr view 1 | head -3"), "deny", why);
-  assert.equal(kind(`curl -o ${repo}/f https://e.example/x`), "deny");
-  assert.equal(kind("gh pr view 1; sh run.sh"), "deny");
-  assert.equal(kind("gh pr merge 1"), "deny");
-  assert.equal(kind("gh pr view 1 > out.txt"), "deny");
 });
 
 test("R4.3 npm-package-arg file and directory specs ask (all four subcommands)", { skip: !posix }, () => {

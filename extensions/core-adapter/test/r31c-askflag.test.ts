@@ -8,12 +8,19 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { AskFlag } from "../askflag.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { openTrace, sanitizeTrace } from "../trace.ts";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r31c-flag-")));
 after(() => rmTestTmp(w));
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+test("A6 no source file but the writer, the sanitizer, the command wiring and the retro scripts reads `ask_flag`", () => {
+  const allowed = new Set(["askflag.ts", "trace.ts", "index.ts"]);
+  for (const n of fs.readdirSync(path.resolve(here, ".."))) {
+    if (!n.endsWith(".ts") || allowed.has(n)) continue;
+    assert.ok(!fs.readFileSync(path.resolve(here, "..", n), "utf8").includes("ask_flag"), n);
+  }
+});
 
 const written = (rec: Record<string, unknown>): Record<string, unknown> => {
   const t = openTrace({ enabled: true, dir: w, stateDir: w, sessionId: "sess" })!;
@@ -67,25 +74,6 @@ test("A5 secrets are masked, paths stay, a long command stays complete; other ev
   assert.ok(dlg.includes("[redacted]") && !dlg.includes("abcdefghijklmnop12345") && dlg.length > 400);
   assert.ok(String(sanitizeTrace({ event: "overlay", decision: "deny", command: "x".repeat(500) }).command).length <= 200);
   assert.equal(sanitizeTrace({ event: "tool_error", note: "n" }).note, undefined);
-});
-
-test("A6 a flag never allows: the flagged shape still asks", () => {
-  const baseline = readBaseline(path.resolve(here, "..", "..", ".."))!;
-  const rules = buildOverlayRules(baseline, {}, {}, path.join(w, "home", ".pi", "agent"), w, undefined, false);
-  const ctx = { cwd: w, home: path.join(w, "home"), platform: process.platform, role: "child" as const };
-  const cmd = "git fetch origin";
-  const before = checkToolCall(rules, "bash", { command: cmd }, ctx)?.kind;
-  const f = new AskFlag();
-  f.overlay({ command: cmd, rule: "r", approved: true, session: "sess" });
-  assert.ok(f.flag("sess"));
-  assert.equal(checkToolCall(rules, "bash", { command: cmd }, ctx)?.kind, before);
-  assert.equal(before, "ask");
-  // and no source file but the writer, the sanitizer, the command wiring and the retro scripts reads `ask_flag`
-  const allowed = new Set(["askflag.ts", "trace.ts", "index.ts"]);
-  for (const n of fs.readdirSync(path.resolve(here, ".."))) {
-    if (!n.endsWith(".ts") || allowed.has(n)) continue;
-    assert.ok(!fs.readFileSync(path.resolve(here, "..", n), "utf8").includes("ask_flag"), n);
-  }
 });
 
 test("A7 the ask_flag event carries its time (ts) and lands in the session's own trace file", () => {

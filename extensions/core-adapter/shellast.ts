@@ -1,7 +1,7 @@
 /**
  * A bash command line as a list of segments (round 41, A1), on top of the `unbash` parser. One segment is one simple
  * command that would run: chains, pipelines, `$(...)`, backticks, subshells, `bash -c` / `sh -c` / `eval` with a
- * literal string and the wrappers env, timeout, nice, nohup, xargs, time, command, stdbuf, setsid, watch, flock -c are
+ * literal string and the wrappers env, timeout, nice, nohup, xargs, time, command, exec, stdbuf, setsid, watch, flock -c are
  * unwrapped (the wrapper names land in `wrappers`). shellchain.ts refuses all of these (null); here they parse.
  *
  * Anything the walker cannot state exactly is an OPAQUE segment: `opaque` holds a reason code and the consumer treats the
@@ -69,7 +69,7 @@ export interface ShellParseOptions {
 export const MAX_DEPTH = 4;
 
 const HARMLESS = new Set(["LANG", "TZ", "NO_COLOR", "FORCE_COLOR", "CI", "DEBUG", "NODE_ENV", "PYTHONDONTWRITEBYTECODE", "GIT_PAGER", "PAGER"]);
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
+export const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
 const INTERPRETERS = new Set([...SHELLS, "node", "nodejs", "bun", "deno", "python", "python2", "python3", "perl", "ruby", "php", "lua", "rscript"]);
 const FOREIGN = new Set(["powershell", "pwsh", "cmd", "wsl"]);
 const BUILTINS = new Set(["alias", "unalias", "shopt", "trap", "enable", "builtin"]);
@@ -516,12 +516,13 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   if (FOREIGN.has(name) || FOREIGN_FILE.test(prog)) return plain(prog, name, rest, c, cwd);
 
   switch (name) {
-    case "cd": {
+    case "cd":
+    case "pushd": {
       plain(prog, name, rest, c, cwd);
-      const one = rest.length === 1 && rest[0].value !== null ? rest[0].value : null;
+      // `pushd` with an option moves nothing we track; `popd` is not tracked at all
+      const one = rest.length === 1 && rest[0].value !== null && !(name === "pushd" && /^[-+]/.test(rest[0].value)) ? rest[0].value : null;
       return one === null ? null : (cdTarget(["cd", one], cwd ?? undefined, win32(sc.run)) ?? null);
     }
-    case "pushd":
     case "popd":
       plain(prog, name, rest, c, cwd);
       return null;
@@ -619,6 +620,14 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const o = opts({ flags: "pvV" });
       if (typeof o === "string" || has(o.opts, "-v", "-V")) return plain(prog, name, rest, c, cwd);
       return wrap(o.rest, "command");
+    }
+    case "exec": {
+      // `exec [-cl] [-a name] cmd args`: the command is the segment; the redirect-only form (no command) stays the opaque builtin
+      const o = opts({ flags: "cl", arg: "a" });
+      if (typeof o === "string" || !o.rest.length) return bad("shell_builtin");
+      // a failed `exec cd` (execfail) leaves the shell where it was: the inner command's cwd is not taken over, as for `env`
+      wrap(o.rest, "exec");
+      return cwd;
     }
     case "stdbuf": {
       const o = opts({ arg: "ioe", longArg: ["--input", "--output", "--error"] });
@@ -783,6 +792,35 @@ function walkScript(script: Script, src: string, sc: Scope): void {
 }
 
 /**
+ * The here-document bodies the parser reads in `command`, as source offsets from the start of the body to the end of the closing line, or null when `command` does
+ * not parse (a quote left open, a `<<` inside it, is none). A here-document inside a word (`$(...)`, backticks) or a function body is not listed, and nor is one
+ * the parser reports without a closing line. The third element is true when a shell does not expand the body: the tag has a quoted part (the parser's `quoted`)
+ * and its source text (the delimiter word's slice of `command`) holds no `$'` or `$"`, which dash does not read as a quote (it ends such a heredoc at a line `$EOF`,
+ * earlier than the parser). An unquoted body is never data, whatever it holds.
+ */
+export function heredocSpans(command: string): Array<[number, number, boolean]> | null {
+  let script: Script | undefined;
+  try {
+    script = parse(command);
+  } catch {
+    return null;
+  }
+  if (!script || (script as any).errors?.length) return null;
+  const spans: Array<[number, number, boolean]> = [];
+  const visit = (n: SyntaxNode, depth: number): void => {
+    const x = n as any;
+    if (depth > 200 || x.type === "Word" || x.type === "Function") return;
+    if (x.type === "HereDoc") {
+      if (x.closing) spans.push([x.body.pos, x.closing.end, !!x.delimiter?.quoted && !/\$['"]/.test(command.slice(x.delimiter.pos, x.delimiter.end))]);
+      return;
+    }
+    forEachChild(n, (c) => visit(c, depth + 1));
+  };
+  visit(script as SyntaxNode, 0);
+  return spans;
+}
+
+/**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
  * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
  * one `parse_error` segment, none of the partial ones. Any other error propagates.
@@ -812,4 +850,273 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     throw e;
   }
   return sc.run.out;
+}
+
+/** The names a line binds: `names` are the assigned ones, `any` is set when a construct may bind any name (`read`, `for`, `eval`, a parse failure ...). */
+export interface BoundNames {
+  names: Set<string>;
+  any: boolean;
+}
+
+/** Builtins that bind a name given as a plain word, or run text that may bind any (`read N`, `printf -v N`, `eval`, `source`, `.`). */
+const BINDS_ANY = new Set(["read", "mapfile", "readarray", "getopts", "let", "eval", "source", ".", "trap"]);
+/** Prefix assignments that make a shell run a file (`BASH_ENV=./f bash -c ..`). */
+const RUNS_FILE_VARS = new Set(["BASH_ENV", "ENV"]);
+const CLEAN_ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
+/** Wrappers a builtin hides behind (`command read N`). */
+const BUILTIN_WRAPPERS = new Set(["command", "builtin", "time"]);
+const ARITH_ASSIGN = /^(?:\*\*|<<|>>|[-+*/%&|^])?=$/;
+/** Variables bash evaluates an assigned value of as arithmetic, like a `declare -i` name. */
+const INT_SPECIALS = ["OPTIND", "OPTERR", "SECONDS", "RANDOM", "LINENO", "HISTCMD"];
+const DECIMAL = /^[0-9]+$/;
+const ARITH_TEST_OPS = new Set(["-eq", "-ne", "-lt", "-le", "-gt", "-ge"]);
+
+/**
+ * The variable names `command` may bind, from its own parse (round 2, step 1): `N=`, `N+=`, `N[..]=` (also after export / declare / local / readonly /
+ * typeset, which also bind a bare `N`), `unset N`, `${N=..}` / `${N:=..}`, an assigning arithmetic. `any` for `read` / `mapfile` / `readarray` / `getopts` / `let`,
+ * `for`, `printf -v`, `declare -n`, `eval`, `source`, `.`, and a line that does not parse.
+ */
+export function boundNames(command: string): BoundNames {
+  const out: BoundNames = { names: new Set(), any: false };
+  let script: Script | undefined;
+  try {
+    script = parse(command);
+  } catch {
+    script = undefined;
+  }
+  if (!script || (script as any).errors?.length) return { names: out.names, any: true };
+  // Arithmetic contexts: bash evaluates the text of an expansion there (`y='S=1'; (( $y ))` assigns S). `late` holds the checks that need the whole
+  // line first: `tainted` names were assigned a non-decimal value, `ints` names evaluate an assigned value as arithmetic.
+  const ints = new Set(INT_SPECIALS);
+  const tainted = new Set<string>();
+  const late: Array<() => boolean> = [];
+  const nonDecimal = (w: any): boolean => w != null && !DECIMAL.test(String(w.value ?? w.text ?? ""));
+  /** `strict`: any name or expansion is risky; else only an expansion or name assigned a non-decimal value, and any positional or computed one. */
+  const arith = (text: string, strict: boolean): boolean => {
+    if (/\$(?!\{?[A-Za-z_])|`/.test(text)) return true;
+    // an assignment, `++` or `--` anywhere in an arithmetic text (`a[HOME=1]=1`, `$((x=y))`) may bind any name
+    if (/=|\+\+|--/.test(text.replace(/[=!<>]=/g, ""))) return true;
+    const ids = text.match(/(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
+    return strict ? ids.length > 0 : ids.some((i) => tainted.has(i));
+  };
+  const wordText = (w: any): string => String(w?.value ?? w?.text ?? "");
+  /** Names the line assigns (not the plain argument names), and the names an argument expands (`wait -p $x`): one that is assigned may hold any name. */
+  const assigned = new Set<string>();
+  const expanded = new Set<string>();
+  const bind = (n: string): void => {
+    out.names.add(n);
+    assigned.add(n);
+  };
+  /** A word with a `[..]` subscript after a name character whose inner text is not a plain decimal: `test -v` and `declare` evaluate it as arithmetic. */
+  const subscriptRisky = (text: string): boolean => {
+    const open = text.search(/[A-Za-z0-9_]\[/) + 1;
+    if (open < 1) return false;
+    const close = text.lastIndexOf("]");
+    const inner = text.slice(open + 1, close > open ? close : undefined);
+    return arith(inner, true);
+  };
+  /**
+   * An argument word read raw (text inside single quotes is no expansion): a positional or computed expansion, a command substitution or an unquoted brace expansion
+   * (`{a,b}`, `{1..3}`) answers any now; a named one (`$x`, `${x:-..}`, `${!x}`) when the line assigns that name, or when it is joined to a literal that is itself
+   * a name (`$unset'HOME'`). `${n:=..}` itself and `$((..))` are read elsewhere.
+   */
+  const expands = (raw: string): boolean => {
+    let live = "";
+    let unquoted = "";
+    let plain = "";
+    let dq = false;
+    for (let i = 0; i < raw.length; i++) {
+      const c = raw[i];
+      if (c === "\\") {
+        i++;
+        plain += raw[i] ?? "";
+        live += "\u0001x\u0001";
+        unquoted += "x";
+      } else if (c === "'" && !dq) {
+        const ansi = live.endsWith("$");
+        if (ansi) live = live.slice(0, -1);
+        for (i++; i < raw.length && raw[i] !== "'"; i++) {
+          if (ansi && raw[i] === "\\") i++;
+          plain += raw[i] ?? "";
+        }
+        live += "\u0001x\u0001";
+        unquoted += "x";
+      } else if (c === '"') {
+        dq = !dq;
+        live += "\u0001";
+      } else {
+        live += c;
+        plain += c;
+        unquoted += dq ? "x" : c;
+      }
+    }
+    if (/(?<!\$)\{[^{}]*(?:,|\.\.)/.test(unquoted)) return true;
+    const text = live.replace(/\$\(\(.*?\)\)/gs, " ");
+    let found = false;
+    for (const m of text.matchAll(/\$\{[^}]*\/|\$!|\$\{!([A-Za-z_][A-Za-z0-9_]*)|\$\{?([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_]|:?=)|\$\{?(?=\d|[@*])|\$\((?!\()|`/g)) {
+      const n = m[1] ?? m[2];
+      if (n === undefined) return true;
+      expanded.add(n);
+      found = true;
+    }
+    // `wait -p ${x:-HOME}`: the default is the name bound when x is unset
+    for (const m of plain.matchAll(/\$\{[^}]*?[-+=?]([A-Za-z_][A-Za-z0-9_]*)\}/g)) out.names.add(m[1]);
+    return found && /^\u0001*(?:-[A-Za-z]+)?\u0001*\w[\w\u0001]*$/.test(text.replace(/\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*/g, ""));
+  };
+  const visit = (n: SyntaxNode, depth: number): void => {
+    const x = n as any;
+    switch (x.type) {
+      case "Command": {
+        const assigns = [...x.prefix, ...x.suffix].filter((a: any) => a.type === "Assignment");
+        for (const a of assigns) {
+          bind(a.name);
+          if (RUNS_FILE_VARS.has(a.name)) out.any = true;
+          const vals: any[] = a.value?.type === "ArrayValue" ? a.value.elements : a.value ? [a.value] : [];
+          // `[key]=v` of a compound array: the key is an arithmetic subscript, the value is what is assigned
+          const plain = vals.map((v) => (/^\[.*\]=/s.test(wordText(v)) ? { value: wordText(v).replace(/^\[.*?\]=/s, "") } : v));
+          for (const v of vals) {
+            const key = /^\[(.*?)\]=/s.exec(wordText(v));
+            if (key) late.push(() => arith(key[1], false));
+          }
+          if (plain.some(nonDecimal)) tainted.add(a.name);
+          late.push(() => ints.has(a.name) && plain.some(nonDecimal));
+          if (a.index) late.push(() => arith(wordText(a.index), false));
+        }
+        // a computed program name (`$x ./f`) or a quote-broken assignment word (`HO""ME=/x`, `{HOME,X}=/x`)
+        if (x.name && (/[$`]/.test(x.name.text) || (String(x.name.value).includes("=") && !CLEAN_ASSIGN.test(String(x.name.value))))) out.any = true;
+        const clean = CLEAN_ASSIGN.exec(String(x.name?.value ?? ""));
+        if (clean) bind(clean[1]);
+        const words: string[] = [];
+        const raws: string[] = [];
+        for (const w of [x.name, ...x.suffix])
+          if (w && w.type === "Word") {
+            words.push(String(w.value ?? w.text));
+            raws.push(String(w.text ?? w.value));
+          }
+        while (words.length && BUILTIN_WRAPPERS.has(baseName(words[0]))) {
+          words.shift();
+          raws.shift();
+        }
+        const name = words.length ? baseName(words[0]) : "";
+        const args = words.slice(1);
+        if (name === "env") {
+          for (let i = 0; i < args.length; i++) {
+            const a = args[i];
+            const m = CLEAN_ASSIGN.exec(a);
+            if (m) bind(m[1]);
+            else if (/^-[A-Za-z]*S|^--split-string/.test(a)) out.any = true;
+            else if (/^(?:-[A-Za-z]*[uCP]|--unset|--chdir)$/.test(a)) i++;
+            else if (!a.startsWith("-")) break;
+          }
+        }
+        // fail closed: a plain argument that is a variable name may be bound by the command (`wait -p N`, `compgen -V N`); a subscript that assigns may bind any name
+        // an option with its name attached (`wait -pHOME`) counts too: the tail after the leading letters
+        args.forEach((a, i) => {
+          if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(a)) out.names.add(a);
+          if (a.startsWith("-"))
+            for (let k = 1; k < a.length; k++) {
+              if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(a.slice(k))) out.names.add(a.slice(k));
+              if (!/[A-Za-z]/.test(a[k])) break;
+            }
+          if (subscriptRisky(a) || expands(raws[i + 1])) out.any = true;
+        });
+        if (DECLARE.has(name) && args.some((a) => /^-[A-Za-z]*i/.test(a))) {
+          for (const a of args) if (!a.startsWith("-")) ints.add(/^[A-Za-z_][A-Za-z0-9_]*/.exec(a)?.[0] ?? a);
+          for (const a of assigns) ints.add(a.name);
+        }
+        if (BINDS_ANY.has(name)) out.any = true;
+        else if (name === "printf" && args.some((a) => /^-[A-Za-z]*v/.test(a))) out.any = true;
+        else if (DECLARE.has(name) || name === "unset") {
+          if (args.some((a) => /^-[A-Za-z]*n/.test(a))) out.any = true;
+          for (const a of args) {
+            const m = CLEAN_ASSIGN.exec(a);
+            if (m) bind(m[1]);
+            else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(a)) bind(a);
+            else if (!a.startsWith("-") && !(/^[A-Za-z_][A-Za-z0-9_]*\[[^\]]*\]\+?=/.test(a))) out.any = true;
+          }
+        }
+        // a nested script (`bash -c '..'`, `flock f -c '..'`, `watch '..'`): what it binds counts too
+        // a `-c` anywhere among the leading flags (`bash -c -e '..'`) makes the next plain word the script
+        {
+          let sawC = /^-[A-Za-z]*c$/.test(String(x.name?.value ?? ""));
+          x.suffix.forEach((w: any, i: number) => {
+            const flag = i > 0 ? x.suffix[i - 1] : x.name;
+            const isC = w.type === "Word" && /^-[A-Za-z]*c$/.test(String(w.value));
+            const script = w.type === "Word" && w.value !== undefined && ((flag?.type === "Word" && /^-[A-Za-z]*c$/.test(String(flag.value))) || (sawC && !String(w.value).startsWith("-")));
+            if (isC) sawC = true;
+            if (script && depth >= MAX_DEPTH) out.any = true;
+            else if (script) {
+              let inner: Script | undefined;
+              try {
+                inner = parse(String(w.value));
+              } catch {
+                inner = undefined;
+              }
+              if (!inner || (inner as any).errors?.length) out.any = true;
+              else for (const st of inner.commands) visit(st, depth + 1);
+            }
+          });
+        }
+        break;
+      }
+      case "For":
+      case "ArithmeticFor":
+      case "Select":
+      case "Coproc":
+        out.any = true;
+        break;
+      case "ArithmeticExpansion":
+        late.push(() => arith(String(x.text ?? "").replace(/^\$(?:\(\(|\[)/, "").replace(/(?:\)\)|\])$/, ""), false));
+        break;
+      case "TestUnary":
+        if (subscriptRisky(wordText(x.operand)) || expands(String(x.operand?.text ?? wordText(x.operand)))) out.any = true;
+        break;
+      case "TestBinary":
+        if (ARITH_TEST_OPS.has(x.operator)) for (const w of [x.left, x.right]) late.push(() => arith(wordText(w), false));
+        break;
+      case "ArithmeticCommand":
+        // `(( 1 + 2 ))` binds nothing; a name or an expansion in it may evaluate to an assignment
+        if (/[^\s\d+\-*/%()<>=!&|^~?:,]/.test(String(x.body ?? ""))) out.any = true;
+        break;
+      case "FileDescriptorVariable":
+        bind(String(x.name));
+        break;
+      case "ParameterExpansion": {
+        const op = x.operation;
+        if (x.parameter && (op?.operator === "=" || op?.operator === ":=")) {
+          if (x.prefix === "!") out.any = true;
+          else bind(x.parameter);
+          // `wait -p ${a:=HOME}`: the value is the name the command binds
+          if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(wordText(op.operand))) out.names.add(wordText(op.operand));
+          if (nonDecimal(op.operand)) tainted.add(x.parameter);
+        }
+        // a default / assign operand on an integer name and a `${a:off:len}` slice are evaluated as arithmetic, a subscript too
+        if (op?.type === "Default" && x.parameter) late.push(() => ints.has(x.parameter) && nonDecimal(op.operand));
+        if (op?.type === "Slice") for (const w of [op.offset, op.length]) if (w) late.push(() => arith(wordText(w), true));
+        if (x.index) late.push(() => arith(wordText(x.index), false));
+        // `${x@P}` runs the prompt expansion, `${a[S++]}` assigns in its subscript
+        if ((op?.type === "Transform" && op.operand?.value === "P") || /[=]|\+\+|--/.test(String(x.index?.value ?? ""))) out.any = true;
+        break;
+      }
+      case "ArithmeticBinary":
+        if (ARITH_ASSIGN.test(x.operator)) {
+          if (x.left?.type === "ArithmeticWord" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(String(x.left.value))) bind(String(x.left.value));
+          else out.any = true;
+        }
+        break;
+      case "ArithmeticUnary":
+        if (x.operator === "++" || x.operator === "--") out.any = true;
+        break;
+    }
+    forEachChild(n, (c) => visit(c, depth));
+  };
+  try {
+    for (const st of script.commands) visit(st, 0);
+    if (late.some((f) => f()) || [...expanded].some((n) => assigned.has(n))) out.any = true;
+  } catch (e) {
+    // a line too deep for the stack: unreadable, like parseShell's `parse_error`
+    if (!(e instanceof RangeError)) throw e;
+    out.any = true;
+  }
+  return out;
 }

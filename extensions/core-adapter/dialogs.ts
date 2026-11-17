@@ -1,4 +1,4 @@
-// `/foreman dialogs --json`: the session trace's blocking dialogs counted per family: overlay asks (decision `ask-*`, regression family by
+// `/foreman dialogs --json`: the session trace's blocking dialogs counted per family: overlay asks (decision `ask-*`, written by earlier versions; regression family by
 // command), checkpoint dialogs, ask_user_question, guard asks and drift asks (R18: `dialog`
 // records with a `surface`, and the guard's `ask` record), plus a `total` of the blocking families (dialogsJson).
 // The overlay family is decided at emit time from the raw command (`dialogFamily`) and kept in the existing `class` trace field; the trace

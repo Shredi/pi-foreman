@@ -10,8 +10,8 @@
 // (effects.ts) a segment may also pass by its effect class; docs/permissions.md has the whole set.
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
-import type { Baseline } from "./permoverlay.ts";
-import { wildcardRegExp } from "./permoverlay.ts";
+import type { Baseline } from "./baseline.ts";
+import { wildcardRegExp } from "./glob.ts";
 import { isReadOnlySed } from "./sedread.ts";
 import { expandScratchVar, scratchCommandAllowed } from "./childscratch.ts";
 import { isTmpScratch } from "./tmpscratch.ts";

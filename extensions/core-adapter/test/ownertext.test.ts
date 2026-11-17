@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ownerFactsLines, ownerSection, ownerSectionIssues, ownerSummary, prefixQuestions, questionHint, questionPrefix, showHint } from "../ownertext.ts";
+import { ownerFactsLines, ownerSection, ownerSectionIssues, ownerSummary, prefixQuestions, questionHint, questionPrefix } from "../ownertext.ts";
 
 const GOOD = "# Plan\n\n## For the owner\nWe make the report page faster.\nFirst we measure, then we fix the slowest part.\nHeads-up: the page is briefly slower while we measure.\nWe assume the old report format stays.\n\n## Goal\nShip it.\n";
 
@@ -73,10 +73,8 @@ test("question hint: jargon in the question or an option description, plain text
   assert.match(questionHint({ questions: [{ question: "Fine?", options: [{ description: "uses plan_review_required" }] }] }, p) ?? "", /jargon/);
 });
 
-test("show hint: a short plain opening passes, a table, a long paragraph or a code start gets the hint", () => {
-  assert.equal(showHint("# Title\n\nThis explains the cache. It keeps the page fast.\n\n| a | b |\n"), null);
-  assert.match(showHint("| a | b |\n|---|---|\n| 1 | 2 |\n") ?? "", /plain 2-3 sentence/);
-  assert.match(showHint("One. Two. Three. Four. Five.\n") ?? "", /plain/);
-  assert.match(showHint("```mermaid\ngraph TD\n```\n") ?? "", /plain/);
-  assert.match(showHint("") ?? "", /plain/);
+test("ownerSummary returns a long owner section whole", () => {
+  const lines = Array.from({ length: 25 }, (_, i) => `Line ${i + 1} in plain words.`);
+  const s = ownerSummary(`# P\n\n## For the owner\n${lines.join("\n")}\n\n## Goal\nx\n`);
+  assert.equal(s, ["For the owner", ...lines.map((l) => `  ${l}`)].join("\n"));
 });

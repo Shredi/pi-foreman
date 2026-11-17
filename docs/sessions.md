@@ -202,23 +202,31 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
   what the parent would have to rule.
   Only handoff dirs whose `child` file names this session count (for the ask state too); a dir where this session is the
   `parent` never does. **Who may write a ruling file:** only the parent. A session's write, edit, `foreman_copy` /
-  `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that names `ruling*.md` in a dir
-  where it is the child is refused up front ("a session cannot write its own parent's ruling"). A shell command is lexed
-  by the overlay's lexer (`permoverlay.ts`, no cd or variable resolution) and refused only
-  when a write surface may be such a file: a redirect on any fd, `tee`/`cp`/`mv`/`install`/`ln`/`rsync` (their
-  destinations, and a ruling file as their source), `dd of=`, `sed -i` and sed `w`, `truncate`/`touch`, `sort -o`,
-  `curl -o`, `--output=`, PowerShell write cmdlets, python/node/perl code writes, or a ruling-named argument of a
-  program that is not a reader. A computed name or directory in a write position (an unbound `$var`, a glob, a `cd`
-  the tracker cannot follow, a directory that does not exist yet, a line that makes a symlink) counts as such a file.
-  Reads, `$`/glob words in read positions and heredoc bodies never do; `$FOREMAN_SCRATCH` is the harness scratch dir
-  unless the line assigns it. `ruling-<name>.ack` files are no ruling files. No python, a timeout or an unreadable
-  line refuses the call. Writing `ruling*.md` into a dir where it is the parent (answering its child) stays
-  allowed. A line that only reads (a `grep` of `brief*.md`, `git diff --stat`, a plain `git ls-remote`, a `sed -n` print) never asks; `git ls-remote` is a read unless it can start a program (see [safety](safety.md#owned-paths)), and `--output <file>` of a git command names a file like `--output=<file>`. This refusal is defence in depth, since a ruling cannot satisfy the gate anyway; a ruling file this session
+  `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that writes `ruling.md`,
+  `ruling-<n>.md` or `brief-<x>.md` in a dir where it is the child is refused up front ("a session cannot write its own
+  parent's ruling"). This is the literal self-ruling refusal (`selfRulingRefusal` in `ruling.ts`), run in the `tool_call` hook
+  before the gate. For a shell line it catches a redirect (also `2>`), `tee`, `cp`, `mv`, `rm`, `install`, `rsync`, `dd of=`,
+  `truncate`, `touch`, `sed -i`, `sort -o`, `curl -o`, a git `--output=` and `ln -s` onto it, inline `python3 -c`, `node -e` and
+  `perl -e` code, `bash -c`, a bare name after `cd <own handoff dir> &&`, a directory spelled with a variable (bound on the
+  same line, or unbound), an unquoted glob in a write target that can match a ruling or brief name in the own handoff dir
+  (`ru*.md`, `r?ling.md`, `*.md`, `[r]uling.md`, `handoffs/*/ruling.md`; judged by the text before the first glob
+  character), and a bare or relative ruling name written after a `cd` or `pushd` to a directory the line cannot resolve
+  (`cd $X`, a directory that does not exist yet). It does
+  not refuse a write through a symlink whose own name is no ruling name (the write lands; a shell write, and a write or edit tool write whose real path is a ruling name, count as self-written and stay ignored),
+  a `ln -s` that has the ruling only as its source (the link is no write onto the ruling),
+  or `ruling-<name>.ack` and `ruling.md.bak` (no ruling files). A builder's redirect, `tee`, `cp`, `mv` or write tool onto
+  such a file is also refused by the gate (`child-write-outside`). Writing a ruling into a dir where the session is the parent
+  (answering its child) is allowed (`default-write-handoff-ruling`, `path-write-handoff-ruling`). Reading a ruling and
+  copying from it (`cat`, `grep`, `cp <handoff dir>/ruling.md .workflow/scratch/r.md`) is not asked about and not refused:
+  the ask that used to follow a line touching a ruling file is gone. A line that only mentions a ruling in text (`echo "see
+  ruling.md"`, `git commit -m "read ruling.md"`) is not refused either. `git ls-remote` is a read
+  (see [safety](safety.md#owned-paths)). This refusal is defence in depth, since a ruling cannot satisfy the gate anyway; a ruling file this session
   still changed is ignored until the parent writes it again (a newer mtime). Self-written marks live in memory.
-- **Child input dirs.** A child writes the files it passes to a command (its `git commit -F` message file) only into
-  `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir and not a place for a
-  child's message file. A
-  child's `git tag -F` message file under a write-protect rule (`.pi/scratch/` included) is denied by the overlay.
+- **Child input dirs.** A child should write the files it passes to a command (its `git commit -F` message file) into
+  `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir. The gate does not enforce
+  this: a builder's write-tool write onto `<worktree>/.pi/scratch/m.txt` is allowed (`path-write-worktree`), and its
+  `git tag -F <file>` is not denied, whatever file it names (a reviewer or explorer is refused `git tag` in its worktree as
+  `child-readonly-write`).
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.
@@ -295,7 +303,7 @@ A heavy task with several phases may run as a multi-session plan: one child sess
 
 ### Parallel rounds
 
-Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Its commits and pushes happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree and the permission overlay asks for it). Children on POSIX may run the exact `npm ci` in their own worktree.
+Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Its commits and pushes happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree; the gate labels `npm ci` `danger-install` and the mode step decides on it). Children on POSIX may run the exact `npm ci` in their own worktree.
 
 A security revision after the final review is cap-exempt: one more Opus builder is allowed.
 Builders commit per numbered item.
@@ -518,7 +526,7 @@ In a Pi session (the foreman, not children):
 - `/retro` prints friction metrics of the session (usage lines logged with cost 0, as the Claude bridge does, are priced from the Pi model registry's rates like the footer) and writes permission-allow proposals (never for commands that run code, such as interpreters, wrappers, runners, eval, ssh or git config, nor for commands naming a protected path) to `<agent dir>/pi-foreman/state/retro/`; nothing is applied for you. Findings also go to the retro backlog, listed with `foreman backlog` ([retro](retro.md)); `retro.enabled` null turns this on in tui and rpc sessions only. `/retro --model <id>` picks the model that writes the findings. `/retro --model --known-limits <file>` appends the file's first 2000 characters to that prompt as rig facts the foreman must not list under Missing (a missing file adds nothing).
 - `/foreman close [result-path]` is how a sub-orchestrator (a session opened with `/foreman session open`) exits: result file, sync (retro, then repository commits), exit. The top orchestrator runs `/sync` by hand; subagents never sync ([retro](retro.md)). It is refused while a long wait is pending, a child run is still active (nothing is cancelled) or a PR this session watches is still open (wait for the merge, or `pr_unwatch`). A parent can send the same request with `herdr agent prompt` or, from its own session id, as an intercom message `foreman:close` (also to an idle session). Its CLOSE report, cleanup of the worktrees and scratch the session created, and handovers to the parent are in [close](close.md).
 - `/foreman cost [workspace]` prints the usage summary (tokens, list-price cost, child launches) of this session, or of all sessions in the given workspace. `--json` prints one object instead (by role, model and role×model: tokens, USD to the cent, and per row how many calls used a recorded cost, were re-priced from `config/prices.json` (long-context tier included) or unpriced); `--all` scopes it to every session of this workspace.
-- `/foreman dialogs --json` prints the blocking dialogs this session's trace recorded, counted per family as `{family: {count, lines: [...]}}` with the redacted, path-scrubbed command lines (200 characters at most). Overlay asks (`ask-*` records) count in `state_usage_read`, `trace_read`, `pi_scratch_read`, `toolchain_probe`, `own_run_dir`, `own_bg_output`, `own_bash_output_log`, `owned_scratch`, `hub_ledger_read`, `other`; every other blocking surface has one family: `permission_prompt` (a permission-system prompt this session shows), `child_dialogs` (a forwarded child prompt, counted only here), `checkpoint`, `ask_user_question`, `guard_ask` (a guard ask a human answered), `drift_ask`, `script` (the owner dialog of `foreman_script`). `self_ruling_refusal` (a block) and `auto_review_allow` (an ask allowed without a dialog) are listed but are no dialogs. The extra key `total` sums every family except those two. An opened child session counts its own dialogs in its own trace (`foreman_dialogs({trace})` on each; sum them). With the trace off (`trace.enabled`) it says so instead of printing zero counts. The foreman-only tool `foreman_dialogs({trace?})` returns the same JSON (default: this session's trace; `trace` names another trace file), and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) prints it for a trace file from a shell; it runs `extensions/core-adapter/dialogs-cli.ts` through `node --experimental-strip-types` and needs Node 22.6 or newer.
+- `/foreman dialogs --json` prints the blocking dialogs this session's trace recorded, counted per family as `{family: {count, lines: [...]}}` with the redacted, path-scrubbed command lines (200 characters at most). Asks of the removed permission layer (`ask-*` records, found only in traces of earlier versions) count in `state_usage_read`, `trace_read`, `pi_scratch_read`, `toolchain_probe`, `own_run_dir`, `own_bg_output`, `own_bash_output_log`, `owned_scratch`, `hub_ledger_read`, `other`; every other blocking surface has one family: `permission_prompt` (a permission-system prompt this session shows), `child_dialogs` (a forwarded child prompt, counted only here), `checkpoint`, `ask_user_question`, `guard_ask` (a guard ask a human answered), `drift_ask`, `script` (the owner dialog of `foreman_script`). `self_ruling_refusal` (a block) and `auto_review_allow` (an ask allowed without a dialog) are listed but are no dialogs. The extra key `total` sums every family except those two. An opened child session counts its own dialogs in its own trace (`foreman_dialogs({trace})` on each; sum them). With the trace off (`trace.enabled`) it says so instead of printing zero counts. The foreman-only tool `foreman_dialogs({trace?})` returns the same JSON (default: this session's trace; `trace` names another trace file), and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) prints it for a trace file from a shell; it runs `extensions/core-adapter/dialogs-cli.ts` through `node --experimental-strip-types` and needs Node 22.6 or newer.
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
 
 The foreman's footer in a TUI session is two lines (`footer.style`: `"foreman"`, the default, or `"pi"` for Pi's own footer and the one-line usage status; child sessions never install it). Line 1: the model and thinking level, the git branch (dropped first when the line is narrow), a context bar of 10 cells (one filled cell per 10%, green below 50%, yellow below 80%, red from 80%) scaled to the compaction point Pi uses for the model, so a full bar means compaction fires (`14% of 200k`; the context window when the point is unknown or compaction is off), then `CH n%` (the session's cache-hit share: cache-read tokens over all prompt tokens) and the cache-timer bar (`footer.cacheBar`, default on). Line 2: the usage text and the other extensions' status texts, dimmed. For example `claude-opus-5-5 • high · main · ■□□□□□□□□□ 14% of 200k · CH 98% · ■│■■■■■■■■■ 3h ♨ ½ · ↓ claude-sonnet-5-5`.
@@ -540,10 +548,10 @@ model ([ladder](ladder.md#idle-rung-foreman-downshift)). The glyphs live in `con
 
 ## Knowledge sources
 
-The bundled skills and design notes digest a few outside pages: skill-authoring guidance, per-model prompting guides and an article on folding subagents. `config/knowledge.json` lists them, one entry per source: `id`, `url`, `target` (the repo file that digests it), `sha256` (of the normalised page text), `checkedOn` (the day the digest was last read against it) and, for index pages, `discover: {pattern, label}`. The digests are written in our own words; the full text is never committed.
+The bundled skills and design notes digest a few outside pages: skill-authoring guidance, per-model prompting guides and an article on folding subagents. `config/knowledge.json` lists them, one entry per source: `id`, `url`, `target` (the repo file that digests it), `sha256` (of the normalised page text, or of the raw bytes for a PDF), `checkedOn` (the day the digest was last read against it) and, for index pages, `discover: {pattern, label}`. The digests are written in our own words; the full text is never committed.
 
 - `foreman knowledge check [--json] [--agent-dir D]` fetches each source (10 s timeout), reduces HTML to its main text (scripts, styles, navigation, header, footer, aside and comments dropped; Markdown is used as is), hashes it and compares with the manifest. Each source is `unchanged`, `changed`, `new` (no hash yet), `unreachable` or, for a discover entry, `discovered`. A discover entry also lists links that match its pattern and are not in the manifest, such as a new model page; these are reported and never added automatically. It exits 0 whatever it finds, and 2 when the manifest is unreadable.
-- The normalised text of every source is cached per user in `<agent dir>/pi-foreman/knowledge/<id>.md` (the full text for a skill to read when its digest needs a recheck), and the result of the run goes to `<agent dir>/pi-foreman/state/knowledge-check.json` (`checkedAt`, `results`).
+- The normalised text of every source is cached per user in `<agent dir>/pi-foreman/knowledge/<id>.md` (the full text for a skill to read when its digest needs a recheck; a PDF source is cached as `<id>.pdf`, the file as it was fetched), and the result of the run goes to `<agent dir>/pi-foreman/state/knowledge-check.json` (`checkedAt`, `results`).
 - `foreman knowledge accept <id>... | --all` copies the hash from the last check into the manifest and sets `checkedOn` to today. Run it after you reread the digest against the cache. An id without a usable result is refused with the reason.
 - `foreman knowledge nudge` prints one line when the last check is older than `knowledge.nudgeDays` (your `foreman.json` over the defaults, default 30) or never ran. `foreman update-check` prints it on stderr, and `/foreman update-check` and `/sync` append it to their output.
 
@@ -674,10 +682,11 @@ startup file runs `foreman pane-resume`, which shows a 5 s countdown and starts 
 [herdr](herdr.md#crash-restart); the hook: [install](install.md#the-resume-hook)).
 
 What comes back by itself: the history; the identity of an opened child (intercom id, parent, label, model); the permission profile, the plan phase and
-the `PI_BG_*` variables the session was opened with; the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
+the `PI_BG_*` variables the session was opened with (on Windows not `PI_BG_SHELL` and `PI_BG_SHELL_PATH`: pi-foreman sets those itself at every start, and the shell's own values stay); the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
 (`foreman_wait`), running child runs and background tasks. The restarted session gets one appended message with the time of the last sign of life, and
 once, ten seconds after the start, one message holding everything it found: the child runs that pi-subagents still lists as running although the machine restarted and the
 background tasks that are gone (on a start or resume only, not on /new or /reload). A session idle for more than 14 days is not restarted and its note is swept. `sessions.hc.resume` `off` turns it off.
+On Windows the hook is a block in the PowerShell profiles and in Git Bash; the one of `hc`'s configured shell runs (see [herdr](herdr.md#crash-restart)).
 
 ## pi-intercom
 
@@ -760,7 +769,7 @@ The tag is text only. Real grouping needs Herdr itself:
 The foreman-only `foreman_bg({command, note})` runs one shell command detached (its own process group on POSIX, not detached on win32; stdout and stderr go to
 `<agent dir>/pi-foreman/state/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when that file already exists, e.g. after a reload) and registers a `pid` wait with your `note`. It returns the wait
 id and the log path at once; you end the turn and one message wakes you when the process has exited (the exit code is not
-known: read the log). The command passes the same guards as a bash call, with no bypass: the overlay deny and ask rules, the
+known: read the log). The command passes the same guards as a bash call, with no bypass: the gate's rules, the
 shell-write guard and the destructive guard. A command that is empty or not a string is refused.
 On Windows the command runs in Git Bash (the bash tool's shell), so write POSIX syntax; only when no bash is found it runs under `cmd.exe` (the session says so once, at start), see the
 [known limit](safety.md#known-limit-background-runs-on-windows).

@@ -1,6 +1,7 @@
 // POSIX launchers (bin/ledger, bin/foreman, bin/foreman-worktree-setup) refuse Python below 3.13 before they run a script.
 // The PATH is controlled: only a fake python3 and dirname are reachable, so no real interpreter is picked up.
 import { spawnSync } from "node:child_process";
+import "./_sandbox-home.mjs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

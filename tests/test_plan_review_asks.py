@@ -34,7 +34,7 @@ class ForemanTextTest(unittest.TestCase):
 
     def test_plan_phase_asks_once_never_both(self):
         out = self.rendered()
-        self.assertIn("real decisions only: in a session a parent opened ask the parent with one plain intercom `send` whose first line starts with `Question` (long detail in a file in the handoff dir that the message names), then end your turn: the answer arrives as a message and starts your next turn; no blocking ask, no `foreman_wait`. Only when intercom cannot reach the parent ask by file (`ask.md`). Ask the owner with `ask_user_question` instead when the decision is the owner's and a human is at the pane, never both for one question.", out)
+        self.assertIn("real decisions only: in a session a parent opened ask the parent with one plain intercom `send` whose first line starts with `Question` (long detail in a file in the handoff dir that the message names), then end your turn: the answer arrives as a message and starts your next turn; no blocking ask, no `foreman_wait`. Only when intercom cannot reach the parent ask by file (`ask.md`). Ask the owner with `ask_user_question` instead when the decision is the owner's and a human is at the pane; one channel per question.", out)
         self.assertIn("At a `[review_loop]` stop in such a session, report the open findings to the parent the same way and end your turn; the parent lifts the stop with a brief, a message does not.", out)
 
     def test_no_rendering_gains_a_line(self):

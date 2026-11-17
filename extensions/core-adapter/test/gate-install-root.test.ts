@@ -217,14 +217,14 @@ test("git branch in list mode inside an install root still asks", () => {
   for (const l of [`git -C ${I} branch --contains HEAD`, `git -C ${I} branch --merged`, `cd ${I} && git branch -l`]) assert.equal(sh(l), IR, l);
 });
 
-// known limits (docs/permissions.md, docs/safety.md): paths are compared by spelling, no symlinked spelling is followed, and `pushd <root>` is not tracked
-test("known limit: a link in the worktree that points into an install root and a pushd into a root are not seen", () => {
+// known limits (docs/permissions.md, docs/safety.md): paths are compared by spelling, no symlinked spelling is followed
+test("known limit: a link in the worktree that points into an install root is not seen; a pushd into a root is", () => {
   const link = path.join(wt, "lnk-to-install");
   fs.symlinkSync(inst, link, "junction");
   // open: the write lands in the install root, the gate sees the spelling inside the worktree (a hole of today, pinned)
   assert.notEqual(sh(`echo x > ${fwd(link)}/a`), IR);
   assert.notEqual(sh(`touch ${fwd(link)}/a`), IR);
-  // open: `pushd` does not change the cwd the gate tracks, `cd` does
-  assert.notEqual(sh(`pushd ${I} && touch f`), IR);
+  // `pushd` is tracked like `cd`
+  assert.equal(sh(`pushd ${I} && touch f`), IR);
   assert.equal(sh(`cd ${I} && touch f`), IR);
 });

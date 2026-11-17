@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { hidesDeclaredTools } from "./childtools.ts";
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
 import { PrWatches, TRACKER_DOWN, countRuns, oneLine, reviewFact } from "./prwatch.ts";
@@ -87,7 +88,8 @@ export function gitPackOn(i: { config: unknown; isChild: boolean; env: Env }): b
 export function applyGitPack(pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools">, on: boolean, isChild: boolean, env: Env): void {
   const active = pi.getActiveTools();
   if (isChild) {
-    if (!on && active.some((n) => GIT_PACK_TOOL_NAMES.includes(n))) pi.setActiveTools(active.filter((n) => !GIT_PACK_TOOL_NAMES.includes(n)));
+    // an off pack stays declared in a child (childtools.ts): its calls are refused, but its allowlisted tools must not leave the request
+    if (hidesDeclaredTools(isChild) && !on && active.some((n) => GIT_PACK_TOOL_NAMES.includes(n))) pi.setActiveTools(active.filter((n) => !GIT_PACK_TOOL_NAMES.includes(n)));
     return;
   }
   if (!on) {
@@ -241,7 +243,7 @@ export function prPackOn(i: { config: unknown; isChild: boolean; env: Env }): bo
 export function applyPrPack(pi: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools">, on: boolean, isChild: boolean, env: Env): void {
   const active = pi.getActiveTools();
   if (isChild) {
-    if (!on && active.some((n) => PR_TOOL_NAMES.includes(n))) pi.setActiveTools(active.filter((n) => !PR_TOOL_NAMES.includes(n)));
+    if (hidesDeclaredTools(isChild) && !on && active.some((n) => PR_TOOL_NAMES.includes(n))) pi.setActiveTools(active.filter((n) => !PR_TOOL_NAMES.includes(n)));
     return;
   }
   if (!on) {

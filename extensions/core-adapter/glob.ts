@@ -98,3 +98,30 @@ export function globMatch(glob: string, text: string, fold = false): boolean {
   if (g.length !== t.length) return false;
   return g.every((seg, i) => globSegMatch(seg, t[i], fold));
 }
+
+const reCache = new Map<string, RegExp>();
+
+export function expandHomePattern(p: string, home: string): string {
+  if (p === "~") return home;
+  if (p.startsWith("~/") || p.startsWith("~\\")) return home + p.slice(1);
+  if (p.startsWith("$HOME")) return home + p.slice(5);
+  if (p.startsWith("${HOME}")) return home + p.slice(7);
+  return p;
+}
+
+/** PS's compileWildcardPattern: split on `*`, `?` = one char, trailing " *" makes the args optional. */
+export function wildcardRegExp(pattern: string, opts: { home: string; ignoreCase: boolean; foldSeparators: boolean }): RegExp {
+  const key = `${opts.ignoreCase ? "i" : "s"}${opts.foldSeparators ? "f" : "-"}${opts.home}\u0000${pattern}`;
+  const hit = reCache.get(key);
+  if (hit) return hit;
+  let expanded = expandHomePattern(pattern, opts.home);
+  if (opts.foldSeparators) expanded = expanded.replace(/\\/g, "/");
+  let escaped = expanded
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\?/g, ".").replace(/\//g, () => "[\\\\/]"))
+    .join(".*");
+  if (escaped.endsWith(" .*")) escaped = `${escaped.slice(0, -3)}( .*)?`;
+  const re = new RegExp(`^${escaped}$`, opts.ignoreCase ? "si" : "s");
+  reCache.set(key, re);
+  return re;
+}

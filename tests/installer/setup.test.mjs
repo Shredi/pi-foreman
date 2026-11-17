@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import "./_sandbox-home.mjs";
 import { writeFakePython } from "./fixtures/fake-python.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -85,7 +86,7 @@ test("dry run writes nothing and runs no install", () => {
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
   assert.doesNotMatch(r.out, /would run: pi (install|remove)/);
-  assert.match(r.out, /package pi-subagents@0\.78\.0: bundled with pi-foreman/);
+  assert.match(r.out, /package pi-subagents@0\.89\.0: bundled with pi-foreman/);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
   assert.doesNotMatch(r.out, /permission-system config|gate migration/);
   assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);
@@ -433,6 +434,7 @@ test("--develop writes <checkout>/.pi/settings.json (override of the installed p
   fs.mkdirSync(checkout);
   for (const f of ["setup.mjs", "packages.lock.json", "package.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(checkout, f));
   fs.cpSync(path.join(ROOT, "scripts"), path.join(checkout, "scripts"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "setup"), path.join(checkout, "setup"), { recursive: true }); // the resume block module runs for a custom agent dir too
   fs.cpSync(path.join(ROOT, "config"), path.join(checkout, "config"), { recursive: true });
   fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(checkout, "extensions", "core-adapter", "profiles.mjs"));
@@ -1131,7 +1133,7 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   const root = path.join(env.base, "pkg");
   fs.mkdirSync(root);
   for (const f of ["setup.mjs", "package.json", "packages.lock.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(root, f));
-  for (const d of ["scripts", "config", "core", "agents"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
+  for (const d of ["scripts", "config", "core", "agents", "setup"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
   fs.mkdirSync(path.join(root, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(root, "extensions", "core-adapter", "profiles.mjs"));
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(root, "extensions", "core-adapter", "bridgelogin.mjs"));
@@ -1157,7 +1159,7 @@ test("setup refuses a python3 3.12 on PATH with the 3.13 message", posix, () => 
   const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
-    env: { PATH: fake, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+    env: { PATH: fake, PI_FOREMAN_HOME: process.env.PI_FOREMAN_HOME, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
   });
   const out = `${r.stdout}${r.stderr}`;
   assert.notEqual(r.status, 0, out);
@@ -1174,7 +1176,7 @@ test("setup accepts a 3.13 interpreter named by PI_FOREMAN_PYTHON, with no pytho
   const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
-    env: { PATH: empty, PI_FOREMAN_PYTHON: py, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+    env: { PATH: empty, PI_FOREMAN_HOME: process.env.PI_FOREMAN_HOME, PI_FOREMAN_PYTHON: py, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
   });
   const out = `${r.stdout}${r.stderr}`;
   assert.match(out, /python 3\.13 via PI_FOREMAN_PYTHON/);
@@ -1345,7 +1347,7 @@ test("a recorded unknown profile warns and skips the picker", () => {
 test("--addon background-tasks runs the exact pi install, records managed.addons and prints the shell-profile env hint", () => {
   const env = fresh();
   seed(env);
-  const r = run(env, ["--addon", "background-tasks"], NO_PICKER);
+  const r = run(env, ["--addon", "background-tasks"], { ...NO_PICKER, PI_FOREMAN_HOME: undefined, HOME: env.base, USERPROFILE: env.base, PI_FOREMAN_TEST_PS_DOCUMENTS: path.join(env.base, "Documents") });
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
   assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself, Pi reads it when it starts/);

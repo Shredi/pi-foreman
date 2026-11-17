@@ -9,13 +9,36 @@ import { fileURLToPath } from "node:url";
 /** realpath of an existing path, null when it does not exist. */
 export type Resolver = (p: string) => string | null;
 
-export const nativeResolver: Resolver = (p) => {
+let lookups: Map<string, unknown> | null = null;
+
+/** Run `fn` with the file-system look-ups that go through `memoLookup` answered once per path (one gate call: the file system does not change meanwhile). Nested calls share the cache. */
+export function withLookupCache<T>(fn: () => T): T {
+  if (lookups) return fn();
+  lookups = new Map();
   try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
+    return fn();
+  } finally {
+    lookups = null;
   }
-};
+}
+
+/** `look()`, remembered under `key` while a `withLookupCache` scope is open. */
+export function memoLookup<T>(key: string, look: () => T): T {
+  if (!lookups) return look();
+  if (lookups.has(key)) return lookups.get(key) as T;
+  const v = look();
+  lookups.set(key, v);
+  return v;
+}
+
+export const nativeResolver: Resolver = (p) =>
+  memoLookup(`n:${p}`, () => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return null;
+    }
+  });
 
 const px = (platform: string): typeof path.posix => (platform === "win32" ? path.win32 : path.posix);
 
@@ -42,6 +65,42 @@ export function normPath(platform: string, p: string, base: string, real: Resolv
   const x = px(platform);
   const long = longForm(platform, x.resolve(base, p), real);
   return platform === "win32" ? long.replace(/\//g, "\\").toLowerCase() : long;
+}
+
+// ------------------------------------------------------------------ win32 8.3 short names
+
+/** A win32 8.3 short name: up to six characters, `~N`, an optional extension of up to three. */
+export const SHORT_NAME = /^[^~\\/]{1,6}~[0-9]+(\.[^\\/]{0,3})?$/i;
+
+/**
+ * Could the 8.3 short name `short` stand for `long`? Windows builds it from the long name with
+ * dots and spaces removed, upper case, `+,;=[]` as `_`: the first six characters (`~1`..`~4`) or
+ * two characters plus a 4-hex hash (`~5` on). The extension is not compared (more matches, never fewer).
+ */
+export function shortNameFits(short: string, long: string): boolean {
+  const base = short.slice(0, short.indexOf("~")).toUpperCase();
+  const norm = (s: string): string => s.toUpperCase().replace(/[. ]/g, "").replace(/[+,;=[\]]/g, "_");
+  const lastDot = long.lastIndexOf(".");
+  const forms = [norm(long), ...(lastDot > 0 ? [norm(long.slice(0, lastDot))] : [])];
+  return forms.some((f) => f.length > 0 && (f.slice(0, 6) === base || (/^..[0-9A-F]{4}$/.test(base) && f.slice(0, 2) === base.slice(0, 2))));
+}
+
+/**
+ * The other spellings of the win32 path `p` with each short-name segment replaced by the protected `names` it could abbreviate
+ * (the original is not in the result, the separator style of `p` is kept). A short name where no protected name sits, or that fits
+ * none, yields nothing; off win32 it is always empty (a file really named `CLAUDE~1` on Linux is an ordinary name).
+ */
+export function shortNameSpellings(platform: string, p: string, names: readonly string[]): string[] {
+  if (platform !== "win32") return [];
+  const segs = p.split(/[\\/]/);
+  if (!segs.some((s) => SHORT_NAME.test(s))) return [];
+  const sep = p.includes("\\") ? "\\" : "/";
+  let variants: string[][] = [[]];
+  for (const seg of segs) {
+    const alts = SHORT_NAME.test(seg) ? [seg, ...names.filter((n) => shortNameFits(seg, n))] : [seg];
+    variants = variants.flatMap((v) => alts.map((a) => [...v, a])).slice(0, 64);
+  }
+  return variants.map((v) => v.join(sep)).filter((v) => v !== p);
 }
 
 // ------------------------------------------------------------------ lexical forms (r79: the one place for slash and case rules)

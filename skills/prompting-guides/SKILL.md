@@ -1,6 +1,6 @@
 ---
 name: prompting-guides
-description: Writes or reviews system prompts, role files (agents/*.md), instructions, skill bodies, launch briefs and tool descriptions for a given target model, using that model family's prompting guide. Use when asked to "write a system prompt", "write a role file", "review this prompt", "tune this prompt for <model>", "write a launch brief", "port this prompt to another model" or "remove instructions written for older models". Covers Claude (Fable, Opus, Sonnet, Haiku) and OpenAI GPT-6 (Luna, Sol, Terra). Not for choosing a model or ladder rung, and not for user-facing docs.
+description: Writes or reviews system prompts, role files (agents/*.md), instructions, skill bodies, launch briefs and tool descriptions for a given target model, using that model family's prompting guide. For changes to AGENTS.md, instructions, role files and hooks or gates, it also holds the agent-design page (when to use agents, what to enforce in code). Use when asked to "write a system prompt", "write a role file", "review this prompt", "tune this prompt for <model>", "write a launch brief", "port this prompt to another model" or "remove instructions written for older models". Covers Claude (Fable, Opus, Sonnet, Haiku) and OpenAI GPT-6 (Luna, Sol, Terra). Not for choosing a model or ladder rung, and not for user-facing docs.
 ---
 
 # Prompting guides
@@ -20,6 +20,7 @@ The model that reads the prompt decides, not the model writing it.
 
 | Target family | Read |
 | --- | --- |
+| Claude Fable 5.2 (also Mythos 5.2) | `references/claude-fable-5-2.md` |
 | Claude Fable 5.1 (also Mythos 5.1) | `references/claude-fable-5-1.md` |
 | Claude Opus 5.5 | `references/claude-opus-5-5.md` |
 | Claude Sonnet 5.5 | `references/claude-sonnet-5-5.md` |
@@ -27,9 +28,11 @@ The model that reads the prompt decides, not the model writing it.
 | OpenAI GPT-6 Luna, GPT-6.1 Sol, GPT-6.1 Terra | `references/openai-gpt-6.md` (one section per model) |
 | Another Claude model, or a family not listed | `references/claude.md`, general techniques only |
 
+For a change to `AGENTS.md`, `instructions/*`, `agents/*.md`, a `SKILL.md` or a hook or gate, and for whether a task needs more than one agent, read `references/claude-agent-design.md` as well. It states the rule to apply: give the reason first, and enforce in code only what has no exceptions and does harm when missed.
+
 `references/claude.md` is the index of the Claude pages: the model table, the techniques shared by all current Claude models, and migration notes. Read it too when the prompt must work on more than one Claude model. Read only the file or section for your family, not all of them.
 
-The reference pages are digests written on the date at their top. For the full source text in the foreman session only: when `foreman knowledge check` has run, read `<agentDir>/pi-foreman/knowledge/<id>.md` (ids `claude-prompting`, `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `gpt-6-luna`, `gpt-6-1-sol`, `gpt-6-1-terra`). If a digest looks stale next to a newer model, say so in the report.
+The reference pages are digests written on the date at their top. For the full source text in the foreman session only: when `foreman knowledge check` has run, read `<agentDir>/pi-foreman/knowledge/<id>.md` (a PDF id is `<id>.pdf`; ids `claude-prompting`, `claude-fable-5-2`, `fable-5-2-whats-new`, `fable-5-2-migration`, `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `gpt-6-luna`, `gpt-6-1-sol`, `gpt-6-1-terra`; for the agent-design page `agents-pdf`, `cc-best-practices`, `cc-memory`, `cc-skills`, `cc-sub-agents`, `cc-hooks-guide`). If a digest looks stale next to a newer model, say so in the report.
 
 ## 3. Rules for every model
 

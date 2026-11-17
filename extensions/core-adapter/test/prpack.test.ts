@@ -56,7 +56,7 @@ test("prpack: env tokens git,pr / pr / removal, child removal when off", () => {
   assert.equal(prPackOn({ config: { tools: { pr: true } }, isChild: true, env: { [PACK_ENV]: "git" } }), false);
   const kid = fakePi(["bash", ...GIT_PACK_TOOL_NAMES, "pr_status", "pr_checks"]);
   applyPrPack(kid.pi, false, true, {});
-  assert.deepEqual(kid.state.active, ["bash", ...GIT_PACK_TOOL_NAMES]);
+  assert.deepEqual(kid.state.active, ["bash", ...GIT_PACK_TOOL_NAMES, "pr_status", "pr_checks"]); // an off pack stays declared in a child (childtools.ts)
 });
 
 test("prpack: pr_off refuses without a trace or a script run", async () => {

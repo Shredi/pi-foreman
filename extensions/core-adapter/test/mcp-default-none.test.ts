@@ -69,10 +69,10 @@ const many = (n: number): Reg[] => Array.from({ length: n }, (_, i) => ({ name: 
 
 // ---------------------------------------------------------------- the default
 
-test("a launch without mcp loads no server, preloads nothing on a directProviders provider and has tool_search inactive", async (t) => {
+test("a launch without mcp loads no server, preloads nothing on a directProviders provider and keeps tool_search active", async (t) => {
   const c = await child(t);
   assert.deepEqual(c.servers, []);
-  assert.deepEqual(c.active, ["read"]);
+  assert.deepEqual(c.active, ["read", "tool_search"]);
   assert.deepEqual(c.trace, []);
   assert.equal(c.mcp.note(), null);
   assert.ok(mcpEmpty(c.mcp.allowed));
@@ -86,14 +86,14 @@ test("a launch without mcp: an mcp__ call of a ceiling server is refused by the 
 
 test("the default claude-bridge provider preloads nothing either without mcp", async (t) => {
   const c = await child(t, { provider: "claude-bridge", direct: undefined });
-  assert.deepEqual(c.active, ["read"]);
+  assert.deepEqual(c.active, ["read", "tool_search"]); // tool_search stays declared: a child never removes an allowlisted tool (childtools.ts)
   assert.deepEqual(c.trace, []);
 });
 
 test("mcp: [] is the same as no mcp", async (t) => {
   const c = await child(t, { launch: [] });
   assert.deepEqual(c.servers, []);
-  assert.deepEqual(c.active, ["read"]);
+  assert.deepEqual(c.active, ["read", "tool_search"]);
   assert.match(c.mcp.callBlock("mcp__alpha__echo") ?? "", /outside the MCP scope/);
 });
 

@@ -17,10 +17,11 @@ Own-words digest. Model names and behaviour are as stated on that date.
 
 ## Model table
 
-Each current model has its own page; read it before the general techniques. Pages exist for the Fable 5.1 and Fable 5 line (with Mythos), Sonnet 5.5 and 5, Opus 5.5, 5 and 4.8, and Haiku 5.5. This skill digests the current four:
+Each current model has its own page; read it before the general techniques. Pages exist for the Fable 5.2, 5.1 and 5 line (with Mythos), Sonnet 5.5 and 5, Opus 5.5, 5 and 4.8, and Haiku 5.5. This skill digests the current five (`claude-fable-5-1.md` stays for conversations still on 5.1):
 
 | Model | Digest | What differs |
 | --- | --- | --- |
+| Fable 5.2 (and Mythos 5.2) | `claude-fable-5-2.md` | Early stops, code ownership, approvals, progress updates, subagent cost, accumulated caution, enforced history rules |
 | Fable 5.1 (and Mythos 5.1) | `claude-fable-5-1.md` | Effort levels, finishing long tasks, progress updates, history rules, batching tool calls |
 | Opus 5.5 | `claude-opus-5-5.md` | Default effort, no thinking-off, unattended runs, time signals |
 | Sonnet 5.5 | `claude-sonnet-5-5.md` | Effort calibration, scope and initiative, JSON on reasoning tasks, mid-turn messages |

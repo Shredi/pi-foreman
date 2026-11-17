@@ -227,7 +227,7 @@ test("a Pi style handler registered again with a new function still counts as Pi
   assert.deepEqual(w.kills, []);
 });
 
-test("signal listeners are not installed on win32, with off, outside tui, for a child, or with an invalid terminal id; those start writes nothing", { skip: !posix }, async (t) => {
+test("signal listeners are not installed with off, outside tui, for a child, or with an invalid terminal id; those start writes nothing", { skip: !posix }, async (t) => {
   const r = rig(t);
   signalWorld(t);
   const mod = await fresh();
@@ -239,7 +239,6 @@ test("signal listeners are not installed on win32, with off, outside tui, for a 
     assert.equal(process.listenerCount("SIGTERM"), base, `${label}: no listener`);
     assert.equal(r.note(), null, `${label}: no note`);
   };
-  await none({ platform: "win32" }, "win32");
   await none({ mode: "print" }, "print mode");
   await none({ mode: "json" }, "json mode");
   await none({ mode: undefined }, "no mode");
@@ -249,7 +248,6 @@ test("signal listeners are not installed on win32, with off, outside tui, for a 
   r.env.PI_SUBAGENT_CHILD = "1";
   await none({}, "subagent child");
   delete r.env.PI_SUBAGENT_CHILD;
-  assert.equal(mod.PaneResume.start(r.init(mod, { platform: "win32" })), null);
   assert.equal(mod.PaneResume.start(r.init(mod, { mode: "print" })), null);
 });
 

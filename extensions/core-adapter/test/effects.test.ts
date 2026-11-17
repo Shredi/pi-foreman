@@ -9,7 +9,7 @@ import { classify, effectCtx, readRootsOf } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
-import { readBaseline } from "../permoverlay.ts";
+import { readBaseline } from "../baseline.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});

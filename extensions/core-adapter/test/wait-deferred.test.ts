@@ -14,7 +14,7 @@ function rig(intercom = false) {
     registerTool: (t: never) => (tool = t),
     sendMessage: (m: { content: string }, opts: Record<string, unknown>) => sent.push({ content: m.content, opts }),
   };
-  const session = { id: "s1", isChild: false, cwd: process.cwd(), agentDir: "/t/agent", overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined, intercomRun: () => intercom };
+  const session = { id: "s1", isChild: false, cwd: process.cwd(), agentDir: "/t/agent", roots: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined, intercomRun: () => intercom };
   const handle = registerWait(pi as never, { session: async () => session as never, home: "/t/home", platform: process.platform });
   const state = { idle: true };
   const ctx = { mode: "tui", cwd: process.cwd(), isIdle: () => state.idle, sessionManager: { getSessionId: () => "s1" } };

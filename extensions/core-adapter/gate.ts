@@ -4,20 +4,23 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { FIND_BAD, segmentAlias } from "./effects.ts";
+import { psWords } from "./pswords.ts";
+import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
-import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, resolveWord, under } from "./pathrules.ts";
-import { boundNames, relaxPatternWords } from "./permoverlay.ts";
+import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
+import { relaxPatternWords } from "./patternargs.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
-import { parseShell } from "./shellast.ts";
+import { boundNames, heredocSpans, parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
 import { matchProtected } from "./protected.ts";
@@ -99,13 +102,17 @@ const READONLY_ROLE_RUNS = new Set(["default-read", "default-git-read", "default
  * A read-only role (`roots.roundReadOnly`: a reviewer or explorer in a round): the first write the gate can name into the worktree, or null. A path tool's write
  * operations; a shell segment's named targets (step 0 helper), and a git segment's catch-all target (every git write subcommand). The scratch dir and the handoff
  * files are no worktree writes. A segment a read, test-run or fetch rule accepts, with no redirect of its own into the worktree, is no write. The catch-all of
- * any other program (`make`, `npm run <script>`, `tar -x` without a directory) is not counted.
+ * any other program (`make`, `npm run <script>`) is not counted. A path counts as inside by its spelling or by its real path (a link to the worktree). Also refused:
+ * a write target that does not resolve (`> "$OUT"`), a git segment whose subcommand writes and whose repository is the worktree (`-C "$D"` counts as the worktree)
+ * unless it is a git read, the implicit-cwd catch-all of `tar -x`, `unzip`, `patch` with no directory option, and a `find` with an action (`-delete`, `-exec`) in the worktree.
  */
-function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): { path: string; gitAny: boolean } | null {
+function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): { path: string; gitAny: boolean; what?: string } | null {
   const { roots, platform, cwd } = env;
   // the targets the child may write: its scratch dir and handoff files (the worktree term left out of the path rules)
   const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
-  const inside = (abs: string): boolean => under(platform, roots.worktree, abs) && !sanctioned(abs);
+  const real = platform === process.platform ? (roots.realpath ?? realDefault) : () => null;
+  const realWt = realSpelling(platform, roots.worktree, real);
+  const inside = (abs: string): boolean => (under(platform, roots.worktree, abs) || under(platform, realWt, realSpelling(platform, abs, real))) && !sanctioned(abs);
   if (!segments) {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
@@ -118,12 +125,42 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
   const ec = effectCtxOf(dctx);
   for (const t of shellWriteTargets(segments, platform)) {
     const git = baseProg(t.seg.program) === "git";
-    if (!(t.named || git) || t.list || !inside(t.path)) continue;
+    if (!(t.named || t.implicit || git) || t.list || !inside(t.path)) continue;
     const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
     const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
     if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
-    return { path: t.path, gitAny: !t.named };
+    return { path: t.path, gitAny: !t.named && !t.implicit };
   }
+  for (const t of braceWriteTargets(segments, platform)) if (inside(t.path)) return { path: t.path, gitAny: false };
+  for (const seg of segments) {
+    const prog = baseProg(seg.program);
+    if (prog === "find" && seg.argv.some((a) => FIND_BAD.has(a) && !/^-(?:[LH]|follow)$/.test(a))) {
+      const lead = seg.argv.findIndex((a) => !/^-[HLP]$/.test(a));
+      const dirs = lead < 0 ? [] : seg.argv.slice(lead).filter((_, i, all) => all.slice(0, i + 1).every((a) => !/^[-(!]/.test(a)));
+      for (const d of dirs.length ? dirs : ["."]) {
+        const abs = seg.cwd === null && !/^(?:[\\/]|[A-Za-z]:[\\/])/.test(d) ? null : resolveWord(platform, seg.cwd ?? "/", d);
+        if (abs && inside(abs)) return { path: abs, gitAny: false };
+        // a root that does not resolve (relative under an unknown cwd) may be the worktree
+        if (!abs) return { path: d, gitAny: false, what: `the find root ${d} cannot be resolved, so it may lie in ${roots.worktree}` };
+      }
+    }
+    if (prog === "git") {
+      // a git output option, or a default output into the cwd (`archive -o`, `format-patch`, `bundle create`, `checkout-index`)
+      const dir = seg.cwd ?? roots.worktree;
+      for (const w of gitOutputWords(seg)) {
+        const abs = resolveWord(platform, dir, w);
+        if (abs === null ? inside(dir) : inside(abs)) return { path: abs ?? w, gitAny: false };
+      }
+    }
+    if (prog === "git" && gitWriteForm(seg) && inside(seg.cwd ?? roots.worktree)) {
+      const plain = gitPlainSegment(seg);
+      const rule = segmentDefault(seg, cmd ?? "", dctx, ec);
+      if ((rule !== null && READONLY_ROLE_RUNS.has(rule)) || (plain !== null && segmentDefault(plain, cmd ?? "", dctx, ec) === "default-git-read")) continue;
+      return { path: seg.cwd ?? roots.worktree, gitAny: true };
+    }
+  }
+  const open = unresolvedShellWriteWords(segments, platform)[0];
+  if (open !== undefined) return { path: open, gitAny: false, what: `the target ${open} cannot be resolved, so it may lie in ${roots.worktree}` };
   return null;
 }
 
@@ -174,21 +211,23 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
   if (tool === "foreman_protect") return deny("child-protect", "Children never change the protected targets; the owner does, with /foreman perms protect.");
   if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
+  if (segments && mergesPullRequest(segments)) return deny("child-pr-merge", "Children never merge a pull or merge request; the foreman or the owner does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
   const outside = outsideTarget(call, env);
   if (outside !== null) {
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
+    const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? ` Use $FOREMAN_SCRATCH${r.scratch.length ? ` (${r.scratch[0]})` : ""}, not /tmp.` : "";
     const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md only when intercom cannot reach the parent, ask-<n>.md and anything below work/)` : "no handoff dir is set";
-    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}. For another worktree, the foreman launches a child with cwd set to it.`);
+    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.${tmpHint} For another worktree, the foreman launches a child with cwd set to it.`);
   }
   if (env.roots.roundReadOnly) {
     const target = readonlyWrite(tool, input, segments, cmd, env);
     if (target !== null) {
       const r = env.roots;
       const scratch = r.scratch.length ? r.scratch[0] : "your scratch dir";
-      const what = target.gitAny ? `a git command changes the repository of the round worktree ${r.worktree}, which is read-only for your role` : `${target.path} is inside ${r.worktree}`;
+      const what = target.what ?? (target.gitAny ? `a git command changes the repository of the round worktree ${r.worktree}, which is read-only for your role` : `${target.path} is inside ${r.worktree}`);
       return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${what}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
     }
   }
@@ -205,6 +244,11 @@ function commandOf(toolName: string, input: Record<string, unknown>): string | n
 /** The powershell tool is one opaque segment: raw-text floors apply, it is never a built-in allow. */
 function powershellSegment(cwd: string): ShellSegment {
   return { program: "powershell", argv: [], redirects: [], heredoc: false, cwd, wrappers: [], opaque: "foreign_shell" };
+}
+
+/** The resolved words of a powershell line (pswords.ts) as the write redirects of one segment: the checks a bash write target gets read them, and no rule can make the segment free. */
+function powershellWordSegment(words: string[], cwd: string): ShellSegment {
+  return { program: "true", argv: [], redirects: words.map((target) => ({ op: ">" as const, fd: null, target })), heredoc: false, cwd, wrappers: [], opaque: null };
 }
 
 /**
@@ -227,8 +271,58 @@ export const PROSE_FIELDS = new Set(["markdown", "html", "brief", "text", "note"
 /** Fields that name a file or directory: a secret path there is a floor deny. */
 const PATH_FIELD = /^(?:path|paths|cwd|worktree|file|files|dir|dirs|directory|target|dest|destination|src|source|from|to|root|repo|output|outputPath|output_path|outputFile)$/i;
 
+/** True when the parser reads a line as a command line that does not parse (an unbalanced quote) and holds no command. */
+const unreadable = (segs: ShellSegment[]): boolean => segs.length === 0 || (segs.length === 1 && segs[0].opaque === "parse_error" && segs[0].program === "" && segs[0].argv.length === 0);
+
 /**
- * Floors on the fields of a structured payload: secretPath on path-like fields; with `raw`, raw-text floors on every other string field except the
+ * The line numbers of a leaf that are here-document body or closing line, read from the parse of the whole leaf (the shell's own context: a `<<` in a quote opened on an
+ * earlier line, in a comment or in `$((1<<2))` is none). Only when every body feeds `cat`/`tee` or a bare redirect (a body fed to a shell is run, so its lines stay),
+ * and only a heredoc with a quoted tag (an unquoted body is always scanned: a shell may expand it);
+ * a leaf that does not parse has none.
+ */
+function bodyLines(leaf: string, whole: ShellSegment[]): Set<number> {
+  const out = new Set<number>();
+  if (!dataBodies(whole)) return out;
+  const count = (to: number): number => leaf.slice(0, to).split("\n").length - 1;
+  for (const [start, end, data] of heredocSpans(leaf) ?? []) if (data) for (let n = count(start); n <= count(end); n++) out.add(n);
+  return out;
+}
+
+/**
+ * A string leaf of a non-shell payload field read as a command: each line is parsed (shellast.ts) and the raw-text and opaque-text floors run on the
+ * parsed line (fieldLineFloors), nothing else; the body lines of a here-document (bodyLines) are not lines. A line the parser cannot read alone is not floored
+ * (it is prose, or code in another language), and no segment floor (secret paths, policy files, config keys) runs here.
+ * When the whole leaf parses and a line does not parse alone (a quote that closes on a later line), the whole leaf is scanned as one shell line too.
+ * The verdict is the floor's: ask for main on a push, remote or git config word, a refusal for a child, a refusal for every other floor.
+ */
+function leafFloors(leaf: string, env: FloorEnv): FloorHit | null {
+  const opts = { cwd: env.cwd, platform: env.platform };
+  const whole = parseShell(leaf, opts);
+  const body = bodyLines(leaf, whole);
+  let found: FloorHit | null = null;
+  let blind = false;
+  const lines = leaf.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (body.has(i) || !lines[i].trim()) continue;
+    const segs = parseShell(lines[i], opts);
+    if (unreadable(segs)) {
+      blind = blind || segs.length > 0;
+      continue;
+    }
+    const h = fieldLineFloors(lines[i], segs, env);
+    if (h?.kind === "deny") return h;
+    found = found ?? h;
+  }
+  if (blind && !unreadable(whole)) {
+    const h = fieldLineFloors(leaf, whole, env);
+    if (h?.kind === "deny") return h;
+    found = found ?? h;
+  }
+  return found;
+}
+
+/**
+ * Floors on the fields of a structured payload: secretPath on path-like fields; with `raw`, the command floors (leafFloors) on every other string field except the
  * prose fields (own tools). Floors are permanent, so only free text is exempt, never a whole tool.
  */
 function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth = 0, read = false): FloorHit | null {
@@ -236,7 +330,7 @@ function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth
   if (typeof v === "string") {
     if (!v) return null;
     if (PATH_FIELD.test(key)) return secretPath(v, env, read);
-    return raw ? (rawFloors(v) ?? opaqueTextFloors(v, env)) : null;
+    return raw ? leafFloors(v, env) : null;
   }
   let found: FloorHit | null = null;
   if (depth < 8 && v && typeof v === "object") {
@@ -263,21 +357,15 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
     }
     return null;
   }
-  // the leaves as one text, then each quote- or line-delimited piece (`sh('rm -rf /')` in code is the text `rm -rf /`). Raw-text floors only:
-  // segment floors (secret paths) stay with the inner calls of codemode, which the gate decides one by one.
+  // each string leaf read as a command (leafFloors): prose and code that does not parse as a command line is not floored. Segment floors (secret paths)
+  // stay with the inner calls of codemode, which the gate decides one by one.
   const pathHit = fieldFloors(inp, "", env, false);
   if (pathHit) return pathHit;
   // codemode: the `code` field is not word-matched; every other field keeps the raw floors
   const scanned = tool === "codemode" ? Object.fromEntries(Object.entries(inp).filter(([k]) => k !== "code")) : inp;
-  const leaves = stringLeaves(scanned, [], 0, proseExempt);
-  const text = leaves.join("\n");
-  if (!text) return null;
   let found: FloorHit | null = null;
-  const hit = rawFloors(text) ?? opaqueTextFloors(text, env);
-  if (hit?.kind === "deny") return hit;
-  found = hit;
-  for (const piece of leaves.flatMap((l) => l.split(/[\n'"`]/)).map((p) => p.trim()).filter(Boolean)) {
-    const h = rawFloors(piece) ?? opaqueTextFloors(piece, env);
+  for (const leaf of stringLeaves(scanned, [], 0, proseExempt)) {
+    const h = leafFloors(leaf, env);
     if (h?.kind === "deny") return h;
     found = found ?? h;
   }
@@ -329,6 +417,11 @@ function ruleResult(v: RuleVerdict): GateResult {
  * the floor ask -> allow rules and built-in allows -> dangerous class. The caller applies the mode step to what is left.
  */
 export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
+  // a powershell line has one word per path: each distinct path is looked up once for the whole call
+  return toolName === "powershell" ? withLookupCache(() => gateRun(toolName, input, cwd, deps)) : gateRun(toolName, input, cwd, deps);
+}
+
+function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
   try {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const env = deps.env(cwd);
@@ -371,22 +464,31 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       // a child's $FOREMAN_SCRATCH is its own scratch dir (set in its process env); without the binding the variable would make every scratch write opaque
       const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0] } } : {};
       const parsed = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar });
-      const h = lineFloors(cmd, parsed, env);
+      // a powershell line: its words go to the write-target checks below, the secret-path and policy-file floors first (a floor deny of the line itself wins)
+      const psSeg = toolName === "powershell" ? powershellWordSegment(psWords(cmd, cwd, home, platform), cwd) : null;
+      const lineHit = lineFloors(cmd, parsed, env);
+      const wordHit = psSeg ? segmentFloors(psSeg, env, [psSeg]) : null;
+      const h = lineHit?.kind === "deny" ? lineHit : wordHit?.kind === "deny" ? wordHit : (lineHit ?? wordHit);
       // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
       const segs = parsed.map(relaxPatternWords);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
-      if (toolName !== "powershell") {
-        const sm = selfmodResult(shellSelfmod(segs, cwd, roots, platform), roots.child);
-        if (sm) return decided(sm);
-      }
-      const dctx = { roots, facts, platform, cwd };
-      if (roots.child && toolName !== "powershell") {
-        const cd = childDenied(toolName, inp, segs, cmd, dctx);
+      // the words of a powershell line are write targets for the self-modification rules and the protected folders (`.git`); no word earns an allow
+      const sm = selfmodResult(shellSelfmod(psSeg ? [psSeg] : segs, cwd, roots, platform), roots.child);
+      if (sm) return decided(sm);
+      const dctx = { roots, facts, platform, cwd, floor: env };
+      if (roots.child) {
+        // a powershell child: only its words inside a `.git` get the child deny set (what a bash write there gets: child-write-outside); the other words stay free
+        const gitWords = psSeg ? psSeg.redirects.filter((r) => r.target.split(/[\\/]+/).some((s) => segmentAlias(platform, ".git", s))) : [];
+        const cd = psSeg ? (gitWords.length ? childDenied(toolName, inp, [powershellWordSegment(gitWords.map((r) => r.target), cwd)], cmd, dctx) : undefined) : childDenied(toolName, inp, segs, cmd, dctx);
         if (cd) return decided(cd);
       }
       const ec = effectCtxOf(dctx);
-      if (toolName !== "powershell") installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
+      if (psSeg) {
+        // the words as write targets (the own worktree is exempt inside installRootWrite): main is asked, a child is refused (its bash line meets child-write-outside first)
+        const ask = installRootWrite(toolName, inp, [psSeg], cmd, dctx);
+        installAsk = ask && "ask" in ask && roots.child ? { block: true, rule: ask.rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${ask.rule}): ${ask.reason}. Report what you need to the foreman and continue with what you can.` } : ask;
+      } else installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
@@ -394,15 +496,18 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
         const r = opaque ? null : segmentDefault(s, cmd, dctx, ec);
         if (r !== null) return r;
-        const pubs = pubKeyReadWords([s], env, boundNames(cmd));
+        const bn = boundNames(cmd);
+        const pubs = pubKeyReadWords([s], env, bn.any ? new Set(["HOME", "USERPROFILE"]) : bn.names);
         if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
         if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
-      if (result) return { result, danger: null, segments: segs };
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
-      const denv = { roots, platform, cwd, facts };
+      const denv = { roots, platform, cwd, facts, floor: env };
+      // a read-only role: a built-in allow of a segment the fence cannot see into (an unknown run, code from a writable folder) gives way to the `danger-readonly-run` label; an owner's allow rule stands
+      const heldBack = !!result && "allow" in result && result.layer === "default" && readonlyRunLine(dcall, denv, (i) => builtin(i));
+      if (result && !heldBack) return { result, danger: null, segments: segs };
       const hits = DANGER_RULES.filter((r) => r.test(dcall, denv));
       const danger: DangerHit | null = hits.length ? { name: hits[0].name, reason: hits[0].reason } : null;
       return { result: undefined, danger, segments: segs, ...(hits.length ? { dangers: hits.map((r) => r.name) } : {}) };
@@ -420,6 +525,8 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       const ph0 = ph0r?.kind === "deny" ? ph0r : ph0n;
       const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(nin, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
+      const scan = h?.kind === "deny" ? null : scanToolFloor(toolName, nin, cwd, env);
+      if (scan) return decided(blocked(scan, toolName));
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
