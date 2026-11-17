@@ -20,7 +20,8 @@ function triggerOf(c: Climb, p: EntryPlan | undefined, cfg: SizingConfig): strin
   if (c.reason === RANK_CAPPED_REASON) {
     if (source.startsWith("sizing")) return sizingText(p, cfg);
     if (source === "heavy") return "heavy tier";
-    return c.handoff ? `${c.handoff.cause} handoff` : "revision";
+    if (c.handoff) return `${c.handoff.cause} handoff`;
+    return c.revisionReason === "review_fail" ? "revision after FAIL" : "revision";
   }
   if (HANDOFF.has(c.reason)) return `${c.reason} handoff`;
   switch (c.reason) {

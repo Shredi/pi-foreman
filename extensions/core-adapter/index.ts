@@ -1262,12 +1262,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The reasons that count now (empty: no pass is due). */
   const hsDue = (s: Session): string[] => dueReasons(s.hs.state(), hsHeavyOn(s));
-  const hsRequired = (s: Session): boolean => hsRequiredOf(s.hs.state(), hsDue(s));
 
   /** A gate asks: the heavy reason is recorded when it applies. */
   function hsRefresh(s: Session): void {
     if (hsHeavyOn(s)) hsFire(s, ["heavy"]);
   }
+
+  /** Whether a high-stakes review is required now, computed as the PR gate does (feature on, heavy reason refreshed). */
+  const hsRequired = (s: Session): boolean => {
+    if (!hsModel(s)) return false;
+    hsRefresh(s);
+    return hsRequiredOf(s.hs.state(), hsDue(s));
+  };
 
   /** The high-stakes test of the PR gate (reviews.ts prGateRefusal): session-wide, `scope` does not narrow it. */
   const hsGate = (s: Session): HighStakesGate => async (_scope, heads) => {
