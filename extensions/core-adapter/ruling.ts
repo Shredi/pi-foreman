@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { forEachChild, parse } from "unbash";
-import type { Command, Redirected, SyntaxNode } from "unbash";
+import type { Command, Redirected, SyntaxNode, Word } from "unbash";
 import { inlineCode, shellWriteTargets, unresolvedShellWriteWords, unresolvedWriteWords } from "./defaults.ts";
 import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits.ts";
 import { braceVariants } from "./floors.ts";
@@ -300,7 +300,7 @@ function stdinTexts(cmd: string): StdinText[] | null {
  * list) that also names a child dir or a ruling or brief file name. PowerShell: a word that resolves to the file, or a bare ruling name beside a word that
  * resolves to a child dir (a read too).
  */
-function shellNamesRuling(toolName: string, cmd: string, cwd: string, dirs: Set<string>, childDirs: string[], inChild: (p: string) => boolean): boolean {
+function shellNamesRuling(toolName: string, cmd: string, cwd: string, dirs: Set<string>, childDirs: string[], inChild: (p: string) => boolean, platform: string): boolean {
   const forms = childDirs.flatMap((d) => [path.resolve(d), realDir(d)]);
   if (shellOf(toolName) === "powershell") {
     const words = psWords(cmd).flatMap((w) => [w, w.replace(/^-{0,2}[A-Za-z][\w-]*[:=]/, ""), ...(codeWords(w) ?? w.match(/[A-Za-z0-9._-]+/g) ?? [])]);
@@ -308,7 +308,35 @@ function shellNamesRuling(toolName: string, cmd: string, cwd: string, dirs: Set<
     const isDir = (w: string): boolean => dirs.has(realKey(path.resolve(cwd, fold(w))));
     return words.some((w) => isTrackedRulingName(w)) && words.some(isDir);
   }
-  return posixNames(cmd, cwd, cwd, childDirs, forms, inChild, 0, { left: VARIANT_CAP });
+  return posixNames(cmd, cwd, cwd, childDirs, forms, inChild, 0, { left: VARIANT_CAP }) || (platform === "win32" && nativeNames(cmd, [...forms, ...childDirs], inChild));
+}
+
+/** The programs whose operands nativeNames reads as write targets. */
+const NATIVE_WRITERS = new Set(["tee", "cp", "mv", "install", "ln"]);
+
+/**
+ * win32 only: a write word (a redirect target, an operand of tee or a copier) written as a native drive path with backslashes that names a ruling or brief file of a
+ * child dir. Bash drops an unquoted backslash, so the parse sees another word; a quoted spelling or a Windows shell reaches the native path, so the quote-stripped
+ * source text of the word counts too (fail closed). Words with an expansion are left to the parse.
+ */
+function nativeNames(cmd: string, forms: string[], inChild: (p: string) => boolean): boolean {
+  let hit = false;
+  const word = (w: { text: string } | undefined): void => {
+    if (!w || !w.text.includes("\\") || /[$`]/.test(w.text)) return;
+    const raw = w.text.replace(/["']/g, "");
+    if (namesFileIn(raw, forms) || inChild(raw)) hit = true;
+  };
+  const walk = (n: SyntaxNode): void => {
+    if (n.type === "Redirect" && !n.operator.startsWith("<")) word(n.target);
+    if (n.type === "Command" && NATIVE_WRITERS.has(path.basename(n.name?.value ?? ""))) {
+      const ops = n.suffix.filter((s): s is Word => s.type === "Word" && !s.value.startsWith("-"));
+      // a copier's last operand is its destination (a source is a read); every operand of tee is a file it writes
+      for (const w of path.basename(n.name!.value) === "tee" ? ops : ops.slice(-1)) word(w);
+    }
+    forEachChild(n, walk);
+  };
+  walk(parse(cmd));
+  return hit;
 }
 
 /** The own-ruling check of one POSIX script (the line, or the body of a shell it feeds): every word judged by its literal path and resolved against the cwd of its segment. */
@@ -445,13 +473,13 @@ function opaqueBodies(cmd: string): string[] {
  * literal path, else undefined: write/edit `path`, foreman_copy/foreman_move `dst`, or a shell line (shellNamesRuling: the gate's parse of its write
  * surfaces), resolved against `cwd`. `*.ack` files are never ruling names; a copy source is a read.
  */
-export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
+export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[], platform: string = process.platform): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
   const inChild = (p: string): boolean => isTrackedRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
   const words = toolName === "write" || toolName === "edit" ? [str(input.path)] : toolName === "foreman_copy" || toolName === "foreman_move" ? [str(input.dst)] : [];
   const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
-  if (cmd && shellNamesRuling(toolName, cmd, cwd, dirs, childDirs, inChild)) return SELF_RULING_REASON;
+  if (cmd && shellNamesRuling(toolName, cmd, cwd, dirs, childDirs, inChild, platform)) return SELF_RULING_REASON;
   return words.some((p) => p && inChild(p)) ? SELF_RULING_REASON : undefined;
 }
 
