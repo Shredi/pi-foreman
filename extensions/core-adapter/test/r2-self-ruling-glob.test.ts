@@ -54,7 +54,7 @@ const REFUSED = [
   `echo x ${GT} $D/ru*.md`,
 ];
 
-test("a sub-session and a builder: the glob and unresolved-cwd writes onto a ruling name are refused", () => {
+test("a sub-session and a builder: the glob and unresolved-cwd writes onto a ruling name are refused", { skip: !posix }, () => {
   for (const line of REFUSED) assert.equal(refusal(line, childDirs), SELF_RULING_REASON, line);
 });
 
@@ -77,11 +77,11 @@ const FREE = [
   `echo x ${GT} ${wt}/src/*/ruling.md`,
 ];
 
-test("a sub-session and a builder: reads, other names, other dirs and text mentions are no refusal", () => {
+test("a sub-session and a builder: reads, other names, other dirs and text mentions are no refusal", { skip: !posix }, () => {
   for (const line of FREE) assert.equal(refusal(line, childDirs), undefined, line);
 });
 
-test("the parent session and a top-level session: none of the refusals fire", () => {
+test("the parent session and a top-level session: none of the refusals fire", { skip: !posix }, () => {
   for (const line of [...REFUSED, ...FREE, `echo x ${GT} ${H}/ruling.md`, `cp a ${H}/ruling*.md`]) assert.equal(refusal(line, parentDirs), undefined, line);
 });
 
@@ -129,7 +129,7 @@ test("a write through a link onto the ruling is not refused (known, pinned as it
 });
 
 // the second branch of the glob-directory check and the not-existing-`cd` check (found needed by removing each: see the report)
-test("a glob write after a cd elsewhere is refused by the directory the line started in; a name below a cd that does not exist too", () => {
+test("a glob write after a cd elsewhere is refused by the directory the line started in; a name below a cd that does not exist too", { skip: !posix }, () => {
   const elsewhere = path.join(wt, "src");
   assert.equal(selfRulingRefusal("bash", { command: `cd ${elsewhere} && echo x ${GT} ru*.md` }, H, childDirs), SELF_RULING_REASON);
   assert.equal(selfRulingRefusal("bash", { command: `cd ${elsewhere} && echo x ${GT} ru*.md` }, root, childDirs), undefined);
