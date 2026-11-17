@@ -43,8 +43,10 @@ stronger model would start from the same context. Raise or lower it per role, pr
 
 A builder revision launched while the latest reviewer verdict is FAIL goes to the builder's strong rung when
 `strongOnRevision` resolves true (`rung_up {reason: "review_fail"}`; lookup in [roles](roles.md)). While the
-builder's live rung is the bottom one and the rank policy allows its strong rung, the finish gate refuses once more without
-counting the refusal (`finish_refused {climb_available: true}`).
+builder's live rung is the bottom one and the rank policy allows its strong rung, the finish gate refuses with the climb hint
+(`finish_refused {climb_available: true}`). This refusal counts as one of the state's two refusals (the same count as the
+usual valve, kept per unchanged state; an owner prompt does not reset it): after two, the finish passes with
+`ceremony_incomplete` even if the climb is still open.
 
 An explicit builder `model` that the rank rules do not allow is refused before any run starts (`[model_not_allowed]`, see [roles](roles.md#role-ladder-rank-policy-and-presets)); an explicit model equal to the strong rung's own is read as `strong` and launches on the strong rung without a `reason`.
 
@@ -56,7 +58,7 @@ The same skip covers a climb the harness picks by itself: a launch sizing rule (
 
 `strongOnRevision` (default true) also covers a revision that answers a FAIL with a `SECURITY:` finding: it launches
 on the strong rung; with `strongOnRevision` false it stays on the bottom rung. On the top rung the revision is a `rung_top`, the finish gate offers no
-climb, and the usual two-refusal valve applies: two counted refusals, then `ceremony_incomplete`
+climb, and the usual two-refusal valve applies: two refusals, then `ceremony_incomplete`
 (see [ceremony](ceremony.md)).
 
 Every builder launch counted as a revision traces `revision {decision, reason}` once the ladder has chosen the rung: `climb` (the rung rose), `unchanged` (already on or above the strong rung), `no_strong` (no strong rung mapped; `revision_no_strong` is traced too) or `keyword` (the launch named a model keyword, which wins); `reason` is the climb reason (`review_fail`). A further fresh builder launched in the same user prompt while the latest verdict is still FAIL and a revision already answered it is a revision too: it takes the same climb (traced `rung_top`/`unchanged` when the first revision already moved the live rung) and adds no second round. A builder after a PASS, or one naming another phase, does not.
@@ -206,4 +208,4 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | `launch_entry` | `role, kind, model` | Once per agent entry of a tasks or chain launch that carries no research marker (`kind: entry`; `model` is the entry's base model or null). `foreman retro` counts the `explorer` ones into the explorer line; marked entries emit only `research_rung`, so nothing is counted twice. |
 | `security_rung_unset` | `role, reason, hits` | A security-shaped diff found no security rung. |
 | `rung_up_steer` | `role, count, baseline, rung, reason` | A child was steered to hand off (context or turns). |
-| `finish_refused` | `climb_available` | The uncounted refusal while the builder's failure climb is open. |
+| `finish_refused` | `climb_available` | A refusal while the builder's failure climb is open; it counts toward the state's two refusals. |

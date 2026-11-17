@@ -430,8 +430,6 @@ interface Session {
   customSeen: CustomSeen;
   /** Needs-attention notices: ended runs (RUN_END_EVENTS) and what was shown (notices.ts, R12 item 9). */
   attention: AttentionNotices;
-  /** Uncounted finish refusals that ask for the builder's review_fail climb, since the last user prompt (at most 2). */
-  climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
   /** Foreman only: the loop guard's stop (reviewloop.ts): builder and reviewer launches are refused while set; persisted in the ceremony-state entry (planstate.ts). */
@@ -1052,7 +1050,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       inRun: false,
       customSeen: new CustomSeen(),
       attention: new AttentionNotices(),
-      climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
       loopStop: null,
       planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
@@ -4437,7 +4434,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.workAtPrompt = { ...s.work }), savePause(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) ownAskFor(s).typed();
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), persistRounds(s);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) persistRounds(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       const was = s.budget.phase;
@@ -5390,19 +5387,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return undefined;
       }
     }
-    // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this
-    // refusal does not count toward the two-refusal valve of an unchanged state (it has its own count, at most 2 per user prompt).
-    if (missing.includes("reviewer") && gate.last === "fail" && s.climbRefusals < 2 && (await builderClimbOpen(s, ctx))) {
-      s.climbRefusals++;
+    // D28: the count belongs to the state the refusal answers (missing steps, work, review verdict); a new state starts at zero.
+    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, gate.last ?? "", gate.failAt ?? ""].join("|");
+    if (s.finishKey !== stateKey) (s.finishKey = stateKey), (s.finishRefusals = 0);
+    // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this refusal
+    // counts as one of the state's two refusals (same counter), with its own message.
+    if (missing.includes("reviewer") && gate.last === "fail" && s.finishRefusals < 2 && (await builderClimbOpen(s, ctx))) {
+      s.finishRefusals++;
+      savePause(s);
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
         entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], reviewHint(gate)) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
-    // D28: the count belongs to the state the refusal answers (missing steps, work, review verdict); a new state starts at zero.
-    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, gate.last ?? "", gate.failAt ?? ""].join("|");
-    if (s.finishKey !== stateKey) (s.finishKey = stateKey), (s.finishRefusals = 0);
     if (s.finishRefusals >= 2) {
       const text = `pi-foreman: finished with ceremony incomplete: missing ${missing.join(", ")}`;
       s.trace?.emit({ event: "ceremony_incomplete", tier: s.ceremony.tier, missing: missing.join(",") });

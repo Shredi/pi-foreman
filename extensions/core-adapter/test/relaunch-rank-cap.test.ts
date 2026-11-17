@@ -571,3 +571,30 @@ test("plan + applyLaunchModels, strong rung allowed (Fable foreman), after a FAI
     assert.equal(r.model, OPUS, value); // as on main: the strong rung
   }
 });
+
+// D28: the climb refusal counts as one of the state's two refusals; an interactive input resets nothing
+test("finish gate after FAIL with the climb open: two refusals (an interactive input between), then ceremony_incomplete; no new refusal after an input", async (t) => {
+  const a = await rig(t, "A", "at-or-below");
+  await built(a);
+  await commands.get("ceremony")!.handler("standard", a.ctx);
+  type R = { continue?: boolean; entries?: { customType?: string }[] } | undefined;
+  const settle1 = async (): Promise<R> => (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
+  const owner = () => a.fire("input", { source: "interactive", text: "next" });
+  const refusing = (r: R) => r?.continue === true && r.entries?.some((e) => e.customType === "pi-foreman-ceremony-gate") === true;
+  const turns: R[] = [];
+  for (let i = 0; i < 8 && turns.filter(refusing).length < 1; i++) turns.push(await settle1()); // the stop guard's reminder comes first
+  await owner();
+  const second = await settle1();
+  assert.equal(refusing(second), true, "second refusal after an interactive input");
+  await owner();
+  const third = await settle1();
+  assert.notEqual(third?.continue, true, "the third turn end goes through");
+  assert.deepEqual((third?.entries ?? []).map((e) => e.customType), ["pi-foreman-ceremony-incomplete"]);
+  assert.equal(a.events("finish_refused").length, 2);
+  assert.equal(a.events("finish_refused").filter((r) => r.climb_available === true).length, 2);
+  assert.ok(a.events("ceremony_incomplete").length >= 1);
+  await owner();
+  const after = await settle1();
+  assert.notEqual(after?.continue, true, "an input after the notice brings no new refusal");
+  assert.equal(a.events("finish_refused").length, 2);
+});
