@@ -264,10 +264,6 @@ function launchDeny(input: Record<string, unknown>): { role: string; command: st
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
 }
-/** The form faults of a plan text: the owner section's presence and position. */
-function planFormOf(text: string): string[] {
-  return planFormIssues(text, {});
-}
 const ADAPTER_ID = "pi-foreman-core-adapter";
 /** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
 const REMOVED_GIT_GUARD_ID = "pi-foreman-git-guard";
@@ -3730,7 +3726,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const p of planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir)) {
               const rp = readPlan(p, planOpts(s, ctx));
               if (!("plan" in rp)) continue;
-              const issues = planFormOf(rp.plan.bytes.toString("utf8"));
+              const issues = planFormIssues(rp.plan.bytes.toString("utf8"), {});
               if (issues.length > 0) faults.push(`${p}: ${issues.join("; ")}`);
             }
           }
@@ -4876,7 +4872,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
       const written = readPlan((event.input as Record<string, unknown>).path, planOpts(owner, ctx));
-      const issues = "plan" in written ? planFormOf(written.plan.bytes.toString("utf8")) : [];
+      const issues = "plan" in written ? planFormIssues(written.plan.bytes.toString("utf8"), {}) : [];
       if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
     }
     // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.

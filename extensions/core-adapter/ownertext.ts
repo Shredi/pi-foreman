@@ -13,11 +13,15 @@ const OWNER_HEADING = /^##[ \t]+for the owner[ \t]*$/i;
 const LEVEL2 = /^##[ \t]+\S/;
 const LEVEL12 = /^#{1,2}[ \t]+\S/;
 
-/** Per line: whether it belongs to a top-level fenced block (its opening and closing lines included). */
+/** The lines without their indent, so a fence nested in a list item (4+ spaces or a tab, which `blocks` in pages.ts renders) is found by the same scanner. */
+const flat = (lines: readonly string[]): string[] => lines.map((l) => l.trimStart());
+
+/** Per line: whether it belongs to a fenced block, nested ones included (its opening and closing lines included). */
 function fencedMask(lines: readonly string[]): boolean[] {
   const mask: boolean[] = new Array(lines.length).fill(false);
+  const flatLines = flat(lines);
   for (let i = 0; i < lines.length; i++) {
-    const f = scanFence(lines, i);
+    const f = scanFence(flatLines, i);
     if (!f) continue;
     mask.fill(true, i, f.next);
     i = f.next - 1;
@@ -90,8 +94,9 @@ export function jargonHits(text: string, max = 3): string[] {
 /** The first and last line index of each mermaid fence in a section (an unclosed one runs to the end). */
 function diagramSpans(lines: string[]): [number, number][] {
   const spans: [number, number][] = [];
+  const flatLines = flat(lines);
   for (let i = 0; i < lines.length; i++) {
-    const f = scanFence(lines, i);
+    const f = scanFence(flatLines, i);
     if (!f) continue;
     if (f.info.trim().split(/\s+/)[0] === "mermaid") spans.push([i, f.next - 1]);
     i = f.next - 1;

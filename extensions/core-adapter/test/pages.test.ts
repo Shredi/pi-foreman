@@ -347,7 +347,7 @@ test("foreman_show: html parameter, exactly one of markdown or html, the 256 KiB
   const ok = await call({ title: "Raw", html: "<p>hi</p>" });
   assert.ok(!ok.isError, ok.content[0].text);
   assert.match(ok.content[0].text, /^shown: Raw \(v1, 0 diagrams\) at .*note\.md\. It writes a page the owner opens in the browser: .*note-1\.html\./);
-  assert.doesNotMatch(ok.content[0].text, /pi-foreman hint/); // no showHint for html
+  assert.doesNotMatch(ok.content[0].text, /pi-foreman hint/); // the reply carries no hint
   for (const params of [{ title: "T" }, { title: "T", markdown: "a", html: "<p>b</p>" }]) {
     const r = await call(params);
     assert.ok(r.isError);
