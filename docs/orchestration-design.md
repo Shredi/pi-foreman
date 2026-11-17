@@ -69,6 +69,13 @@ Principle: measure, change a single thing, retain what survives. A subagent stay
 
 In this model teams hold skills and tools instead of whole agents. A single small central team is responsible for the system prompt and overall quality, and it approves each new skill, tool and eval.
 
+## When agents at all
+
+Guidance from Anthropic's agents PDF, digested with the rest of the agent-design rules in [`skills/prompting-guides/references/claude-agent-design.md`](../skills/prompting-guides/references/claude-agent-design.md). It rules nothing: the tier ceremony is this harness's own choice.
+
+- A multi-agent system uses roughly 10 to 15 times the tokens of a single agent, so count the cost at expected volume before adding agents.
+- Before adding agents, try specialist skills on one agent; they may reach the accuracy needed at far lower cost and complexity.
+
 ## Questions for pi-foreman
 
 Open questions only; none is decided here.

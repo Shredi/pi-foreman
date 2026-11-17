@@ -34,6 +34,27 @@
       }
     },
     {
+      "id": "claude-fable-5-2",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-2",
+      "target": "skills/prompting-guides/references/claude-fable-5-2.md",
+      "sha256": "ed7d15fb1ec32acc7e83bc04c3b4d84b41d2de92f1689b6dff8a37683141993c",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "fable-5-2-whats-new",
+      "url": "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+      "target": "skills/prompting-guides/references/claude-fable-5-2.md",
+      "sha256": "2a9d877ba6f209a43e6314103e3945a27ab510536361c658f7f428fc178e1ffa",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "fable-5-2-migration",
+      "url": "https://platform.claude.com/docs/en/models/fable-5-2/migration-guide",
+      "target": "skills/prompting-guides/references/claude-fable-5-2.md",
+      "sha256": "cbfb3617b55cbd9a65acbefdc11eae6ba645906a0e1d87ab264c7afebdb96679",
+      "checkedOn": "2026-11-17"
+    },
+    {
       "id": "claude-fable-5-1",
       "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1",
       "target": "skills/prompting-guides/references/claude-fable-5-1.md",
@@ -60,6 +81,48 @@
       "target": "skills/prompting-guides/references/claude-haiku-5-5.md",
       "sha256": "aec3899e2dedd4452e77074367ac08cf240adf5f9e26b2cf5f8409361174c337",
       "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "agents-pdf",
+      "url": "https://resources.anthropic.com/hubfs/Building%20Effective%20AI%20Agents-%20Architecture%20Patterns%20and%20Implementation%20Frameworks.pdf",
+      "target": "skills/prompting-guides/references/claude-agent-design.md",
+      "sha256": "4057458c6208cd653624dd3fbf318ab64c799f434753463367cee522a1d103ad",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "cc-best-practices",
+      "url": "https://code.claude.com/docs/en/best-practices.md",
+      "target": "skills/prompting-guides/references/claude-agent-design.md",
+      "sha256": "ee235042febdd1f76cf07228240140239638a3c464b6bc39bd3014830d02a9bf",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "cc-memory",
+      "url": "https://code.claude.com/docs/en/memory.md",
+      "target": "skills/prompting-guides/references/claude-agent-design.md",
+      "sha256": "524cff77043d4b230e427dfcebce29a5284fcd2e3f4678abb2ef9b6e856c5ff8",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "cc-skills",
+      "url": "https://code.claude.com/docs/en/skills.md",
+      "target": "skills/prompting-guides/references/claude-agent-design.md",
+      "sha256": "632e75ce5b55590853a15a1539dbfccfcd02e884a2acf93abc176c3356954fad",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "cc-sub-agents",
+      "url": "https://code.claude.com/docs/en/sub-agents.md",
+      "target": "skills/prompting-guides/references/claude-agent-design.md",
+      "sha256": "b9fa9efd317c92efc0c2ca331a2ecb08a22eb735aad0844b90e9435a45f66cd6",
+      "checkedOn": "2026-11-17"
+    },
+    {
+      "id": "cc-hooks-guide",
+      "url": "https://code.claude.com/docs/en/hooks-guide.md",
+      "target": "skills/prompting-guides/references/claude-agent-design.md",
+      "sha256": "2076ece854a4d4be8c0a9c7568db4e9abc0e35153c22975adf750c6f8f3166e9",
+      "checkedOn": "2026-11-17"
     },
     {
       "id": "gpt-6-luna",

@@ -12,8 +12,12 @@ if ($sub -eq 'setup') {
     exit $rc
 }
 if ($sub -eq 'pane-resume') {
-    [Console]::Out.WriteLine('foreman pane-resume: not supported on Windows')
-    exit 0
+    # for hand use (the PowerShell hook runs node itself); a too-old Node is silent, no node exits 127, as bin/foreman
+    if (-not (Get-Command node -CommandType Application -ErrorAction SilentlyContinue)) { exit 127 }
+    & node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" 2>$null
+    if ($LASTEXITCODE -ne 0) { exit 0 }
+    & node --no-warnings --experimental-strip-types (Join-Path $PSScriptRoot '..\extensions\core-adapter\paneresume-cli.ts') @rest
+    exit $LASTEXITCODE
 }
 if ($sub -eq 'features') {
     & node (Join-Path $PSScriptRoot '..\scripts\foreman_features.mjs') @rest

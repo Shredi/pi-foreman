@@ -586,7 +586,7 @@ class PackageFilesTest(unittest.TestCase):
         knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off", "tools.pr": "off", "show": "off"}  # show "off" = no foreman_show explain rule (always "on" too)
         # round 29: the launch-wait rule is the one deliberate change since eee843d (async launches)
         old_wait = "- The launch result is the wait: it returns when the child finishes or asks. Do not call bg_wait after it and do not narrate between waits. Call `bg_wait <id>` only when the result says the child is still running. Do not poll with bash."
-        new_wait = "- A launch returns at once with its receipt. Launch, then end your turn: the child's completion notice (or its question) starts your next turn, and you read the report there or at the result path. Several children may run at once, with one writer per checkout. Call `bg_wait <id>` only for a result you need in this same turn. Never poll with bash."
+        new_wait = "- A launch returns at once with its receipt. Launch, then end your turn: the child's completion notice (or its question) starts your next turn, and you read the report there or at the result path. Several children may run at once, with one writer per checkout. Call `bg_wait <id>` only for a result you need in this same turn."
         expected = old.stdout.decode("utf-8")
         self.assertIn(old_wait, expected)
         # round 37: the read-budget rule reminds instead of refusing
@@ -611,6 +611,12 @@ class PackageFilesTest(unittest.TestCase):
              "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
             # the SECURITY: revision-cap rule lost its removed `planner` tag, so it renders in every variant (eee843d never had it)
             ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
+            # rules diet: prohibitions with exceptions or plain preferences read as the wanted behaviour
+            ("notice; do not rely on that.", "notice."),
+            ("`write` tool, never through the shell. Writing it", "`write` tool. Writing it"),
+            ("change workspace files yourself (`write`, `edit`, `foreman_move`, `foreman_copy`), and then only", "change workspace files yourself, and then only"),
+            ("launch a builder instead. `.workflow/` (ledger, notes) stays writable. Do not work", "launch a builder instead. Do not work"),
+            ("stays unbound and the gates treat the session as having no ledger.", "stays unbound, so the gates see none."),
             # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
             ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
         ]
@@ -622,7 +628,7 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_launch, expected)
         # token-diet item 9: the ask_user_question rule (schema, notes, ask by file when the tool is absent)
         old_ask = "- Plan mode is not part of the ceremony; the checkpoint is.\n"
-        new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask the parent in a message, or by file (`ask.md`) when intercom cannot reach it. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both.\n"
+        new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask the parent in a message, or by file (`ask.md`) when intercom cannot reach it. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog.\n"
         self.assertIn(old_ask, expected)
         want = expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch).replace(old_ask, new_ask)
         for old_text, new_text in role_pairs:
