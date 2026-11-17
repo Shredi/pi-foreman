@@ -3793,11 +3793,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused (a pre-pr, high-stakes or plan review is no repeat).
         const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
         const dupOn = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false;
+        // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
+        const gotFindings = actionOf(input) === null && hsModel(s) !== null && s.hs.findingsFor() !== null;
         // the checkouts the reviewers run in (a resumed one: those of its target run; none recorded or one unresolved: null, which reads every entry)
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -5124,7 +5126,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
       launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, (recordedOccasions.includes("pre-pr") || recordedOccasions.includes("item")) && hsRequired(s) ? dueReminder(hsDue(s)) : null) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, (recordedOccasions.includes("pre-pr") || recordedOccasions.includes("item")) && hsRequired(s), dueReminder(hsDue(s))) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;

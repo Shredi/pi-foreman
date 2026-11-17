@@ -54,9 +54,10 @@ const OCCASION_LINES: Partial<Record<Occasion, string>> = {
 };
 
 /** The launch-result line of each non-item occasion the review children of the launch were recorded with (taken at the launch, not from the rewritten task). */
-export function occasionLinesOf(occasions: Iterable<Occasion>, reminder: string | null = null): string[] {
+export function occasionLinesOf(occasions: Iterable<Occasion>, hsRequired = false, reminderText: string | null = null): string[] {
   const named = new Set(occasions);
-  // `reminder`: a high-stakes review is due; it only reminds, on an item or `[pre-pr]` review, the steps before the late ones (the finish hold, the PR tools).
+  // `hsRequired`: a high-stakes review is due; `reminderText` only reminds, on an item or `[pre-pr]` review, the steps before the late ones (the finish hold, the PR tools).
+  const reminder = hsRequired ? reminderText : null;
   const lines = [...named].flatMap((o) => (o === "pre-pr" && reminder ? `${OCCASION_LINES[o]}; ${reminder}` : OCCASION_LINES[o] ?? []));
   return reminder && named.has("item") ? [...lines, reminder] : lines;
 }
