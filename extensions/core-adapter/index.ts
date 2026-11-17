@@ -4540,8 +4540,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const files = new Set(reviewers.map((x) => x ?? bound));
         return files.size === 1 ? [...files][0] : null;
       }
-      // no launch record (a reload or resume): the ledger the result's own task names, else none
-      return p.task ? taskLedger(p.task, s.cwd, bound, [s.cwd]).path : null;
+      // no launch record (a reload or resume): a task that names no ledger (or no task text) uses the bound one;
+      // a task that names one re-derives it, and marks nothing when that fails
+      if (!p.task) return bound;
+      const t = taskLedger(p.task, s.cwd, bound, [s.cwd]);
+      return t.notice ? null : t.path;
     };
     const byFile = new Map<string, string[]>();
     for (const p of parts) {
