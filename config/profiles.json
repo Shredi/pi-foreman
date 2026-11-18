@@ -21,7 +21,7 @@
     },
     "full": {
       "title": "Full",
-      "summary": "Every toggleable feature on, safety relaxations included (git tools, children may push, workflow scripts, remote intercom).",
+      "summary": "Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom).",
       "features": {
         "codemode": true,
         "reviewer-climb": true,
@@ -30,7 +30,6 @@
         "git-tools": true,
         "pr-ops": true,
         "review-required": true,
-        "children-may-push": true,
         "workflow-scripts": true,
         "remote-intercom": true,
         "idle-cache": true,

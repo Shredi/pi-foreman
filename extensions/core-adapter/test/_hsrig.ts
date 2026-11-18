@@ -45,7 +45,7 @@ export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
     const origin = path.join(root, "origin.git");
     execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
     git(w.project, "remote", "add", "origin", origin);
-    // the harness sets url.invalid-push:.pushInsteadOf for every URL; the fixture's own origin keeps its path
+    // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path
     git(w.project, "-c", `url.${origin}.pushInsteadOf=${origin}`, "push", "-q", "origin", "main");
   }
   const cfgFile = path.join(root, "agent", "foreman.json");

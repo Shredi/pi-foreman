@@ -30,6 +30,9 @@ const KEY_RES = KEYS.keyPatterns.map((p) => new RegExp(p));
 const ENV_RE = new RegExp(KEYS.envPattern);
 const REMOTE_SUBS = new Set(KEYS.remoteSubcommands);
 
+/** The refusal for a push by a child that is not a builder from a single launch. */
+const PUSH_CHILD_TEXT = "Only a builder from a single launch pushes; other children never push; the foreman pushes. Commit your work and report the branch.";
+
 export interface FloorEnv {
   platform?: string;
   /** The session cwd (the start directory of the line). */
@@ -49,8 +52,10 @@ export interface FloorEnv {
   pkgRoot?: string;
   currentBranch?: (cwd: string) => string | null;
   remoteHead?: (cwd: string) => string | null;
-  /** A subagent child session: it never pushes (the foreman pushes). */
+  /** A subagent child session: it never pushes unless it is a builder (`builder`); the foreman pushes. */
   child?: boolean;
+  /** The child is a builder from a single launch (launch binding role `builder`); fail-closed: unset means a child that never pushes. */
+  builder?: boolean;
   /** realpath of an existing path for the long-name forms (tests stub it; default: the native realpath). */
   resolver?: Resolver;
 }
@@ -379,7 +384,7 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   }
   if (call.sub === "config") return !call.rest.some((w) => w === "--global" || w === "--system") && inOwnTemp(configTargets(call), env) ? null : configFloor(call);
   if (call.sub === "remote") return remoteFloor(call);
-  if (call.sub === "push" && env.child) return hit("git-push-child", "Children never push; the foreman pushes. Commit your work and report the branch.");
+  if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env);
   return null;
 }
@@ -1005,7 +1010,7 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
     const push = calls.find((c) => c.verb === "push");
     // A3: a child cannot answer an owner question about a line the parser could not read: a deterministic deny that says how to rephrase
     const flag = env.child ? opaqueDeny : askHit;
-    if (env.child && push) return flag("git-push-child", "The unparsed line looks like a git push. Children never push; the foreman pushes.");
+    if (env.child && !env.builder && push) return flag("git-push-child", `The unparsed line looks like a git push. ${PUSH_CHILD_TEXT}`);
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
     if (key !== undefined) return flag("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`, key);
     if (calls.some((c) => c.verb === "remote" && /^\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(c.tail))) return flag("git-config", "The unparsed line changes a git remote.");

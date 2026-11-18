@@ -223,7 +223,7 @@ export function gitReadSubWrite(sub: string | undefined, rest: string[]): boolea
 
 /** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */
 function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boolean {
-  if (c.roots.child) return false;
+  if (c.roots.child && !c.roots.builder) return false;
   if (c.facts.isOwnWorktree && !c.facts.isOwnWorktree(cwd)) return false;
   // a harmless env prefix is dropped by the walker; the push default wants none at all
   if (/(?:^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]*=/.test(text)) return false;

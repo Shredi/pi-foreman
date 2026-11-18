@@ -35,6 +35,8 @@ export interface GateRoots {
   /** Every dir where this session is the child side (owned.ts childHandoffDirs): a ruling or brief is never written there, whatever else lists it. */
   childHandoffs?: string[];
   child: boolean;
+  /** The child is a builder from a single launch (its launch binding names the role `builder`); false for every other child, a missing binding included. A builder pushes like the main session. */
+  builder?: boolean;
   /** A child that reads its round worktree and has no write root on it (a reviewer or explorer in a round): the gate refuses its named writes there (gate.ts childDenied). */
   roundReadOnly?: boolean;
   /** `gate.readTools`: extension tools judged like read/grep on their path field. */
