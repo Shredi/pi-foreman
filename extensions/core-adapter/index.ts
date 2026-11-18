@@ -2917,6 +2917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const rp of readPlansOnce(plans, opts)) {
         s.planReviews.record(rp.plan.path, { hash: rp.plan.hash, verdict: r.verdict, model: r.model, findings });
         s.planReviews.keepReviewed(rp.plan.path, rp.plan.hash);
+        s.planReviews.closeLaunch(rp.plan.path);
         s.show?.planReviewed(r.verdict === "pass", rp.plan.hash); // plan page state and milestone (show.ts)
         reviewed.add(rp.plan.path);
         const state = rp.plan.hash;
@@ -2935,6 +2936,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
         s.planPhase = false;
         s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
+      } else if (s.planPhase && s.planPhaseOrigin === "parent") {
+        const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
+        s.trace?.emit({ event: "plan_phase", decision: "kept", cause });
       }
     }
     persistRounds(s);
@@ -4243,7 +4247,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
               rereview.push(...(before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
             }
-            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text);
+            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text, s.launchBatch.generation);
           }
           // one entry per plan (a page and its copy named together are one); a plan that cannot be read stays listed
           const raws = new Set(readable.map((rp) => rp.raw));
@@ -5188,6 +5192,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const written = readPlan(wrotePath, planOpts(owner, ctx));
       if ("error" in written) planFormNote = written.error; // e.g. a Write over the generated copy that lost its marker
       else {
+        // a write in the tool batch of a still-open [plan-review] launch (also one nested in a codemode call): the reviewer reads these bytes
+        owner.planReviews.refreshLaunch(written.plan.path, written.plan.hash, written.plan.markdown, owner.launchBatch.generation);
         const issues = planFormIssues(written.plan.markdown, {});
         if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
         if (written.plan.kind === "html" && typeof wrotePath === "string" && wrotePath.endsWith(".md")) planFormNote = `pi-foreman: plan-${written.plan.topic}.md is generated from plan-${written.plan.topic}.html; edit the page, not the copy. The copy was written again from the page.${planFormNote ? `\n${planFormNote}` : ""}`;
