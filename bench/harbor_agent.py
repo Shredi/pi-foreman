@@ -541,9 +541,10 @@ class _BenchPi(BaseInstalledAgent):
         pkgs = []
         if self.KIND == "foreman":
             # R_REPO has node_modules (npm ci in install): without the filter its bundled pi-subagents and
-            # pi-intercom load next to the R_NPM pi-subagents (duplicate tools, a broker nobody asked for).
+            # pi-intercom load next to the R_NPM pi-subagents (duplicate tools, a broker nobody asked for), and its
+            # bundled pi-background-tasks adds bg_run to a run that never had it.
             pkgs += [R_NPM + "/node_modules/pi-subagents",
-                     {"source": R_REPO, "extensions": ["!node_modules/pi-subagents/**", "!node_modules/pi-intercom/**"]}]
+                     {"source": R_REPO, "extensions": ["!node_modules/pi-subagents/**", "!node_modules/pi-intercom/**", "!node_modules/pi-background-tasks/**"]}]
         if not self.fake:
             pkgs.append(R_NPM + "/node_modules/pi-claude-bridge")
         return pkgs

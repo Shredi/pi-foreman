@@ -392,7 +392,7 @@ TOOL_FLOOR = ("tool_search", "codemode", "read", "bash", "subagent", "foreman_le
 # the add-on's optional tools (deferred.ts deferredDoctorLines): disabled at the source (PI_BG_FEATURES=process) they cost nothing
 BG_FEATURE_TOOLS = ("fusion_*", "bg_delegate", "bg_run_pi_attested")
 # packages the harness ships or bundles, and the pseudo-sources: never a `pi remove` suggestion
-NO_REMOVE_SOURCES = ("pi-foreman", "pi-subagents", "pi-intercom", "@juicesharp/rpiv-ask-user-question", "builtin", "unknown")
+NO_REMOVE_SOURCES = ("pi-foreman", "pi-subagents", "pi-intercom", "pi-background-tasks", "@juicesharp/rpiv-ask-user-question", "builtin", "unknown")
 
 
 def tool_usage_sessions(agent_dir, now=None):

@@ -34,17 +34,17 @@ test("self ruling: write, edit, foreman_copy dst and foreman_move dst into the c
   assert.equal(await refuse(r, "write", { path: "ruling.md" }, r.up), SELF_RULING_REASON);
 });
 
-test("self ruling: shell redirect, cp, backgrounded job and foreman_bg/bg_run naming the path are refused", async () => {
+test("self ruling: shell redirect, cp, backgrounded job and bg_run naming the path are refused", async () => {
   const r = rig();
   const native = path.join(r.up, "ruling.md");
   const f = inBash(native);
-  for (const tool of ["bash", "powershell", "foreman_bg", "bg_run"]) assert.equal(await refuse(r, tool, { command: `echo APPROVED > ${tool === "powershell" ? native : f}` }), SELF_RULING_REASON, tool);
+  for (const tool of ["bash", "powershell", "bg_run"]) assert.equal(await refuse(r, tool, { command: `echo APPROVED > ${tool === "powershell" ? native : f}` }), SELF_RULING_REASON, tool);
   assert.equal(await refuse(r, "bash", { command: `cp x ${f}` }), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: `(sleep 2; printf APPROVED > "${f}") &` }), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: "cp x ruling.md" }, r.up), SELF_RULING_REASON);
   assert.equal(await refuse(r, "bash", { command: `cat ${f} & cp x ${f}` }), SELF_RULING_REASON);
   // R16 item 4a: `cd <H> && cp x ruling*.md` lives in test/retired/self-ruling-rows.json (the flat ask trigger)
-  assert.equal(await refuse(r, "foreman_bg", { command: `sleep 3 && cp x ${f}` }), SELF_RULING_REASON);
+  assert.equal(await refuse(r, "bg_run", { command: `sleep 3 && cp x ${f}` }), SELF_RULING_REASON);
 });
 
 test("self ruling: pure reads of the ruling and the dir stay allowed", async () => {

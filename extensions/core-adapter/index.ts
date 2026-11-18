@@ -125,7 +125,7 @@ import { ExtStatus } from "./extstatus.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
-import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
+import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
@@ -214,7 +214,7 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
-import { bgBashNotice, resolveBgShell } from "./bgshell.ts";
+import { applyBgAddonDefaults, bgBashNotice, resolveBgShell } from "./bgshell.ts";
 import { shellPathSetting } from "./bg.ts";
 import type { ShellConfigFn } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
@@ -441,8 +441,6 @@ interface Session {
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
   ceremonyRestored: boolean;
-  /** The background-tasks add-on is present (decided at session_start): foreman_bg, which refuses then, is not offered and the tool floor does not re-add it. */
-  bgAddon: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -564,6 +562,8 @@ export interface AdapterDeps {
   worktreeSnapshot?: (cwd: string) => Promise<string | null>;
   /** Tests: replaces Pi's shell resolution, used by the read question's entry condition (is the bash tool's shell a bash) and the win32 background-shell setup (default: Pi's getShellConfig). */
   getShellConfig?: ShellConfigFn;
+  /** Tests: the environment the bundled add-on's start defaults (PI_BG_*) are written to (default: process.env). */
+  env?: NodeJS.ProcessEnv;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
@@ -584,8 +584,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
-  // win32: the pi-background-tasks add-on reads PI_BG_SHELL* in its own factory, which loads after this one; set them now, before any await
-  const bgShell = platform === "win32" ? resolveBgShell({ platform, getShellConfig: deps.getShellConfig ?? piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) }) : { set: false, noBash: false };
+  // The bundled pi-background-tasks add-on reads PI_BG_* in its own factory, which loads after this one (package.json order): set its defaults now, before any await (win32: also the shell)
+  const bgEnv = deps.env ?? process.env;
+  applyBgAddonDefaults(bgEnv);
+  const bgShell = platform === "win32" ? resolveBgShell({ platform, env: bgEnv, getShellConfig: deps.getShellConfig ?? piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) }) : { set: false, noBash: false };
   // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
@@ -789,7 +791,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     release?.();
   };
   let bgTrace: (rec: Record<string, unknown>) => void = () => undefined;
-  const bgRecords = installBgRecords(pi, { platform: deps.platform ?? process.platform, trace: (r) => bgTrace(r) }).recorder; // hc records for background tasks (bgrecords.ts)
+  installBgRecords(pi, { platform: deps.platform ?? process.platform, trace: (r) => bgTrace(r) }); // hc records for the add-on's background tasks (bgrecords.ts)
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
   const askFlag = new AskFlag(); // /foreman flag-ask (askflag.ts): the last ask the owner answered
@@ -1072,7 +1074,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
-      bgAddon: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1898,7 +1899,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
-    if (!s.isChild) s.bgAddon = addonPresent((pi.getAllTools?.() ?? []).map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd }); // once per start: the request prefix stays stable
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
@@ -2034,9 +2034,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Re-activates the registered floor tools another extension's tool reset left inactive (toolfloor.ts): append only. */
   function restoreToolFloor(s: Session, ctx: ExtensionContext): string[] {
     try {
-      // with the add-on present foreman_bg refuses (bg_run does its job): it leaves the active tools and the floor does not bring it back
-      if (s.bgAddon && pi.getActiveTools().includes(FOREMAN_BG_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== FOREMAN_BG_TOOL));
-      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) }).filter((n) => !(s.bgAddon && n === FOREMAN_BG_TOOL));
+      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) });
       if (!missing.length) return [];
       pi.setActiveTools([...pi.getActiveTools(), ...missing]);
       s.trace?.emit({ event: "tools_floor_restored", names: missing.join(",") });
@@ -2502,7 +2500,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idle = false; // a stale context counts as a running turn
     }
     const w = waits.active(s.id);
-    const other = w.some((x) => x.bg) || addonTasksRunning(s) ? "bg_task" : w.length > 0 ? "wait" : null;
+    const other = addonTasksRunning(s) ? "bg_task" : w.length > 0 ? "wait" : null;
     const strongA = s.activeRuns.size > 0 || s.pendingLaunches.size > 0 || launchWaits.holding > 0 ? "subagent" : other;
     // for the tier only: a launch with an open permission ask is not working (active run, pending launch or held launch alike)
     const open = new Set(childAskWatches.get(s.id)?.openDirs() ?? []);
@@ -3209,7 +3207,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (gateStopped.has(gs.id)) return denied("user-stop", "dialog", STOP_TEXT);
       const base = { kind, role, tool: event.toolName, input: event.input, payload, segments: out.segments, roots, allowed, denied };
       // the foreman's shell-write refusal is deterministic: it comes before any dialog or classifier, so an owner is never asked about a write that is refused anyway
-      if (((r && "ask" in r) || out.danger) && (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL)) {
+      if (((r && "ask" in r) || out.danger) && (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === ADDON_BG_TOOL)) {
         const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
         if (shellWrite) return shellWrite;
       }
@@ -3554,7 +3552,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return r.lines.join("\n");
   }
 
-  const SHELL_GATE_TOOLS = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+  const SHELL_GATE_TOOLS = new Set(["bash", "bg_run", "powershell"]);
   /** The text the log shapes and the classifier reads: the command, the path operands, or the JSON input. */
   const gatePayload = (tool: string, input: unknown): string => {
     const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
@@ -3669,8 +3667,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (triage) return triage;
       }
     }
-    if (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL) {
-      // foreman_bg and the add-on's bg_run are checked as a bash call: the same script, the same verdicts.
+    if (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === ADDON_BG_TOOL) {
+      // the add-on's bg_run is checked as a bash call: the same script, the same verdicts.
       const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
       if (shellWrite) return shellWrite;
     }
@@ -5810,8 +5808,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = await ensureSession(ctx);
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, roots: await gateRootsOf(s, ctx.cwd, sessionDirOf(ctx)), config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", inRun: () => s.inRun, onStart: (spec, id) => {
         markHandoffWait(s, spec, id);
-        if (spec.kind === "pid" && spec.bg) bgRecords.post(`fb-${id}`, "working", spec.note, "Running");
-      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), steer: (text) => steerFor(s).append(text) };
+      }, onCancel: (id) => cancelHandoffWait(s, id), steer: (text) => steerFor(s).append(text) };
     },
   });
 
@@ -6972,7 +6969,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(`INFO background-tasks: ${addonOn ? "present" : "absent"}`);
     out.push(...bgFeaturesDoctor(addonOn, s.agentDir, process.env));
     if (!s.isChild) out.push(...deferredDoctorLines(addedPatterns(deferred.patterns, shippedDeferred()), pi.getAllTools().map((t) => t.name)));
-    const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
+    const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd, bundledRoot: PKG_ROOT }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
     out.push(...optionalAddonsDoctor({ agentDir: s.agentDir, cwd: s.cwd }, pi.getAllTools().map((t) => t.name), process.env));
     out.push(dormantDoctorLine(PKG_ROOT, withBuiltinKeepalive(s.config.config, dm?.provider, cache.active)));

@@ -53,8 +53,8 @@ const USAGE = [
   "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
   "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
   "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
-  "  --addon        install exactly these Pi add-ons from config/addons.json (repeatable); without it the default add-ons are installed (polish, background-tasks, quiver, memory)",
-  "  --no-addons    install no add-on; --skip-addon <id> leaves one out (repeatable); --no-env does not write PI_BG_FEATURES to your shell profile or Windows user environment",
+  "  --addon        install exactly these Pi add-ons from config/addons.json (repeatable); without it the default add-ons are installed (polish, quiver, memory)",
+  "  --no-addons    install no add-on; --skip-addon <id> leaves one out (repeatable); --no-env does not write an add-on's environment variables to your shell profile or Windows user environment. background-tasks ships with pi-foreman: --addon and --skip-addon accept it and do nothing",
   "  --no-resume-hook  write no resume block to your shell startup file (the block that restarts a crashed Pi session in its pane) and remove an existing one; --no-env writes none either",
   "                 (`foreman setup --remove` removes it too; docs/install.md shows the block for adding it by hand)",
   "  --github-hosts the GitHub hosts the PR tracker covers (tools.prGithubHosts, 1-20 host names, comma list); the picker asks for them, a fresh install without the flag writes github.com",
@@ -64,7 +64,10 @@ const USAGE = [
   "  --dry-run      show what would change, write nothing",
 ].join("\n");
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
-const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
+const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|pi-background-tasks|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
+/** The add-on id that ships with pi-foreman since the bundling: `--addon` and `--skip-addon` still accept it and do nothing. */
+const SHIPPED_ADDON = "background-tasks";
+const SHIPPED_ADDON_NOTE = `${SHIPPED_ADDON} ships with pi-foreman; nothing to install or skip`;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
 const NO_PROFILE_HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node "${path.join(ROOT, "setup.mjs")}" --pick in a terminal`;
 export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain } = {}) {
@@ -345,12 +348,17 @@ function parseArgs(argv) {
   const plan = planChanges({}, { profile: o.profile ?? undefined, enable: o.enable, disable: o.disable });
   if (plan.errors.length) throw new Fatal(plan.errors.join("\n"), 2);
   const addonIds = loadAddons().addons.map((a) => a.id);
-  const badAddon = o.addon.filter((id) => !addonIds.includes(id));
+  const badAddon = o.addon.filter((id) => id !== SHIPPED_ADDON && !addonIds.includes(id));
   if (badAddon.length) throw new Fatal(`unknown add-on ${badAddon.join(", ")}; valid: ${addonIds.join(", ")}`, 2);
-  const badSkip = o.skipAddon.filter((id) => !addonIds.includes(id));
+  const badSkip = o.skipAddon.filter((id) => id !== SHIPPED_ADDON && !addonIds.includes(id));
   if (badSkip.length) throw new Fatal(`unknown add-on ${badSkip.join(", ")} in --skip-addon; valid: ${addonIds.join(", ")}`, 2);
   if (o.addon.length && (o.noAddons || o.skipAddon.length)) throw new Fatal("--addon names exactly the add-ons to install and cannot be combined with --no-addons or --skip-addon.", 2);
   if (o.noAddons && o.skipAddon.length) throw new Fatal("--no-addons already skips every add-on; drop --skip-addon.", 2);
+  // the shipped add-on is a no-op: `--addon` then installs exactly the others (none when it names only that one); the flag still counts as given
+  o.shippedAddon = o.addon.includes(SHIPPED_ADDON) || o.skipAddon.includes(SHIPPED_ADDON);
+  if (o.addon.length && o.addon.every((id) => id === SHIPPED_ADDON)) o.noAddons = true;
+  o.addon = o.addon.filter((id) => id !== SHIPPED_ADDON);
+  o.skipAddon = o.skipAddon.filter((id) => id !== SHIPPED_ADDON);
   return o;
 }
 
@@ -664,7 +672,6 @@ function isRecorded(settings, spec) {
 
 const isLocalSource = (src) => !/^(npm|git|https?|ssh):/.test(src) && !src.startsWith("git@");
 const isBridgeEntry = (e) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(entrySource(e) ?? "");
-const isBgTasksEntry = (e) => /(^|[/:@])pi-background-tasks(@|$|\/)/.test(entrySource(e) ?? "");
 const isBundledEntry = (e) => BUNDLED_RE.test(entrySource(e) ?? "");
 const isRemoteForeman = (e) => REMOTE_FOREMAN_RE.test(entrySource(e) ?? "");
 const expandHome = (src) => (src === "~" ? os.homedir() : src.startsWith("~/") ? path.join(os.homedir(), src.slice(2)) : src);
@@ -706,8 +713,7 @@ function withoutIntercom(e) {
  */
 function foremanBeforeBridge(list, baseDir) {
   if (!Array.isArray(list)) return null;
-  // also before pi-background-tasks: pi-foreman sets PI_BG_SHELL* in its factory, which the add-on reads in its own
-  const bridge = list.findIndex((e) => isBridgeEntry(e) || isBgTasksEntry(e));
+  const bridge = list.findIndex((e) => isBridgeEntry(e));
   const foreman = list.findIndex((e) => isForemanEntry(e, baseDir));
   if (bridge < 0 || foreman < 0 || foreman < bridge) return null;
   const out = list.filter((_, i) => i !== foreman);
@@ -1381,12 +1387,13 @@ async function main(argv) {
 
     // choices: flags, or the picker (terminal only, first run or --pick)
     const st = pickerState();
-    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length || opts.noAddons || opts.skipAddon.length || opts.githubHosts);
+    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length || opts.noAddons || opts.skipAddon.length || opts.shippedAddon || opts.githubHosts);
     let request = { profile: opts.profile, enable: opts.enable, disable: opts.disable };
     let addonIds = [...opts.addon];
     let diffShown = false;
     // add-ons: --addon names exactly what to install, --no-addons none; otherwise the registry's defaults, offered once each (managed.addonsOffered)
     const addonRegistry = loadAddons().addons;
+    if (opts.shippedAddon) say(SHIPPED_ADDON_NOTE);
     const installedBefore = addonsInstalled();
     const offeredBefore = Array.isArray(managed.addonsOffered) ? managed.addonsOffered.filter((x) => typeof x === "string") : [];
     const defaultIds = addonRegistry.filter((a) => a.default && !opts.skipAddon.includes(a.id)).map((a) => a.id);

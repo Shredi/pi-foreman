@@ -31,7 +31,7 @@ type Case = { tool?: string; line?: string; input?: Record<string, unknown>; ups
 const callOf = (c: Case) => {
   const tool = c.tool ?? "bash";
   const input = c.input ?? { command: c.line };
-  return tool === "bash" || tool === "bg_run" || tool === "foreman_bg" ? { tool, input, text: c.line!, segments: parseShell(c.line!, { cwd: wt, env: { FOREMAN_SCRATCH: scr } }) } : { tool, input };
+  return tool === "bash" || tool === "bg_run" ? { tool, input, text: c.line!, segments: parseShell(c.line!, { cwd: wt, env: { FOREMAN_SCRATCH: scr } }) } : { tool, input };
 };
 const hit = (c: Case): string | null => dangerMatch(callOf(c), denv(c.upstream))?.name ?? null;
 const sh = (line: string, o: Partial<Case> = {}): Case => ({ line, ...o });

@@ -12,19 +12,6 @@
       ]
     },
     {
-      "id": "background-tasks",
-      "package": "pi-background-tasks",
-      "version": "2.6.10",
-      "default": true,
-      "purpose": "Background shell tasks for long-running commands (`bg_run`).",
-      "env": { "PI_BG_FEATURES": "process" },
-      "clashes": [
-        "PI_BG_FEATURES=process is read when Pi starts, not at install: setup writes it to your shell profile (POSIX) or user environment (Windows) unless you pass --no-env.",
-        "Without `process`, its attribution extension takes over the global anthropic provider slot.",
-        "2.6.10 declares a Pi peer range of 0.81 to 0.84 while pi-foreman pins Pi 1.5.x; `/foreman doctor` reports the mismatch."
-      ]
-    },
-    {
       "id": "quiver",
       "package": "pi-quiver",
       "version": "6.14.2",

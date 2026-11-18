@@ -100,7 +100,7 @@ test("gate level: a nested shell call of a script, and every shell tool, refuses
   const deps = { env: (cwd: string) => baseFloorEnv(cwd) };
   for (const g of GROUPS) {
     const line = g.args ? `${g.prog} ${g.args}` : g.prog;
-    for (const tool of ["bash", "foreman_bg", "bg_run"]) {
+    for (const tool of ["bash", "bg_run"]) {
       const res = gateDecide(tool, { command: `true; ${line}` }, process.cwd(), deps) as { block?: true; rule?: string } | undefined;
       assert.ok(res?.block, `${tool} ${g.name}`);
       assert.equal(res?.rule, g.rule, `${tool} ${g.name}`);

@@ -82,9 +82,6 @@
     "powershell": {
       "commandArgument": "command"
     },
-    "foreman_bg": {
-      "commandArgument": "command"
-    },
     "bg_run": {
       "commandArgument": "command"
     }

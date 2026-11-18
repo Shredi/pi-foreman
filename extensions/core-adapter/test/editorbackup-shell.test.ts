@@ -1,5 +1,5 @@
 // The child editor_backup guard (index.ts tool_call, effects.ts editorBackupCommand) applies to every shell tool,
-// not only bash: foreman_bg and the add-on's bg_run too. Temp dirs only; every case is refused before any spawn.
+// not only bash: the add-on's bg_run too. Temp dirs only; every case is refused before any spawn.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -58,12 +58,12 @@ function adapter(t: { after(fn: () => void): void }, toolNames: string[]) {
   return { handlers, ctx, project };
 }
 
-test("editor_backup guard: a child's rm of an editor backup is denied on bash, foreman_bg and bg_run alike", async (t) => {
+test("editor_backup guard: a child's rm of an editor backup is denied on bash, bg_run and powershell alike", async (t) => {
   const a = adapter(t, ["bash", "bg_run"]);
   process.env.PI_SUBAGENT_CHILD = "1";
   t.after(() => delete process.env.PI_SUBAGENT_CHILD);
   const commands = ["rm -f src/a.ts~", "rm src/a.ts.bak", "rm -- src/a.ts.orig", "rm .#a.ts"];
-  for (const tool of ["bash", "foreman_bg", "bg_run", "powershell"]) {
+  for (const tool of ["bash", "bg_run", "powershell"]) {
     assert.equal(isShellTool(tool), true, tool);
     for (const command of commands) {
       const d = (await a.handlers.get("tool_call")!({ toolName: tool, toolCallId: "x", input: { command } }, a.ctx)) as { block?: boolean; reason?: string } | undefined;

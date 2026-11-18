@@ -59,7 +59,7 @@ function doctorHarness(t: { after(fn: () => void): void }, deps: AdapterDeps = {
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, deps);
+  coreAdapter(pi as never, { env: {}, ...deps }); // a fresh env: the add-on start defaults land there, not in the process env the doctor reads
   const notes: { text: string; level: string }[] = [];
   const sessionId = `addon-session-${++sessions}`;
   const ctx = {
@@ -112,7 +112,7 @@ test("addonPeerRangeLine: no add-on -> no line; range inside / outside / none de
 test("doctor: an add-on whose peer range excludes the running Pi prints an INFO line; the outcome level is unchanged", async (t) => {
   const base = doctorHarness(t, { piVersion: async () => "1.2.0" });
   const before = await base.doctor();
-  assert.doesNotMatch(before.text, /peer range/, "absent add-on: no line");
+  assert.match(before.text, /INFO pi-background-tasks peer range/, "no separate copy: the bundled copy's line");
   const h = doctorHarness(t, { piVersion: async () => "1.2.0" });
   fakeAddon(h.agentDir, { "@earendil-works/pi-coding-agent": "^0.81.0 || ^0.84.0" });
   const r = await h.doctor();

@@ -202,7 +202,7 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
   what the parent would have to rule.
   Only handoff dirs whose `child` file names this session count (for the ask state too); a dir where this session is the
   `parent` never does. **Who may write a ruling file:** only the parent. A session's write, edit, `foreman_copy` /
-  `foreman_move` destination, or `bash` / `powershell` / `foreman_bg` / `bg_run` command that writes `ruling.md`,
+  `foreman_move` destination, or `bash` / `powershell` / `bg_run` command that writes `ruling.md`,
   `ruling-<n>.md` or `brief-<x>.md` in a dir where it is the child is refused up front ("a session cannot write its own
   parent's ruling"). This is the literal self-ruling refusal (`selfRulingRefusal` in `ruling.ts`), run in the `tool_call` hook
   before the gate. For a shell line it catches a redirect (also `2>`), `tee`, `cp`, `mv`, `rm`, `install`, `rsync`, `dd of=`,
@@ -230,8 +230,6 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.
-- **`foreman_bg` and `foreman_wait {kind: pid}`.** `foreman_bg` returns the wait id; an explicit `foreman_wait` on the same pid
-  returns that id (no second wait).
 - **A wake during a run is delivered after the run settles.** An idle session is started by the `foreman_wake` message at once.
   When the waits resolve while a run is active, the outcomes are held (not sent as a follow-up into that run) and go out as one
   message with a turn trigger after the run's `agent_settled` and the reset of its stop-gate state. The wake therefore runs as
@@ -243,7 +241,7 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
   and the run's turn cause stays as it was. With no run in progress an idle session is started by the wake; a session that is not idle (a compaction) gets the wake
   as a follow-up only when the last turn cause is intercom, otherwise the wake is held until the session settles. On Pi before 1.2 the intercom message starts its run
   only after the adapter saw it, so the doubled turn stays there.
-- **A restart loses the waits.** `foreman_wait` and `foreman_bg` waits live in the process, so a restart (`pi --continue`,
+- **A restart loses the waits.** `foreman_wait` waits live in the process, so a restart (`pi --continue`,
   `--session <id>`, `/reload`) ends them without a wake. The active set is stored in the session file (`pi-foreman-waits`
   entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
   `foreman_wait lost on restart: …` listing the lost ids, kinds and notes, and starts again what it still needs (trace `wait`
@@ -766,12 +764,9 @@ The tag is text only. Real grouping needs Herdr itself:
 
 ## Background runs
 
-The foreman-only `foreman_bg({command, note})` runs one shell command detached (its own process group on POSIX, not detached on win32; stdout and stderr go to
-`<agent dir>/pi-foreman/state/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when that file already exists, e.g. after a reload) and registers a `pid` wait with your `note`. It returns the wait
-id and the log path at once; you end the turn and one message wakes you when the process has exited (the exit code is not
-known: read the log). The command passes the same guards as a bash call, with no bypass: the gate's rules, the
+Background shell commands run with `bg_run`, the tool of the bundled [background-tasks add-on](herdr.md#bundled-add-on-background-tasks) (status, logs and kill beside it); the add-on wakes the session when a task ends. The command passes the same guards as a bash call, with no bypass: the gate's rules, the
 shell-write guard and the destructive guard. A command that is empty or not a string is refused.
-On Windows the command runs in Git Bash (the bash tool's shell), so write POSIX syntax; only when no bash is found it runs under `cmd.exe` (the session says so once, at start), see the
+On Windows the command runs in Git Bash, so write POSIX syntax; only when no bash is found it runs under `cmd.exe` (the session says so once, at start), see the
 [known limit](safety.md#known-limit-background-runs-on-windows).
 
 `foreman_wait` `pid` and `ci` waits take an optional `log`: a file inside the workspace, its `.workflow/`, `<agent dir>/pi-foreman/state/wait/`
@@ -780,8 +775,7 @@ or the session scratch dir. A path outside those, or one that is not a string, i
 `/foreman waits` lists the session's pending waits: id, kind, note, age, time left and the last 5 lines of the log. The note is also what
 the presence file (`waits[].note`) and the Herdr sidebar line 2 show.
 
-With the optional [background-tasks add-on](herdr.md#optional-add-on-background-tasks) installed, `foreman_bg` is not offered (it leaves the active tools at session start; a call still refuses and points at that
-add-on's `bg_run` tool); `/foreman waits` then also lists its running tasks, and `bg_run` passes the same guards as bash.
+`/foreman waits` also lists the add-on's running tasks.
 
 ## Further session keys
 

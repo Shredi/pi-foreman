@@ -314,18 +314,6 @@
       "enable": ""
     },
     {
-      "id": "foreman-bg",
-      "area": "tools",
-      "title": "Background shell runs",
-      "purpose": "The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job).",
-      "doc": "docs/sessions.md#background-runs",
-      "keys": [],
-      "commands": [],
-      "switch": null,
-      "state": "on",
-      "enable": ""
-    },
-    {
       "id": "foreman-show",
       "area": "tools",
       "title": "Notes for the side panel",
@@ -340,9 +328,9 @@
     {
       "id": "background-tasks-addon",
       "area": "tools",
-      "title": "Background-tasks add-on detection",
-      "purpose": "Detects the pi-background-tasks add-on (installed by default by `foreman setup`, skip with `--skip-addon background-tasks`; setup writes `PI_BG_FEATURES=process` into the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.",
-      "doc": "docs/herdr.md#optional-add-on-background-tasks",
+      "title": "Background shell runs (bundled background-tasks add-on)",
+      "purpose": "The pi-background-tasks add-on ships with pi-foreman and runs background commands with its `bg_run` tool (status, logs and kill beside it), in the foreman session only. pi-foreman starts it with `PI_BG_FEATURES=process` and `PI_BG_DISABLE_UPDATE_CHECK=1` unless you set them: `/foreman doctor` reports it, `/foreman waits` lists its tasks, and `bg_run` passes the same bash guards as a foreground call.",
+      "doc": "docs/herdr.md#bundled-add-on-background-tasks",
       "keys": [],
       "commands": [],
       "switch": null,
@@ -649,7 +637,7 @@
       "id": "msys-no-pathconv",
       "area": "sessions",
       "title": "Git Bash argument conversion off on Windows",
-      "purpose": "On Windows the bash tool and `foreman_bg` set `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms.",
+      "purpose": "On Windows the bash tool sets `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms.",
       "doc": "docs/safety.md#known-limit-background-runs-on-windows",
       "keys": ["shell.msysNoPathconv"],
       "commands": [],

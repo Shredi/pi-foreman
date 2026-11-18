@@ -49,7 +49,7 @@ A missing user file is `mode: "auto"` with empty lists. The project file lives i
 
 | Rule tool | Matches | The pattern meets |
 |---|---|---|
-| `Bash` | `bash`, `foreman_bg`, `bg_run`, `powershell` | each segment of the line, as `program arg arg` (single spaces, quotes stripped) |
+| `Bash` | `bash`, `bg_run`, `powershell` | each segment of the line, as `program arg arg` (single spaces, quotes stripped) |
 | `Read` | `read`, `grep`, `find`, `ls` | the resolved absolute path |
 | `Edit` | `edit`, `write`, `foreman_move`, `foreman_copy` | the resolved absolute path (a move checks source and destination) |
 | `Write` | `write`, `foreman_move`, `foreman_copy` | the resolved absolute path |

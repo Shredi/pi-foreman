@@ -30,8 +30,6 @@ export interface LiveWait {
   note: string;
   ageSeconds: number;
   leftSeconds: number;
-  /** A foreman_bg command (the sidebar lists it with the tasks). */
-  bg?: boolean;
   /** The synthetic `pr_watch` entry: the PR numbers being watched. */
   prs?: number[];
   /** The `pr_watch` entry: the watched PRs with their repository and host, so a session carries the chip of a PR in another repository. Absent in an older live file (`prs` alone keeps the same-repository rule). */
@@ -318,7 +316,7 @@ export class LiveState {
 
   private waitList(): LiveWait[] {
     try {
-      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.filter((u) => Number.isInteger(u.n) && typeof u.repo === "string" && u.repo).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.review) ? { review: w.review.filter((u) => Number.isInteger(u.n) && typeof u.head === "string" && (u.state === "ok" || u.state === "wip" || u.state === "unreviewed")).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100), head: short(u.head, 64), state: u.state, ...(u.noChecks === true ? { noChecks: true } : {}) })) } : {}) }));
+      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.filter((u) => Number.isInteger(u.n) && typeof u.repo === "string" && u.repo).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.review) ? { review: w.review.filter((u) => Number.isInteger(u.n) && typeof u.head === "string" && (u.state === "ok" || u.state === "wip" || u.state === "unreviewed")).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100), head: short(u.head, 64), state: u.state, ...(u.noChecks === true ? { noChecks: true } : {}) })) } : {}) }));
     } catch {
       return []; // waits are best effort
     }

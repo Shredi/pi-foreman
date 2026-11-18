@@ -12,6 +12,7 @@
       "matchPackageNames": [
         "pi-subagents",
         "pi-intercom",
+        "pi-background-tasks",
         "@mariozechner/*",
         "@earendil-works/*"
       ],

@@ -74,7 +74,6 @@ class SpinnerFollowsStateTest(unittest.TestCase):
             "bg_run task": dict(extra={"tasks": [{"id": "t1", "label": "build", "ageSeconds": 5}]}),
             "pr_watch": dict(extra={"waits": [{"id": "w", "kind": "pr", "note": "", "prs": [4], "age_s": 1, "left_s": 9}]}),
             "foreman_wait": dict(extra={"waits": [{"id": "w", "kind": "timer", "note": "n", "age_s": 1, "left_s": 9}]}),
-            "foreman_bg": dict(extra={"waits": [{"id": "w", "kind": "pid", "note": "n", "bg": True, "age_s": 1, "left_s": 9}]}),
         }
         for name, kw in cases.items():
             for sym in ("idle", "waiting-external"):
