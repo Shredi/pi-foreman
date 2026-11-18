@@ -1559,6 +1559,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.planPhase = e.planPhase;
     s.planPhaseOrigin = e.planPhaseOrigin ?? "owner"; // an entry without the field: the owner's origin (a PASS does not end it)
+    if (!s.planPhase && process.env.PI_FOREMAN_PLAN_PHASE !== undefined) {
+      // a resumed pane put the launch flag back from an identity entry written before the phase ended: drop it there too, so a later resume does not bring it back
+      delete process.env.PI_FOREMAN_PLAN_PHASE;
+      recordIdentity(s, ctx, reason, { status: "none" });
+    }
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     if (e.highStakes && s.hs.isEmpty()) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
@@ -2949,6 +2954,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s.planReviews.lineage(p)?.latest.verdict === "pass" && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
         // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
         s.planPhase = false;
+        delete process.env.PI_FOREMAN_PLAN_PHASE; // child shells must not see the ended phase
         s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
       } else if (s.planPhase && s.planPhaseOrigin === "parent") {
         const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
@@ -6184,6 +6190,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
           if (s.planPhase) {
             s.planPhase = false; // an approval ends the plan phase
+            delete process.env.PI_FOREMAN_PLAN_PHASE;
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
           }
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
@@ -6566,6 +6573,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         s.planPhase = rest[0] !== "off";
         if (s.planPhase) s.planPhaseOrigin = "owner"; // the owner's phase, also inside a child: a plan-review PASS never ends it
+        else delete process.env.PI_FOREMAN_PLAN_PHASE;
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
         persistCeremonyState(s);
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");

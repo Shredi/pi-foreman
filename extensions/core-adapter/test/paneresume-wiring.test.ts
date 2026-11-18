@@ -126,7 +126,10 @@ test("a resumed opened child keeps its identity, plan phase and approval; the id
   const b = await w.adapter("startup");
   assert.equal(process.env.PI_INTERCOM_STABLE_ID, child, "the intercom id comes back through restoreIdentity");
   assert.equal(process.env.PI_FOREMAN_HANDOFF_DIR, w.handoff, "and the handoff dir");
-  assert.equal(identity().length, 1, "an unchanged identity appends nothing");
+  // the approval ended the phase, so the flag the resume put back is dropped and the identity is rewritten without planPhase (once)
+  assert.equal(process.env.PI_FOREMAN_PLAN_PHASE, undefined);
+  assert.equal(identity().length, 2);
+  assert.equal((identity()[1].data as Record<string, unknown>).planPhase, undefined);
   assert.equal(await b.launch("builder"), undefined, "the approval survived: the plan phase is over although the env says 1");
   await b.down();
 });
