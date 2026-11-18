@@ -1,77 +1,15 @@
-// A reviewer PASS marks its items (retro-harvest item 1). The reviewer's output contract
-// (agents/reviewer.md) has one `N. PASS|FAIL <evidence>` line per ledger item; on an overall PASS
-// of a `reviewer` run the
-// harness ticks each `N. PASS` item that is still open in the foreman's bound ledger, with no model
-// turn. V is never marked here: it stays with the fresh verifier. Each review run marks at most
-// once, whether its result arrives inline (launch-wait) or as a detached completion notice.
+// A reviewer PASS marks its items (retro-harvest item 1). The reviewer hands its per-item results over in its
+// `review_verdict` record (verdict.ts): on a `pass` of a counting occasion the harness ticks each item with result `pass` that is still open in the
+// ledger the review launch routed to, with no model turn, and notes each open item that carries a note. V is marked only when the launch's `items`
+// field named it (verdict.ts checks that); it goes with `--verifier` under the ledger's own V rules. Each review run marks at most once,
+// whether its result arrives inline (launch-wait) or as a detached completion notice.
 import * as fs from "node:fs";
-import { completedAgents, verdictOf, withoutCritique } from "./rounds.ts";
-import { noticeRuns } from "./launchwait.ts";
+import { openLedgerItems, type VerdictItem } from "./verdict.ts";
 
 export const MARK_NOTE = "verified by reviewer PASS";
 
 // Same item line as ladder.ts / core/scripts/ledger.py ITEM_RE.
 const ITEM_LINE = /^\s*[-*] \[(.)\]\s+(?:deferred:.*? — )?(\d+|V)\.(?:\s+|$)/;
-
-/** A line without leading decoration: list markers (`-`, `*`), backticks and bold (`**`), in any mix. */
-export function stripLineDecoration(line: string): string {
-  return line.replace(/^(?:\s+|[-*]\s+|`+|\*\*+|__)+/, "");
-}
-
-/**
- * Item numbers of the review's per-item `N. <word>` lines (word PASS or FAIL), in order, without
- * repeats. Each line may carry decoration (`- 1. PASS`, `**1. PASS**`, `` `1. PASS` ``, `1) PASS`)
- * and the doubled bench form "1. `1. PASS`". Lines inside ``` fences, the CRITIQUE block and `PASSED` do not count.
- */
-export function verdictItemsOf(text: string, word: "PASS" | "FAIL"): string[] {
-  const re = new RegExp(`^${word}\\b`);
-  return [...new Set(itemLines(text).filter((l) => re.test(l.rest)).map((l) => l.n))];
-}
-
-/** The per-item `N. <rest>` lines of a review (fences and the CRITIQUE block skipped), item numbers normalised. */
-function itemLines(text: string): { n: string; rest: string }[] {
-  const out: { n: string; rest: string }[] = [];
-  let fenced = false;
-  for (const line of withoutCritique(text).split(/\r?\n/)) {
-    if (line.trimStart().startsWith("```")) {
-      fenced = !fenced;
-      continue;
-    }
-    if (fenced) continue;
-    let rest = stripLineDecoration(line);
-    let n: string | null = null;
-    // one number, or two (outside and inside the backticks): the inner one counts
-    for (let i = 0; i < 2; i++) {
-      const m = /^(\d+)[.)]\s*/.exec(rest);
-      if (!m) break;
-      n = m[1];
-      rest = stripLineDecoration(rest.slice(m[0].length));
-    }
-    if (n !== null) out.push({ n: String(Number(n)), rest });
-  }
-  return out;
-}
-
-// PASS (closing decoration `, *, _ allowed) followed by `(`, `[` or the word partial/partially is a qualified PASS.
-const QUALIFIED = /^PASS\b[`*_]*\s*(?:[(\[]|partial(?:ly)?\b)/i;
-
-/** Item numbers of the review's unqualified `N. PASS` lines (not `PASS (…)`, `PASS [...]`, `PASS partial`), in order, without repeats. */
-export function passItemsOf(text: string): string[] {
-  return [...new Set(itemLines(text).filter((l) => /^PASS\b/.test(l.rest) && !QUALIFIED.test(l.rest)).map((l) => l.n))];
-}
-
-/** Qualified PASS and `N. PARTIAL` lines: item number and the line remainder (one line, max 200 chars); first line per item, none for an item that also has an unqualified PASS. */
-export function partialItemsOf(text: string): { n: string; note: string }[] {
-  const passed = new Set(passItemsOf(text));
-  const seen = new Set<string>();
-  const out: { n: string; note: string }[] = [];
-  for (const { n, rest } of itemLines(text)) {
-    if (passed.has(n) || seen.has(n) || !(QUALIFIED.test(rest) || /^PARTIAL\b/.test(rest))) continue;
-    seen.add(n);
-    out.push({ n, note: rest.replace(/[\x00-\x1f\x7f\x85\u2028\u2029]/g, " ").replace(/\s+/g, " ").replace(/[\s`*_]+$/, "").slice(0, 200) });
-  }
-  return out;
-}
 
 /** Numbered items that are open (`- [ ]`) in a ledger, outside ``` fences. */
 export function openItemsOf(ledger: string): Set<string> {
@@ -95,57 +33,34 @@ export function hasOpenLedgerLine(ledger: string): boolean {
   return false;
 }
 
-const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object";
+/** The note a record item carries for an open item (one line, at most 200 characters, as the tool checked it). */
+const noteOf = (i: VerdictItem): string | null => (i.result === "open" && i.note ? i.note : null);
 
-/** The output of the completed `reviewer` results with an overall PASS in a run-end event ("" = none). */
-export function reviewerPassOfRunEnd(data: unknown): string {
-  return reviewerPassesOfRunEnd(data).map((p) => p.text).join("\n");
-}
-
-/** Each completed `reviewer` result with an overall PASS: its index in `results` (0 for a single result) and output. */
-export function reviewerPassesOfRunEnd(data: unknown): { index: number; text: string }[] {
-  if (!isObj(data)) return [];
-  const results = Array.isArray(data.results) && data.results.length > 0 ? data.results : [data];
-  const out: { index: number; text: string }[] = [];
-  for (const [index, r] of results.entries()) {
-    if (!isObj(r)) continue;
-    const role = typeof r.agent === "string" ? r.agent : typeof data.agent === "string" ? data.agent : "";
-    if (role !== "reviewer") continue;
-    const completed = (r.status === undefined ? r.success === true : r.status === "completed") && r.success !== false && r.timedOut !== true && r.stopped !== true && !r.error;
-    const text = [r.output, r.summary].filter((t): t is string => typeof t === "string").join("\n");
-    if (completed && verdictOf(text) === "pass") out.push({ index, text });
-  }
-  return out;
-}
-
-/** A completion notice of exactly one `reviewer` run with an overall PASS: its run id and text, else null. */
-export function reviewerPassOfNotice(text: string): { runId: string; text: string } | null {
-  const agents = completedAgents(text);
-  const runs = noticeRuns(text);
-  if (agents.length !== 1 || agents[0] !== "reviewer" || !runs || runs.ids.length !== 1 || verdictOf(text) !== "pass") return null;
-  return { runId: runs.ids[0], text };
-}
-
-/** Tick each open `N. PASS` item of `text` through `mark` and note each open qualified/PARTIAL one through `note`; null when there is nothing to mark or note. */
+/**
+ * Tick each open item of `items` with result `pass` through `mark` (numbers first, V last) and note each open item with a note through `note`;
+ * null when there is nothing to mark or note. An item that is no longer open is skipped.
+ */
 export async function markPassItems(
-  text: string,
+  items: readonly VerdictItem[],
   ledgerFile: string,
-  mark: (n: string) => Promise<boolean>,
-  note: (n: string, text: string) => Promise<boolean> = async () => false,
+  mark: (id: string) => Promise<boolean>,
+  note: (id: string, text: string) => Promise<boolean> = async () => false,
 ): Promise<{ items: string[]; skipped: string[]; noted: string[] } | null> {
-  const wanted = passItemsOf(text);
-  const partial = partialItemsOf(text);
-  if (wanted.length === 0 && partial.length === 0) return null;
-  let open: Set<string>;
+  const passed = items.filter((i) => i.result === "pass");
+  const notes = items.filter((i) => noteOf(i) !== null && i.id !== "V");
+  if (passed.length === 0 && notes.length === 0) return null;
+  let open: { nums: number[]; v: boolean };
   try {
-    open = openItemsOf(fs.readFileSync(ledgerFile, "utf8"));
+    open = openLedgerItems(fs.readFileSync(ledgerFile, "utf8"));
   } catch {
-    open = new Set();
+    open = { nums: [], v: false };
   }
-  const items: string[] = [];
+  const isOpen = (id: VerdictItem["id"]): boolean => (id === "V" ? open.v : open.nums.includes(id));
+  const marked: string[] = [];
   const skipped: string[] = [];
-  for (const n of wanted) (open.has(n) && (await mark(n)) ? items : skipped).push(n);
+  const ordered = [...passed.filter((i) => i.id !== "V"), ...passed.filter((i) => i.id === "V")];
+  for (const i of ordered) (isOpen(i.id) && (await mark(String(i.id))) ? marked : skipped).push(String(i.id));
   const noted: string[] = [];
-  for (const p of partial) if (open.has(p.n) && (await note(p.n, p.note))) noted.push(p.n);
-  return { items, skipped, noted };
+  for (const i of notes) if (isOpen(i.id) && (await note(String(i.id), noteOf(i) ?? ""))) noted.push(String(i.id));
+  return { items: marked, skipped, noted };
 }

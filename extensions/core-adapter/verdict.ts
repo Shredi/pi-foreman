@@ -327,3 +327,9 @@ export function launchItemsOf(ledger: string | null, given: readonly ItemId[] | 
   }
   return { items: [...open.nums] };
 }
+
+/** The numbers of the items a record marks `fail` (V is not a numbered item), in order, without repeats, as strings (the ledger's item numbers). */
+export const failedItemIds = (items: readonly VerdictItem[]): string[] => [...new Set(items.filter((i) => i.result === "fail" && typeof i.id === "number").map((i) => String(i.id)))];
+
+/** The `defect` findings of a record: the blocking ones, the only kind that enters a loop key or the findings store. */
+export const defectsOf = (findings: readonly VerdictFinding[]): VerdictFinding[] => findings.filter((f) => f.kind === "defect");

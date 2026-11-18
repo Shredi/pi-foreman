@@ -8,7 +8,6 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { Verdict } from "./rounds.ts";
 import type { ReviewKind } from "./reviewloop.ts";
 
@@ -36,28 +35,19 @@ export const MAX_REVIEWS = 50;
 const MAX_SIG = 100;
 const HEAD_TIMEOUT_MS = 2000;
 
-/** Completed reviewer results of a run-end event that carry a verdict, with the cwd they ran in. */
-export function reviewsOfRunEnd(data: unknown): { role: string; verdict: Verdict; cwd: string | null }[] {
-  return reviewsWithOutput(data).map(({ role, verdict, cwd }) => ({ role, verdict, cwd }));
-}
-
-/** As reviewsOfRunEnd, each with the path of the result's output file when it has one. */
-export function reviewsWithOutput(data: unknown): { role: string; verdict: Verdict; cwd: string | null; outputPath?: string }[] {
+/**
+ * The review results of a run end that carry a verdict (from the verdict record, occasion.ts ReviewResult), each with the path of the
+ * result's output file when it has one. `data` is the run-end event the results came from (`index` is the position among its results).
+ */
+export function reviewsWithOutput(data: unknown, results: readonly { index: number; role: string; verdict: Verdict | null; cwd: string | null }[]): { role: string; verdict: Verdict; cwd: string | null; outputPath?: string }[] {
   if (!data || typeof data !== "object") return [];
   const d = data as Record<string, unknown>;
-  const results = Array.isArray(d.results) && d.results.length > 0 ? d.results : [d];
+  const kids = Array.isArray(d.results) && d.results.length > 0 ? d.results : [d];
   const out: { role: string; verdict: Verdict; cwd: string | null; outputPath?: string }[] = [];
-  for (const c of results) {
-    if (!c || typeof c !== "object") continue;
-    const r = c as Record<string, unknown>;
-    const role = typeof r.agent === "string" ? r.agent : typeof d.agent === "string" ? d.agent : "";
-    if (!REVIEW_ROLES.includes(role)) continue;
-    const completed = (r.status === undefined ? r.success === true : r.status === "completed") && r.success !== false && r.timedOut !== true && r.stopped !== true && !r.error;
-    if (!completed) continue;
-    const verdict = verdictOf([r.output, r.summary].filter((t): t is string => typeof t === "string").join("\n"));
+  for (const { index, role, verdict, cwd } of results) {
     if (!verdict) continue;
-    const cwd = typeof r.cwd === "string" && r.cwd ? r.cwd : typeof d.cwd === "string" && d.cwd ? d.cwd : null;
-    const ap = r.artifactPaths;
+    const c = kids[index];
+    const ap = c && typeof c === "object" ? (c as Record<string, unknown>).artifactPaths : undefined;
     const outputPath = ap && typeof ap === "object" ? (ap as Record<string, unknown>).outputPath : undefined;
     out.push({ role, verdict, cwd, ...(typeof outputPath === "string" && outputPath ? { outputPath } : {}) });
   }
