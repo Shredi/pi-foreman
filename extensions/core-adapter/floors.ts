@@ -946,8 +946,9 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
 // ------------------------------------------------------------------ PowerShell units, deletes with an unknown target (plan PR B, O4)
 
 const PS_REMOVERS = new Set(["remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"]);
-/** `-Recurse` (any prefix of it), `/s`, and the `rm`-style `-r`, `-rf`, `-fr`. */
-const PS_RECURSE = /^(?:-r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?|\/s|-rf|-fr)$/i;
+/** `-Recurse` (any prefix of it, also `-Recurse:$true`), a cmd switch cluster holding `s` (`/s`, `/s/q`, `/q/s`), and the `rm`-style `-r`, `-rf`, `-fr`. */
+const PS_RECURSE = /^(?:-r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?(?::\S*)?|\/(?:[a-z]\/)*s(?:\/[a-z])*|-rf|-fr)$/i;
+const CMD_SWITCHES = /^\/[a-z](?:\/[a-z])*(?::\S*)?$/i;
 const PS_ENCODED = /^-e(?:c|nc(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)?)?)?)?)?)?$/i;
 
 /**
@@ -975,7 +976,7 @@ function psRecursiveDelete(words: string[]): string[] | null {
   if (!PS_REMOVERS.has(base(words[0]))) return null;
   const rest = words.slice(1);
   if (!rest.some((w) => PS_RECURSE.test(w))) return null;
-  return rest.filter((w) => !/^-/.test(w) && !/^\/[a-z](?::\S*)?$/i.test(w));
+  return rest.filter((w) => !/^-/.test(w) && !CMD_SWITCHES.test(w));
 }
 
 /**
@@ -1052,8 +1053,15 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
     }
   }
   if (foreignSegments(segments)) {
-    for (const words of psUnits(text)) {
+    const units = psUnits(text);
+    const recursiveElsewhere = units.some((w) => w.slice(1).some((x) => PS_RECURSE.test(x)));
+    for (const words of units) {
       if (psRecursiveDelete(words)) return UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes");
+      if (PS_REMOVERS.has(base(words[0]))) {
+        const rest = words.slice(1);
+        if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) return UNKNOWN_DELETE("Remove-Item takes a splatted argument list");
+        if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) return UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes");
+      }
       const p = base(words[0]);
       if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) return UNKNOWN_DELETE("an encoded PowerShell command cannot be read");
       if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) return UNKNOWN_DELETE("iex of a computed string cannot be read");
