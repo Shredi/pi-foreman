@@ -90,6 +90,8 @@ export interface LiveFile {
   /** `owner/name` of the origin remote and the checked-out branch; each present only when known. The radar and the herdr-app mod join a feed PR to this session by equal repo and head branch. */
   repo?: string;
   branch?: string;
+  /** The owner's last answer to this session's plan checkpoint (decision word and ISO time; no plan or note text); present once an answer was given. */
+  lastCheckpoint?: { decision: "approve" | "revise" | "reject"; at: string };
   /** Written only by the last write of a session that ended on SIGHUP/SIGTERM (`LiveInit.endedBy`): its pane note stays, so a crash restart can read the record. */
   endedBy?: "signal";
   /** env HERDR_PANE_ID, else null. */
@@ -195,6 +197,7 @@ export class LiveState {
   private readonly endedByOf: (() => "signal" | undefined) | undefined;
   private readonly taskEnded: ((task: AddonTask) => boolean) | undefined;
   private endedBy: "signal" | undefined;
+  private lastCheckpoint: { decision: "approve" | "revise" | "reject"; at: string } | undefined;
   private lastEventMs = this.startedMs;
   private working = false;
   /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
@@ -371,6 +374,12 @@ export class LiveState {
     this.touch();
   }
 
+  /** The owner answered the plan checkpoint: the decision word is published in the live file for the parent's information line. */
+  recordCheckpoint(decision: "approve" | "revise" | "reject"): void {
+    this.lastCheckpoint = { decision, at: new Date().toISOString() };
+    this.flush();
+  }
+
   /** An own source opened or closed: filed under the class it declared (`holdOn`), an unclassed one counts as an owner wait. */
   private track(active: boolean, source: string): void {
     if (active) {
@@ -498,7 +507,7 @@ export class LiveState {
     }
     const blockedOn: BlockOn | undefined = this.ownerKinds.size > 0 ? "owner" : this.parentKinds.size > 0 ? "parent" : undefined;
     const blockedKind = blockedOn === "owner" ? this.ownerKind : blockedOn === "parent" ? [...this.parentKinds.values()][0] : null;
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.lastCheckpoint ? { lastCheckpoint: this.lastCheckpoint } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
   }
 
   private schedule(): void {
