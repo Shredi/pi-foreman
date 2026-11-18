@@ -188,7 +188,7 @@ function protectedSet(env: FloorEnv): Set<string> {
 
 const stripHeads = (r: string): string => r.replace(/^refs\/heads\//, "");
 
-/** The two push floors (plan Addendum 2): (a) force, delete, mirror, any `:` or `+` refspec; (b) any push whose target is a default or protected branch. */
+/** The two push floors (plan Addendum 2): (a) force, delete, mirror, a leading `+` or an empty source (`:dst`) or several `:` in a refspec (a `src:dst` refspec goes through (b) on dst); (b) any push whose target is a default or protected branch. */
 function pushFloor(call: GitCall, env: FloorEnv): FloorHit | null {
   const positional: string[] = [];
   let force: string | null = null;
@@ -1040,7 +1040,7 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
       const end = tail.findIndex((w) => w === ";" || w === "+");
       const cmd = end >= 0 ? tail.slice(0, end) : tail;
       const removes = cmd.some((w) => base(w) === "rm") && cmd.some((w) => RM_RECURSIVE.test(w));
-      const inner = cmd.join(" ").split(/\s+/);
+      const inner = cmd.join(" ").split(/[\s;&|]+/);
       const at = inner.findIndex((w) => REMOVERS.has(base(w)));
       const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && at >= 0 && inner.slice(at + 1).some((w) => RM_RECURSIVE.test(w));
       if (removes || viaRunner) return UNKNOWN_DELETE("a remover under find -exec");

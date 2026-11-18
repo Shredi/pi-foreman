@@ -131,6 +131,7 @@ test("(F) a plain push and a chain of rev-parse and status are no force push; ev
   for (const l of plain) assert.notEqual(floorOf(l)?.rule, "floor-git-push-force", l);
   const forced = ["git push -f origin x", "git push --force origin x", "git push --force-with-lease origin x", "git push --force-if-includes origin x", "git push origin +x", "git push --mirror origin", "git push --delete origin x", "git push -d origin x", "git push origin :x", "cd /w/repo && git push -u origin +feat/x 2>&1 | tail -5"];
   for (const l of forced) assert.equal(floorOf(l)?.rule, "floor-git-push-force", l);
+  for (const l of ["git push origin x:y", "git push origin HEAD:refs/heads/x", "cd /w/repo && git push origin feat/x:feat/y"]) assert.notEqual(floorOf(l)?.rule, "floor-git-push-force", l);
 });
 
 // ---- revision: a field is floored for what the same text is floored for as a shell line (when it is a real command), and never for more
