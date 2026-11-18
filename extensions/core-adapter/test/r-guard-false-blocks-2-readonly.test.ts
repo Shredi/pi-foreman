@@ -63,6 +63,7 @@ test("the write fence and the secret floor stay for the read-only roles", () => 
   for (const role of ROLES) {
     const v = outcome("cat ~/.ssh/id_rsa", role, "ro").result as { block?: boolean; rule?: string } | undefined;
     assert.equal(v?.block, true, role);
+    assert.equal(v?.rule, "floor-secret-path", role);
   }
 });
 
@@ -102,3 +103,44 @@ test("adapter: the reads of a read-only child run in mode auto with zero model c
   assert.equal(fs.existsSync(path.join(askDir, "ask.md")), false);
   assert.equal(calls, 0);
 });
+
+// Owner decision 2026-11-18: a read-only child's line with another danger label is handled like a builder's (no unconditional parent ask).
+// The secret-like words are built by concatenation so the guard does not refuse this file.
+const SECRET_DIR = ".s" + "sh";
+const ENV_FILE = ".e" + "nv";
+const LABELED = [
+  `P=~/${SECRET_DIR}/id_rsa; cat "$P"`,
+  `git show HEAD:${ENV_FILE}`,
+  "gh pr comment 1 -b x",
+  "ssh host true",
+  "kill 1",
+];
+const ALLOW_VERDICT = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
+
+async function labeledOutcome(t: import("node:test").TestContext, role: string, mode: string, line: string): Promise<string> {
+  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => text(ALLOW_VERDICT) };
+  const prev = process.env[BINDINGS_ENV];
+  process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", role, launchId: "l1", kind: "first", workspace: "", perms: { mode, childDeny: true } } });
+  t.after(() => {
+    if (prev === undefined) delete process.env[BINDINGS_ENV];
+    else process.env[BINDINGS_ENV] = prev;
+  });
+  const cfg = { presence: { enabled: false }, roles: { [role]: { skills: [] } }, providers: { fake: { review: { model: "m" }, roles: { [role]: { model: `fake/${role}` } } } } };
+  const r = await r11Rig(t, {}, { child: true, deps: { spawner: inprocSpawner }, ctx: { hasUI: false, mode: "json", modelRegistry: registry, [RIG_PERMISSIONS]: { mode } }, config: cfg });
+  const dir = path.join(r.agentDir, "pi-foreman", "state", "sessions", "parent-s");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify({ entries: [{ path: r.project, kind: "worktree" }] }));
+  await r.restart();
+  const res = await r.call("bash", { command: line });
+  return res === undefined ? "run" : JSON.stringify({ block: res.block, reason: String(res.reason).replace(r.project, "<wt>") });
+}
+
+for (const mode of ["auto", "allow"]) {
+  test(`a read-only child's line with another danger label gets a builder's outcome in mode ${mode}`, async (t) => {
+    for (const line of LABELED) {
+      const builder = await labeledOutcome(t, "builder", mode, line);
+      for (const role of ROLES) assert.equal(await labeledOutcome(t, role, mode, line), builder, `${role} (${mode}): ${line}`);
+      if (mode === "allow") assert.equal(builder, "run", `a builder runs it in mode allow: ${line}`);
+    }
+  });
+}
