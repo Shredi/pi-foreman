@@ -74,23 +74,26 @@ test("redactCommand masks quoted values, -U, combined short flags and spaced quo
   }
 });
 
-// Linear time is a ratio, not a wall-time bound (which a loaded runner breaks): 4x the input costs about 4x (3.7-4.4 seen), a quadratic rule about 16x.
-const bestMs = (input: string): number => {
-  let best = Infinity;
-  for (let i = 0; i < 10; i++) {
-    const t0 = performance.now();
-    redactCommand(input);
-    best = Math.min(best, performance.now() - t0);
-  }
-  return best;
+// Linear time is a ratio, not a wall-time bound (which a loaded runner breaks). Method as in redact-linear.test.ts: 4x the input costs about 4x, a
+// quadratic rule about 16x. Each pair is timed back to back and the statistic is the smallest large/small ratio over 10 pairs: a stall of a loaded
+// machine inflates one side of a pair at a time, so a clean pair shows the true growth. The sizes keep the small sample well above a millisecond.
+const timeMs = (input: string): number => {
+  const t0 = performance.now();
+  redactCommand(input);
+  return performance.now() - t0;
 };
 
-test("redactCommand runs in linear time on 100k-character option-start lines", () => {
+test("redactCommand runs in linear time on option-start lines (paired ratio, 200k to 800k)", () => {
   for (const unit of ["(-u", ";-u", "&--user=", "--password ", " --proxy-user ", " -vu "]) {
-    const small = bestMs(unit.repeat(Math.ceil(25000 / unit.length)));
-    const large = bestMs(unit.repeat(Math.ceil(100000 / unit.length)));
-    const ratio = large / Math.max(small, 0.001);
-    assert.ok(ratio < 8, `${JSON.stringify(unit)}: 25k ${small.toFixed(2)} ms, 100k ${large.toFixed(2)} ms, ratio ${ratio.toFixed(1)}`);
+    const small = unit.repeat(Math.ceil(200000 / unit.length));
+    const large = unit.repeat(Math.ceil(800000 / unit.length));
+    let best = Infinity;
+    for (let i = 0; i < 10; i++) {
+      const a = timeMs(small);
+      const b = timeMs(large);
+      best = Math.min(best, b / a);
+    }
+    assert.ok(best < 8, `${JSON.stringify(unit)}: 200k to 800k ratio ${best.toFixed(1)}`);
   }
 });
 
