@@ -104,11 +104,14 @@ test("overdue: a baseline that stays unreadable gives the same event with the un
   assert.ok(lines.includes(`report to the parent: PR #7 expected checks not reported on ${SHA.slice(0, 7)}, not counted as passed`), "a child reports it to its parent");
 });
 
-test("overdue under a readable required list: a required check that never appears gives the line, no pass", () => {
+test("overdue under a readable required list: a required check that never appears is a waiting one: no overdue line, the waiting pass past the hold (D101)", () => {
   const s = snap({ runs: [run("lint", "passed")], required: ["ci-ok"], expect: { missing: ["ci-ok"], overdue: true } });
-  const r = tick(baselineOf(snap({ runs: [run("lint", "pending")], required: ["ci-ok"] })), s, BOUND);
-  assert.deepEqual(events(r), [OVERDUE]);
-  assert.deepEqual(r.delta?.unreported, ["ci-ok"]);
+  const held = tick(baselineOf(snap({ runs: [run("lint", "pending")], required: ["ci-ok"] })), s, BOUND);
+  assert.deepEqual(events(held), [], "the hold starts when the run set is first seen");
+  const r = tick(held.state, s, BOUND + SETTLE);
+  assert.deepEqual(events(r), ["checks finished: pass, waiting on required checks"]);
+  assert.equal(r.delta?.unreported, undefined);
+  assert.deepEqual(r.delta?.waiting, ["ci-ok"]);
 });
 
 test("the overdue line is a no_checks event: a rule silencing no_checks silences it, and it is not replayed", () => {

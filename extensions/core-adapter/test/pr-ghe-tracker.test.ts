@@ -72,7 +72,7 @@ test("an old tracked line and state entry without a host read as github.com; a l
   }
 });
 
-test("addTracked: the host is written lowercase for a non-github.com host only; the same o/r#n on two hosts are two lines", async () => {
+test("addTracked: the host is written lowercase (github.com too); a host-less github.com line is upgraded in place; the same o/r#n on two hosts are two lines", async () => {
   const dir = mkTestTmp("prghe-add-");
   try {
     assert.equal(await addTracked(dir, "acme/app", 7), "added");
@@ -80,7 +80,7 @@ test("addTracked: the host is written lowercase for a non-github.com host only; 
     assert.equal(await addTracked(dir, "acme/app", 7, undefined, GHE.toUpperCase()), "added");
     assert.equal(await addTracked(dir, "acme/app", 7, undefined, GHE), "present");
     const prs = JSON.parse(fs.readFileSync(trackedFile(dir), "utf8")).prs as Record<string, unknown>[];
-    assert.deepEqual(prs.map(({ addedAt: _a, ...l }) => l), [{ repo: "acme/app", number: 7 }, { repo: "acme/app", number: 7, host: GHE }]);
+    assert.deepEqual(prs.map(({ addedAt: _a, ...l }) => l), [{ repo: "acme/app", number: 7, host: "github.com" }, { repo: "acme/app", number: 7, host: GHE }]);
   } finally {
     rmTestTmp(dir);
   }
@@ -115,9 +115,13 @@ function rig(o: { hosts?: GithubHosts; at?: { host: string; repo: string } | nul
   return { call, callIn, spawned, tracked, watches, sent, hosts };
 }
 
-test("pr_follow: the host defaults to the first list entry, a listed host is tracked with its host, an unlisted one is refused naming the list", async () => {
+test("pr_follow: no host with several listed and no checkout match is refused; a listed host is tracked with its host, an unlisted one is refused naming the list", async () => {
   const h = rig({ hosts: { hosts: [GHE, "github.com"] } });
-  const a = await h.call(PR_FOLLOW, { repo: "acme/app", number: 7 });
+  const none = await h.call(PR_FOLLOW, { repo: "acme/app", number: 7 });
+  assert.equal(none.isError, true);
+  assert.equal(none.details.decision, "host_unresolved");
+  assert.deepEqual(h.tracked, [], "nothing written");
+  const a = await h.call(PR_FOLLOW, { repo: "acme/app", number: 7, host: GHE });
   assert.deepEqual(h.tracked, [["acme/app", 7, GHE]]);
   assert.match(a.content[0].text, new RegExp(`^pr_follow: following ${GHE.replace(/\./g, "\\.")}/acme/app#7;`));
   const b = await h.call(PR_FOLLOW, { repo: "acme/app", number: 8, host: "GitHub.com" });
@@ -379,10 +383,12 @@ test("pr_watch {repo, host, number} from a folder that is not a git checkout arm
     assert.deepEqual(h.tracked, [["acme/app", 7, GHE_COM]]);
     assert.deepEqual(h.watches.list().map((w) => [w.key.host, w.key.repo, w.n]), [[GHE_COM, "acme/app", 7]]);
     assert.deepEqual(h.spawned, [], "no host call");
-    // the host defaults to the first list entry, as pr_follow does
+    // no host, several listed, no remote to read it from: refused, as pr_follow does; nothing armed
     const d = rig({ hosts: { hosts: [GHE_COM, "github.com"] }, at: null });
-    assert.equal((await d.callIn(dir, "pr_watch", { repo: "acme/app", number: 8 })).details.decision, "watching");
-    assert.deepEqual(d.watches.list().map((w) => w.key.host), [GHE_COM]);
+    const refused = await d.callIn(dir, "pr_watch", { repo: "acme/app", number: 8 });
+    assert.equal(refused.details.decision, "host_unresolved");
+    assert.deepEqual(d.watches.list(), []);
+    assert.deepEqual(d.tracked, []);
   } finally {
     rmTestTmp(dir);
   }

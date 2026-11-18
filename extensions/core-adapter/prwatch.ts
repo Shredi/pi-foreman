@@ -263,7 +263,17 @@ const gatingOf = (runs: Run[]): Run[] => runs.filter((r) => r.gates !== false);
 /** Whether a run is the required check `name`. */
 const isCheck = (r: Run, name: string): boolean => r.name === name || rawName(r) === name;
 
-/** A pass is not settled while a required check has no run on the head (a failure is settled at once). */
+/**
+ * The required check names with no run on the head, only when at least one gating run exists and every gating run passed (no pending, failed or missing one); else `[]`.
+ * Such a pass is a waiting pass: the host reports those checks only at merge time (a merge queue, a gate), so no run may come before the merge.
+ */
+export const waitingOf = (all: Run[], required?: string[] | null): string[] => {
+  const runs = gatingOf(all);
+  if (!required?.length || runs.length === 0 || runs.some((r) => r.bucket !== "passed")) return [];
+  return required.filter((n) => !all.some((r) => isCheck(r, n)));
+};
+
+/** A pass is not settled while a required check has no run on the head (a failure is settled at once); `waitingOf` names the case the settle hold ends. */
 export const settledOf = (all: Run[], required?: string[] | null): { settled: boolean; result: "pass" | "fail" | "" } => {
   const runs = gatingOf(all);
   const c = countRuns(runs);
@@ -277,7 +287,18 @@ export const settledOf = (all: Run[], required?: string[] | null): { settled: bo
 export const EXPECT_BOUND_MS = 10 * 60_000;
 
 /** Expected checks are still to come: a missing name or an unknown baseline (the facts of the tracker). A failure is never vetoed. */
-const vetoOf = (snap: { expect?: ExpectFacts }): boolean => !!snap.expect && (snap.expect.unknown === true || snap.expect.missing.length > 0);
+const vetoOf = (snap: { expect?: ExpectFacts; runs: Run[]; required?: string[] | null }): boolean => {
+  const e = snap.expect;
+  if (!e) return false;
+  if (e.unknown === true) return true;
+  if (e.missing.length === 0) return false;
+  const waiting = waitingOf(snap.runs, snap.required);
+  return e.missing.some((n) => !waiting.includes(n));
+};
+
+/** The header text of a waiting pass and the line a child sends for it (no check name in either: names are host text, data lines only). */
+const WAITING_HEADER = "waiting on required checks";
+const WAITING_LINE = "checks passed, waiting on required checks (approval or merge queue)";
 
 /** The checks part of the readiness rule; `leaving`: the managed-draft leave step, which also takes a veto that is overdue with nothing pending or failed (zero runs included). */
 function checksInput(st: WatchState, snap: WatchSnapshot, now: number, settleMs: number, leaving: boolean): "green" | "red" | "running" {
@@ -287,8 +308,9 @@ function checksInput(st: WatchState, snap: WatchSnapshot, now: number, settleMs:
   if (gating.length === 0) return st.noCi >= 2 && !veto ? "green" : "running";
   const s = settledOf(snap.runs, snap.required);
   if (s.result === "fail") return "red";
+  const result = !veto && waitingOf(snap.runs, snap.required).length > 0 ? "pass" : s.result;
   const holding = !!st.passSince && st.passSince.head === snap.head && now - st.passSince.at < settleMs;
-  return s.result === "pass" && !veto && st.ci === `${snap.head}:pass` && !holding ? "green" : "running";
+  return result === "pass" && !veto && st.ci === `${snap.head}:pass` && !holding ? "green" : "running";
 }
 
 /**
@@ -388,6 +410,8 @@ export interface Delta {
   counts: Counts | null;
   failed: { name: string; url: string; source?: string }[];
   missing: string[];
+  /** The required checks with no run of a waiting pass (host text, data lines only). */
+  waiting?: string[];
   newComments: { id: string; kind: string; author: string; path?: string; line?: number; body: string; source?: string; state?: string }[];
   moreComments: number;
   /** Child session lines (PI_FOREMAN_HANDOFF_DIR set). */
@@ -443,13 +467,17 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   // a pending run the tracker made up for a source that did not answer does not reset the recorded result
   if (gating.some((r) => r.bucket === "pending" && !r.noAnswer)) st.ci = "";
   let s = settledOf(snap.runs, snap.required);
-  // expected checks are still to come (a missing name or an unreadable baseline): no pass whatever the settle time; a failure stays immediate
+  // expected checks are still to come (a missing name that is not a waiting one, or an unreadable baseline): no pass whatever the settle time; a failure stays immediate
   const veto = vetoOf(snap);
   if (veto && s.result === "pass") s = { settled: false, result: "" };
+  // a waiting pass: every check that ran passed and only required checks without a run are missing; it is a pass held for the settle time like one without a required set
+  const waiting = veto ? [] : waitingOf(snap.runs, snap.required);
+  const waitPass = waiting.length > 0;
+  if (waitPass) s = { settled: true, result: "pass" };
   // no readable required set to wait for (none, or unreadable): a pass holds until the same gating run set has stood for the settle time;
   // while the ready line is still to come the hold covers it too (a watch armed inside the window starts with the early pass as reported)
   let held = false;
-  if (s.result === "pass" && gate && gate.settleMs > 0 && !snap.required?.length && (st.ci !== `${snap.head}:pass` || (child && st.readyHead !== snap.head))) {
+  if (s.result === "pass" && gate && gate.settleMs > 0 && (!snap.required?.length || waitPass) && (st.ci !== `${snap.head}:pass` || (child && st.readyHead !== snap.head))) {
     const h = holdPass(st.passSince, snap.head, snap.runs, gate.now, gate.settleMs);
     st.passSince = h.since;
     held = h.held;
@@ -463,7 +491,8 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     ciFired = true;
     ciWakes = wakeOf("checks_settled", "github");
     if (ciWakes) {
-      events.push(snap.draft ? `checks finished: ${s.result}, draft` : `checks finished: ${s.result}`);
+      events.push(`checks finished: ${s.result}${snap.draft ? ", draft" : ""}${waitPass ? `, ${WAITING_HEADER}` : ""}`);
+      if (waitPass) d.waiting = waiting;
       d.failed = snap.runs.filter((r) => r.bucket === "failed").map(asked);
       d.missing = snap.runs.filter((r) => r.bucket === "missing").map((r) => r.name);
     }
@@ -536,7 +565,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   }
 
   // with the rule input the line also needs the review facts (`ok`); a withheld line leaves the latch unset, so it is sent once the rule holds
-  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head && (!rule || rule.ok)) {
+  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !waitPass && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head && (!rule || rule.ok)) {
     st.readyHead = snap.head;
     d.ready = true;
     events.push("ready to merge");
@@ -548,9 +577,10 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     events.push("ready to merge, no checks");
   }
   // blocked or behind: never silent, once per head and state; like the ready line it always wakes (not a rule event)
-  const notReady = NOT_READY_LINES[snap.mergeState ?? ""];
-  if (child && green && snap.mergeable === "mergeable" && !snap.draft && notReady && st.notReadyKey !== `${snap.head}:${snap.mergeState}`) {
-    st.notReadyKey = `${snap.head}:${snap.mergeState}`;
+  const notReady = waitPass ? WAITING_LINE : NOT_READY_LINES[snap.mergeState ?? ""];
+  const notReadyKey = `${snap.head}:${waitPass ? "waiting" : snap.mergeState}`;
+  if (child && green && snap.mergeable === "mergeable" && !snap.draft && notReady && st.notReadyKey !== notReadyKey) {
+    st.notReadyKey = notReadyKey;
     d.notReady = notReady;
     events.push(notReady);
   }
@@ -578,9 +608,10 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   for (const f of d.failed.slice(0, 10)) lines.push(`- failed ${f.source ? `[${oneLine(f.source, 40)}] ` : ""}${oneLine(f.name, 120)} ${oneLine(f.url, 200)}`.trimEnd());
   for (const m of d.missing.slice(0, 10)) lines.push(`- missing ${oneLine(m, 120)}`);
   for (const m of (d.unreported ?? []).slice(0, 10)) lines.push(`- not reported ${oneLine(m, 120)}`);
+  for (const m of (d.waiting ?? []).slice(0, 10)) lines.push(`- waiting ${oneLine(m, 120)}`);
   if (d.unreadable) lines.push("- expected checks unreadable");
   for (const c of d.newComments) lines.push(`- ${c.source ? `[${oneLine(c.source, 40)}] ` : ""}${c.kind} ${oneLine(c.author, 60)}${c.state ? ` (${oneLine(c.state, 40)})` : ""}${c.path ? ` ${oneLine(c.path, 120)}${c.line !== undefined ? `:${c.line}` : ""}` : ""}: ${oneLine(c.body)}`);
-  let more = d.moreComments + Math.max(0, d.failed.length - 10) + Math.max(0, d.missing.length - 10) + Math.max(0, (d.unreported?.length ?? 0) - 10);
+  let more = d.moreComments + Math.max(0, d.failed.length - 10) + Math.max(0, d.missing.length - 10) + Math.max(0, (d.unreported?.length ?? 0) - 10) + Math.max(0, (d.waiting?.length ?? 0) - 10);
   let content = "";
   for (let i = 0; i < lines.length; i++) {
     const next = (content ? content + "\n" : "") + lines[i];
@@ -1371,8 +1402,9 @@ export class PrWatches {
 
   /** The checks-passed message of a draft PR the watch takes out of draft on this tick: `leaving draft` for `draft`, and the line for a child or a session without a parent. */
   private leavingDelta(d: Delta, child: boolean): Delta {
-    if (!d.events.includes("checks finished: pass, draft")) return d;
-    return { ...d, events: d.events.map((e) => (e === "checks finished: pass, draft" ? "checks finished: pass, leaving draft" : e)), leavingDraft: child ? "child" : "alone" };
+    const draftLine = (e: string): boolean => e === "checks finished: pass, draft" || e === `checks finished: pass, draft, ${WAITING_HEADER}`;
+    if (!d.events.some(draftLine)) return d;
+    return { ...d, events: d.events.map((e) => (draftLine(e) ? e.replace("pass, draft", "pass, leaving draft") : e)), leavingDraft: child ? "child" : "alone" };
   }
 
   /**

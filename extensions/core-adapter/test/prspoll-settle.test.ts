@@ -73,11 +73,15 @@ test("a complete required set is settled at once", async () => {
   assert.equal((await h.poll(0)).unsettled, undefined);
 });
 
-test("a required check without a run is unsettled, even past the hold", async () => {
+test("a required check without a run is unsettled during the hold; past it the entry is settled and names the waiting check (D101)", async () => {
   const h = await setup();
   h.world.row = row({ required: ["ci", "lint"] });
-  await h.poll(0);
-  assert.equal((await h.poll(STEP * 10)).unsettled, true);
+  const first = await h.poll(0);
+  assert.equal(first.unsettled, true);
+  assert.equal(first.waiting, undefined);
+  const later = await h.poll(STEP * 10);
+  assert.equal(later.unsettled, undefined);
+  assert.deepEqual(later.waiting, ["lint"]);
 });
 
 test("a failed run is not flagged and the failure stays in the snap", async () => {

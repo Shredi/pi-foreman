@@ -90,7 +90,6 @@ test("a watch armed during the gap later reports the real pass, and the ready la
 const variants: [string, Partial<WatchSnapshot>, Run[]][] = [
   ["zero runs", { runs: [], expect: { missing: ["ci"] } }, [run("quick", "passed"), run("ci", "passed")]],
   ["one passed quick check", { runs: [run("quick", "passed")], expect: { missing: ["ci"] } }, [run("quick", "passed"), run("ci", "passed")]],
-  ["a readable required list", { runs: [run("lint", "passed")], required: ["ci-ok"], expect: { missing: ["ci-ok"] } }, [run("lint", "passed"), run("ci-ok", "passed")]],
 ];
 for (const [title, part, done] of variants) {
   test(`a managed draft whose expected checks never start in draft leaves draft at the bound, then gets the real result: ${title}`, async () => {

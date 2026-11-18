@@ -13,7 +13,7 @@ import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { resolveGithubHosts } from "./prhost.ts";
 import type { GithubHosts } from "./prhost.ts";
-import { expectStep, holdPass, pollWatchBatch, settleMsOf, settledOf } from "./prwatch.ts";
+import { expectStep, holdPass, oneLine, pollWatchBatch, settleMsOf, settledOf, waitingOf } from "./prwatch.ts";
 import type { CommentEntry, RunOp, SourceStatus, WatchPoll } from "./prwatch.ts";
 import { inScope, noAnswerRun, parsePrSources, runSource, sourceComments, sourceRuns } from "./prsources.ts";
 import type { PrContext, SourceCfg, SourceResult } from "./prsources.ts";
@@ -108,7 +108,7 @@ function readState(agentDir: string): StateDoc | null {
   const baselines: Record<string, BaselineEntry> = {};
   if (isObj(j.baselines))
     for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at };
-  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}) };
+  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(finite(j.hostlessDroppedAt) ? { hostlessDroppedAt: j.hostlessDroppedAt } : {}) };
 }
 
 const validEntry = (e: Record<string, unknown>): boolean => typeof e.repo === "string" && finite(e.number) && finite(e.at);
@@ -148,7 +148,7 @@ function setOff(agentDir: string, now: number, off: boolean): void {
     withStateLock(agentDir, now, () => {
       const st = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
       if ((st.off === true) === off) return;
-      const next: StateDoc = { v: 1, trackedAt: st.trackedAt, prs: st.prs, ...(st.baselines ? { baselines: st.baselines } : {}), ...(off ? { off: true as const } : {}) };
+      const next: StateDoc = { v: 1, trackedAt: st.trackedAt, prs: st.prs, ...(st.baselines ? { baselines: st.baselines } : {}), ...(st.hostlessDroppedAt !== undefined ? { hostlessDroppedAt: st.hostlessDroppedAt } : {}), ...(off ? { off: true as const } : {}) };
       writeAtomic(trackedStateFile(agentDir), next);
     });
   } catch {
@@ -234,12 +234,34 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const { agentDir } = deps;
   const t0 = deps.now();
   const state = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
-  const listed = readTracked(agentDir);
+  let listed = readTracked(agentDir);
   if (listed.kind === "bad") {
     res.skipped = "list_unreadable";
     markHidden(state.prs, sx.hide);
-    if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs, ...(state.baselines ? { baselines: state.baselines } : {}) });
+    if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs, ...(state.baselines ? { baselines: state.baselines } : {}), ...(state.hostlessDroppedAt !== undefined ? { hostlessDroppedAt: state.hostlessDroppedAt } : {}) });
     return;
+  }
+  // once, with more than one host configured: the lines without a `host` field go (they were polled as github.com, and an older default may have put them on the wrong host);
+  // the marker is written with the state, so a line a session on older code adds later stays
+  let hostlessDroppedAt = state.hostlessDroppedAt;
+  if (hosts.length > 1 && hostlessDroppedAt === undefined) {
+    const done = await withTrackedLock(agentDir, () => {
+      const cur = readTracked(agentDir);
+      if (cur.kind !== "ok") return 0;
+      const keep = cur.lines.filter((l) => !(usableLine(l) && isObj(l) && l.host === undefined));
+      if (keep.length === cur.lines.length) return 0;
+      writeTracked(agentDir, keep);
+      return cur.lines.length - keep.length;
+    }, deps.now);
+    if (done) {
+      hostlessDroppedAt = t0;
+      if (done.value > 0) {
+        const note = `removed ${done.value} tracked PR line${done.value === 1 ? "" : "s"} without a host (several hosts are configured); follow ${done.value === 1 ? "it" : "them"} again`;
+        res.error = res.error ? `${res.error}; ${note}` : note;
+      }
+      listed = readTracked(agentDir);
+      if (listed.kind === "bad") return;
+    }
   }
   const lines = listed.kind === "ok" ? listed.lines : [];
   const seenKeys = new Set<string>();
@@ -318,10 +340,13 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       const row = rows.get(rk);
       const meta = row ? metaOf(row.row) : prev?.meta;
       const s = settledOf(snap.runs, snap.required);
-      const hold = s.result === "pass" && sx.settleMs > 0 && !snap.required?.length ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
+      // a waiting pass (only required checks without a run are missing) is held like a pass without a required set, then it is settled and carries the names
+      const waiting = waitingOf(snap.runs, snap.required);
+      const hold = sx.settleMs > 0 && ((s.result === "pass" && !snap.required?.length) || waiting.length > 0) ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
       const held = hold?.held ?? false;
-      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && (!s.settled || held);
-      prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), at: now };
+      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && ((!s.settled && waiting.length === 0) || held);
+      const names = !held && waiting.length > 0 ? waiting.slice(0, 10).map((n) => oneLine(n, 120)) : [];
+      prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), ...(names.length ? { waiting: names } : {}), at: now };
       if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(0, MAX_COMMENTS).map(cap) };
     } else if ("error" in r && r.error === DEADLINE) {
       // keeps its entry and its turn
@@ -339,7 +364,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
   markHidden(prs, sx.hide);
   if (JSON.stringify(newComments) !== commentsBefore) writeAtomic(trackedCommentsFile(agentDir), { v: 1, prs: newComments });
-  writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs, ...(Object.keys(baselines).length ? { baselines } : {}) });
+  writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(hostlessDroppedAt !== undefined ? { hostlessDroppedAt } : {}) });
   if (drop.size) {
     const done = await withTrackedLock(agentDir, () => {
       const cur = readTracked(agentDir);
@@ -527,7 +552,14 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     e.exp = state;
     const { expect: _drop, ...rest } = e.snap;
     e.snap = facts ? { ...rest, expect: facts } : rest;
-    if (facts && settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed")) e.unsettled = true;
+    const open = settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed");
+    // a missing required name that is a waiting one does not veto (prwatch.ts vetoOf); a source run merged in since the hold may have ended the waiting pass
+    const waiting = waitingOf(e.snap.runs, e.snap.required);
+    if (e.waiting && waiting.length === 0) {
+      delete e.waiting;
+      if (open) e.unsettled = true;
+    }
+    if (facts && open && (facts.unknown === true || facts.missing.some((n) => !waiting.includes(n)))) e.unsettled = true;
   });
 }
 
