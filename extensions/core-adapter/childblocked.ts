@@ -99,7 +99,8 @@ export class ChildBlocked {
   private sent = new Map<string, Sent>();
   /** The checkpoint answers already reported or seeded: key `${label}\n${at}` -> child. */
   private answered = new Map<string, string>();
-  private readonly startedMs: number;
+  /** The first start of this session's watcher, kept in the state file so a reload does not move it. */
+  private startedMs: number;
   private cancel: Cancel | null = null;
   /** The remote children whose registry ask was seen: when first, and whether the reminder went out (memory only; it ends with the entry). */
   private readonly remoteAsks = new Map<string, { seq: unknown; first: number; reminded: boolean }>();
@@ -107,7 +108,7 @@ export class ChildBlocked {
   constructor(d: ChildBlockedDeps) {
     this.d = d;
     this.startedMs = (d.now ?? Date.now)();
-    this.load();
+    if (!this.load()) this.save();
   }
 
   start(): void {
@@ -241,7 +242,7 @@ export class ChildBlocked {
     const beat = typeof f.heartbeatAt === "string" ? Date.parse(f.heartbeatAt) : NaN;
     if (!Number.isFinite(beat) || now - beat > STALE_LIVE_MS) return undefined;
     const cp = f.lastCheckpoint;
-    const answer = cp && typeof cp.decision === "string" && cp.decision in ANSWER_WORDS && typeof cp.at === "string" && Number.isFinite(Date.parse(cp.at)) ? { decision: cp.decision, at: cp.at } : undefined;
+    const answer = cp && typeof cp.decision === "string" && Object.hasOwn(ANSWER_WORDS, cp.decision) && typeof cp.at === "string" && Number.isFinite(Date.parse(cp.at)) ? { decision: cp.decision, at: cp.at } : undefined;
     if (f.blockedOn !== "owner") return { blocked: false, ...(answer ? { answer } : {}) };
     const since = typeof f.ownerBlockedSince === "string" ? Date.parse(f.ownerBlockedSince) : NaN;
     return Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind, ...(answer ? { answer } : {}) } : undefined;
@@ -257,15 +258,21 @@ export class ChildBlocked {
     return Number.isFinite(since) ? { blocked: true, since, kind: "dialog" } : undefined;
   }
 
-  private load(): void {
+  /** True when a state file with a start time was read. */
+  private load(): boolean {
     try {
-      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { sent?: Record<string, Partial<Sent> & { ask?: true }>; answered?: Record<string, unknown> };
+      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { startedMs?: unknown; sent?: Record<string, Partial<Sent> & { ask?: true }>; answered?: Record<string, unknown> };
       for (const [k, c] of Object.entries(j.answered ?? {})) if (typeof c === "string") this.answered.set(k, c);
       // an `ask: true` record of an older state file is dropped: it is no owner episode
       for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since });
+      if (typeof j.startedMs === "number" && Number.isFinite(j.startedMs)) {
+        this.startedMs = j.startedMs;
+        return true;
+      }
     } catch {
       // no file yet
     }
+    return false;
   }
 
   /** Atomic: temp file in the same folder, then rename. */
@@ -274,7 +281,7 @@ export class ChildBlocked {
     const tmp = `${file}.${process.pid}.tmp`;
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, sent: Object.fromEntries(this.sent), answered: Object.fromEntries(this.answered) })}\n`, "utf8");
+      fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, startedMs: this.startedMs, sent: Object.fromEntries(this.sent), answered: Object.fromEntries(this.answered) })}\n`, "utf8");
       fs.renameSync(tmp, file);
     } catch {
       try {

@@ -97,6 +97,35 @@ test("an answer older than this session's start is seeded, not replayed", (t) =>
   assert.equal(r.sent.length, 0);
 });
 
+test("inherited object keys are no answer: no line", (t) => {
+  const r = rig();
+  t.after(r.cleanup);
+  r.live({});
+  const cb = r.mk();
+  cb.tick();
+  for (const decision of ["constructor", "toString", "__proto__"]) {
+    r.advance(MIN);
+    r.live(r.answer(decision));
+    cb.tick();
+  }
+  assert.equal(r.sent.length, 0);
+});
+
+test("an answer given between the last tick and a parent reload is reported once", (t) => {
+  const r = rig();
+  t.after(r.cleanup);
+  r.live({});
+  r.mk().tick();
+  r.advance(MIN);
+  r.live(r.answer("approve"));
+  r.advance(MIN); // the parent reloads later: a new ChildBlocked on the same state file
+  const cb = r.mk();
+  cb.tick();
+  cb.tick();
+  r.mk().tick();
+  assert.deepEqual(r.sent.map((s) => s.text), ["Child session job: plan approved by the owner."]);
+});
+
 test("no answer: no line (dismissed, no UI, pending)", (t) => {
   const r = rig();
   t.after(r.cleanup);
