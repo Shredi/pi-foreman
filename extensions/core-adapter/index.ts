@@ -223,7 +223,7 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESS
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
+import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -465,6 +465,8 @@ interface Session {
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
+  /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
+  ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
   hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
@@ -1083,6 +1085,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewFailOpen: false,
       hs: new HighStakes(),
       hsReminded: null,
+      ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
@@ -1253,6 +1256,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
+  /** The ledger part of a PassMark and of the repeat-review signal: the bound path and the count of subject changes (`path#rev`), null when no ledger is bound. */
+  function ledgerSignal(s: Session): string | null {
+    const f = boundLedger(s.markerDir, s.id);
+    return f === null ? null : `${f}#${s.ledgerRev}`;
+  }
+
+  /** Whether a resolved tool path is the bound ledger (selffinish's samePath: native real paths, Windows case and separators folded, so an 8.3 short temp path matches). */
+  function isBoundLedgerPath(p: string | null, bound: string): boolean {
+    return p !== null && samePath(p, bound);
+  }
+
+  /** A subject change to the bound ledger (an item added or rewritten, a write or edit of the file): the next reviewer launch is allowed after a PASS. Saved at once. */
+  function bumpLedgerRev(s: Session): void {
+    s.ledgerRev += 1;
+    persistCeremonyState(s);
+  }
+
   /** Append the `pi-foreman-ceremony-state` session entry (planstate.ts) when the state differs from the last one appended or restored. */
   function persistCeremonyState(s: Session): void {
     if (s.isChild || !s.ceremonyRestored) return;
@@ -1273,6 +1293,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       highStakes: s.hs.snapshot(),
       pause: s.pauseSaved,
       hsReminded: s.hsReminded,
+      ledgerRev: s.ledgerRev,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1580,6 +1601,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
+    if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
       s.work = { ...e.pause.work };
@@ -3963,7 +3985,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const signals = new Set<string>();
             for (const m of marks) {
               if (!m) continue;
-              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: boundLedger(s.markerDir, s.id), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
+              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: ledgerSignal(s), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
             }
             if (signals.size > 0) s.trace?.emit({ event: "review_dup_allowed", agent, signals: [...signals].join(",") });
             else {
@@ -4687,7 +4709,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         delete s.passMarks[k];
       }
       const at = Date.now();
-      const ledger = boundLedger(s.markerDir, s.id);
+      const ledger = ledgerSignal(s);
       for (const k of passedKeys) {
         const cwd = k === SESSION_WIDE ? (reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd) : k;
         if (k !== SESSION_WIDE) s.builderRunsByRoot[k] ??= 0;
@@ -4791,6 +4813,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   function planOpts(s: Session, ctx: ExtensionContext) {
     return { cwd: ctx.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
+  }
+
+  /**
+   * A plan-only session may close V on plan reviews: no builder launched (counted at launch, and the saved step count), no project edit counted, at least one
+   * plan lineage, and every lineage's latest verdict a PASS on its plan's version as it is on disk now.
+   */
+  function planOnlyPass(s: Session, ctx: ExtensionContext): boolean {
+    if (s.work.builders !== 0 || s.steps.builder !== 0 || s.work.edits !== 0) return false;
+    const lineages = s.planReviews.all();
+    if (lineages.length === 0) return false;
+    return lineages.every((l) => {
+      if (l.latest.verdict !== "pass") return false;
+      const r = readPlan(l.path, planOpts(s, ctx));
+      return "plan" in r && r.plan.hash === l.latest.hash;
+    });
   }
 
   /** Roles a `subagent` call runs: top-level, tasks, chain (and parallel steps), or the role of a resumed run. */
@@ -5235,6 +5272,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let planFormNote = "";
     const wroteFile = !!owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit");
     const wrotePath = (event.input as Record<string, unknown>).path;
+    if (owner && wroteFile && typeof wrotePath === "string") {
+      const bound = boundLedger(owner.markerDir, owner.id);
+      if (bound && isBoundLedgerPath(resolveToolPath(wrotePath, ctx.cwd, os.homedir()), bound)) bumpLedgerRev(owner); // a direct write of the ledger counts, whatever it changed
+    }
     if (owner && wroteFile && isPlanPath(wrotePath, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
       const written = readPlan(wrotePath, planOpts(owner, ctx));
@@ -6019,8 +6060,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6041,16 +6082,46 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
-      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates) });
+      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);
       }
+      if (plan.upserts) {
+        // every named item must exist before anything is written (a dry run on a copy of the file)
+        const file = boundLedger(s.markerDir, s.id);
+        let dry: string | null = null;
+        try {
+          dry = file ? fs.readFileSync(file, "utf8") : null;
+        } catch {
+          // unreadable: refused below
+        }
+        let error = dry === null ? `${LEDGER_TOOL}: this session has no ledger of its own.` : "";
+        for (const u of plan.upserts) {
+          if (error || dry === null || u.item === null) continue;
+          const r = rewriteItemText(dry, u.item, u.text);
+          if ("error" in r) error = r.error;
+          else dry = r.file;
+        }
+        if (error) {
+          s.trace?.emit({ event: "ledger_call", kind, allowed: false });
+          return refuse(error);
+        }
+      }
       const out: string[] = [];
       let ok = true;
       let traceItems = plan.items;
-      if (plan.upsert) {
-        const u = plan.upsert;
+      // Entries are applied one by one, each taking the ledger lock itself (the lock is not reentrant); a failure stops the rest and the answer lists both sets.
+      const ups = plan.upserts ?? (plan.upsert ? [plan.upsert] : []);
+      const upLabel = (u: { item: string | null; text: string }): string => (u.item !== null ? `item ${u.item}` : `new "${u.text.slice(0, 40)}"`);
+      const applied: string[] = [];
+      const unapplied: string[] = [];
+      const touched: string[] = [];
+      for (const u of ups) {
+        if (!ok) {
+          unapplied.push(upLabel(u));
+          continue;
+        }
         const file = boundLedger(s.markerDir, s.id);
         let content: string | null = null;
         try {
@@ -6077,6 +6148,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
                 const rr = renameRetry(tmp, file);
                 if (rr.error) throw rr.error;
                 out.push(`upserted ${u.item}`);
+                bumpLedgerRev(s);
               } catch (err) {
                 try {
                   fs.rmSync(tmp, { force: true });
@@ -6109,16 +6181,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const r = await runLedger(s, ["add", u.text], null);
             if (r.text) out.push(r.text);
             ok = ok && r.ok;
+            if (r.ok) bumpLedgerRev(s);
             const n = /^added (\d+):/.exec(r.text);
             if (n) traceItems = n[1];
           }
         }
+        (ok ? applied : unapplied).push(upLabel(u));
+        touched.push(u.item ?? traceItems);
       }
+      if (ups.length > 1) traceItems = touched.filter(Boolean).join(",");
+      const added: { id: string; text: string }[] = [];
       for (const c of plan.calls) {
+        const label = `add "${(c[1] ?? "").slice(0, 40)}"`;
+        if (c[0] === "add" && !ok) {
+          unapplied.push(label);
+          continue;
+        }
         const r = await runLedger(s, c, null);
         if (r.text) out.push(r.text);
         ok = ok && r.ok;
+        if (r.ok && c[0] === "add") bumpLedgerRev(s);
+        if (c[0] === "add") (r.ok ? applied : unapplied).push(label);
+        const n = c[0] === "add" && r.ok ? /^added (\d+):/m.exec(r.text) : null;
+        if (n) added.push({ id: n[1], text: c[1] ?? "" });
       }
+      // A texts add traces every new number; each one is annotated with its own text below.
+      if (Array.isArray(params.texts)) traceItems = added.map((a) => a.id).join(",");
+      if (!ok && unapplied.length > 0 && applied.length + unapplied.length > 1) out.push(`${LEDGER_TOOL}: stopped; applied: ${applied.join(", ") || "none"}; not applied: ${unapplied.join(", ")}.`);
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
       ok = ok && st.ok;
@@ -6126,8 +6215,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const unbound = plan.attested && ok ? headlessPass(s.reviews) : null;
       if (unbound) out.push(`Note: the reviewer PASS carries no commit (${unbound}), so the PR gate will refuse; run a reviewer again on the head before pr_create.`);
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
-      const hint = ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null;
-      if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
+      // ledgerHint reads one item and no text from a list, so a texts add gives each new item its own hint.
+      const hints = Array.isArray(params.texts) ? added.map((a) => ledgerHint(kind, a.id, "", a.text)) : [ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null];
+      for (const hint of hints) if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);
