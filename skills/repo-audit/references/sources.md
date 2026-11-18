@@ -117,7 +117,7 @@ Count by the rule or code named in each suppression. The same rule disabled in t
 ### Skipped tests
 
 ```
-git grep -I -n -E '\.skip\(|xit\(|@pytest\.mark\.(skip|xfail)|t\.Skip\(|#\[ignore\]'
+git grep -I -n -E '\.skip\(|(^|[^[:alnum:]_.])xit\(|@pytest\.mark\.(skip|xfail)|t\.Skip\(|#\[ignore\]'
 ```
 
 A skipped test with a comment naming a bug is a finding with evidence. A skipped test with no reason is a gap in runtime verification.
@@ -173,7 +173,7 @@ Use this adapter when the repository has pi-foreman's stores for this repository
 The `foreman` command is the shell wrapper `bin/foreman` in the pi-foreman checkout. Run it as a command (`bin/foreman findings list`).
 
 - Findings store: `foreman findings list` prints the findings. The subcommands are `extract`, `record`, `list`, `dismiss` and `export`; `foreman findings` alone prints a usage error. Add `--json` to parse the output. The store belongs to the user account, not to the repository, so it holds rows from other repositories too. Filter the rows to the target repository by the paths or repository name in each row, then report how many rows belong to it and how many you kept. Group the kept rows by cause and use the finding ids as evidence.
-- Retro backlog: `foreman backlog list` prints the open items; `foreman backlog list --json | jq '[.[] | select(.count >= 2)]'` keeps the entries seen at least twice (`backlog brief --min-count 2` builds the same list but always writes a file, so it is not for the audit, which is read-only). Use `--json` to parse the output, `--workspace <path>` or `--all` to choose the workspace, and `--status all` to include closed items. `foreman backlog -h` shows the `--cwd` option. Each open item is a candidate group; check whether a later round closed it.
+- Retro backlog: `foreman backlog list` prints the open items; `foreman backlog list --min-count 2 --json` keeps the entries seen at least twice (`backlog brief --min-count 2` builds the same list but always writes a file, so it is not for the audit, which is read-only). Use `--json` to parse the output, `--workspace <path>` or `--all` to choose the workspace, and `--status all` to include closed items. `foreman backlog -h` shows the `--cwd` option. Each open item is a candidate group; check whether a later round closed it.
 - Closed rounds: `.workflow/closed/*/result.md`, the result file of each round. Its open-issues or left-open list is a source of repeated findings:
 
   ```
