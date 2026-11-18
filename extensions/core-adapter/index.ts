@@ -6011,8 +6011,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6038,11 +6038,41 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);
       }
+      if (plan.upserts) {
+        // every named item must exist before anything is written (a dry run on a copy of the file)
+        const file = boundLedger(s.markerDir, s.id);
+        let dry: string | null = null;
+        try {
+          dry = file ? fs.readFileSync(file, "utf8") : null;
+        } catch {
+          // unreadable: refused below
+        }
+        let error = dry === null ? `${LEDGER_TOOL}: this session has no ledger of its own.` : "";
+        for (const u of plan.upserts) {
+          if (error || dry === null || u.item === null) continue;
+          const r = rewriteItemText(dry, u.item, u.text);
+          if ("error" in r) error = r.error;
+          else dry = r.file;
+        }
+        if (error) {
+          s.trace?.emit({ event: "ledger_call", kind, allowed: false });
+          return refuse(error);
+        }
+      }
       const out: string[] = [];
       let ok = true;
       let traceItems = plan.items;
-      if (plan.upsert) {
-        const u = plan.upsert;
+      // Entries are applied one by one, each taking the ledger lock itself (the lock is not reentrant); a failure stops the rest and the answer lists both sets.
+      const ups = plan.upserts ?? (plan.upsert ? [plan.upsert] : []);
+      const upLabel = (u: { item: string | null; text: string }): string => (u.item !== null ? `item ${u.item}` : `new "${u.text.slice(0, 40)}"`);
+      const applied: string[] = [];
+      const unapplied: string[] = [];
+      const touched: string[] = [];
+      for (const u of ups) {
+        if (!ok) {
+          unapplied.push(upLabel(u));
+          continue;
+        }
         const file = boundLedger(s.markerDir, s.id);
         let content: string | null = null;
         try {
@@ -6107,13 +6137,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (n) traceItems = n[1];
           }
         }
+        (ok ? applied : unapplied).push(upLabel(u));
+        touched.push(u.item ?? traceItems);
       }
+      if (ups.length > 1) traceItems = touched.filter(Boolean).join(",");
       for (const c of plan.calls) {
+        const label = `add "${(c[1] ?? "").slice(0, 40)}"`;
+        if (c[0] === "add" && !ok) {
+          unapplied.push(label);
+          continue;
+        }
         const r = await runLedger(s, c, null);
         if (r.text) out.push(r.text);
         ok = ok && r.ok;
         if (r.ok && c[0] === "add") bumpLedgerRev(s);
+        if (c[0] === "add") (r.ok ? applied : unapplied).push(label);
       }
+      if (!ok && unapplied.length > 0 && applied.length + unapplied.length > 1) out.push(`${LEDGER_TOOL}: stopped; applied: ${applied.join(", ") || "none"}; not applied: ${unapplied.join(", ")}.`);
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
       ok = ok && st.ok;

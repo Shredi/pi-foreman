@@ -177,7 +177,40 @@ export interface GateView {
   passRun?: string;
 }
 
-export type LedgerPlan = { error: string } | { calls: string[][]; items: string; attested: boolean; upsert?: { item: string | null; text: string } };
+/** The most entries one `add` (texts) or `upsert` (entries) call takes. */
+export const LEDGER_BATCH_MAX = 32;
+
+export type LedgerPlan = { error: string } | { calls: string[][]; items: string; attested: boolean; upsert?: { item: string | null; text: string }; upserts?: { item: string | null; text: string }[] };
+
+const oneLine = (v: unknown): string | null => (typeof v === "string" && v.trim() && !/[\r\n]/.test(v.trim()) ? v.trim() : null);
+
+/** The `texts` of an add call: 1 to LEDGER_BATCH_MAX one-line strings. */
+function addTexts(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length === 0 || v.length > LEDGER_BATCH_MAX) return null;
+  const out = v.map(oneLine);
+  return out.every((t): t is string => t !== null) ? out : null;
+}
+
+/** The `entries` of an upsert call: 1 to LEDGER_BATCH_MAX `{item?, text}` objects, one-line text, each named item once. */
+function upsertEntries(v: unknown): { item: string | null; text: string }[] | string {
+  const bad = `${LEDGER_TOOL}: entries is a list of 1 to ${LEDGER_BATCH_MAX} {item?, text} objects with one-line text.`;
+  if (!Array.isArray(v) || v.length === 0 || v.length > LEDGER_BATCH_MAX) return bad;
+  const out: { item: string | null; text: string }[] = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object" || Array.isArray(e)) return bad;
+    const { item, text, ...rest } = e as Record<string, unknown>;
+    const t = oneLine(text);
+    if (t === null || Object.keys(rest).length > 0) return bad;
+    if (item === undefined || item === null) out.push({ item: null, text: t });
+    else {
+      const id = itemId(item);
+      if (!id) return `${LEDGER_TOOL}: item is an item number or "V".`;
+      if (out.some((o) => o.item === id)) return `${LEDGER_TOOL}: item ${id} is named twice in entries.`;
+      out.push({ item: id, text: t });
+    }
+  }
+  return out;
+}
 
 function itemId(v: unknown): string | null {
   if (typeof v === "number" && Number.isInteger(v) && v > 0) return String(v);
@@ -211,10 +244,23 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
   switch (action as LedgerAction) {
     case "status":
       return { calls: [], items: "", attested: false };
-    case "add":
+    case "add": {
+      if (params.texts !== undefined) {
+        if (params.text !== undefined) return { error: `${LEDGER_TOOL}: give text or texts, not both.` };
+        const texts = addTexts(params.texts);
+        if (!texts) return { error: `${LEDGER_TOOL}: texts is a list of 1 to ${LEDGER_BATCH_MAX} one-line strings.` };
+        return { calls: texts.map((t) => ["add", t]), items: "", attested: false };
+      }
       if (!text) return { error: `${LEDGER_TOOL}: add needs text.` };
       return { calls: [["add", text]], items: "", attested: false };
+    }
     case "upsert": {
+      if (params.entries !== undefined) {
+        if (params.text !== undefined || (params.item !== undefined && params.item !== null)) return { error: `${LEDGER_TOOL}: give item and text, or entries, not both.` };
+        const entries = upsertEntries(params.entries);
+        if (typeof entries === "string") return { error: entries };
+        return { calls: [], items: entries.flatMap((e) => (e.item ? [e.item] : [])).join(","), attested: false, upserts: entries };
+      }
       if (!text) return { error: `${LEDGER_TOOL}: upsert needs text.` };
       if (params.item === undefined || params.item === null) return { calls: [], items: "", attested: false, upsert: { item: null, text } };
       const id = itemId(params.item);
