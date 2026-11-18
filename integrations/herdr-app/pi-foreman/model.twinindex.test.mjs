@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { twinOf, prUrl } from "./model.js";
 
-// The brute-force twin scan that `twinOf` replaced (verbatim from HEAD), with the private helpers it used copied here.
+// The brute-force twin scan that `twinOf` replaced (the old scan, with lowercased keys), with the private helpers it used copied here.
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const str = (v) => (typeof v === "string" ? v : "");
 const listOf = (x) => (Array.isArray(x) ? x : []);
