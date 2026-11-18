@@ -164,8 +164,8 @@ A result row with missing or failed cells is marked `(partial: k/n cells)` in th
 
 Policies: `--mode climb --rungs m1,m2,...` (offline policy exploration only: the runtime has no climb on find; at least two; `--rungs` is an error with `--mode single`, the default)
 measures a reviewer ladder. For each task and repeat, rung 1 runs as a normal single cell
-(`<task>__<model>__r<n>`); while a rung's report has a located finding (`scripts/foreman_findings.py`
-`located_findings`: a FAIL unit, or a bullet of a PASS report, that names a diff file with a line or a class word) the
+(`<task>__<model>__r<n>`); while a rung's verdict record has a located finding (`scripts/foreman_review_bench.py`
+`located_findings`: a `defect` finding whose `file` names a file of the diff and that gives a `line` or a `class`) the
 next rung reviews the same diff. The chain stops at the first rung without one, or is exhausted after the last. Rung
 cells are ordinary single cells in the same `--out`, so a climb resumes, a later `--mode single` run over the same models
 reuses them, and `--token-cap` counts every rung run. Each finished chain writes

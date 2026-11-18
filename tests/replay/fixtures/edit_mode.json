@@ -41,6 +41,6 @@
  },
  "*": {
   "b-built": [{"text": "[[replay:review]] built"}],
-  "r-pass": [{"text": "[[replay:after]] no findings\nOverall verdict: PASS"}]
+  "r-pass": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:after]] no findings\nOverall verdict: PASS"}]
  }
 }

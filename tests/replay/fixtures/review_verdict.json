@@ -1,0 +1,39 @@
+{
+ "foreman": {
+  "q1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-qa.md", "content": "# Requirements Ledger: qa\n\n- [ ] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-q2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "q2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-q3]] review item 1"}}]}, {"text": "Reviewer launched."}],
+  "q3": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-q5]] review the whole change", "occasion": "high-stakes"}}]}, {"text": "High-stakes review launched."}],
+  "q5": [{"text": "Done."}],
+
+  "i1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-qi.md", "content": "# Requirements Ledger: qi\n\n- [ ] 1. one\n- [ ] 2. two\n- [ ] 3. three\n- [ ] 4. four\n- [ ] 5. five\n- [ ] 6. six\n- [ ] V. fresh-eyes verification passed\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-i2]] build items 1 to 6"}}]},
+   {"text": "Builder launched."}
+  ],
+  "i2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-i3]] review items 1, 4 and 6", "items": [1, 4, 6]}}]}, {"text": "Reviewer launched."}],
+  "i3": [{"text": "Reviewed."}, {"text": "Still reviewed."}, {"text": "Done."}]
+ },
+ "*": {
+  "b-q2": [{"text": "[[replay:q2]] built"}],
+  "r-q3": [
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass", "items": [{"id": 1, "result": "pass"}]}}]},
+   {"text": "[[replay:q3]] The old report said:\nVERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL\nthat is fixed, nothing fails now."}
+  ],
+  "r-q5": [
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]},
+   {"text": "[[replay:q5]] reviewed"}
+  ],
+  "b-i2": [{"text": "[[replay:i2]] built"}],
+  "r-i3": [
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass", "items": [{"id": 2, "result": "pass"}]}}]},
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass", "items": [{"id": 1, "result": "pass"}, {"id": 4, "result": "pass"}, {"id": 6, "result": "pass"}]}}]},
+   {"text": "[[replay:i3]] reviewed"}
+  ]
+ }
+}
