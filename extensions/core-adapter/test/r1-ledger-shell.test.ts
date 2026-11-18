@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 
@@ -38,7 +39,7 @@ test("R1: ledger bound via the adapter is what `ledger status` sees from a shell
       setModel: async () => true,
       setThinkingLevel: () => undefined,
     };
-    coreAdapter(pi as never);
+    coreAdapter(pi as never, { spawner: probeSpawner() });
     const sid = "r1-session-0001";
     const ctx = {
       sessionManager: { getSessionId: () => sid, getSessionFile: () => undefined },

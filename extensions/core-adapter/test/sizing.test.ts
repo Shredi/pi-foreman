@@ -106,7 +106,8 @@ test("measure: lines, modules, ENOENT, directories, big files, outside files, mo
   assert.equal(two.lines, 1600);
   const absent = measure({ files: ["scripts/new.py"] }, root, root);
   assert.deepEqual([absent.lines, absent.large, absent.invalid], [0, false, undefined]);
-  assert.match(measure({ files: ["scripts"] }, root, root).invalid ?? "", /\[sizing_invalid\].*directories/);
+  const dir = measure({ files: ["scripts"] }, root, root);
+  assert.deepEqual([dir.files, dir.invalid, dir.large], [1, undefined, false]);
   put(root, "big.bin", "x".repeat(MAX_BYTES + 1));
   assert.equal(measure({ files: ["big.bin"] }, root, root).large, true);
   const outside = measure({ files: ["/etc/hosts", "../escape.ts"] }, root, root);

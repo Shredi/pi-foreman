@@ -61,7 +61,49 @@ test("a malformed size or risk refuses the foreman's launch with [sizing_invalid
   }
   assert.ok(a.events("launch_refused").some((r) => r.reason === "sizing_invalid"));
   fs.mkdirSync(path.join(a.project, "dir"));
-  assert.match((await a.launch(builder({ size: { files: ["dir"] } }))).res?.reason ?? "", /\[sizing_invalid\].*directories/);
+  assert.equal((await a.launch(builder({ size: { files: ["dir"] } }))).res, undefined);
+});
+
+test("a directory in size.files is measured by its files and counts as one module component", async (t) => {
+  const a = await rig(t);
+  fs.mkdirSync(path.join(a.project, "src/pkg"), { recursive: true });
+  fs.writeFileSync(path.join(a.project, "src/pkg/big.py"), BIG);
+  const input = builder({ size: { files: ["src/pkg"] } });
+  assert.equal((await a.launch(input)).res, undefined);
+  assert.equal(input.model, "fake/strong");
+  const [s] = sizing(a);
+  assert.deepEqual([s.rule, s.files, s.lines, s.modules], ["large_file", 1, 1700, 1]);
+});
+
+test("a folder of 50 small files stays on the default rung", async (t) => {
+  const a = await rig(t);
+  fs.mkdirSync(path.join(a.project, "out"));
+  for (let i = 0; i < 50; i++) fs.writeFileSync(path.join(a.project, "out", `f${i}.txt`), "a\nb\n");
+  const input = builder({ size: { files: ["out"] } });
+  assert.equal((await a.launch(input)).res, undefined);
+  assert.equal(input.model, "fake/builder");
+  assert.deepEqual(sizing(a).map((r) => [r.rule, r.rung]), [["small", "default"]]);
+});
+
+test("the directory walk stops at the file cap: a large file beyond it is not seen", async (t) => {
+  const a = await rig(t);
+  fs.mkdirSync(path.join(a.project, "out"));
+  for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(a.project, "out", `a${String(i).padStart(2, "0")}.txt`), "a\n");
+  fs.writeFileSync(path.join(a.project, "out", "z.txt"), BIG);
+  const input = builder({ size: { files: ["out"] } });
+  assert.equal((await a.launch(input)).res, undefined);
+  assert.equal(input.model, "fake/builder");
+});
+
+test("the directory walk stops at the entry cap", async (t) => {
+  const a = await rig(t);
+  fs.mkdirSync(path.join(a.project, "out"));
+  for (let i = 0; i < 2000; i++) fs.mkdirSync(path.join(a.project, "out", `d${String(i).padStart(4, "0")}`));
+  fs.mkdirSync(path.join(a.project, "out", "zz"));
+  fs.writeFileSync(path.join(a.project, "out", "zz", "big.py"), BIG);
+  const input = builder({ size: { files: ["out"] } });
+  assert.equal((await a.launch(input)).res, undefined);
+  assert.equal(input.model, "fake/builder");
 });
 
 test("a large file sends the builder to strong without a reason: rung_up reason sizing and a launch_sizing record", async (t) => {

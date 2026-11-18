@@ -7,6 +7,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { isShellTool } from "../toolmap.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -42,7 +43,7 @@ function adapter(t: { after(fn: () => void): void }, toolNames: string[]) {
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const ctx = {
     sessionManager: { getSessionId: () => "edbk-session-1", getSessionFile: () => undefined },
     cwd: project,

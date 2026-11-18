@@ -23,7 +23,7 @@ test("a [second-opinion] reviewer launch result names the advisory occasion; a p
 
 test("a [pre-pr] reviewer launch result names that it counts for items and the PR gate", async (t) => {
   const a = await r11Rig(t, { default: "standard", revisionRounds: { standard: 1 } });
-  const pre = { agent: "reviewer", task: "review the whole branch\n[pre-pr]" };
+  const pre = { agent: "reviewer", task: "[pre-pr] review the whole branch" };
   const launched = await a.launch(pre);
   const res = await a.started(launched.id, pre, "run-pre");
   assert.ok(texts(res).includes("occasion: pre-pr (counts for items and the PR gate)"), JSON.stringify(res));

@@ -10,6 +10,14 @@ export const PLAN_MODE_TOOLS: readonly string[] = ["plan_mode_question", "plan_m
 /** Session section name of the hint. */
 export const DEFERRED_SECTION = "pi-foreman-deferred";
 
+/** Session section name of the model-only tools line. */
+export const MODEL_ONLY_SECTION = "pi-foreman-model-only";
+
+/** The fixed line naming the tools a codemode script cannot call (exposure `model-only`); empty for no names. */
+export function modelOnlyHint(names: readonly string[]): string {
+  return names.length ? `Model-only tools: when declared, call them directly; a codemode script's \`tools\` does not have them: ${names.join(", ")}` : "";
+}
+
 /** Session custom entry `{names, planMode}`: the un-hidden names and the plan-mode decision at session start, read back on resume and /reload. */
 export const DEFERRED_ENTRY = "deferred-loaded";
 

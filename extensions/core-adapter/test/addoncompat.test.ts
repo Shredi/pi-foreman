@@ -7,6 +7,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter, { type AdapterDeps } from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { addonPeerRangeLine, anthropicCredentialKind, ATTRIBUTION_WARNING, bgFeaturesDoctor, rangeAllows } from "../bg.ts";
 
 const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
@@ -59,7 +60,7 @@ function doctorHarness(t: { after(fn: () => void): void }, deps: AdapterDeps = {
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { env: {}, ...deps }); // a fresh env: the add-on start defaults land there, not in the process env the doctor reads
+  coreAdapter(pi as never, { env: {}, spawner: probeSpawner(), ...deps }); // a fresh env: the add-on start defaults land there, not in the process env the doctor reads
   const notes: { text: string; level: string }[] = [];
   const sessionId = `addon-session-${++sessions}`;
   const ctx = {

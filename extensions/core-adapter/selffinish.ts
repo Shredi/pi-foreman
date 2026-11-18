@@ -1,6 +1,6 @@
 // Self-finish of a child foreman session whose watched PR was merged (docs/close.md#self-finish-on-merge).
 //
-// The close sequence (source `pr-merged`, close.ts) calls selfFinish() after the result file and the report: one pr_status
+// The close sequence (close.ts, any source, after a remembered merge) calls selfFinish() after the result file and the report: one pr_status
 // decides the verified-merged fact (MERGED, head ref == the target worktree's branch, head commit == the local tip). The target
 // is the session's worktree when its branch is the PR head ref, else the worktree of `git worktree list` that has the head ref
 // checked out (never the main worktree, never the base branch). `.workflow/` is archived into `<handoff>/workflow/`, and
@@ -182,7 +182,7 @@ function archiveLines(out: CheckOut, archive: string): string[] {
   return lines;
 }
 
-/** The self-finish of the `pr-merged` close: report lines and, when every precondition holds, the detached cleanup. */
+/** The self-finish of a close after a merge: report lines and, when every precondition holds, the detached cleanup. */
 export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFinish> {
   const status = await d.status(n);
   const pr = status.kind === "ran" ? status.result : null;
