@@ -33,7 +33,8 @@ import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
-import { withBlockedOn } from "./herdr.ts";
+import { cleanLabel, withBlockedOn } from "./herdr.ts";
+import { planWait } from "./roundstate.ts";
 import { cleanDialogText, ownerDialog, shapedConfirm } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
 import type { EventBus } from "./herdr.ts";
@@ -934,7 +935,7 @@ const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) 
 /** Inbound report recognition plus the `/foreman session` handler. */
 export function registerSession(
   pi: ExtensionAPI,
-  deps: { session: (ctx: ExtensionContext) => Promise<SessionHost>; spawner: Spawner; pkgRoot: string; onChildNotice?: (sessionId: string, label: string, kind: string, notePath: string) => void },
+  deps: { session: (ctx: ExtensionContext) => Promise<SessionHost>; spawner: Spawner; pkgRoot: string; onChildNotice?: (sessionId: string, label: string, kind: string, notePath: string) => void; onPlanWait?: (text: string) => void },
 ): { command: (args: string, ctx: ExtensionContext) => Promise<void> } {
   const seen = new Set<string>();
   const onInbound = async (ctx: ExtensionContext, details: unknown): Promise<void> => {
@@ -981,6 +982,7 @@ export function registerSession(
     }
     ctx.ui.notify(`pi-foreman session ${entry.label}: ${msg.kind} ${msg.path}`, "info");
     deps.onChildNotice?.(s.id, entry.label, msg.kind, msg.path);
+    if (msg.kind === "plan") deps.onPlanWait?.(`${cleanLabel(entry.label)} ${planWait(entry.handoff).text}.`); // one fixed line from the child's own state file
   };
   pi.on("message_end", async (event, ctx) => {
     const hit = intercomInbound({ hook: "message_end", message: event.message });

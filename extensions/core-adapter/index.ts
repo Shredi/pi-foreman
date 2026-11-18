@@ -1624,6 +1624,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       plan: plan ? { topic: plan.topic, hash: plan.hash } : null,
       planReview: l ? { hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds } : null,
       round: s.round,
+      tier: s.ceremony.tier,
+      planOpen: plan?.status !== "approved",
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
@@ -5894,6 +5896,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     spawner,
     pkgRoot: PKG_ROOT,
     onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath, true),
+    onPlanWait: (text) => pi.sendMessage({ customType: CHILD_BLOCKED_TYPE, content: text, display: true }, { triggerTurn: false }), // append-only, quiet: no turn of its own
     session: sessionHost,
   });
 
