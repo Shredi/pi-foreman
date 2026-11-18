@@ -21,15 +21,7 @@
    "role": "explorer",
    "toolFamily": "bash",
    "guard": "gate",
-   "decision": "allowed"
-  },
-  {
-   "event": "bash_timeout",
-   "role": "explorer"
-  },
-  {
-   "event": "tool_error",
-   "role": "explorer"
+   "decision": "blocked"
   },
   {
    "event": "llm",
