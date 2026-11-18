@@ -19,7 +19,7 @@ ROLE_PAIRS = [
     ("the finalizer drafts it at heavy tier, you draft it otherwise.", "you draft it in the scratch dir at every tier."),
     ("Skip explorer, planner, reviewer and finalizer:", "Skip explorer and reviewer:"),
     ("- heavy: ledger, then `planner` (single launch; it writes `.workflow/scratch/plan-<topic>.md`), then `foreman_checkpoint({path})`, then builder(s), `finalizer`, `reviewer`, PR. Builders may fan out up to the configured width. `finalizer` closes the task; it is also required before you may finish.",
-     "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.md`, then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
+     "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.html` (an HTML page the owner reads in the browser; `plan-<topic>.md` also works), then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
     ("After a FAIL send the plan back to the planner once", "After a FAIL revise the plan once"),
     ("After a FAIL revise the plan once (`plan_revision_required`) and have the revised plan reviewed again; then the checkpoint opens and the owner sees the verdict.",
      "After a FAIL (`plan_revision_required`) revise the plan and have it reviewed again, as often as needed and without asking, while the findings are defects or gaps. A finding needs a decision when the reviewer marked it `DECISION:` or settling it means choosing scope, risk, a gate, guard or permission that loosens, a default, format or cost that changes, or a trade-off with no single sensible fix; ask then, when unsure, and when a finding comes back after you revised for it. Go to the checkpoint with a FAIL only for such findings. After every fifth failed review of the same plan in a row, say so in one line with the count (to the parent by a normal update when you have one, otherwise in your chat reply) and go on."),
@@ -49,6 +49,12 @@ ROLE_PAIRS = [
     # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
     ("on the current head; the adapter refuses it otherwise. Start",
      "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
+    # html plans: the standard line names the HTML plan form
+    ("then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it)",
+     "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it), the HTML from `{{planSkeleton}}`"),
+    # html plans: an HTML plan keeps rulings in a sidecar and any page change is a new version
+    ("a body edit is a new version. After a FAIL",
+     "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),
 ]
 
 

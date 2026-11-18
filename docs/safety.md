@@ -280,6 +280,12 @@ A remote child (see [sessions](sessions.md#remote-child-sessions)) runs on a mac
 
 `sessions.json` is read, changed and written back without a lock (`foreman session brief`, the open and close verbs all do this, the write itself is atomic). Two of them running at once can lose one update. The loss is accepted for now.
 
+## Known limit: model-written HTML pages
+
+Plan pages and `html` notes are shown as the model wrote them: no content security policy, no script or network stripping. The approval of an HTML plan covers its source bytes (the version is the sha256 of the whole file). What a script, a remote resource or CSS renders when the owner opens the page is outside it. This is accepted: the page opens like the note tool says, with scripts and network access.
+
+CSS can hide text from the generated markdown copy that reviewers read (`display:none`, `visibility:hidden`, `font-size:0`, `opacity:0`, the `hidden` attribute) or add text it does not hold (CSS `content:`). The converter counts these and the plan-review facts list them, so the reviewer can judge whether the page misleads; the harness refuses nothing for them. Rulings never go into the page, so an approved page cannot change by a ruling.
+
 ## Owner scripts
 
 An approved owner script runs with the owner's rights, and no guard reads it: no floor, no permission rule, no classifier and no sandbox applies inside the run. The owner's answer in the dialog is the only control. The owner chose this (2026-11-10) for changes the guards close to every agent, such as user config, global installs and protected files.

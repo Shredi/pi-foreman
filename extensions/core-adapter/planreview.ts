@@ -176,7 +176,7 @@ export function planFactsBlock(plans: readonly string[], ledgerPath: string | nu
   return [
     "",
     "## Plan review facts (pi-foreman)",
-    `Plan: ${plans.length ? plans.join(", ") : "(no plan-<topic>.md named in the task)"}`,
+    `Plan: ${plans.length ? plans.join(", ") : "(no plan-<topic>.html or plan-<topic>.md named in the task)"}`,
     `Ledger: ${ledgerPath ?? "(no ledger bound)"}`,
     "Open ledger items (review the plan against them: missing items, wrong order, risks):",
     ...(items.length ? items : ["(none)"]),
