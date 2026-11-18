@@ -11,6 +11,9 @@ BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
 
 
 ROLE_PAIRS = [
+    # builders push (PR-B): the child push line names who pushes
+    ("- Children run detached with a strict tool allowlist. They never push.",
+     "- Children run detached with a strict tool allowlist. A builder from a single launch pushes its own branch; other children never push, and a builder from a `tasks` or `chain` launch does not either (the foreman pushes for it, or launches a builder that must push on its own). No child opens or merges a PR."),
     # D28: finish refusals are counted per unchanged state, not per user prompt
     ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
     ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),

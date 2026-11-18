@@ -88,7 +88,7 @@ class FeatureMap(unittest.TestCase):
 
     def test_layer_rules_from_code(self):
         self.assertEqual(fd.layer_order(), ["L1", "L3", "L2", "project", "session"])
-        self.assertEqual(fd.layer_rule(("safety", "children", "mayPush")), "tighten-only (only false is accepted)")
+        self.assertEqual(fd.layer_rule(("safety", "review", "required")), "tighten-only (only true is accepted)")
         self.assertTrue(fd.layer_rule(("retro", "repoBacklog")).startswith("not in project/session"))
         self.assertEqual(fd.layer_rule(("quiet",)), "any layer")
 

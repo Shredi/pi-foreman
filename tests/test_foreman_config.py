@@ -154,10 +154,9 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.load(trusted_project=True)["config"]["fanout"]["max"], 9)
 
     def test_project_tightens_but_never_loosens(self):
-        self.l2({"safety": {"children": {"mayPush": True}, "review": {"required": True},
+        self.l2({"safety": {"review": {"required": True},
                             "permissions": {"deny": ["a"], "allow": ["x", "y"]}}})
         self.proj({"safety": {
-            "children": {"mayPush": True},
             "review": {"required": False},
             "permissions": {"deny": ["b"], "ask": ["c"], "allow": ["y", "z"]},
             "git": {"protectedBranches": ["release"]},
@@ -165,7 +164,6 @@ class ConfigTest(unittest.TestCase):
             "preconditionOps": {"x": 1}}})
         res = self.load(trusted_project=True)
         s = res["config"]["safety"]
-        self.assertIs(s["children"]["mayPush"], True)  # L2 value stays; project cannot change it up
         self.assertIs(s["review"]["required"], True)  # project false ignored
         # safety.permissions is gone from the tighten table: the project value changes nothing
         self.assertEqual(s["permissions"]["deny"], ["a"])
@@ -179,17 +177,17 @@ class ConfigTest(unittest.TestCase):
             self.assertIn(key, joined)
 
     def test_project_can_tighten_booleans(self):
-        self.l2({"safety": {"children": {"mayPush": True}}})
-        self.proj({"safety": {"children": {"mayPush": False}, "review": {"required": True}}})
+        self.proj({"safety": {"review": {"required": True}}})
         s = self.load(trusted_project=True)["config"]["safety"]
-        self.assertIs(s["children"]["mayPush"], False)
         self.assertIs(s["review"]["required"], True)
 
-    def test_project_cannot_loosen_push_default(self):
-        self.proj({"safety": {"children": {"mayPush": True}}})
-        res = self.load(trusted_project=True)
-        self.assertIs(res["config"]["safety"]["children"]["mayPush"], False)
-        self.assertIn("safety.children.mayPush", "\n".join(res["warnings"]))
+    def test_children_may_push_is_an_accepted_no_op(self):
+        for value in (True, False):
+            self.l2({"safety": {"children": {"mayPush": value}}})
+            self.proj({"safety": {"children": {"mayPush": value}}})
+            res = self.load(trusted_project=True)
+            self.assertNotIn("mayPush", "\n".join(res["warnings"]))
+            self.assertEqual(res["errors"], [])
 
     def test_bridge_isolation_default_and_project_cannot_switch_off(self):
         self.assertEqual(self.load()["config"]["bridge"]["isolateClaudeConfig"], "auto")
@@ -239,13 +237,13 @@ class ConfigTest(unittest.TestCase):
         self.assertIs(res["config"]["ui"]["spinner"], False)
 
     def test_invalid_safety_drops_only_that_entry(self):
-        self.l2({"safety": {"children": {"mayPush": "yes"}, "git": {"protectedBranches": ["dev"]}}})
+        self.l2({"safety": {"review": {"required": "yes"}, "git": {"protectedBranches": ["dev"]}}})
         res = self.load()
         self.assertFalse(res["safetyFallback"])
-        self.assertIs(res["config"]["safety"]["children"]["mayPush"], False)
+        self.assertIs(res["config"]["safety"]["review"]["required"], False)
         self.assertEqual(res["config"]["safety"]["git"]["protectedBranches"], ["dev"])
         self.assertEqual(res["errors"], [])
-        self.assertTrue(any("L2 invalid safety value dropped: safety.children.mayPush" in w for w in res["warnings"]))
+        self.assertTrue(any("L2 invalid safety value dropped: safety.review.required" in w for w in res["warnings"]))
 
     def test_invalid_other_value_is_error(self):
         self.l2({"fanout": {"max": 0}})
@@ -626,6 +624,9 @@ class PackageFilesTest(unittest.TestCase):
             ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
             # review per checkout: the finish rule names the checkout
             ("A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes.", "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."),
+            # builders push (PR-B): the child push line names who pushes
+            ("- Children run detached with a strict tool allowlist. They never push.",
+             "- Children run detached with a strict tool allowlist. A builder from a single launch pushes its own branch; other children never push, and a builder from a `tasks` or `chain` launch does not either (the foreman pushes for it, or launches a builder that must push on its own). No child opens or merges a PR."),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)
