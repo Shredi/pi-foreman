@@ -13,6 +13,13 @@ import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 const HERMETIC = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "_hermetic-env.mjs")).href;
 const COUNTER = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "_spawn-count.mjs")).href;
 
+// Env of a counted child: the outer run's wrapper pid, file label, watch and exempt flag are dropped, so only this test's settings reach it.
+function countedEnv(dir: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra, FOREMAN_SPAWN_COUNT_DIR: dir };
+  for (const k of ["FOREMAN_SPAWN_GUARD_EXEMPT", "FOREMAN_TEST_FILE", "FOREMAN_TEST_WRAPPER_PID", "NODE_OPTIONS"]) delete env[k];
+  return env;
+}
+
 test("sumSpawnCounts adds the per-process counts by kind; unknown kinds and bad numbers are handled", () => {
   const t = sumSpawnCounts([{ git: 2, python: 1 }, { git: 1, npm: 3, node: 4 }, { zsh: 5, git: -1, node: 1.5 }, null, {}]);
   assert.deepEqual(t, { git: 3, python: 1, node: 4, npm: 3, other: 5, total: 16 });
@@ -98,8 +105,7 @@ test("the counter preload labels each count file with its script: relative to th
   try {
     fs.writeFileSync(path.join(dir, "probe-label.mjs"), "export {};\n");
     fs.writeFileSync(path.join(outside, "probe-outside.mjs"), "export {};\n");
-    const env: NodeJS.ProcessEnv = { ...process.env, FOREMAN_SPAWN_COUNT_DIR: dir };
-    delete env.FOREMAN_SPAWN_GUARD_EXEMPT;
+    const env = countedEnv(dir);
     const runs = [
       ["probe-label.mjs"],
       [path.join(outside, "probe-outside.mjs")],
@@ -119,8 +125,7 @@ test("the counter preload labels each count file with its script: relative to th
 function npmCountOf(code: string): number {
   const dir = mkTestTmp("pf-spawn-npm-");
   try {
-    const env: NodeJS.ProcessEnv = { ...process.env, FOREMAN_SPAWN_COUNT_DIR: dir };
-    delete env.FOREMAN_SPAWN_GUARD_EXEMPT;
+    const env = countedEnv(dir);
     const r = spawnSync(process.execPath, ["--import", HERMETIC, "-e", code], { env, encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(fs.readdirSync(dir).length, 1);
@@ -146,8 +151,7 @@ test("npx counts as npm, through the fake npx on PATH", { skip: process.platform
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
     fs.writeFileSync(path.join(bin, "npx"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    const env: NodeJS.ProcessEnv = { ...process.env, FOREMAN_SPAWN_COUNT_DIR: dir, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
-    delete env.FOREMAN_SPAWN_GUARD_EXEMPT;
+    const env = countedEnv(dir, { PATH: `${bin}${path.delimiter}${process.env.PATH}` });
     const code = `require("node:child_process").spawnSync("npx", ["--version"]);`;
     const r = spawnSync(process.execPath, ["--import", COUNTER, "-e", code], { env, encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
@@ -173,8 +177,7 @@ test("the counter preload writes per-kind counts on exit and skips exempt spawns
       `process.env.FOREMAN_SPAWN_GUARD_EXEMPT = "1";`,
       `cp.spawnSync(process.execPath, ["-e", "0"]);`,
     ].join("\n");
-    const env: NodeJS.ProcessEnv = { ...process.env, FOREMAN_SPAWN_COUNT_DIR: dir };
-    delete env.FOREMAN_SPAWN_GUARD_EXEMPT;
+    const env = countedEnv(dir);
     const r = spawnSync(process.execPath, ["--import", COUNTER, "-e", code], { env, encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(fs.readdirSync(dir).length, 1);

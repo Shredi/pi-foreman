@@ -16,7 +16,7 @@ const WRAPPER = path.join(HERE, "..", "..", "..", "scripts", "foreman_test_run.m
 
 function cleanEnv(extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
-  for (const k of ["FOREMAN_SPAWN_GUARD_EXEMPT", "FOREMAN_TEST_FILE", "FOREMAN_TEST_WRAPPER_PID", "NODE_TEST_CONTEXT", "NODE_OPTIONS", "CI"]) if (!(k in extra)) delete env[k];
+  for (const k of ["FOREMAN_SPAWN_GUARD_EXEMPT", "FOREMAN_SPAWN_COUNT_DIR", "FOREMAN_TEST_FILE", "FOREMAN_TEST_WRAPPER_PID", "NODE_TEST_CONTEXT", "NODE_OPTIONS", "CI"]) if (!(k in extra)) delete env[k];
   return env;
 }
 
