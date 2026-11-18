@@ -10,6 +10,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { checkpointConfigRefusal } from "../checkpoint.ts";
 import { selfRulingRefusal } from "../ruling.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Result = { details?: { decision?: string; by?: string | null }; content: { text: string }[] };
@@ -60,7 +61,7 @@ async function rig(t: import("node:test").TestContext, o: { config?: unknown; pa
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const counts = { select: 0, confirm: 0, input: 0 };
   const ctx = {
     sessionManager: { getSessionId: () => "cphuman-session", getSessionFile: () => undefined },

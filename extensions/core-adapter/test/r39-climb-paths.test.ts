@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { pressurePath } from "../pressure.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -65,7 +66,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong: boolean }): 
   };
   const clock = { now: NOW };
   const sessionId = `r39-climb-session-${++rigs}`;
-  coreAdapter(pi as never, { pressureNow: () => clock.now, pressureRun: async () => ({ ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => clock.now, pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined },
     cwd: project,

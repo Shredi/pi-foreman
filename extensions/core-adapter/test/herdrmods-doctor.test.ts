@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -48,7 +49,7 @@ async function doctor(t: { after(fn: () => void | Promise<void>): void }, setup:
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { piVersion: async () => "1.2.0" });
+  coreAdapter(pi as never, { piVersion: async () => "1.2.0", spawner: probeSpawner() });
   const notes: string[] = [];
   const ctx = {
     sessionManager: { getSessionId: () => "herdrmods-doc-1", getSessionFile: () => undefined },

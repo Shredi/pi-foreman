@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 let sessions = 0;
@@ -44,7 +45,7 @@ function harness(t: { after(fn: () => void): void }, dataEnv: string) {
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { piVersion: async () => "1.2.0" });
+  coreAdapter(pi as never, { piVersion: async () => "1.2.0", spawner: probeSpawner() });
   const notes: { text: string; level: string }[] = [];
   const sessionId = `cdoc-session-${++sessions}`;
   const ctx = {
