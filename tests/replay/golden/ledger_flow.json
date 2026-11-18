@@ -155,10 +155,6 @@
    "event": "turn"
   },
   {
-   "event": "readonly_state_diff",
-   "role": "explorer"
-  },
-  {
    "event": "guard",
    "role": "foreman",
    "toolFamily": "Stop",
