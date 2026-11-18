@@ -305,7 +305,8 @@ const pidOf = (a) => int(a?.pid) ?? int(a?.foreground?.pid);
 
 /** Map agent address -> session node. Join on `hcTerminal` == the agent's terminal address (`machine/` prefix for an agent of
  *  a remote space: pass that machine), only nodes that are not done and not themselves remote; when both sides have a pid
- *  they must match. An agent without a `hcTerminal` match joins the live local node with the same pid (a session started by hand
+ *  they must match, unless the node is live (not lost, stale or ended): a resumed session's terminal pid is its shell's, so a
+ *  live node joins by the address alone. An agent without a `hcTerminal` match joins the live local node with the same pid (a session started by hand
  *  in an hc terminal); a node matched by `hcTerminal` or in `taken` is never used for that. */
 export function joinAgents(agents, tree, machine = null, taken = new Set()) {
   const out = new Map();
@@ -321,7 +322,8 @@ export function joinAgents(agents, tree, machine = null, taken = new Set()) {
     const n = byTerminal.get(addr.slice(prefix.length));
     if (!n) continue;
     const pid = pidOf(a);
-    if (pid !== null && n.pid !== null && pid !== n.pid) continue;
+    const live = !isEnded(n) && n.state !== "lost" && n.state !== "stale";
+    if (!live && pid !== null && n.pid !== null && pid !== n.pid) continue;
     out.set(addr, n);
   }
   if (machine) return out;

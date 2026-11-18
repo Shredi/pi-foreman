@@ -58,9 +58,11 @@ test("a stale node whose pid equals the terminal's pid joins through the pid pat
   assert.equal(childJoined.get("t1c")?.key, "k");
 });
 
-test("an agent with a pane and another pid still does not join (today's rule)", () => {
+test("a live node with another pid joins by its terminal address (D100); a stale one does not", () => {
   const node = { key: "a", kind: "session", state: "working", hcTerminal: "t9", pid: 1, machine: "", sessions: [] };
-  assert.equal(joinAgents([{ address: "t9", foreground: { pid: 2 } }], [node]).size, 0);
+  assert.equal(joinAgents([{ address: "t9", foreground: { pid: 2 } }], [node]).get("t9"), node);
+  const stale = { ...node, state: "stale" };
+  assert.equal(joinAgents([{ address: "t9", foreground: { pid: 2 } }], [stale]).size, 0);
 });
 
 test("a resumed pane-less child whose terminal says done shows the run state of its radar node", () => {

@@ -63,10 +63,10 @@ a PR leaves the list only when GitHub reports it merged or closed. `pr_watch` ge
 without an age label until a PR search succeeded.
 
 A radar node joins an agent when its `hcTerminal` equals the agent's terminal address (`machine/` prefix for a remote space),
-the node is not done, and, when both sides carry a pid, the pids match. The agent's pid is the terminal's foreground pid from herdr
-`terminals()`, so the equal-pid check guards this join against an address reused after a core restart whenever radar has a pid.
-A pane-less child terminal's pid is its launch shell's, not the session's, so such a child joins by `hcTerminal` alone while its node is live;
-a lost or stale node still needs a matching pid.
+the node is not done, and: a live node (not lost, stale or ended) joins by the address alone. A lost or stale node also needs the pids to match
+when both sides carry one, which guards that join against an address reused after a core restart. The agent's pid is the terminal's
+foreground pid from herdr `terminals()`; after `pane-resume` it is the launch shell's, not pi's, so a live node's pid is not compared (D100).
+A pane-less child terminal joins the same way.
 An agent with no `hcTerminal` match joins the live local node whose pid equals the terminal's foreground pid; done, ended and
 remote nodes and nodes already matched are skipped.
 
