@@ -286,7 +286,7 @@ also `pr_create {cwd}` for a sibling; the refusal names the checkout of the FAIL
 session once per set of reasons (once every ledger item except V is marked; no bound ledger, or an unreadable one, counts
 as marked) with the reminder, then lets the next finish go with a one-line owner notice and the trace
 `high_stakes_skipped`; a new reason holds once more. The hold itself traces `high_stakes_reminded {reasons}`. The hold is no refusal and does not count toward the two per prompt.
-The FAIL entry of the finish gate does not depend on the ledger. A session that changed nothing is not held. A PR that is
+The FAIL entry of the finish gate does not depend on the ledger. A session that changed nothing is not held (files under `.workflow/` and the scratch dir do not count as a change; a scratch dir set to a source folder hides that folder from this check). A PR that is
 already open is held session-wide only by a FAIL: its readiness answers `wip` while a FAIL stands uncleared or when the PR
 head is the head of a high-stakes FAIL; a due pass never changes it. Under the draft flow the PR then goes back to draft until
 the FAIL was cleared and the head moved; a PR from one checkout is held by the state of the session. A PR opened from the shell is not refused; the rules text carries the duty.
