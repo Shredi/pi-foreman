@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { LOAD_ORDER_NOTICE } from "../bridgeiso.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -34,7 +35,7 @@ test("session_start warns in the main session when pi-claude-bridge loads before
   delete process.env.PI_SUBAGENT_CHILD;
   const handlers = new Map<string, Handler>();
   const pi = { on: (n: string, h: Handler) => void handlers.set(n, h), registerCommand: () => undefined, registerTool: () => undefined, getActiveTools: () => [] as string[], setActiveTools: () => undefined, setModel: async () => true, setThinkingLevel: () => undefined };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const run = async (id: string, packages: string[]): Promise<Array<[string, string]>> => {
     fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages }));
     const notes: Array<[string, string]> = [];

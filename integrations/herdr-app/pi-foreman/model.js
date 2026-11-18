@@ -733,20 +733,42 @@ function repoName(url, fallback) {
 // owner/name of a repository given as an https URL or already as owner/name; "" for none.
 const nameOf = (v) => repoName(v, str(v));
 
+// The twin lookup index of a feed array: entries by number and by URL, in feed order. Built once per array and rebuilt when its
+// length changed (the feeds are new arrays on every render, and nothing edits one in place); a non-array feed is an empty index,
+// never a WeakMap key. NaN numbers are not indexed (NaN matches nothing with ===).
+const TWIN_EMPTY = { len: 0, byNumber: new Map(), byUrl: new Map() };
+const twinIdx = new WeakMap();
+function twinIndex(feed) {
+  if (!Array.isArray(feed)) return TWIN_EMPTY;
+  let ix = twinIdx.get(feed);
+  if (ix && ix.len === feed.length) return ix;
+  ix = { len: feed.length, byNumber: new Map(), byUrl: new Map() };
+  feed.forEach((f, i) => {
+    if (!isObj(f)) return;
+    const rec = { f, i, url: prUrl(null, { url: f.url }), repo: nameOf(f.repo) };
+    const push = (m, k) => { const l = m.get(k); if (l) l.push(rec); else m.set(k, [rec]); };
+    if (f.number === f.number) push(ix.byNumber, f.number);
+    if (rec.url) push(ix.byUrl, rec.url);
+  });
+  twinIdx.set(feed, ix);
+  return ix;
+}
+
 /** The feed entry a PR is: same URL when both have one; else same number and repository when both know it; else the same
  *  number when exactly one feed entry has it. null when none (the PR is its own entry). */
 export function twinOf(pr, feed, fallbackRepo = "") {
-  const list = listOf(feed).filter(isObj);
   const repo = nameOf(pr.repo || fallbackRepo);
   const url = prUrl(null, { url: pr.url });
-  const same = list.filter((f) => f.number === pr.number);
-  return list.find((f) => {
-    const fu = prUrl(null, { url: f.url });
-    if (url && fu) return url === fu;
-    if (f.number !== pr.number) return false;
-    const fr = nameOf(f.repo);
-    return repo && fr ? repo === fr : same.length === 1;
-  }) ?? null;
+  const number = pr.number;
+  const ix = twinIndex(feed);
+  const same = number === number ? ix.byNumber.get(number) ?? [] : [];
+  // Only entries with the same URL or the same number can be the twin; in feed order, the first one that passes wins.
+  const cand = [...new Set([...same, ...(url ? ix.byUrl.get(url) ?? [] : [])])].sort((a, b) => a.i - b.i);
+  return cand.find((r) => {
+    if (url && r.url) return url === r.url;
+    if (r.f.number !== number) return false;
+    return repo && r.repo ? repo === r.repo : same.length === 1;
+  })?.f ?? null;
 }
 
 /** The "Open PRs" section. A PR is listed once, at the first place of: (a) the row of a shown session (then not here at all),

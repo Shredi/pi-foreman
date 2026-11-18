@@ -596,7 +596,7 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   if (d.ready) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
   if (d.readyNoChecks) content += `\nreport to the parent: PR #${number} no checks on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
   if (d.draftReady) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, still a draft`;
-  if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch, then push via the parent`;
+  if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch and push it`;
   if (d.closedUnmerged) content += `\nreport to the parent: PR #${number} closed unmerged`;
   if (d.leavingDraft === "child") content += `\nthe watch is taking PR #${number} out of draft now; hold your report until the ready line follows`;
   if (d.leavingDraft === "alone") content += `\nthe watch is taking PR #${number} out of draft now; confirm with pr_status before you tell the owner it is ready`;

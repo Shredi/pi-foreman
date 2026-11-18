@@ -33,7 +33,7 @@ export interface OrientInput {
 export function win32Lines(platform: string | undefined, msysNoPathconv: boolean | undefined): string[] {
   if (platform !== "win32") return [];
   return [
-    "Windows shell: the bash tool and foreman_bg run commands in the bash tool's git-bash (`bash -c`), not cmd.exe.",
+    "Windows shell: the bash tool and background commands run in the bash tool's git-bash (`bash -c`), not cmd.exe.",
     msysNoPathconv
       ? "Windows-native exes get their arguments unconverted (MSYS path conversion is off): write `C:/x/y.py`, not `/c/x/y.py`; a word like `/switch` stays as written."
       : "MSYS path conversion is on: git-bash rewrites POSIX-looking arguments for native exes; write `C:/x/y.py`, not `/c/x/y.py`.",

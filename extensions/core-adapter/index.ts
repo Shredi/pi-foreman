@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
-import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
+import { checkTrivial, cleanTreeStatus, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -157,7 +157,9 @@ import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatch
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
 import { ownerFactsLines, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
-import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
+import type { DialogSpec } from "./ownerdialog.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -441,6 +443,8 @@ interface Session {
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
   ceremonyRestored: boolean;
+  /** The background-tasks add-on is present (decided at session_start): foreman_bg, which refuses then, is not offered and the tool floor does not re-add it. */
+  bgAddon: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -1080,6 +1084,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
+      bgAddon: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1574,6 +1579,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.planPhase = e.planPhase;
     s.planPhaseOrigin = e.planPhaseOrigin ?? "owner"; // an entry without the field: the owner's origin (a PASS does not end it)
+    if (!s.planPhase && process.env.PI_FOREMAN_PLAN_PHASE !== undefined) {
+      // a resumed pane put the launch flag back from an identity entry written before the phase ended: drop it there too, so a later resume does not bring it back
+      delete process.env.PI_FOREMAN_PLAN_PHASE;
+      recordIdentity(s, ctx, reason, { status: "none" });
+    }
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     if (e.highStakes && s.hs.isEmpty()) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
@@ -1903,6 +1913,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
+    if (!s.isChild) s.bgAddon = addonPresent((pi.getAllTools?.() ?? []).map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd }); // once per start: the request prefix stays stable
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
@@ -2038,7 +2049,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Re-activates the registered floor tools another extension's tool reset left inactive (toolfloor.ts): append only. */
   function restoreToolFloor(s: Session, ctx: ExtensionContext): string[] {
     try {
-      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) });
+      // with the add-on present foreman_bg refuses (bg_run does its job): it leaves the active tools and the floor does not bring it back
+      if (s.bgAddon && pi.getActiveTools().includes(FOREMAN_BG_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== FOREMAN_BG_TOOL));
+      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) }).filter((n) => !(s.bgAddon && n === FOREMAN_BG_TOOL));
       if (!missing.length) return [];
       pi.setActiveTools([...pi.getActiveTools(), ...missing]);
       s.trace?.emit({ event: "tools_floor_restored", names: missing.join(",") });
@@ -3019,6 +3032,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s.planReviews.lineage(p)?.latest.verdict === "pass" && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
         // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
         s.planPhase = false;
+        delete process.env.PI_FOREMAN_PLAN_PHASE; // child shells must not see the ended phase
         s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
       } else if (s.planPhase && s.planPhaseOrigin === "parent") {
         const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
@@ -3544,15 +3558,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const where = file === "user" ? rt.store.filePath("user") : cur.projectFile;
     if (a.action === "remove" && !existing) return no(`${clean.kind} ${clean.glob} is not protected`);
     if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id}); to change its note or check, remove it and add it again`);
-    const text = a.action === "add"
-      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode). For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
-      : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
+    const spec: DialogSpec = a.action === "add"
+      ? {
+          ask: `Protect ${clean.kind} ${clean.glob}?`,
+          ...(clean.note ? { summary: clean.note } : {}),
+          detail: [`Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode)`, `File: ${where}`, "For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply."],
+          answers: "Yes: the protection is written   No: nothing changes",
+        }
+      : {
+          ask: `Remove protection from ${clean.kind} ${clean.glob}?`,
+          summary: `Its calls go back to your ask rules and the dangerous class. Entry: ${existing?.id}.`,
+          detail: [`File: ${where}`],
+          answers: "Yes: the protection is removed   No: nothing changes",
+        };
     let yes = false;
     try {
-      const confirm = blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => ctx.ui.confirm(title, msg));
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), PROTECT_CONFIRM_MS); timer.unref?.(); });
-      yes = (await Promise.race([confirm("Protected target", text), timeout])) === true;
+      const asked = withBlockedOn(herdrEvents, BLOCK_CONFIRM, cleanDialogText(spec.ask), () => shapedConfirm(ctx.ui, ctx.mode, spec));
+      yes = (await Promise.race([asked, timeout])) === true;
       if (timer) clearTimeout(timer);
     } catch {
       yes = false;
@@ -5653,8 +5677,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return undefined;
     }
     // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
-    if (!rejected && s.steps.builder === 0 && s.tally.files.length === 0) {
-      const porcelain = await git(ctx.cwd, ["status", "--porcelain"]);
+    if (!rejected && s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0) { // a launched builder (failed or not) is work even when the tree stays clean
+      const porcelain = await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform);
       if (noChange(s.steps, s.tally.files.length, porcelain)) {
         s.trace?.emit({ event: "ceremony_gate", reason: "no_change", tier: s.ceremony.tier });
         ctx.ui.notify("pi-foreman: finished without a change: no builder or reviewer required", "info");
@@ -5698,7 +5722,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * then let go with an owner notice. A session that changed nothing is never held.
    */
   async function hsReminderHold<E>(s: Session, ctx: ExtensionContext, entries: E[], remind: string, reasons: string[]) {
-    if (s.steps.builder === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await git(ctx.cwd, ["status", "--porcelain"]))) return undefined;
+    if (s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform))) return undefined;
     const key = reasons.join(",");
     if (s.hsReminded?.join(",") !== key) {
       s.hsReminded = reasons;
@@ -6216,12 +6240,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "plan_version", tier, from: sha256(plan.bytes).slice(0, 16), to: plan.hash.slice(0, 16) }); // from = hash of the file bytes, to = version (body) hash
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL sends the plan back for a revision.
         let reviewed: string | null = null;
+        let reviewFact = "not required";
         if (planReviewOn(s.config.config, tier)) {
           const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
           const g = s.planReviews.gate(plan.path, plan.hash, cap);
           if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
           // Capped: the checkpoint opens on a FAIL with the open findings visible.
           reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
+          reviewFact = g.verdict.verdict === "pass" ? "passed" : "failed";
         }
         const alreadyApproved = !!s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path;
         const planPage = s.show?.checkpointed(plan.path, alreadyApproved ? "approved" : "waits for you"); // ruling point (show.ts): the plan the owner is about to see, and its page
@@ -6237,11 +6263,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // The owner answers in this session's own pane, also in a session opened by another session: no file from a parent approves a plan.
         if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
         let answer: string | undefined;
-        const title = `pi-foreman checkpoint: ${name} (${hash8})`;
         s.trace?.emit({ event: "dialog", surface: "checkpoint" });
         try {
-          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${await planPageLine(planPage, undefined, showOffReason(!!s.live, s.id))}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
-          answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
+          const page = await planPageOutcome(planPage, undefined, showOffReason(!!s.live, s.id));
+          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${planPageLineOf(page)}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          const spec: DialogSpec = {
+            ask: `Approve the plan for ${plan.topic}?`,
+            summary: "Builders start only after you approve. Read the plan page first.",
+            facts: [["Plan", planSummary(plan.markdown, plan.rel, plan.hash).split("\n")[0].replace(/^Plan:\s*(?:Plan:\s*)?/i, "")], ["Version", hash8], ["Review", reviewFact]],
+            ...("path" in page ? { links: [{ label: "Plan page", path: page.path, text: "open the plan page", kind: "page" as const }], detail: ["The page is a path on this session's machine."] } : { detail: [`Plan page: not available (${page.reason})`] }),
+            answers: "revise: you say what to change   reject: the work stops   approve: builders start",
+          };
+          answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, cleanDialogText(spec.ask), () => shapedSelect(ctx.ui, ctx.mode, spec, [...CHECKPOINT_CHOICES], { signal }));
         } catch {
           answer = undefined;
         }
@@ -6262,6 +6295,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
           if (s.planPhase) {
             s.planPhase = false; // an approval ends the plan phase
+            delete process.env.PI_FOREMAN_PLAN_PHASE;
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
           }
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
@@ -6442,7 +6476,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         try {
           // One notice: the terminal replaces an info status line by the next one sent back to back.
           ctx.ui.notify([...scriptNoticeLines(p), scriptUndoLine(p)].join("\n"), "info");
-          answer = await withBlockedOn(herdrEvents, BLOCK_SCRIPT, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
+          const spec: DialogSpec = {
+            ask: title,
+            summary: p.description,
+            facts: [["Risk", p.risk], ["Undo", p.undo]],
+            detail: [`Path: ${cleanText(p.rel)} (${p.lines} lines)`, scriptUndoLine(p)],
+            answers: "approve: the dry run runs first   revise: you say what to change   reject: nothing runs",
+          };
+          answer = await withBlockedOn(herdrEvents, BLOCK_SCRIPT, title, () => shapedSelect(ctx.ui, ctx.mode, spec, [...SCRIPT_CHOICES], { signal }));
         } catch {
           answer = undefined;
         }
@@ -6644,6 +6685,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         s.planPhase = rest[0] !== "off";
         if (s.planPhase) s.planPhaseOrigin = "owner"; // the owner's phase, also inside a child: a plan-review PASS never ends it
+        else delete process.env.PI_FOREMAN_PLAN_PHASE;
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
         persistCeremonyState(s);
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");

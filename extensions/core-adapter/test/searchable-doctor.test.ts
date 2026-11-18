@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -41,7 +42,7 @@ test("doctor reports a searchable change that settings.json does not carry, and 
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
     const pi = { on: (n: string, h: Handler) => void handlers.set(n, h), registerCommand: (n: string, c: { handler: (args: string, ctx: unknown) => Promise<void> }) => void commands.set(n, c), registerTool: () => undefined, getActiveTools: () => [] as string[], getAllTools: () => [{ name: "bash" }], setActiveTools: () => undefined, setModel: async () => true, setThinkingLevel: () => undefined, sendMessage: () => undefined };
-    coreAdapter(pi as never, { piVersion: async () => "1.2.0" });
+    coreAdapter(pi as never, { piVersion: async () => "1.2.0", spawner: probeSpawner() });
     const notes: string[] = [];
     const ctx = { sessionManager: { getSessionId: () => "searchdoc-1", getSessionFile: () => undefined }, cwd: project, model: undefined, mode: "tui", hasUI: true, isProjectTrusted: () => false, isIdle: () => true, modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) }, ui: { notify: (m: string) => void notes.push(m), confirm: async () => false } };
     await handlers.get("session_start")!({ reason: "startup" }, ctx);

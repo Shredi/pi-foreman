@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { probeSpawner } from "./_probe-memo.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -140,7 +141,7 @@ test("checkpoint tool: sequential; a plan changed during the dialog is not appro
   const events = { on: (n: string, h: (d: unknown) => void) => void channels.set(n, h), emit: () => undefined };
   const pi = { on: (n: string, h: Fn) => void handlers.set(n, h), events, registerCommand: () => undefined, registerTool: (d: { name: string; executionMode?: string; execute: Fn }) => void tools.set(d.name, d), getActiveTools: () => [] as string[], setActiveTools: () => undefined, setModel: async () => true, setThinkingLevel: () => undefined };
   const { default: coreAdapter } = await import("../index.ts");
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   let onSelect: () => void = () => undefined;
   const ctx = {
     sessionManager: { getSessionId: () => "ck-tool-1", getSessionFile: () => undefined },
