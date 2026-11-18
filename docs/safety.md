@@ -119,7 +119,7 @@ Who sees an ask:
 - A session opened by another session asks in its own pane.
 - A child's ask goes to its parent's pane through an ask dir the parent adapter owns (`gate.childAsk`, `parent` by default, `deny` keeps a plain deny); the child waits for the ruling without a time limit and is denied only when the starting session is gone (`gate.askTimeoutMs` has no effect). A child can never write that dir.
 - A headless session denies an ask at once, as does a subagent launched in a group or a chain. An owner who is away does not: the dialog waits for the owner and only a dismissal denies. A floor decision never counts as an ask: it is decided without a presence probe and keeps its own reason ([permissions](permissions.md#presence)).
-- A child's text-only hit on a line the parser could not read (a push, a git config key, a remote, a policy file) is a deny with a rephrase hint, never a parent ask ([permissions](permissions.md#floors)).
+- A child's text-only hit on a line the parser could not read (a push, a git config key, a remote, a policy file) is a deny with a rephrase hint, never a parent ask; for a push this holds only for a child that is not a builder (a builder's unparsed plain push is decided like main's) ([permissions](permissions.md#floors)).
 - A child's `rm` / `rm -f` of an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) is denied with reason `editor_backup`; the child reports the file instead.
 - Every decision is a line in `<agentDir>/pi-foreman/state/gate/log.jsonl`; classifier calls are logged to the usage log with role `classifier`.
 

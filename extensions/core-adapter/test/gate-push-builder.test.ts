@@ -49,6 +49,13 @@ test("force, delete and protected pushes stay refused for a builder and for main
   }
 });
 
+test("an unparsed protected push on main is an owner ask, not a deny", () => {
+  const l = `sh -c "$X git push origin main"`;
+  const m = lineFloors(l, parseShell(l, { cwd: env.cwd }), env);
+  assert.ok(m && m.rule.startsWith("floor-git-push"), JSON.stringify(m));
+  assert.equal(m.kind, "ask");
+});
+
 const facts: GitFacts = { currentBranch: () => "round/41-x", protectedBranches: () => ["main", "master", "trunk"], pushConfigured: () => false };
 const roots = (o: Partial<GateRoots>): GateRoots => ({
   worktree: "/w/repo", scratch: [], tmp: ["/tmp"], scratchBase: "/tmp/pi-foreman-scratch", owned: [], install: [], roundFlow: [], handoffs: [],
