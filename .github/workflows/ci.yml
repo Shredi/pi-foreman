@@ -83,19 +83,10 @@ jobs:
           Remove-Item Env:PI_FOREMAN_PYTHON
           $out = cmd /c "bin\ledger.cmd -f `"$led`" status"; Check 'ledger.cmd (py launcher fallback)' $out $LASTEXITCODE
   replay:
+    # The macOS leg runs on push to main only: on pull_request the matrix is built without it (GitHub has too few free macOS runners; a macOS-only replay fault is then found after the merge).
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - {os: ubuntu-latest, shard: 1, shards: 2, node: "22"}
-          - {os: ubuntu-latest, shard: 2, shards: 2, node: "22"}
-          - {os: macos-latest, shard: 1, shards: 1, node: "22"}
-          - {os: windows-latest, shard: 1, shards: 4, node: "22"}
-          - {os: windows-latest, shard: 2, shards: 4, node: "22"}
-          - {os: windows-latest, shard: 3, shards: 4, node: "22"}
-          - {os: windows-latest, shard: 4, shards: 4, node: "22"}
-          - {os: ubuntu-latest, shard: 1, shards: 2, node: "26"}
-          - {os: ubuntu-latest, shard: 2, shards: 2, node: "26"}
+      matrix: ${{ fromJSON(github.event_name == 'pull_request' && '{"include":[{"os":"ubuntu-latest","shard":1,"shards":2,"node":"22"},{"os":"ubuntu-latest","shard":2,"shards":2,"node":"22"},{"os":"windows-latest","shard":1,"shards":4,"node":"22"},{"os":"windows-latest","shard":2,"shards":4,"node":"22"},{"os":"windows-latest","shard":3,"shards":4,"node":"22"},{"os":"windows-latest","shard":4,"shards":4,"node":"22"},{"os":"ubuntu-latest","shard":1,"shards":2,"node":"26"},{"os":"ubuntu-latest","shard":2,"shards":2,"node":"26"}]}' || '{"include":[{"os":"ubuntu-latest","shard":1,"shards":2,"node":"22"},{"os":"ubuntu-latest","shard":2,"shards":2,"node":"22"},{"os":"macos-latest","shard":1,"shards":1,"node":"22"},{"os":"windows-latest","shard":1,"shards":4,"node":"22"},{"os":"windows-latest","shard":2,"shards":4,"node":"22"},{"os":"windows-latest","shard":3,"shards":4,"node":"22"},{"os":"windows-latest","shard":4,"shards":4,"node":"22"},{"os":"ubuntu-latest","shard":1,"shards":2,"node":"26"},{"os":"ubuntu-latest","shard":2,"shards":2,"node":"26"}]}') }}
     name: replay (${{ matrix.os }}, ${{ matrix.shard }}/${{ matrix.shards }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }})
     runs-on: ${{ matrix.os }}
     steps:
@@ -242,14 +233,10 @@ jobs:
           test -f node_modules/pi-intercom/package.json
           test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
   fresh-install-advisory:
-    # Advisory (not in ci-ok): the newest npm, so a new npm release cannot block all work. macOS (bundled npm) runs here when runner capacity allows; it never blocks merging.
+    # Advisory (not in ci-ok): the newest npm, so a new npm release cannot block all work. macOS (bundled npm) runs here on push to main only, never on pull_request (GitHub has too few free macOS runners); it never blocks merging.
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - {os: ubuntu-latest, npm: "latest"}
-          - {os: windows-latest, npm: "latest"}
-          - {os: macos-latest, npm: bundled}
+      matrix: ${{ fromJSON(github.event_name == 'pull_request' && '{"include":[{"os":"ubuntu-latest","npm":"latest"},{"os":"windows-latest","npm":"latest"}]}' || '{"include":[{"os":"ubuntu-latest","npm":"latest"},{"os":"windows-latest","npm":"latest"},{"os":"macos-latest","npm":"bundled"}]}') }}
     name: fresh-install-advisory (${{ matrix.os }}, npm ${{ matrix.npm }})
     runs-on: ${{ matrix.os }}
     env:
