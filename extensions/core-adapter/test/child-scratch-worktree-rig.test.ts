@@ -49,6 +49,12 @@ test("a custom close.worktreeDir: $FOREMAN_SCRATCH is under that root", async (t
   assert.ok(scratchOf(input)!.startsWith(path.join(base, `custom-root${n}`, ".foreman", "scratch", a.sessionId) + path.sep), scratchOf(input));
 });
 
+test("a session without a launch has no child_scratch_root event", async (t) => {
+  const a = await rig(t, fakeRepo());
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(a.events("child_scratch_root"), []);
+});
+
 test("a non-git cwd: the temp folder", async (t) => {
   const plain = path.join(base, "plain");
   fs.mkdirSync(plain);
@@ -75,11 +81,17 @@ test("before the npm root resolves a launch uses the temp folder; after it, the 
   const early: Record<string, unknown> = { agent: "builder", task: "go" };
   assert.equal((await a.launch(early)).res, undefined);
   assert.ok(scratchOf(early)!.startsWith(path.join(fs.realpathSync.native(os.tmpdir()), "pi-foreman-scratch") + path.sep), scratchOf(early));
-  assert.deepEqual(a.events("child_scratch_root"), []);
+  assert.deepEqual(a.events("child_scratch_root").map((r) => r.source), ["tmp"]);
   resolve(path.join(base, "fake-npm", "node_modules"));
-  for (let i = 0; i < 50 && !a.events("child_scratch_root").length; i++) await new Promise((r) => setTimeout(r, 20));
-  const late: Record<string, unknown> = { agent: "builder", task: "go" };
-  assert.equal((await a.launch(late)).res, undefined);
+  const wtRoot = path.join(base, `${path.basename(repo)}.worktrees`, ".foreman", "scratch") + path.sep;
+  let late: Record<string, unknown> = { agent: "builder", task: "go" };
+  for (let i = 0; i < 50; i++) {
+    late = { agent: "builder", task: "go" };
+    assert.equal((await a.launch(late)).res, undefined);
+    if (scratchOf(late)!.startsWith(wtRoot)) break;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.deepEqual(a.events("child_scratch_root").map((r) => r.source), ["tmp"]); // once per session, at the first launch
   assert.ok(scratchOf(late)!.startsWith(path.join(base, `${path.basename(repo)}.worktrees`, ".foreman", "scratch") + path.sep), scratchOf(late));
 });
 

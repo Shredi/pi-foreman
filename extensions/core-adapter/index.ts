@@ -521,6 +521,8 @@ interface Session {
   scratch: ChildScratch;
   /** The worktree-side scratch location (`<root>/.foreman/scratch`) once the npm root resolved; null: the temp folder. Set together with `owned.childScratchRoot`. */
   scratchWt: ScratchWt | null;
+  /** `child_scratch_root` was traced (at the first launch that created a lane). */
+  scratchRootTraced?: boolean;
   /** Foreman only: the usage sync of stray Pi warm entries (keepalive.ts), the latest event context and assistant message time. */
   keepalive: KeepaliveLog;
   /** The warm owner (budget, cache touch, the idle warms of every cache; selfwarm.ts) and the presence gate (the presence probe runs in the foreman only). */
@@ -1132,11 +1134,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pressureQ: null,
     };
     sessions.set(id, s);
-    // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman traces it once and removes worktree-side lanes older than 7 days
+    // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman removes worktree-side lanes older than 7 days
     const applyScratchBase = (): void => {
       s.scratchWt = scratchWtNow;
       if (isChild) return;
-      s.trace?.emit({ event: "child_scratch_root", source: scratchWtNow ? "worktree" : "tmp" });
       try {
         sweepOldScratch(s);
       } catch {

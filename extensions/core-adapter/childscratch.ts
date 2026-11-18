@@ -545,6 +545,8 @@ export interface ScratchHost {
   agentDir?: string;
   /** The worktree-side scratch location (`<root>/.foreman/scratch`), null/absent: the temp folder. */
   scratchWt?: ScratchWt | null;
+  /** Set once `child_scratch_root` is traced (the first launch that creates a lane). */
+  scratchRootTraced?: boolean;
 }
 
 const depsOf = (h: ScratchHost, deps: ScratchFs): ScratchFs => (h.scratchWt ? { ...deps, wtBase: h.scratchWt.base } : deps);
@@ -558,6 +560,10 @@ export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b:
   if (!dir) {
     h.trace?.emit({ event: "child_scratch", role: b.role, action: "unavailable" });
     return;
+  }
+  if (!h.scratchRootTraced) {
+    h.scratchRootTraced = true;
+    h.trace?.emit({ event: "child_scratch_root", source: h.scratchWt && !h.scratchWt.failed ? "worktree" : "tmp" });
   }
   b.scratch = dir;
   h.scratch.add(b.launchId, dir, b.role);
