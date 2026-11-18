@@ -165,3 +165,12 @@ test("pending flow: Yes opens, with a stub confirmShaped that receives the signa
   assert.equal(d.spawned.length, 1);
   assert.ok(signals[0] instanceof AbortSignal);
 });
+
+test("open dialog: the brief heading's first letter is capitalised in the summary and the 'Brief heading:' line", async () => {
+  fs.writeFileSync(path.join(root, "lower.md"), "# Brief: a throwaway test session\n\nbody\n");
+  const a = asking();
+  await runSessionCommand(deps({ confirm: a.confirm }), "open demo lower.md");
+  assert.equal(a.seen[0].message.split("\n")[0], "A throwaway test session");
+  assert.match(a.seen[0].message, /Brief heading: A throwaway test session/);
+  assert.doesNotMatch(a.seen[0].message, /Brief: /);
+});

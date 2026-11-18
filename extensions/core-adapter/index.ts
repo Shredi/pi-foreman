@@ -6185,7 +6185,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const spec: DialogSpec = {
             ask: `Approve the plan for ${plan.topic}?`,
             summary: "Builders start only after you approve. Read the plan page first.",
-            facts: [["Plan", planSummary(plan.markdown, plan.rel, plan.hash).split("\n")[0].replace(/^Plan: /, "")], ["Version", hash8], ["Review", reviewFact]],
+            facts: [["Plan", planSummary(plan.markdown, plan.rel, plan.hash).split("\n")[0].replace(/^Plan:\s*/, "").replace(/^Plan:\s*/i, "")], ["Version", hash8], ["Review", reviewFact]],
             ...("path" in page ? { links: [{ label: "Plan page", path: page.path, text: "open the plan page", kind: "page" as const }], detail: ["The page is a path on this session's machine."] } : { detail: [`Plan page: not available (${page.reason})`] }),
             answers: "revise: you say what to change   reject: the work stops   approve: builders start",
           };

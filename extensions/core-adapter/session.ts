@@ -507,14 +507,14 @@ export function ownerConfirmShaped(ctx: ExtensionContext, events: EventBus | und
   };
 }
 
-/** The brief's first `#` heading with markdown signs and a leading `Brief:` removed, or null. */
+/** The brief's first `#` heading with markdown signs and a leading `Brief:` removed, its first letter capitalised, or null. */
 function briefHeading(file: string): string | null {
   try {
     for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
       const m = /^#\s+(.*)$/.exec(line);
       if (!m) continue;
       const h = cleanDialogText(m[1].replace(/[`*_]/g, "").replace(/^brief:\s*/i, ""));
-      return h === "" ? null : h;
+      return h === "" ? null : h.charAt(0).toUpperCase() + h.slice(1);
     }
   } catch {
     // unreadable: no heading

@@ -91,3 +91,19 @@ test("checkpoint dialog: in the TUI the dialog is Pi's selector through custom; 
   assert.match(text, /file:\/\/.*plan\.html/);
   assert.deepEqual(customs[0].options.blocked, { kind: "question", message: "Approve the plan for widget?" });
 });
+
+test("checkpoint dialog: the Plan fact drops the heading's own 'Plan:' (case-insensitive), so it reads 'dialog test'", async (t) => {
+  const w = world(t);
+  fs.writeFileSync(w.planFile, "# Plan: dialog test\n\n## For the owner\nWe test the dialog.\n\n## Goal\nShip it.\n");
+  const a = await w.adapter("startup");
+  assert.equal(await a.review("PASS"), null);
+  const seen: string[] = [];
+  const ctx = a.ctx as unknown as { ui: Ui; mode: string };
+  ctx.mode = "rpc";
+  ctx.ui.select = async (title: unknown) => (seen.push(String(title)), "approve");
+  assert.equal((await a.checkpoint()).decision, "approve");
+  await tick();
+  assert.equal(seen.length, 1);
+  assert.match(seen[0], /Plan: +dialog test\n/);
+  assert.doesNotMatch(seen[0], /Plan: +Plan:/);
+});
