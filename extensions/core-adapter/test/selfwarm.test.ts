@@ -619,3 +619,41 @@ test("an owner who is present keeps the half tier for a subagent that only waits
   assert.deepEqual([v.tier, v.reason, v.presence], ["half", "subagent", "present"]);
   assert.equal(h.sw["finalBusy"](), true);
 });
+
+test("a queued message while a tool call runs: warms still fire (a steer waits until the call ends)", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.f.queued = true;
+  h.f.sig = { ...h.f.sig, turn: true, toolRunning: true };
+  await h.advance(275_000);
+  assert.equal(h.f.replays, 1);
+  assert.equal(h.ev("keepalive", "skipped").some((r) => r.reason === "queued"), false);
+});
+
+test("a 10-minute owner-script tool call on a 300 s TTL with a queued steer gives warms", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.f.queued = true;
+  h.f.sig = { ...h.f.sig, turn: true, command: true, toolRunning: true };
+  await h.advance(600_000);
+  assert.ok(h.f.replays >= 2, `replays ${h.f.replays}`);
+  assert.ok(h.ev("keepalive", "fired").length >= 2);
+});
+
+test("a queued message with no tool call running: skipped, one `skipped reason=queued` event per stretch", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.f.queued = true;
+  await h.advance(290_000);
+  assert.equal(h.f.replays, 0);
+  const hits = h.ev("keepalive", "skipped").filter((r) => r.reason === "queued");
+  assert.equal(hits.length, 1);
+});
+
+test("a fire while a real request is in flight writes one `skipped reason=in_flight` event", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.sw.capture([{ role: "system", content: "sys" }, { role: "user", content: "hi" }]); // a real request starts; the timer is cleared, so fire the stale path directly
+  await (h.sw as unknown as { fire(gen: number): Promise<void> }).fire((h.sw as unknown as { gen: number }).gen);
+  assert.equal(h.ev("keepalive", "skipped").filter((r) => r.reason === "in_flight").length, 1);
+});

@@ -13,7 +13,7 @@ type Rig = { root: string; main: string; wt: string; g: (cwd: string, ...a: stri
 /** A bare origin, a main checkout at origin/main and a linked worktree on round/x created from origin/main (upstream = origin/main). */
 function rig(): Rig {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-prhead-")));
-  // the harness sets url.invalid-push:.pushInsteadOf for every URL; the fixture's own origin keeps its path
+  // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path
   const pushKeep = `url.${path.join(root, "origin.git")}.pushInsteadOf=${path.join(root, "origin.git")}`;
   const g = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", pushKeep, ...a], { encoding: "utf8" }).trim();
   const commit = (cwd: string, m: string) => {

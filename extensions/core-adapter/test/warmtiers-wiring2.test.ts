@@ -101,3 +101,35 @@ test("with none of the signals the same rig holds the quarter tier, reason idle"
   assert.equal(hit.tier, "quarter");
   assert.equal(hit.activity, "idle");
 });
+
+// D73: a message queued during a running tool call no longer skips every warm silently.
+async function queuedRig(t: Parameters<typeof r11Rig>[0], queued: { v: boolean }): Promise<Rig> {
+  const open = { ...config.providers.pa.cache, keepalive: { enabled: true, compactMinTokens: 0 } };
+  const r = await r11Rig(t, {}, {
+    config: { providers: { pa: { ...config.providers.pa, cache: open } } },
+    ctx: { model: { provider: "pa", id: "big", api: "openai-responses", contextWindow: 200_000 }, modelRegistry: registry, isIdle: () => true, hasPendingMessages: () => queued.v, getContextUsage: () => ({ tokens: 1000, contextWindow: 200_000 }) },
+  });
+  await r.fire("agent_start", {});
+  await r.fire("context_with_system", { messages: [{ role: "system", content: [{ type: "text", text: "sys" }] }, { role: "user", content: "hi" }] });
+  await r.fire("message_end", { message: { role: "assistant", provider: "pa", model: "big", content: [{ type: "text", text: "ok" }], stopReason: "stop", usage: { input: 100_000, output: 10, cacheRead: 0, cacheWrite: 0 } } });
+  return r;
+}
+
+test("a queued message with no tool call running: the warm is skipped and one `skipped reason=queued` event is written", async (t) => {
+  const r = await queuedRig(t, { v: true });
+  await r.fire("agent_settled", {});
+  await sleep(settleGraceMs(11) + 1500);
+  const ev = r.events("keepalive");
+  assert.equal(ev.filter((e) => e.outcome === "skipped" && e.reason === "queued").length, 1, JSON.stringify(ev));
+  assert.equal(ev.some((e) => e.outcome === "fired" || (e.outcome === "error")), false, JSON.stringify(ev));
+});
+
+test("a queued message while a tool call runs: the warm is not skipped as queued", async (t) => {
+  const r = await queuedRig(t, { v: true });
+  await r.call("foreman_script", { action: "run", id: "x" }); // a tool_call with no tool_result yet: the call runs
+  await r.fire("agent_settled", {});
+  await sleep(settleGraceMs(11) + 1500);
+  const ev = r.events("keepalive");
+  assert.equal(ev.some((e) => e.reason === "queued"), false, JSON.stringify(ev));
+  assert.ok(ev.some((e) => e.outcome === "fired" || e.outcome === "window_end" || e.outcome === "skipped"), JSON.stringify(ev));
+});

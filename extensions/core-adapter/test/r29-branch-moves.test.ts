@@ -20,7 +20,7 @@ function fixture() {
   const origin = path.join(base, "origin.git");
   const work = path.join(base, "work");
   const g = (...a: string[]) => execFileSync("git", ["-C", work, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { encoding: "utf8" }).trim();
-  // the harness sets url.invalid-push:.pushInsteadOf for every URL; the fixture's own origin keeps its path
+  // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path
   const pushOrigin = (...a: string[]) => g("-c", `url.${origin}.pushInsteadOf=${origin}`, "push", ...a);
   execFileSync("git", ["init", "-q", "--bare", origin]);
   fs.mkdirSync(work);
