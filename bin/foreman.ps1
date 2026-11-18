@@ -49,7 +49,7 @@ switch ($sub) {
     'update-check' { $name = 'foreman_update_check.py' }
     'retro' { $name = 'foreman_retro.py' }
     'sync' { $name = 'foreman_sync.py' }
-    'session' { $name = 'foreman_session.py' }
+    'session' { $name = 'foreman_session.py'; if (-not $env:PI_FOREMAN_START_CHECK_SECONDS) { $env:PI_FOREMAN_START_CHECK_SECONDS = '3' } }
     'radar' { $name = 'foreman_radar.py' }
     'config' { $name = 'foreman_config.py' }
     'bench' { $name = 'foreman_bench.py' }

@@ -11,6 +11,11 @@ import { tick, world } from "./_r46world.ts";
 type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 type World = ReturnType<typeof world>;
 type Settle = { entries?: { customType?: string; content?: string }[] } | undefined;
+/** Polls every 50 ms until the condition holds or 10 s pass; the assert after it decides. */
+async function until(pred: () => boolean, ms = 10_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!pred() && Date.now() < end) await tick(50);
+}
 
 const MODEL = "fake/hs";
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
@@ -293,10 +298,10 @@ test("item 7: a high-stakes run whose completion notice arrives after a reload i
   const notice = (id: string) => `Background task completed: **reviewer**\n\nRetention-managed async directory: /x/async/${id}\n`;
   const ledger = () => fs.readFileSync(path.join(w.project, ".workflow", "LEDGER-x.md"), "utf8");
   await b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: notice(`run-${run.id}`) } });
-  await tick(300);
-  assert.match(ledger(), /- \[ \] 3\. third/, "the high-stakes run marked nothing");
   await b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: notice(`run-${other.id}`) } });
-  await tick(300);
+  // the control's mark is awaited; the high-stakes notice is refused before any mark is queued, so it can only have been queued ahead of the control
+  await until(() => /- \[x\] 3\. third/.test(ledger()));
+  assert.match(ledger(), /- \[ \] 2\. second/, "the high-stakes run marked nothing");
   assert.match(ledger(), /- \[x\] 3\. third/, "control: a notice of another run marks");
 });
 
