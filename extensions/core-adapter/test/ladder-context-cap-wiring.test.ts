@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
+import { lightSpawner } from "./_light-spawner.ts";
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 const ROLES = { explorer: { model: "fake/explorer" }, reviewer: { model: "fake/reviewer" }, builder: { model: "fake/builder", strong: { model: "fake/strong" } } };
@@ -12,7 +13,9 @@ const rig = (t: Parameters<typeof r11Rig>[0], ladder?: Record<string, unknown>):
   r11Rig(t, { default: "standard" }, {
     ctx: { ...reviewAllowOpts().ctx, model: { provider: "fake", id: "foreman" } },
     config: { providers: { fake: { review: { model: "m" }, roles: ROLES } }, ...(ladder ? { ladder } : {}) },
+    deps: { spawner: lightSpawner() }, // the cases read the launch binding, not the spawn gate's answer
   });
+
 
 test("a single builder launch carries contextCap 250000 on the bottom and the top rung; reviewers none", async (t) => {
   const a = await rig(t);

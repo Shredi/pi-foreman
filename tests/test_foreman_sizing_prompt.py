@@ -11,6 +11,8 @@ BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
 
 
 ROLE_PAIRS = [
+    # D80: `init` creates and binds the ledger when `write` is missing
+    ("`add` (`text`); `upsert`", "`add` (`text`); `init` (`topic`, `texts?`: creates and binds `.workflow/LEDGER-<topic>.md` with the `texts` items plus V when `write` is missing, and binds an existing file unless the session is bound elsewhere); `upsert`"),
     # D28: finish refusals are counted per unchanged state, not per user prompt
     ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
     ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),

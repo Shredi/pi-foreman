@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { lightSpawner } from "./_light-spawner.ts";
 
 const base = fs.realpathSync.native(mkTestTmp("pf-d82rig-"));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -26,6 +27,7 @@ const rig = (t: Parameters<typeof r11Rig>[0], cwd: string, close?: Record<string
   r11Rig(t, { default: "standard" }, {
     ctx: { ...reviewAllowOpts().ctx, cwd, model: { provider: "fake", id: "foreman" } },
     config: { providers: { fake: { review: { model: "m" }, roles: { builder: { model: "fake/builder" } } } }, ...(close ? { close } : {}) },
+    deps: { spawner: lightSpawner() }, // the cases read the scratch binding, not the spawn gate's answer
   });
 
 test("default close.worktreeDir: $FOREMAN_SCRATCH is under ../<repo>.worktrees/.foreman/scratch/<session>/, traced once as worktree", async (t) => {

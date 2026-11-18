@@ -1,9 +1,9 @@
 // D80: foreman_ledger {action: "init", topic, texts?} creates and binds a ledger for a session without the write tool.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { boundLedger } from "../marker.ts";
+import { boundLedger, markerPath } from "../marker.ts";
 import { isLedgerOnlyCommand, LEDGER_ACTIONS, planLedgerInit } from "../ledgercall.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
@@ -13,7 +13,25 @@ const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platfor
 const skip = !py.ok ? "no Python >= 3.13" : false;
 
 type Res = { content: { text: string }[]; isError?: boolean };
-async function rig(t: Parameters<typeof r11Rig>[0], child = false) {
+type Rig = Awaited<ReturnType<typeof makeRig>>;
+let shared: Rig | undefined;
+const ends: (() => void | Promise<void>)[] = [];
+after(async () => {
+  for (const fn of ends) await fn();
+});
+/** One session for every case but the child's: each case gets it back with an empty .workflow and its marker without a binding. */
+async function rig(t: Parameters<typeof r11Rig>[0], child = false): Promise<Rig> {
+  if (child) return makeRig(t, true);
+  if (!shared) return (shared = await makeRig({ after: (fn) => void ends.push(fn) }, false));
+  const dir = path.join(shared.a.project, ".workflow");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const marker = markerPath(path.join(shared.a.agentDir, "pi-foreman", "state"), shared.a.sessionId);
+  const { session_id, started } = JSON.parse(fs.readFileSync(marker, "utf8")) as { session_id: string; started: number };
+  fs.writeFileSync(marker, JSON.stringify({ session_id, started })); // no binding, same session
+  return shared;
+}
+async function makeRig(t: Parameters<typeof r11Rig>[0], child: boolean) {
   const tools = new Map<string, { execute: (...a: unknown[]) => Promise<Res> }>();
   const a = await r11Rig(t, { ledgerHelper: "tool" }, { child, piExtra: { registerTool: (d: { name: string; execute: never }) => void tools.set(d.name, d as never) } });
   const bound = () => boundLedger(path.join(a.agentDir, "pi-foreman", "state"), a.sessionId);
