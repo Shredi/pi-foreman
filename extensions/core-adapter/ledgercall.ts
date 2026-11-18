@@ -254,7 +254,7 @@ export function planLedgerInit(params: Record<string, unknown>): { topic: string
   if (!Array.isArray(raw) || raw.length > LEDGER_INIT_MAX_TEXTS) return { error: `${LEDGER_TOOL}: texts is a list of at most ${LEDGER_INIT_MAX_TEXTS} one-line strings.` };
   const texts: string[] = [];
   for (const t of raw) {
-    if (typeof t !== "string" || !t.trim() || /[\r\n]/.test(t)) return { error: `${LEDGER_TOOL}: each text is a non-empty single line.` };
+    if (typeof t !== "string" || !t.trim() || /[\r\n\x0b\x0c\x1c\x1d\x1e\x85\p{Zl}\p{Zp}]/u.test(t)) return { error: `${LEDGER_TOOL}: each text is a non-empty single line.` };
     texts.push(t.trim());
   }
   return { topic, texts };

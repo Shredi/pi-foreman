@@ -70,8 +70,9 @@ export function ownedRoots(i: OwnedInput): OwnedRoots {
  * The owned read-write roots as literal dirs: the `*` segment (one dir per session) is expanded from disk. A root that holds the child scratch base
  * `exclude` (`<root>/.foreman/scratch`) is replaced by the directories beside the path down to it, so no shell write reaches the scratch lanes.
  */
-export function literalOwnedDirs(roots: string[], exclude?: string): string[] {
+export function literalOwnedDirs(roots: string[], exclude?: string, platform: string = process.platform): string[] {
   const out: string[] = [];
+  const fold = (x: string): string => (platform === "win32" || platform === "darwin" ? x.toLowerCase() : x);
   const real = (p: string): string => {
     try {
       return fs.realpathSync(p);
@@ -82,7 +83,7 @@ export function literalOwnedDirs(roots: string[], exclude?: string): string[] {
   for (const r of roots) {
     const i = r.split(path.sep).indexOf("*");
     if (i < 0) {
-      const rel = exclude ? path.relative(real(r), exclude) : "";
+      const rel = exclude ? path.relative(fold(real(r)), fold(exclude)) : "";
       if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) {
         out.push(r);
         continue;
@@ -90,7 +91,7 @@ export function literalOwnedDirs(roots: string[], exclude?: string): string[] {
       let cur = r;
       for (const seg of rel.split(path.sep)) {
         try {
-          for (const e of fs.readdirSync(cur, { withFileTypes: true })) if (e.isDirectory() && e.name !== seg) out.push(path.join(cur, e.name));
+          for (const e of fs.readdirSync(cur, { withFileTypes: true })) if (e.isDirectory() && fold(e.name) !== seg) out.push(path.join(cur, e.name));
         } catch {
           // the dir does not exist yet: nothing to allow
         }
