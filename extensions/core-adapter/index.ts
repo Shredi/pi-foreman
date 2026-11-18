@@ -70,7 +70,7 @@ import { bgWaitLocations, coordinationCall, launchLocations, inRecorded, noticeL
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
-import { DEFERRED_ENTRY, DEFERRED_SECTION, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
+import { DEFERRED_ENTRY, DEFERRED_SECTION, MODEL_ONLY_SECTION, modelOnlyHint, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
@@ -210,7 +210,7 @@ const BLOCK_CHECKPOINT: BlockClass = { on: "owner", kind: "checkpoint" };
 const BLOCK_SCRIPT: BlockClass = { on: "owner", kind: "script" };
 const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
 const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
-import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
+import { completedAgents, CritiqueCounter, incompleteOf, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
@@ -222,9 +222,9 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDocto
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeCloseRequest, mergeCloseStarter, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
+import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -237,7 +237,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, contextCap, topClimbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, countsForItems, entryOccasions, keptIndices, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -466,6 +466,8 @@ interface Session {
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
+  /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
+  ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
   hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
@@ -577,6 +579,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
+  // The model-only tools line (deferred.ts): built at the first request of a session, then fixed so the prefix stays byte-stable.
+  const modelOnly = { done: false, hint: "" };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
   const skillState = { rules: { visible: [], hidden: [] } as SkillRules, hidden: [] as SkillRef[], split: false, hint: "" };
   let toolUsage = new ToolUsageTracker(); // replaced at every session_start: /new and /resume reuse this load
@@ -914,14 +918,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
     const owned = computeOwned(null, false);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
-    // A child foreman session (handoff dir set) whose last watched PR was merged closes itself (close.ts `pr-merged`, selffinish.ts); one close per tick.
-    const startMergeClose = mergeCloseStarter((c, r) => close.start(c, r), () => close.closing(s.id));
-    const mergeClose = (n: number | null): void => {
-      const ctx = s.prCtx;
-      const req = mergeCloseRequest({ handoff: process.env[HANDOFF_DIR_ENV], watched: s.prWatches.numbers(), n, parent: parentIntercomId(process.env) });
-      if (!req || !ctx) return;
-      startMergeClose(ctx, req);
-    };
+    // A child foreman session (handoff dir set) says once per merged PR that it stays open (close.ts mergeNotifier); a merge never starts a close.
+    const mergeNotice = mergeNotifier({
+      handoff: process.env[HANDOFF_DIR_ENV],
+      get parent() { return parentIntercomId(process.env); },
+      remote: process.env[REMOTE_PARENT_ENV] === "1",
+      notify: (text) => s.prCtx?.ui.notify(text, "info"),
+      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      trace: (r) => s.trace?.emit(r),
+    });
     const s: Session = {
       id,
       cwd,
@@ -982,10 +987,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const st = o.kind === "ran" ? o.result.state : null;
           return st === "open" || st === "merged" || st === "closed" ? st : "unknown";
         },
-        // A child foreman session (handoff dir set) whose PR was merged closes itself (close.ts `pr-merged`, selffinish.ts).
-        onMerged: (info) => mergeClose(info.key.n),
-        // The last watch ended unmerged (the host closed it) after a merge: the close the merge did not start.
-        onLastEnded: () => mergeClose(s.prWatches.mergedPrs().at(-1)?.n ?? null),
+        // A merged PR is announced once (child pane and intercom parent); the session closes only on a close request.
+        onMerged: (info) => mergeNotice(info.key.n),
         returnToBase: ({ key, cwd }) => {
           const dir = cwd || (s.prCtx?.cwd ?? s.cwd);
           return mergedReturn({
@@ -1093,6 +1096,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewFailOpen: false,
       hs: new HighStakes(),
       hsReminded: null,
+      ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
@@ -1276,6 +1280,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
+  /** The ledger part of a PassMark and of the repeat-review signal: the bound path and the count of subject changes (`path#rev`), null when no ledger is bound. */
+  function ledgerSignal(s: Session): string | null {
+    const f = boundLedger(s.markerDir, s.id);
+    return f === null ? null : `${f}#${s.ledgerRev}`;
+  }
+
+  /** Whether a resolved tool path is the bound ledger (selffinish's samePath: native real paths, Windows case and separators folded, so an 8.3 short temp path matches). */
+  function isBoundLedgerPath(p: string | null, bound: string): boolean {
+    return p !== null && samePath(p, bound);
+  }
+
+  /** A subject change to the bound ledger (an item added or rewritten, a write or edit of the file): the next reviewer launch is allowed after a PASS. Saved at once. */
+  function bumpLedgerRev(s: Session): void {
+    s.ledgerRev += 1;
+    persistCeremonyState(s);
+  }
+
   /** Append the `pi-foreman-ceremony-state` session entry (planstate.ts) when the state differs from the last one appended or restored. */
   function persistCeremonyState(s: Session): void {
     if (s.isChild || !s.ceremonyRestored) return;
@@ -1296,6 +1317,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       highStakes: s.hs.snapshot(),
       pause: s.pauseSaved,
       hsReminded: s.hsReminded,
+      ledgerRev: s.ledgerRev,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1499,11 +1521,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
   }
 
-  /** A high-stakes run ended with a verdict: it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
+  /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
   function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null);
     const verdict = r?.verdict;
     if (!r || !verdict) return;
+    if (incompleteOf(r.text)) {
+      // the reviewer stopped early and found no defect: nothing is recorded (no run, no gate change), as for a run with no verdict
+      s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
+      return;
+    }
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
     if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
@@ -1598,6 +1625,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
+    if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
       s.work = { ...e.pause.work };
@@ -2081,6 +2109,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     deferred.patterns = merged.list;
     deferred.loaded = new Set(recorded?.names ?? []);
     deferred.hint = "";
+    modelOnly.done = false;
+    modelOnly.hint = "";
     deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
     deferred.trace = (r) => s.trace?.emit(r);
     let declared: string[] = [];
@@ -2312,6 +2342,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       deferred.hint = deferredHint(deferred.hidden, codemode);
       event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
     } else deferred.hint = "";
+    if (!modelOnly.done) {
+      modelOnly.done = true;
+      try {
+        if (pi.getActiveTools().includes("codemode")) modelOnly.hint = modelOnlyHint(pi.getAllTools().filter((tool) => tool.exposure === "model-only").map((tool) => tool.name));
+      } catch {
+        // no tool api: no line
+      }
+    }
+    if (modelOnly.hint) event.systemPromptOptions.sections[MODEL_ONLY_SECTION] = modelOnly.hint;
     if (!s.isChild) {
       const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
       if (Array.isArray(listed)) {
@@ -2472,7 +2511,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild) return undefined;
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
-    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
+    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [MODEL_ONLY_SECTION, modelOnly.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
     // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
     // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
@@ -2772,11 +2811,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
-        try {
-          void Promise.resolve(close.onRunsDone(s.id)).catch(() => undefined);
-        } catch {
-          // a refused merge close is not retried
-        }
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
         if (typeof runId === "string") s.hs.ended(runId); // a run that ended, with or without a verdict, no longer counts as running
@@ -3730,6 +3764,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let notices: string[] = [];
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
+      let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Warned only once the launch passed every check (set at the end of the guard path).
@@ -3777,6 +3812,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: flags.error };
         }
+        if (flags.occasionError && !s.isChild && actionOf(input) === null) {
+          s.trace?.emit({ event: "review_occasion_unknown" });
+          return { block: true, reason: flags.occasionError };
+        }
+        takenOccasions = flags.occasions;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -3872,12 +3912,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
           return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
-        // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
-        if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
-        // A task that names both [pre-pr] and [high-stakes] in prose would silently become a high-stakes review: refused, the foreman keeps one.
-        if (namesBothTags(occasions)) {
-          s.trace?.emit({ event: "review_occasion_ambiguous" });
-          return { block: true, reason: "pi-foreman: launch refused [review_occasion_ambiguous]: the task names both [pre-pr] and [high-stakes]; keep one, or quote the other in backticks." };
+        // Review occasions (occasion.ts launchOccasion): the launch field or the head marker of each reviewer task, before any rewrite or facts block.
+        if (!s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            if (typeof e.agent !== "string") continue;
+            const r = launchOccasion(e, takenOccasions.get(e), input.reason);
+            if ("refused" in r) {
+              s.trace?.emit({ event: r.refused });
+              return { block: true, reason: r.text };
+            }
+            occasions.set(e, r.occasion);
+            // a field-only launch: the marker heads the caller's own text, so the reviewer and the later steps see the kind
+            if (r.prepend && r.occasion !== "item" && typeof e.task === "string") e.task = withOccasionMarker(e.task, r.occasion);
+          }
+        } else if (s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            const kind = takenOccasions.get(e);
+            if (kind && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = withOccasionMarker(e.task, kind);
+          }
         }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
@@ -3921,7 +3973,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const base = typeof m === "string" ? splitLevel(m.trim()).base : "";
           return base === "strong" || (base !== "" && typeof rung === "string" && base === splitLevel(rung).base);
         }));
-        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
+        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null }, occasions);
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
           return { block: true, reason: shadow.message };
@@ -3944,7 +3996,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -3955,7 +4007,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const signals = new Set<string>();
             for (const m of marks) {
               if (!m) continue;
-              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: boundLedger(s.markerDir, s.id), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
+              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: ledgerSignal(s), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
             }
             if (signals.size > 0) s.trace?.emit({ event: "review_dup_allowed", agent, signals: [...signals].join(",") });
             else {
@@ -4261,8 +4313,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
-        const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
-          if (occasionOf(task) !== "plan-review") return null;
+        const factCount = await reviewFacts.augment(input, ctx.cwd, (task, step) => {
+          if ((occasions.get(step) ?? occasionOf(task)) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
           const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
           const rereview: string[] = [];
@@ -4346,7 +4398,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger)) s.trace?.emit(r);
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
@@ -4680,7 +4732,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         delete s.passMarks[k];
       }
       const at = Date.now();
-      const ledger = boundLedger(s.markerDir, s.id);
+      const ledger = ledgerSignal(s);
       for (const k of passedKeys) {
         const cwd = k === SESSION_WIDE ? (reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd) : k;
         if (k !== SESSION_WIDE) s.builderRunsByRoot[k] ??= 0;
@@ -4784,6 +4836,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   function planOpts(s: Session, ctx: ExtensionContext) {
     return { cwd: ctx.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
+  }
+
+  /**
+   * A plan-only session may close V on plan reviews: no builder launched (counted at launch, and the saved step count), no project edit counted, at least one
+   * plan lineage, and every lineage's latest verdict a PASS on its plan's version as it is on disk now.
+   */
+  function planOnlyPass(s: Session, ctx: ExtensionContext): boolean {
+    if (s.work.builders !== 0 || s.steps.builder !== 0 || s.work.edits !== 0) return false;
+    const lineages = s.planReviews.all();
+    if (lineages.length === 0) return false;
+    return lineages.every((l) => {
+      if (l.latest.verdict !== "pass") return false;
+      const r = readPlan(l.path, planOpts(s, ctx));
+      return "plan" in r && r.plan.hash === l.latest.hash;
+    });
   }
 
   /** Roles a `subagent` call runs: top-level, tasks, chain (and parallel steps), or the role of a resumed run. */
@@ -5208,6 +5275,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let planFormNote = "";
     const wroteFile = !!owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit");
     const wrotePath = (event.input as Record<string, unknown>).path;
+    if (owner && wroteFile && typeof wrotePath === "string") {
+      const bound = boundLedger(owner.markerDir, owner.id);
+      if (bound && isBoundLedgerPath(resolveToolPath(wrotePath, ctx.cwd, os.homedir()), bound)) bumpLedgerRev(owner); // a direct write of the ledger counts, whatever it changed
+    }
     if (owner && wroteFile && isPlanPath(wrotePath, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
       const written = readPlan(wrotePath, planOpts(owner, ctx));
@@ -5992,8 +6063,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "init: one line per open item (at most 32); refused when the file exists." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6019,16 +6090,46 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "ledger_call", kind, allowed: r.ok });
         return r.ok ? { content: [{ type: "text" as const, text: r.text }], details: { decision: "done" } } : refuse(r.text);
       }
-      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates) });
+      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);
       }
+      if (plan.upserts) {
+        // every named item must exist before anything is written (a dry run on a copy of the file)
+        const file = boundLedger(s.markerDir, s.id);
+        let dry: string | null = null;
+        try {
+          dry = file ? fs.readFileSync(file, "utf8") : null;
+        } catch {
+          // unreadable: refused below
+        }
+        let error = dry === null ? `${LEDGER_TOOL}: this session has no ledger of its own.` : "";
+        for (const u of plan.upserts) {
+          if (error || dry === null || u.item === null) continue;
+          const r = rewriteItemText(dry, u.item, u.text);
+          if ("error" in r) error = r.error;
+          else dry = r.file;
+        }
+        if (error) {
+          s.trace?.emit({ event: "ledger_call", kind, allowed: false });
+          return refuse(error);
+        }
+      }
       const out: string[] = [];
       let ok = true;
       let traceItems = plan.items;
-      if (plan.upsert) {
-        const u = plan.upsert;
+      // Entries are applied one by one, each taking the ledger lock itself (the lock is not reentrant); a failure stops the rest and the answer lists both sets.
+      const ups = plan.upserts ?? (plan.upsert ? [plan.upsert] : []);
+      const upLabel = (u: { item: string | null; text: string }): string => (u.item !== null ? `item ${u.item}` : `new "${u.text.slice(0, 40)}"`);
+      const applied: string[] = [];
+      const unapplied: string[] = [];
+      const touched: string[] = [];
+      for (const u of ups) {
+        if (!ok) {
+          unapplied.push(upLabel(u));
+          continue;
+        }
         const file = boundLedger(s.markerDir, s.id);
         let content: string | null = null;
         try {
@@ -6055,6 +6156,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
                 const rr = renameRetry(tmp, file);
                 if (rr.error) throw rr.error;
                 out.push(`upserted ${u.item}`);
+                bumpLedgerRev(s);
               } catch (err) {
                 try {
                   fs.rmSync(tmp, { force: true });
@@ -6087,16 +6189,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const r = await runLedger(s, ["add", u.text], null);
             if (r.text) out.push(r.text);
             ok = ok && r.ok;
+            if (r.ok) bumpLedgerRev(s);
             const n = /^added (\d+):/.exec(r.text);
             if (n) traceItems = n[1];
           }
         }
+        (ok ? applied : unapplied).push(upLabel(u));
+        touched.push(u.item ?? traceItems);
       }
+      if (ups.length > 1) traceItems = touched.filter(Boolean).join(",");
+      const added: { id: string; text: string }[] = [];
       for (const c of plan.calls) {
+        const label = `add "${(c[1] ?? "").slice(0, 40)}"`;
+        if (c[0] === "add" && !ok) {
+          unapplied.push(label);
+          continue;
+        }
         const r = await runLedger(s, c, null);
         if (r.text) out.push(r.text);
         ok = ok && r.ok;
+        if (r.ok && c[0] === "add") bumpLedgerRev(s);
+        if (c[0] === "add") (r.ok ? applied : unapplied).push(label);
+        const n = c[0] === "add" && r.ok ? /^added (\d+):/m.exec(r.text) : null;
+        if (n) added.push({ id: n[1], text: c[1] ?? "" });
       }
+      // A texts add traces every new number; each one is annotated with its own text below.
+      if (Array.isArray(params.texts)) traceItems = added.map((a) => a.id).join(",");
+      if (!ok && unapplied.length > 0 && applied.length + unapplied.length > 1) out.push(`${LEDGER_TOOL}: stopped; applied: ${applied.join(", ") || "none"}; not applied: ${unapplied.join(", ")}.`);
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
       ok = ok && st.ok;
@@ -6104,8 +6223,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const unbound = plan.attested && ok ? headlessPass(s.reviews) : null;
       if (unbound) out.push(`Note: the reviewer PASS carries no commit (${unbound}), so the PR gate will refuse; run a reviewer again on the head before pr_create.`);
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
-      const hint = ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null;
-      if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
+      // ledgerHint reads one item and no text from a list, so a texts add gives each new item its own hint.
+      const hints = Array.isArray(params.texts) ? added.map((a) => ledgerHint(kind, a.id, "", a.text)) : [ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null];
+      for (const hint of hints) if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);
@@ -6148,6 +6268,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (created) reviewFacts.reset();
     refreshLedgerTier(s);
     const bound = boundLedger(s.markerDir, s.id);
+    // A new ledger is a subject change like a direct write of it (#264: ledger changes reopen review); binding an existing file changes nothing.
+    if (created && bound) bumpLedgerRev(s);
     const st = await runLedger(s, ["status"], null);
     return { ok: !!bound && st.ok, text: [`${created ? "created" : "bound"} ${file}`, bound ? "" : "not bound: the ledger bind did not take effect.", st.text].filter(Boolean).join("\n") };
   }

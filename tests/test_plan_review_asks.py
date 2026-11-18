@@ -60,6 +60,15 @@ class ReviewerTextTest(unittest.TestCase):
         self.assertLessEqual(len((ROOT / "agents" / "reviewer.md").read_text(encoding="utf-8").splitlines()), 30)
 
 
+class ReviewerIncompleteRuleTest(unittest.TestCase):
+    def test_reviewer_names_the_incomplete_verdict(self):
+        text = (ROOT / "agents" / "reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("`VERDICT: FAIL INCOMPLETE`", text)
+        self.assertIn("found no defect", text)
+        self.assertIn("a defect found gives a plain FAIL", text)
+        self.assertLessEqual(len(text.splitlines()), 30)
+
+
 class FooterTextTest(unittest.TestCase):
     def check(self, text, to_parent="by file (`ask.md`)"):
         self.assertIn("Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes.", text)

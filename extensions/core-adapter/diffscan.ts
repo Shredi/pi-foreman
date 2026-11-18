@@ -413,16 +413,16 @@ export class ReviewFacts {
 
   /**
    * Call before a launch: appends the facts block to each reviewer step's task; returns the number of facts added (summed over the steps changed).
-   * `planFacts` returns the block of a plan-review step (plan path and ledger items instead of a diff), null for any other step.
+   * `planFacts` returns the block of a plan-review step (plan path and ledger items instead of a diff), null for any other step; it gets the step object too (the recorded occasion is keyed by it).
    */
-  async augment(input: Json, cwd: string, planFacts?: (task: string) => string | null): Promise<number> {
+  async augment(input: Json, cwd: string, planFacts?: (task: string, step: Json) => string | null): Promise<number> {
     let n = 0;
     for (const s of steps(input)) {
       if (typeof s.agent !== "string" || !REVIEW_ROLES.includes(s.agent) || typeof s.task !== "string") continue;
       const dir = this.cwdOf(s, input, cwd);
       const early = this.early.get(s);
       this.early.delete(s);
-      const plan = planFacts?.(s.task) ?? null;
+      const plan = planFacts?.(s.task, s) ?? null;
       if (plan !== null) {
         s.task = `${s.task}\n${plan}\n`;
         continue;

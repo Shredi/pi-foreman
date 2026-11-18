@@ -89,12 +89,12 @@ test("with no high-stakes model the repeat refusal of a standing PASS stays (no 
 
 test("D23: with the feature off a task naming both tags is still refused as ambiguous; in a child session it is not", async (t) => {
   const { w, a } = await setup(t, { ceremony: { highStakes: {} } });
-  const both = await launch(a, "reviewer", "[pre-pr] review the branch; also [high-stakes]");
+  const both = await launch(a, "reviewer", "[pre-pr] [high-stakes] review the branch");
   assert.match(both.blocked ?? "", /\[review_occasion_ambiguous\]/);
   assert.equal((await traces(w, "review_occasion_ambiguous")).length, 1);
   process.env.PI_SUBAGENT_CHILD = "1"; // the world restores the environment at its end
   const c = await w.adapter("startup");
-  const r = await launch(c, "reviewer", "[pre-pr] review the branch; also [high-stakes]");
+  const r = await launch(c, "reviewer", "[pre-pr] [high-stakes] review the branch");
   assert.doesNotMatch(r.blocked ?? "", /review_occasion_ambiguous/);
   assert.equal((await traces(w, "review_occasion_ambiguous")).length, 1, "no new trace");
 });

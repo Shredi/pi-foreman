@@ -330,9 +330,13 @@ export const SECOND_OPINION = "second-opinion";
  * A reviewer launch while the last review passed and nothing was revised since: "refuse", or
  * "second-opinion" when the launch asks for one (`reason: "second-opinion"` or the marker
  * `[second-opinion]` in its text). null = no duplicate (no reviewer, FAIL, revised, no review yet).
+ * `recorded` (the occasion of each launch entry, taken at the launch): with a reviewer entry in it, the launch is a second opinion only when
+ * every reviewer entry is recorded `second-opinion`; without one (a resume) the reason/text check applies.
  */
-export function dupReview(g: ReviewGate, roles: string[], input: Record<string, unknown>): "refuse" | "second-opinion" | null {
+export function dupReview(g: ReviewGate, roles: string[], input: Record<string, unknown>, recorded?: ReadonlyMap<Record<string, unknown>, string>): "refuse" | "second-opinion" | null {
   if (!(g.last === "pass" && !g.revised) || !roles.some((r) => REVIEW_ROLES.includes(r)) || roles.includes("builder")) return null; // a builder in the same launch is a revision
+  const reviewers = [...(recorded ?? [])].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
+  if (reviewers.length > 0) return reviewers.every(([, o]) => o === SECOND_OPINION) ? "second-opinion" : "refuse";
   return input.reason === SECOND_OPINION || JSON.stringify(input).includes(`[${SECOND_OPINION}]`) ? "second-opinion" : "refuse";
 }
 
@@ -358,5 +362,5 @@ export function repeatSignals(mark: PassMark, now: Omit<PassMark, "at">): string
 /** The refusal of a reviewer launch on unchanged, passed work; names what was compared and when. */
 export function dupRefusalText(at?: number): string {
   const when = at === undefined ? "" : ` at ${new Date(at).toTimeString().slice(0, 8)}`;
-  return `pi-foreman: the last review passed${when} and nothing changed since (no builder run, HEAD, worktree or ledger change) — finish, or revise first. Ask for a second review only when warranted: put "[${SECOND_OPINION}]" in the reviewer task text.`;
+  return `pi-foreman: the last review passed${when} and nothing changed since (no builder run, HEAD, worktree or ledger change) — finish, or revise first. Ask for a second review only when warranted: set occasion: "${SECOND_OPINION}" on the reviewer launch (or put "[${SECOND_OPINION}]" first in its task).`;
 }
