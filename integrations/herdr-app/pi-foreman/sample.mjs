@@ -50,9 +50,10 @@ export const SAMPLE = {
     agent("t7", "sample idle", "idle"),
     agent("t8", "sample fleet", "idle"),
     agent("t9", "sample review", "idle"),
+    agent("t10", "sample three prs", "idle"),
   ],
   terminals: [
-    ...[303, 305, 306, 308, 309].map((pid, i) => ({ address: ["t3", "t5", "t6", "t8", "t9"][i], state: "live", foreground: { pid } })),
+    ...[303, 305, 306, 308, 309, 310].map((pid, i) => ({ address: ["t3", "t5", "t6", "t8", "t9", "t10"][i], state: "live", foreground: { pid } })),
     // the live mirror of the ended remote session: its dimmed row stays while this terminal lives
     { address: "t20", state: "live", name: attachName("box1", ENDED), parent: "t8", agent: "pi", status: "done", argv: ["hc", "attach", "box1/t71"] },
   ],
@@ -69,6 +70,11 @@ export const SAMPLE = {
           session("s-remote", "remote-one", { machine: "box1", hcTerminal: "t70", state: "working", sym: "working", parent: "s-fleet" }),
           session(ENDED, "ended-one", { machine: "box1", hcTerminal: "t71", state: "closed", sym: "closed", ended_s: 600, parent: "s-fleet" }),
         ],
+      }),
+      // A session with more PRs than fit in its title row: one line per PR, red, ready and merge-blocked.
+      session("s-lines", "sample three prs", {
+        pid: 310, hcTerminal: "t10",
+        dots: [113, 114, 115].map((n) => ({ n, state: n === 113 ? "fail" : "ok", label: `#${n}`, src: "pr", url: `https://example.test/acme/widgets/pull/${n}` })),
       }),
       session("s-review", "sample review", {
         pid: 309, hcTerminal: "t9", repo: "acme/gadgets",
@@ -89,6 +95,9 @@ export const SAMPLE = {
       pr(110, { repo: "acme/tools", mergeState: "blocked" }),
       pr(111, { repo: "acme/tools", mergeable: "UNKNOWN", mergeState: "unknown" }),
       pr(112, { checks: [{ n: "lint", state: "fail" }, { n: "ci", state: "pending" }] }),
+      pr(113, { checks: [{ n: "ci", state: "fail" }] }),
+      pr(114),
+      pr(115, { mergeState: "blocked" }),
     ],
   },
 };

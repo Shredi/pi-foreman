@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
@@ -447,15 +447,14 @@ export default class ForemanAgents extends View {
   // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one dot; a click opens its
   // page when radar gave a URL (or a repository URL to derive it from). Resting on the chip opens the hover card.
   // `line` ({title}) draws it as an Open PRs line instead (see openPrGroup): full width, no pill, the title after the dot.
-  prChip(t, pr, href, key, more = [], line = null) {
-    return this.prGuard(() => this.prChipRaw(t, pr, href, key, more, line), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
+  prChip(t, pr, href, key, line = null) {
+    return this.prGuard(() => this.prChipRaw(t, pr, href, key, line), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
   }
 
-  // `more`: further PRs of the same row; the chip then reads "#n +k" and its hover card lists them.
-  prChipRaw(t, pr, href, key, more, line = null) {
+  prChipRaw(t, pr, href, key, line = null) {
     const st = prDotState(pr);
     const red = st.fill === "red";
-    const label = `⎇ #${pr.number}${more.length ? ` +${more.length}` : ""}`;
+    const label = `⎇ #${pr.number}`;
     const chip = (line
       ? h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
       : h_flex().flex_none().h(18).px(6).gap(4).items_center().rounded(9).border(1).border_color(red ? t.blocked : t.border).bg(t.raised).text_size(10.5).font_medium())
@@ -472,7 +471,7 @@ export default class ForemanAgents extends View {
         .child(prDot(t, st)))
       .when(Boolean(line?.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
       .when(Boolean(line) && pr.unreviewed === true, (el) => el.child(div().flex_none().text_color(tones(t).amber).child(UNREVIEWED)));
-    const c = { ...prCard(pr), more: more.length ? `also ${more.map((p) => `#${p.number}`).join(", ")}` : "" };
+    const c = prCard(pr);
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
     const onMove = (e, cx) => guard(() => {
@@ -528,8 +527,7 @@ export default class ForemanAgents extends View {
       .when(c.groups.length === 0 && !c.status && !c.note, (el) => el.child(div().text_color(t.dim).child("no job data")));
     const state = div().text_color(t.foreground).child(c.state);
     return shell.child(title).child(state).when(Boolean(c.excerpt), (el) => el.child(excerpt))
-      .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs)
-      .when(Boolean(c.more), (el) => el.child(div().text_color(t.dim).child(c.more)));
+      .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs);
   }
 
   // Session PRs with the title, description and job names of their twin in radar's open-PRs list.
@@ -537,12 +535,19 @@ export default class ForemanAgents extends View {
     return this.prGuard(() => enrichPrs(prs, this.feed), prs);
   }
 
-  // The PR chips of a session row, on the right of its title row for every row: up to two chips, more as one chip "#n +k".
+  // The PR chips of a session row, on the right of its title row for every row: up to INLINE_MAX chips. A row with more PRs has none
+  // here; its PRs are lines below the row (prLines).
   rowChips(t, item) {
-    const { chips, more } = chipPrs(item.prs ?? []);
-    const shown = this.enrich(chips);
-    const rest = this.enrich(more);
-    return shown.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, rest).mr(3));
+    const shown = this.enrich(splitPrs(item.prs ?? []).inline);
+    return shown.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id).mr(3));
+  }
+
+  // The PRs of a session row with more than INLINE_MAX PRs: one Open PRs line each (number, marks, dot, title), in sorted order, indented
+  // like the row's sub-rows. Hover and click are the chip's.
+  prLines(t, item, below, ind) {
+    const lines = this.enrich(below);
+    return v_flex().flex_none().pl(ind + 20).pr(8).gap(1)
+      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "" })));
   }
 
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
@@ -594,7 +599,9 @@ export default class ForemanAgents extends View {
     const line = statusLine(detail);
     const blocked = detail.blocked;
     const shows = item.node?.show ? showRows(item.node.show, this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`), Date.now()) : [];
+    const below = splitPrs(item.prs ?? []).below;
     const rows = [
+      ...(below.length ? [this.prGuard(() => this.prLines(t, item, below, ind), div())] : []),
       ...(shows.length ? [h_flex().pl(ind + 20).pr(8).h(18).flex_none().items_center().gap(10)
         .children(shows.map((r) => {
           const id = `show:${r.kind}:${item.id}`;
@@ -750,7 +757,7 @@ export default class ForemanAgents extends View {
     const group = v_flex().id(`op-${g.repo}`).flex_none().mt(5).pt(3).border_t(1).border_color(t.border).child(head);
     if (folded) return group;
     return group.child(v_flex().flex_none().pl(20).pr(8).gap(1)
-      .children(prs.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, [], { title: p.title ?? "" }))));
+      .children(prs.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "" }))));
   }
 
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.
