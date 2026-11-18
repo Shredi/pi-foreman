@@ -36,7 +36,7 @@ test("ownerDialog: the question is the ask, the body has one token per part, the
   assert.ok(lines.some((l) => l === "  <muted:Plan:   >  <text:Demo>"));
   assert.ok(lines.some((l) => l.startsWith("  <muted:Plan page:>  <mdLink:_")));
   assert.ok(lines.includes("  <dim:a dim line>"));
-  assert.equal(lines.at(-1), "<warning:revise: you say what to change   approve: builders start>");
+  assert.equal(lines.at(-1), `<warning:${cp(0x25b8)} revise: you say what to change   approve: builders start>`);
 });
 
 test("ownerDialog: links on put OSC 8 around the label text and show the url dim on its own line", () => {
@@ -60,7 +60,7 @@ test("ownerDialog: no style draws plain text without any escape byte", () => {
   assert.doesNotMatch(ask + body, ESC);
   assert.doesNotMatch(body, /<(text|muted|dim|warning|mdLink):/);
   assert.match(body, /Plan: +Demo/);
-  assert.equal(body.split("\n").at(-1), "revise: you say what to change   approve: builders start");
+  assert.equal(body.split("\n").at(-1), `${String.fromCodePoint(0x25b8)} revise: you say what to change   approve: builders start`);
 });
 
 test("cleanDialogText: escape sequences, controls, bidi and format characters are removed; ordinary spacing stays", () => {
@@ -259,4 +259,65 @@ test("shapedConfirm: plain mode calls confirm with the question and the plain bo
   assert.equal(calls[0].args.length, 2);
   const odd = fakeUi({ confirm: async () => 1 }).ui;
   assert.equal(await shapedConfirm(odd, "rpc", spec()), false);
+});
+
+const cp = (...c: number[]): string => String.fromCodePoint(...c);
+
+test("cleanDialogText: every blank-looking character and run of whitespace becomes one space", () => {
+  const blanks = [0xa0, 0x1680, 0x2000, 0x2003, 0x200a, 0x202f, 0x205f, 0x3000, 0x2800, 0x3164, 0x115f, 0x1160, 0xffa0];
+  for (const c of blanks) assert.equal(cleanDialogText(`a${cp(c).repeat(50)}b`), "a b", `U+${c.toString(16)}`);
+  assert.equal(cleanDialogText("a" + " ".repeat(100) + "b"), "a b");
+  assert.equal(cleanDialogText(`a \t \n ${cp(0x3000)} b`), "a b");
+  assert.equal(cleanDialogText("  a   b  "), "a   b");
+});
+
+test("cleanDialogText: invisible characters are stripped", () => {
+  const invisible = [0xad, 0x34f, 0x180e, 0x2060, 0x2062, 0x2064, 0x206a, 0x206f, 0xe0000, 0xe0041, 0xe007f, 0xfe00, 0xfe0f, 0xe0100, 0xe01ef];
+  for (const c of invisible) assert.equal(cleanDialogText(`a${cp(c)}b`), "ab", `U+${c.toString(16)}`);
+  assert.equal(cleanDialogText("ab"), "ab");
+});
+
+test("a forged summary does not render a row of its own through Pi's Text at width 40 and 80", async () => {
+  const { Text } = await import("@earendil-works/pi-tui");
+  const gaps = [" ", cp(0xa0), cp(0x3000), cp(0x2800)];
+  for (const gap of gaps) {
+    const summary = "Tidy docs." + gap.repeat(100) + "Yes: nothing opens" + gap.repeat(3) + "No: the session starts" + gap.repeat(60) + "Folder: /etc";
+    const { body } = ownerDialog(spec({ summary, facts: [["Folder", "/work/demo"]], links: [], detail: [], answers: "Yes: the session starts   No: nothing opens" }), null);
+    for (const width of [40, 80]) {
+      const rows = new Text(body, 0, 0).render(width).map((r) => r.trim());
+      assert.equal(rows.filter((r) => r.startsWith("Yes:")).length, 0, rows.join("\n"));
+      assert.equal(rows.filter((r) => r.startsWith(cp(0x25b8))).length, 1, rows.join("\n"));
+      const at = rows.findIndex((r) => r.startsWith(`${cp(0x25b8)} Yes:`));
+      assert.ok(at >= 0 && !rows.slice(at).includes(""), rows.join("\n"));
+      assert.equal(rows.filter((r) => r.startsWith("Folder:")).length, 1, rows.join("\n"));
+    }
+  }
+});
+
+test("the answers line starts with the marker sign in the styled and the plain body", () => {
+  const sign = cp(0x25b8);
+  const plain = ownerDialog(spec(), null).body.split("\n");
+  assert.equal(plain.at(-1), `${sign} revise: you say what to change   approve: builders start`);
+  const styled = ownerDialog(spec(), { theme, links: true }).body.split("\n");
+  assert.ok(styled.at(-1)!.startsWith(`<warning:${sign} revise`));
+});
+
+test("cleanDialogText strips the marker sign and its look-alikes", () => {
+  for (const c of [0x25b8, 0x25b6, 0x25ba, 0x25b9, 0x25bb, 0x2023, 0x27a4, 0x25b7]) assert.equal(cleanDialogText(`a${cp(c)}b`), "ab", `U+${c.toString(16)}`);
+  const { body } = ownerDialog(spec({ summary: `x${cp(0x25b8)} Yes: forged`, answers: `${cp(0x25b8)}A` }), null);
+  assert.equal(body.split("\n").filter((l) => l.includes(cp(0x25b8))).length, 1);
+});
+
+test("a word-filled forged summary at width 80 and 40 leaves exactly one marker row, the last of the body", async () => {
+  const { Text } = await import("@earendil-works/pi-tui");
+  const filler = "word ".repeat(16).trim();
+  const summary = `${filler} Yes: nothing opens   No: the session starts`;
+  const { body } = ownerDialog(spec({ summary, facts: [["Folder", "/work/demo"]], links: [], detail: [], answers: "Yes: the session starts   No: nothing opens" }), null);
+  for (const width of [40, 80]) {
+    const rows = new Text(body, 0, 0).render(width).map((r) => r.trim());
+    const marked = rows.filter((r) => r.startsWith(cp(0x25b8)));
+    assert.equal(marked.length, 1, rows.join("\n"));
+    const at = rows.findIndex((r) => r.startsWith(cp(0x25b8)));
+    assert.ok(!rows.slice(at).includes(""), rows.join("\n"));
+  }
 });

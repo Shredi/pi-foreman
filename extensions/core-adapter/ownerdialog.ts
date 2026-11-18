@@ -45,6 +45,16 @@ export interface DialogStyle {
 
 const isFormatChar = (c: number): boolean => c === 0x061c || (c >= 0x200b && c <= 0x200f) || c === 0x2028 || c === 0x2029 || c === 0xfeff || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
 
+/** Code point ranges as [from, to] pairs, turned into a character-class source without writing the characters or escapes in this file. */
+const classOf = (ranges: Array<[number, number]>): string => ranges.map(([a, b]) => String.fromCharCode(92) + "u{" + a.toString(16) + "}" + (b > a ? "-" + String.fromCharCode(92) + "u{" + b.toString(16) + "}" : "")).join("");
+/** Characters that draw nothing: soft hyphen, combining grapheme joiner, Mongolian vowel separator, word joiner and invisible operators, deprecated format characters, tag characters, variation selectors. */
+const INVISIBLE = new RegExp("[" + classOf([[0xad, 0xad], [0x34f, 0x34f], [0x180e, 0x180e], [0x2060, 0x2064], [0x206a, 0x206f], [0xe0000, 0xe007f], [0xfe00, 0xfe0f], [0xe0100, 0xe01ef]]) + "]", "gu");
+/** The marker sign of the real answers line (black right-pointing small triangle) and its look-alikes; cleaned text never holds one. */
+const ANSWERS_SIGN = String.fromCodePoint(0x25b8);
+const SIGN_LIKE = new RegExp("[" + classOf([[0x25b6, 0x25bb], [0x2023, 0x2023], [0x27a4, 0x27a4]]) + "]", "gu");
+/** Whitespace plus the characters that draw blank (Braille blank, Hangul fillers). */
+const BLANK_RUN = new RegExp("[\\s" + classOf([[0x2800, 0x2800], [0x3164, 0x3164], [0x115f, 0x1160], [0xffa0, 0xffa0]]) + "]+", "gu");
+
 /** Every caller- or model-provided string: escape sequences, control characters and bidi/format characters out, one line. */
 export function cleanDialogText(s: string): string {
   return String(s)
@@ -52,6 +62,10 @@ export function cleanDialogText(s: string): string {
     .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/[^ -~]/g, (ch) => (isFormatChar(ch.charCodeAt(0)) ? " " : ch))
+    .replace(INVISIBLE, "")
+    .replace(SIGN_LIKE, "")
+    // blank-looking characters and long runs of spaces become one space; a run of up to three plain spaces is the dialogs' own separator
+    .replace(BLANK_RUN, (run) => (run.length > 3 || /[^ ]/.test(run) ? " " : run))
     .trim();
 }
 
@@ -103,7 +117,7 @@ export function ownerDialog(spec: DialogSpec, style: DialogStyle | null, windows
   }
   if (spec.answers) {
     out.push("");
-    out.push(fg("warning", cleanDialogText(spec.answers)));
+    out.push(fg("warning", `${ANSWERS_SIGN} ${cleanDialogText(spec.answers)}`));
   }
   return { ask: cleanDialogText(spec.ask), body: out.join("\n") };
 }
