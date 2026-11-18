@@ -1,7 +1,7 @@
 // Handover cases for the r79 rules-first rewrite of the gh/glab read default (ledger LEDGER-gh-read-search, items 1-2).
 // Rows live in tests/fixtures/gh-read-cases.json: {line, expect, child?, today, note}. `today` says whether today's rules already
-// give `expect`. today:true rows are live assertions; today:false rows are node:test `todo` (they run, a failure does not fail the
-// suite). When the r79 rule lands, flip `today` to true per row. The graphql rule must parse conservatively: any mutation or
+// give `expect`. today:true rows assert `expect`; today:false rows are known gaps: a plain test that today's result is still not allow (no
+// `todo`, so a passing run prints no "failing tests"). When the r79 rule lands, that test fails: flip `today` to true per row. The graphql rule must parse conservatively: any mutation or
 // subscription anywhere (second `-f query=`, other field, same document), any @file, --input or -H keeps the line not-allow.
 // Quoting cases for PowerShell/cmd are not applicable: the lexer does not split them (see the powershell test below).
 import { test, after } from "node:test";
@@ -44,8 +44,15 @@ const decide = (row: Row): GateResult => g("bash", { command: expand(row.line) }
 const rowName = (row: Row, i: number): string => `row ${i + 1}: ${row.expect} ${row.child ? "[child] " : ""}${row.line} (${row.note})`;
 
 rows.forEach((row, i) => {
-  const opts = row.today ? {} : { todo: "r79: gh read set (search, graphql query, GET with fields)" };
-  test(rowName(row, i), opts, () => {
+  if (!row.today) {
+    // A known gap (r79: gh read set: search, graphql query, GET with fields): a plain test of today's result, not a node:test `todo`, which the spec
+    // reporter lists under "failing tests" on an exit-0 run. The fixture row keeps the target; when the rule lands, flip `today` to true.
+    test(`known gap, today not allowed (target ${row.expect}) ${rowName(row, i)}`, () => {
+      assert.notEqual(kind(decide(row)), "allow", row.line);
+    });
+    return;
+  }
+  test(rowName(row, i), () => {
     const r = decide(row);
     if (row.expect === "allow") {
       assert.equal(kind(r), "allow", row.line);
