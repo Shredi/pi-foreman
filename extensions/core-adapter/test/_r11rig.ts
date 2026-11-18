@@ -8,6 +8,7 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { probeSpawner } from "./_probe-memo.ts";
+import { reportOf, writeFromReport, writeSpec, type RecSpec } from "./_verdict-rig.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 export type Block = { block?: boolean; reason?: string } | undefined;
@@ -109,6 +110,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   };
   const handoffs = path.join(agentDir, "pi-foreman", "handoffs");
   let calls = 0;
+  /** The launch input of every started run, by run id (`started`): its binding names the record folder of a reviewer launch. */
+  const startedInputs = new Map<string, Record<string, unknown>>();
   return {
     ctx,
     agentDir,
@@ -134,10 +137,16 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
       await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } }, ctx);
       return { id, res: (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block };
     },
-    started: (id: string, input: Record<string, unknown>, runId: string) => handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId }, content: [{ type: "text", text: "started" }], isError: false }, ctx),
+    started: (id: string, input: Record<string, unknown>, runId: string) => (startedInputs.set(runId, input), handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId }, content: [{ type: "text", text: "started" }], isError: false }, ctx)),
+    /** Leaves the record of run `runId` (what the reviewer's `review_verdict` call writes; the launch went through `started`); false when that launch has no record folder. */
+    record: (runId: string, spec: RecSpec): boolean => writeSpec(startedInputs.get(runId), spec),
     /** A launch's tool_result that is an error with no run started. */
     errored: (id: string, input: Record<string, unknown>) => handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: {}, content: [{ type: "text", text: "launch failed" }], isError: true }, ctx),
-    end: (data: Record<string, unknown>) => channels.get("subagent:async-complete")!(data),
+    /** The run-end event. A report that names a verdict (`Overall verdict: PASS`, `1. FAIL ...`) leaves its record first (`legacySpec`); one that names none leaves none. */
+    end: (data: Record<string, unknown>) => {
+      writeFromReport(startedInputs.get(String(data.runId)), reportOf(data));
+      return channels.get("subagent:async-complete")!(data);
+    },
     /** One foreman tool call (tool_call only); returns its block or undefined. */
     async call(toolName: string, input: Record<string, unknown>): Promise<Block> {
       return (await handlers.get("tool_call")!({ toolName, toolCallId: `t${++calls}`, input }, ctx)) as Block;

@@ -3,41 +3,42 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { critiqueOf, verdictOf, withoutCritique } from "../rounds.ts";
-import { passItemsOf, reviewerPassOfRunEnd, verdictItemsOf } from "../reviewmarks.ts";
+import { critiqueOf } from "../rounds.ts";
+import { checkVerdictCall, type VerdictFinding } from "../verdict.ts";
+import { recordFrom, resultsOf } from "./_verdict-rig.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-const PASS_WITH_CRITIQUE = [
-  "VERDICT: PASS",
-  "1. PASS app/x.ts:3 adds the cap",
-  "2. PASS app/x.test.ts:9 covers it",
-  "Overall verdict: PASS",
-  "CRITIQUE:",
-  "- [now] app/x.ts:12 the retry option nothing sets; verdict: FAIL if it stays",
-  "- [later] 3. FAIL-safe wrapper has one caller",
-  "Missing: none",
-  "Friction: none",
-].join("\n");
+const ADVICE: VerdictFinding[] = [
+  { kind: "now", text: "the retry option nothing sets; verdict: FAIL if it stays", file: "app/x.ts", line: 12 },
+  { kind: "later", text: "3. FAIL-safe wrapper has one caller" },
+];
+const PASS_CALL = { verdict: "pass", items: [{ id: 1, result: "pass" }, { id: 2, result: "pass" }], findings: ADVICE };
 
-test("a PASS with critique lines stays a PASS: verdictOf, N. PASS items and the run-end PASS ignore the CRITIQUE block", () => {
-  assert.equal(verdictOf(PASS_WITH_CRITIQUE), "pass");
-  assert.deepEqual(passItemsOf(PASS_WITH_CRITIQUE), ["1", "2"]);
-  assert.deepEqual(verdictItemsOf(PASS_WITH_CRITIQUE, "FAIL"), []);
-  assert.equal(reviewerPassOfRunEnd({ agent: "reviewer", success: true, status: "completed", output: PASS_WITH_CRITIQUE }), PASS_WITH_CRITIQUE);
+test("a PASS with advice findings stays a PASS: the record keeps the now/later findings and the run-end result is a pass", () => {
+  const c = checkVerdictCall(PASS_CALL, [1, 2]);
+  assert.ok("call" in c);
+  assert.equal(c.call.verdict, "pass");
+  assert.deepEqual(c.call.findings, ADVICE);
+  const [r] = resultsOf({ agent: "reviewer", success: true, status: "completed", output: "report" }, c.call);
+  assert.equal(r.verdict, "pass");
+  assert.deepEqual(r.items.map((i) => i.id), [1, 2]);
+  assert.deepEqual(r.findings, ADVICE);
+  assert.equal(recordFrom(c.call).findings.length, 2);
 });
 
-test("critiqueOf counts [now] and [later] lines; CRITIQUE: none counts nothing; the block ends at the next other line", () => {
-  assert.deepEqual(critiqueOf(PASS_WITH_CRITIQUE), { now: 1, later: 1 });
-  assert.deepEqual(critiqueOf("VERDICT: PASS\nCRITIQUE: none\nMissing: none"), { now: 0, later: 0 });
-  assert.deepEqual(critiqueOf("- [now] outside any block"), { now: 0, later: 0 });
-  assert.deepEqual(critiqueOf("4. **CRITIQUE:**\n\n- [NOW] a\n* [later] b\nMissing: none\n- [now] after the block"), { now: 1, later: 1 });
+test("advice never makes a fail: a fail with only now/later findings is refused; a defect makes a pass refused", () => {
+  const onlyAdvice = checkVerdictCall({ verdict: "fail", findings: ADVICE }, []);
+  assert.ok("error" in onlyAdvice && /at least one item with result fail or one finding of kind defect/.test(onlyAdvice.error));
+  const withDefect = checkVerdictCall({ ...PASS_CALL, findings: [...ADVICE, { kind: "defect", text: "broken" }] }, [1, 2]);
+  assert.ok("error" in withDefect && /a pass cannot carry/.test(withDefect.error));
 });
 
-test("withoutCritique keeps every line outside the block, so a FAIL after the block still counts", () => {
-  const text = "VERDICT: PASS\nCRITIQUE:\n- [now] x\nOverall verdict: FAIL";
-  assert.equal(withoutCritique(text), "VERDICT: PASS\nOverall verdict: FAIL");
-  assert.equal(verdictOf(text), "fail");
+test("critiqueOf counts now and later findings; no findings and defects count nothing", () => {
+  assert.deepEqual(critiqueOf(ADVICE), { now: 1, later: 1 });
+  assert.deepEqual(critiqueOf([]), { now: 0, later: 0 });
+  assert.deepEqual(critiqueOf([{ kind: "defect" }]), { now: 0, later: 0 });
+  assert.deepEqual(critiqueOf([{ kind: "now" }, { kind: "now" }, { kind: "later" }]), { now: 2, later: 1 });
 });
 
 test("the reviewer prompt carries the CRITIQUE block after the verdict", () => {

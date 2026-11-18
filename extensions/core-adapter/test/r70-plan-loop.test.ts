@@ -5,10 +5,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { PlanReviews, planReviewHash, planReviewRefusalText, type PlanVerdict } from "../planreview.ts";
-import { failedItemsOf } from "../costguard.ts";
 import { launchRefusalText } from "../checkpoint.ts";
 import { loopRefusal, loopRefusalParented, loopVerdict, loopVerdictOf, sigOf, type LoopRound, type LoopStop } from "../reviewloop.ts";
 import { tick, world } from "./_r46world.ts";
+import type { RecSpec } from "./_verdict-rig.ts";
 
 const fail = (state: string, sig: string[]): LoopRound => ({ verdict: "fail", state, sig });
 
@@ -55,10 +55,8 @@ test("the loop-stop text: byte-identical without a parent; the parented text nam
   assert.match(loopRefusalParented({ rule: "stalled", kind: "code", sig: ["item:2"] }), /no change to the work since the round before \(item:2\)/);
 });
 
-test("a DECISION: marker after the verdict word keeps the line a failed item", () => {
-  const text = "3. FAIL: DECISION: scope of the guard\nOverall verdict: FAIL";
-  assert.deepEqual(failedItemsOf(text), ["3"]);
-  assert.deepEqual(sigOf(text, []), ["item:3"]);
+test("a failed item whose note starts with DECISION: stays a failed item in the signature", () => {
+  assert.deepEqual(sigOf([{ id: 3, result: "fail", note: "DECISION: scope of the guard" }], []), ["item:3"]);
 });
 
 const P = "/ws/.workflow/scratch/plan-x.md";
@@ -97,11 +95,12 @@ test("the plan-review refusal texts", () => {
   assert.doesNotMatch(phase, /ask the owner with ask_user_question/);
 });
 
-const FAIL1 = "1. FAIL: the goal is vague\nOverall verdict: FAIL";
-const FAIL2 = "1. FAIL: the scope is unclear\nOverall verdict: FAIL";
+// a plan review has no ledger items: its findings are located defects (a different line band is a new finding)
+const FAIL1: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "the goal is vague", file: "plan.md", line: 1, class: "off-by-one" }] };
+const FAIL2: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "the scope is unclear", file: "plan.md", line: 20, class: "off-by-one" }] };
 const isLoop = (s: string | null): boolean => /\[review_loop\]/.test(s ?? "");
 
-test("a parented session: a revised plan failing under the same item goes on; the same version failing again stops with the parented text; a brief lifts it, a ruling-<n>.md does not", async (t) => {
+test("a parented session: a revised plan failing with a new finding goes on; the same version failing again stops with the parented text; a brief lifts it, a ruling-<n>.md does not", async (t) => {
   const w = world(t, { handoff: true, parent: true });
   const a = await w.adapter("startup");
   // polls the plan_review trace event of this round (emitted when the verdict is kept), 10 s deadline, every 25 ms
@@ -113,17 +112,17 @@ test("a parented session: a revised plan failing under the same item goes on; th
       await tick(25);
     }
   };
-  const review = async (report: string): Promise<string | null> => {
+  const review = async (spec: RecSpec): Promise<string | null> => {
     const r = await a.reviewLaunch();
     if (r.blocked) return r.blocked;
     const want = ++planRounds;
-    a.endRun(r.id, report);
+    a.endRunRecord(r.id, spec);
     await until(`plan review ${want} was recorded`, async () => (await w.traceEvents()).filter((e) => e.event === "plan_review").length >= want);
     return null;
   };
   assert.equal(await review(FAIL1), null);
   fs.writeFileSync(w.planFile, fs.readFileSync(w.planFile, "utf8").replace("Ship it.", "Ship it twice."));
-  assert.equal(await review(FAIL2), null, "a revised plan under the same item");
+  assert.equal(await review(FAIL2), null, "a revised plan with a new finding");
   assert.equal((await w.traceEvents()).filter((e) => e.event === "review_loop").length, 0, "no stop for a revised plan");
   assert.equal(await review(FAIL2), null, "the next review is launched");
   await until("the loop stop is set", async () => (await w.traceEvents()).some((e) => e.event === "review_loop"));

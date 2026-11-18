@@ -5,8 +5,9 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { countsForItems, occasionOf } from "../occasion.ts";
-import { REVIEW_ROLES, verdictOf } from "../rounds.ts";
+import { REVIEW_ROLES } from "../rounds.ts";
 import { tick, world } from "./_r46world.ts";
+import { legacySpec, type RecSpec } from "./_verdict-rig.ts";
 
 process.env.PI_OFFLINE = "1";
 
@@ -96,9 +97,13 @@ export async function launch(a: Rig, agent: string, task: string, extra: Record<
 /** A launch as `end` reads it: its run id and, for a reviewer, the task the test passed and the launch's `reason`. */
 export interface Ended { id: string; blocked?: string | null; task?: string; reason?: unknown }
 
-/** Whether the end of this run writes a review record (`review_recorded` or `review_high_stakes`): a started, counting or high-stakes reviewer whose output has a verdict. */
+/**
+ * Whether the end of this run writes a review record (`review_recorded` or `review_high_stakes`): a started, counting or high-stakes reviewer whose output
+ * names a verdict. The verdict record itself is left by the world's `endRunAs` (report text of the legacy shape becomes a record, see _verdict-rig.ts).
+ */
 const writesRecord = (s: Ended, agent: string, output: string): boolean => {
-  if (s.blocked || typeof s.task !== "string" || !REVIEW_ROLES.includes(agent) || verdictOf(output) === null) return false;
+  const spec = legacySpec(output);
+  if (s.blocked || typeof s.task !== "string" || !REVIEW_ROLES.includes(agent) || spec === null || spec.verdict === "incomplete") return false;
   const occasion = occasionOf(s.task, s.reason);
   return countsForItems(occasion) || occasion === "high-stakes";
 };
@@ -118,6 +123,12 @@ export async function endWith(a: Rig, s: Ended, agent: string, output: string, f
   assert.ok(now > before, `the run end of ${agent} (run-${s.id}) wrote no review record (review_recorded / review_high_stakes) within 15 s`);
 }
 export const end = (a: Rig, s: Ended, agent: string, output: string, cwd?: string) => endWith(a, s, agent, output, () => a.endRunAs(s.id, agent, output, cwd));
+/** `end` after the reviewer's `review_verdict` call `spec` (an explicit record: items, findings, `incomplete`); the report text names no verdict. */
+export async function endRecord(a: Rig, s: Ended, agent: string, spec: RecSpec, cwd?: string): Promise<void> {
+  a.record(s.id, spec);
+  const report = spec.verdict === "incomplete" ? "report" : `Overall verdict: ${spec.verdict.toUpperCase()}`;
+  await endWith(a, s, agent, report, () => a.endRunAs(s.id, agent, "report", cwd));
+}
 export const settle = async (a: Rig): Promise<string> => {
   const r = (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as Settle;
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";

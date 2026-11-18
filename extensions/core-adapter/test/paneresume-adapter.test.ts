@@ -394,7 +394,7 @@ test("D12: the package fails a dead pid's run (a failed result no gate counts); 
   const result = files(results).filter((f) => f.endsWith(".json")).map((f) => JSON.parse(fs.readFileSync(f, "utf8"))).find((j) => j.id === "run-dead" && Array.isArray(j.results));
   assert.ok(result, "the package wrote the failed result");
   assert.equal(result.success, false);
-  assert.deepEqual(stepsOfRunEnd(result), [], "a failed run never counts as a builder step: the finish gate still requires a builder");
+  assert.deepEqual(stepsOfRunEnd(result, []), [], "a failed run never counts as a builder step: the finish gate still requires a builder");
   const b = reconcileAsyncRun(moved, { resultsDir: results, pidNamespaceScope: () => "ns-new" });
   assert.equal(b.repaired, false, "the pid namespace changed: the package keeps the run");
   assert.equal(b.status?.state, "running");
