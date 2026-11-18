@@ -17,8 +17,9 @@
 
 `open` writes the handoff dir `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/`:
   brief.md  the brief file's text plus the report-back footer (message contract below)
-  parent    the opener's intercom id (the child's close check reads it: re-pointing the parent
-            is a one-file change)
+  parent    the opener's intercom id (the child's routing, close check and replies re-read it per call;
+            a hand edit, temp file then rename, to another valid intercom id re-points them but does
+            not move the registry entry: see docs/sessions.md, re-point an orphaned child)
   child     the child's intercom id `fm-<slug>-<6 hex>`
   launch.txt the exact launch line (the Herdr pane command, else this platform's fallback line)
 and records the session in `<agent dir>/pi-foreman/state/sessions.json` (atomic write).
