@@ -70,7 +70,7 @@ import { bgWaitLocations, coordinationCall, launchLocations, inRecorded, noticeL
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
-import { DEFERRED_ENTRY, DEFERRED_SECTION, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
+import { DEFERRED_ENTRY, DEFERRED_SECTION, MODEL_ONLY_SECTION, modelOnlyHint, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
@@ -209,7 +209,7 @@ const BLOCK_CHECKPOINT: BlockClass = { on: "owner", kind: "checkpoint" };
 const BLOCK_SCRIPT: BlockClass = { on: "owner", kind: "script" };
 const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
 const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
-import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
+import { completedAgents, CritiqueCounter, incompleteOf, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
@@ -221,7 +221,7 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDocto
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeCloseRequest, mergeCloseStarter, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
@@ -236,7 +236,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, countsForItems, entryOccasions, keptIndices, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -572,6 +572,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
+  // The model-only tools line (deferred.ts): built at the first request of a session, then fixed so the prefix stays byte-stable.
+  const modelOnly = { done: false, hint: "" };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
   const skillState = { rules: { visible: [], hidden: [] } as SkillRules, hidden: [] as SkillRef[], split: false, hint: "" };
   let toolUsage = new ToolUsageTracker(); // replaced at every session_start: /new and /resume reuse this load
@@ -903,14 +905,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
     const owned = computeOwned(null, false);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
-    // A child foreman session (handoff dir set) whose last watched PR was merged closes itself (close.ts `pr-merged`, selffinish.ts); one close per tick.
-    const startMergeClose = mergeCloseStarter((c, r) => close.start(c, r), () => close.closing(s.id));
-    const mergeClose = (n: number | null): void => {
-      const ctx = s.prCtx;
-      const req = mergeCloseRequest({ handoff: process.env[HANDOFF_DIR_ENV], watched: s.prWatches.numbers(), n, parent: parentIntercomId(process.env) });
-      if (!req || !ctx) return;
-      startMergeClose(ctx, req);
-    };
+    // A child foreman session (handoff dir set) says once per merged PR that it stays open (close.ts mergeNotifier); a merge never starts a close.
+    const mergeNotice = mergeNotifier({
+      handoff: process.env[HANDOFF_DIR_ENV],
+      get parent() { return parentIntercomId(process.env); },
+      remote: process.env[REMOTE_PARENT_ENV] === "1",
+      notify: (text) => s.prCtx?.ui.notify(text, "info"),
+      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      trace: (r) => s.trace?.emit(r),
+    });
     const s: Session = {
       id,
       cwd,
@@ -971,10 +974,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const st = o.kind === "ran" ? o.result.state : null;
           return st === "open" || st === "merged" || st === "closed" ? st : "unknown";
         },
-        // A child foreman session (handoff dir set) whose PR was merged closes itself (close.ts `pr-merged`, selffinish.ts).
-        onMerged: (info) => mergeClose(info.key.n),
-        // The last watch ended unmerged (the host closed it) after a merge: the close the merge did not start.
-        onLastEnded: () => mergeClose(s.prWatches.mergedPrs().at(-1)?.n ?? null),
+        // A merged PR is announced once (child pane and intercom parent); the session closes only on a close request.
+        onMerged: (info) => mergeNotice(info.key.n),
         returnToBase: ({ key, cwd }) => {
           const dir = cwd || (s.prCtx?.cwd ?? s.cwd);
           return mergedReturn({
@@ -1475,11 +1476,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
   }
 
-  /** A high-stakes run ended with a verdict: it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
+  /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
   function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null);
     const verdict = r?.verdict;
     if (!r || !verdict) return;
+    if (incompleteOf(r.text)) {
+      // the reviewer stopped early and found no defect: nothing is recorded (no run, no gate change), as for a run with no verdict
+      s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
+      return;
+    }
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
     if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
@@ -2057,6 +2063,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     deferred.patterns = merged.list;
     deferred.loaded = new Set(recorded?.names ?? []);
     deferred.hint = "";
+    modelOnly.done = false;
+    modelOnly.hint = "";
     deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
     deferred.trace = (r) => s.trace?.emit(r);
     let declared: string[] = [];
@@ -2288,6 +2296,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       deferred.hint = deferredHint(deferred.hidden, codemode);
       event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
     } else deferred.hint = "";
+    if (!modelOnly.done) {
+      modelOnly.done = true;
+      try {
+        if (pi.getActiveTools().includes("codemode")) modelOnly.hint = modelOnlyHint(pi.getAllTools().filter((tool) => tool.exposure === "model-only").map((tool) => tool.name));
+      } catch {
+        // no tool api: no line
+      }
+    }
+    if (modelOnly.hint) event.systemPromptOptions.sections[MODEL_ONLY_SECTION] = modelOnly.hint;
     if (!s.isChild) {
       const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
       if (Array.isArray(listed)) {
@@ -2448,7 +2465,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild) return undefined;
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
-    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
+    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [MODEL_ONLY_SECTION, modelOnly.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
     // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
     // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
@@ -2747,11 +2764,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
-        try {
-          void Promise.resolve(close.onRunsDone(s.id)).catch(() => undefined);
-        } catch {
-          // a refused merge close is not retried
-        }
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
         if (typeof runId === "string") s.hs.ended(runId); // a run that ended, with or without a verdict, no longer counts as running
@@ -3704,6 +3716,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let notices: string[] = [];
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
+      let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Warned only once the launch passed every check (set at the end of the guard path).
@@ -3751,6 +3764,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: flags.error };
         }
+        if (flags.occasionError && !s.isChild && actionOf(input) === null) {
+          s.trace?.emit({ event: "review_occasion_unknown" });
+          return { block: true, reason: flags.occasionError };
+        }
+        takenOccasions = flags.occasions;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -3846,12 +3864,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
           return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
-        // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
-        if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
-        // A task that names both [pre-pr] and [high-stakes] in prose would silently become a high-stakes review: refused, the foreman keeps one.
-        if (namesBothTags(occasions)) {
-          s.trace?.emit({ event: "review_occasion_ambiguous" });
-          return { block: true, reason: "pi-foreman: launch refused [review_occasion_ambiguous]: the task names both [pre-pr] and [high-stakes]; keep one, or quote the other in backticks." };
+        // Review occasions (occasion.ts launchOccasion): the launch field or the head marker of each reviewer task, before any rewrite or facts block.
+        if (!s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            if (typeof e.agent !== "string") continue;
+            const r = launchOccasion(e, takenOccasions.get(e), input.reason);
+            if ("refused" in r) {
+              s.trace?.emit({ event: r.refused });
+              return { block: true, reason: r.text };
+            }
+            occasions.set(e, r.occasion);
+            // a field-only launch: the marker heads the caller's own text, so the reviewer and the later steps see the kind
+            if (r.prepend && r.occasion !== "item" && typeof e.task === "string") e.task = withOccasionMarker(e.task, r.occasion);
+          }
+        } else if (s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            const kind = takenOccasions.get(e);
+            if (kind && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = withOccasionMarker(e.task, kind);
+          }
         }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
@@ -3895,7 +3925,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const base = typeof m === "string" ? splitLevel(m.trim()).base : "";
           return base === "strong" || (base !== "" && typeof rung === "string" && base === splitLevel(rung).base);
         }));
-        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
+        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null }, occasions);
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
           return { block: true, reason: shadow.message };
@@ -3918,7 +3948,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -4235,8 +4265,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
-        const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
-          if (occasionOf(task) !== "plan-review") return null;
+        const factCount = await reviewFacts.augment(input, ctx.cwd, (task, step) => {
+          if ((occasions.get(step) ?? occasionOf(task)) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
           const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
           const rereview: string[] = [];
@@ -4320,7 +4350,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger)) s.trace?.emit(r);
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
