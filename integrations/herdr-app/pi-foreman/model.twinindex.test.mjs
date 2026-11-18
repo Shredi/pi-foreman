@@ -13,14 +13,14 @@ function repoName(url, fallback) {
 const nameOf = (v) => repoName(v, str(v));
 function oldTwinOf(pr, feed, fallbackRepo = "") {
   const list = listOf(feed).filter(isObj);
-  const repo = nameOf(pr.repo || fallbackRepo);
-  const url = prUrl(null, { url: pr.url });
+  const repo = nameOf(pr.repo || fallbackRepo).toLowerCase();
+  const url = prUrl(null, { url: pr.url }).toLowerCase();
   const same = list.filter((f) => f.number === pr.number);
   return list.find((f) => {
-    const fu = prUrl(null, { url: f.url });
+    const fu = prUrl(null, { url: f.url }).toLowerCase();
     if (url && fu) return url === fu;
     if (f.number !== pr.number) return false;
-    const fr = nameOf(f.repo);
+    const fr = nameOf(f.repo).toLowerCase();
     return repo && fr ? repo === fr : same.length === 1;
   }) ?? null;
 }
