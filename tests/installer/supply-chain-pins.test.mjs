@@ -69,7 +69,7 @@ test("setup passes npm_config_ignore_scripts=true to add-on installs only, not t
     assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
     const calls = fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
     const addons = calls.filter((c) => c.args[0] === "install" && c.args[1].startsWith("npm:pi-"));
-    assert.equal(addons.length, 4, "the four default add-ons are installed");
+    assert.equal(addons.length, 3, "the three default add-ons are installed");
     for (const c of addons) assert.equal(c.ignoreScripts, "true", c.args.join(" "));
     const overlay = calls.filter((c) => c.args[1] === "npm:@org/overlay@1.2.3");
     assert.equal(overlay.length, 1);
