@@ -71,3 +71,20 @@ test("wiring: two upserts change both texts and keep both states; one unknown it
   assert.match(now, /- \[x\] 1\. uno\n/);
   assert.match(now, /- \[ \] 2\. dos\n/);
 });
+
+test("wiring: three texts in one add call each get their own ledger add hint; a single add gets one too", async (t) => {
+  const { a, w } = await setup(t);
+  await a.writeLedger(LEDGER);
+  const file = path.join(w.project, ".workflow", "LEDGER-x.md");
+  const r = await call(a, { action: "add", texts: ["four", "five", "six"] });
+  assert.equal(r.isError, false, r.text);
+  const three = fs.readFileSync(file, "utf8");
+  for (const n of ["4. four", "5. five", "6. six"]) {
+    const word = n.slice(3);
+    assert.match(three, new RegExp(`\\] ${n}\\n\\s+> \\d{4}-\\d{2}-\\d{2} ledger add: ${word}\\n`), n);
+  }
+  assert.equal(three.match(/ledger add: /g)?.length, 3, "one hint per new item, none bare");
+  const one = await call(a, { action: "add", text: "seven" });
+  assert.equal(one.isError, false, one.text);
+  assert.match(fs.readFileSync(file, "utf8"), /\] 7\. seven\n\s+> \d{4}-\d{2}-\d{2} ledger add: seven\n/);
+});

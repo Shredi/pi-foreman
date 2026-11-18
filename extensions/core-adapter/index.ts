@@ -6141,6 +6141,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         touched.push(u.item ?? traceItems);
       }
       if (ups.length > 1) traceItems = touched.filter(Boolean).join(",");
+      const added: { id: string; text: string }[] = [];
       for (const c of plan.calls) {
         const label = `add "${(c[1] ?? "").slice(0, 40)}"`;
         if (c[0] === "add" && !ok) {
@@ -6152,7 +6153,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ok = ok && r.ok;
         if (r.ok && c[0] === "add") bumpLedgerRev(s);
         if (c[0] === "add") (r.ok ? applied : unapplied).push(label);
+        const n = c[0] === "add" && r.ok ? /^added (\d+):/m.exec(r.text) : null;
+        if (n) added.push({ id: n[1], text: c[1] ?? "" });
       }
+      // A texts add traces every new number; each one is annotated with its own text below.
+      if (Array.isArray(params.texts)) traceItems = added.map((a) => a.id).join(",");
       if (!ok && unapplied.length > 0 && applied.length + unapplied.length > 1) out.push(`${LEDGER_TOOL}: stopped; applied: ${applied.join(", ") || "none"}; not applied: ${unapplied.join(", ")}.`);
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
@@ -6161,8 +6166,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const unbound = plan.attested && ok ? headlessPass(s.reviews) : null;
       if (unbound) out.push(`Note: the reviewer PASS carries no commit (${unbound}), so the PR gate will refuse; run a reviewer again on the head before pr_create.`);
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
-      const hint = ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null;
-      if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
+      // ledgerHint reads one item and no text from a list, so a texts add gives each new item its own hint.
+      const hints = Array.isArray(params.texts) ? added.map((a) => ledgerHint(kind, a.id, "", a.text)) : [ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null];
+      for (const hint of hints) if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);

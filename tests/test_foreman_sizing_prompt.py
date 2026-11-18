@@ -54,7 +54,12 @@ ROLE_PAIRS = [
      "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it), the HTML from `{{planSkeleton}}`"),
     # html plans: an HTML plan keeps rulings in a sidecar and any page change is a new version
     ("a body edit is a new version. After a FAIL",
-     "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),
+     "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),    # D74: foreman_ledger add takes texts, upsert takes entries (the ledgerHelper=tool line)
+    ("Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`. It does not count against `ceremony.recheckBudget`.",
+     "Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`, or `texts` for several items in one call); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op; `entries: [{item?, text}]` for several in one call); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`."),
+    # D72: a plan-only session closes V on a plan-review PASS (the ledgerHelper=tool V line)
+    ("once a reviewer PASS stands with no builder launch or project edit since; before that the tool refuses.",
+     "once a reviewer PASS stands with no builder launch or project edit since (in a session with no builder launch and no project edit, a `[plan-review]` PASS on the current version of every plan also does); before that the tool refuses."),
 ]
 
 
