@@ -42,11 +42,11 @@ const STOP: LoopStop = { rule: "repeat", kind: "plan", sig: ["item:1"] };
 test("the loop-stop text: byte-identical without a parent; the parented text names the parent and the owner decision", () => {
   assert.equal(
     loopRefusal(STOP),
-    "pi-foreman: launch refused [review_loop]: the last two plan review rounds failed with the same findings (item:1). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.",
+    "pi-foreman: launch refused [review_loop]: the last two plan review rounds failed with the same findings (item:1). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a review with occasion second-opinion is still allowed.",
   );
   assert.equal(
     loopRefusal({ rule: "stalled", kind: "code", sig: ["item:2", "item:4"] }),
-    "pi-foreman: launch refused [review_loop]: the last code review failed again with no new finding and no change to the work since the round before (item:2, item:4). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.",
+    "pi-foreman: launch refused [review_loop]: the last code review failed again with no new finding and no change to the work since the round before (item:2, item:4). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a review with occasion second-opinion is still allowed.",
   );
   const p = loopRefusalParented(STOP);
   assert.match(p, /^pi-foreman: launch refused \[review_loop\]: the last two plan review rounds failed with the same findings \(item:1\)\. /);
