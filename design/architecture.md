@@ -103,7 +103,7 @@
 | `foreman` | Picard | Triage, plan, ledger, delegate, integrate. Never trusts a child's request blindly. | Main session | All active tools + `subagent` | on |
 | `explorer` | Dora | Read-only search, briefs | Child, detached | `read, ls, grep, find, bash`, codemode | on |
 | `builder` | Bob | Implements one scoped change | Child, detached | `read, ls, grep, find, bash, edit, write` | off |
-| `reviewer` | Watson | Diff review against ledger items, plan review; loads the shipped `security-review` skill (`roles.reviewer.skills`) for security-relevant diffs | Child, detached | `read, ls, grep, find, bash` | off |
+| `reviewer` | Watson | Diff review against ledger items, plan review; loads the shipped `security-review` skill (`roles.reviewer.skills`) for security-relevant diffs | Child, detached | `read, ls, grep, find, bash`, codemode | on |
 
 The foreman writes the heavy plan itself and commits after the reviewer PASS; security review is a skill of the one reviewer, not a role.
 
@@ -536,7 +536,7 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 |---|---|
 | Mechanism | Pi 1.0 built-in. It is off by default. It is enabled per session by the tool list: children get `codemode` in their `tools` JSON array (a comma string is rejected), and the foreman adds it through `pi.setActiveTools` at `session_start`. There is no per-model flag in Pi. |
 | Evidence | Hands-on 2026-10-03, Pi 1.0.0, pi-subagents@0.75.0: a child with `tools: ["read","ls","codemode"]` ran a codemode script successfully |
-| Default | The mechanism works for all six roles. The shipped default is `on` (direct tools plus codemode) only for `foreman` and `explorer`, and `off` for the other four until benchmark numbers exist. `codemode.mode: only` is never a default. |
+| Default | The mechanism works for all six roles. The shipped default is `on` (direct tools plus codemode) for `foreman`, `explorer` and `reviewer`, and `off` for `builder` and the other roles until benchmark numbers exist. `codemode.mode: only` is never a default. |
 | Switch | `providers.<p>.roles.<id>.codemode` (per role × provider) overrides `roles.<id>.codemode`. The benchmark rig flips it per configuration, and the generator writes the resulting tool arrays. |
 | MCP | Built-in MCP servers default to `codemode` exposure. `autoEnableCodemode` stays as Pi sets it. |
 
@@ -674,3 +674,4 @@ Open item 13: per-cycle context collapse (replacing a finished delegation span b
 | 10 | All changes in §14 are accepted. |
 | 11 | Phase 2 (plan review): pi-foreman injects its own `instructions/foreman.md`; the core's injector is not called. The core is vendored as a pinned tarball with a hash manifest, not a subtree. pytest is a CI-only dependency. CI runs replay on the fake provider on all three systems. |
 | 12 | Phase 4: `subagents.disableBuiltins` stays unset (§7 "Session features"). Herdr state: the official integration reports working and idle; pi-foreman emits `herdr:blocked` for its own asks and bridges the permission system's prompts. Intercom is adopted behind the §5 layer-7 guard; the same-user limit of the broker and the Herdr socket is accepted until the OS boundary round. |
+| 13 | 2026-11-18, owner decision D6, supersedes row 4 for the reviewer: `reviewer` gets codemode by default (`roles.reviewer.codemode` true). Each inner call of a reviewer codemode script passes the same gate and read-only checks as a direct call. Builder stays off. | Owner decision D6. Row 4 is kept as history. |
