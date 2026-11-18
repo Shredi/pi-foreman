@@ -20,7 +20,8 @@ test("literalOwnedDirs: a differently cased spelling of the root still carves ou
       assert.ok(!out.includes(root), `${platform}: the root is carved`);
       assert.ok(out.includes(path.join(root, "round1")), `${platform}: the sibling dir stays`);
     }
-    assert.deepEqual(literalOwnedDirs([root], base, "linux"), [root]);
+    // On a Windows host path is path.win32, whose relative() folds case itself, so the case-sensitive branch cannot be simulated.
+    if (process.platform !== "win32") assert.deepEqual(literalOwnedDirs([root], base, "linux"), [root]);
   } finally {
     fs.rmSync(top, { recursive: true, force: true });
   }
