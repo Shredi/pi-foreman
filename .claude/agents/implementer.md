@@ -13,7 +13,7 @@ the trailer lines for commits.
 ## 1. Worktree first
 
 - Work ONLY in the worktree and branch the spec names. Never switch branches in
-  the main checkout, never touch `main`, never push, never touch other worktrees.
+  the main checkout, never touch `main`, push only the spec's branch, never touch other worktrees.
 - Isolation worktrees may start on `main`: when the spec names a base branch,
   first bring it in (`git reset --hard <base>` on a fresh branch with no work
   yet, else merge/rebase it) and confirm with `git log --oneline -3` before editing.
