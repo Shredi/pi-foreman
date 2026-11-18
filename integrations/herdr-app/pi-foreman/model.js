@@ -516,7 +516,7 @@ export function prStateText(pr) {
   if (p.state === "unreviewed") return "CI passing, not reviewed";
   if (p.state === "ready") return p.reviewed ? "ready to merge" : "ready to merge (CI passing, no review claim)";
   if (p.state === "waiting") return `${base.fill === "green" ? "CI passing" : "no CI checks"}, ${p.merge === "behind" ? "branch behind" : "merge blocked"}`;
-  return d.fill === "red" ? "CI failing" : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
+  return d.fill === "red" ? (d.pulse ? "CI failing, still running" : "CI failing") : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
 
 /** The page of a PR: its own URL, else `<https repository URL>/pull/<number>`; "" when radar gives neither (not clickable). */
@@ -1100,20 +1100,20 @@ export function displayStatus(item, folded) {
 
 // ---- PR dot and hover card (items 17 d, 19) ------------------------------------------------------------------
 
-/** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, unless a finished job failed (red never
- *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses or the merge is blocked or
+/** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, also after a finished job failed; `fill` is
+ *  "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses and no job failed, or the merge is blocked or
  *  behind (still), "red" once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent.
  *  `mark: "check"` is set on a ready PR: a check mark replaces the dot, its fill stays green. A green dot without a mark says only "CI passing"
  *  (an older feed, or a PR not known to be mergeable). */
 export function prDotState(pr) {
   const d = baseDot(pr);
   const p = pillOf(pr, d);
-  const pulse = d.ring && d.fill !== "red";
+  const pulse = d.ring;
   if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
   if (p.state === "waiting") return { pulse: false, fill: "amber", conflict: d.conflict };
   if (p.state === "ready") return { pulse: false, fill: "green", mark: "check", conflict: d.conflict }; // checks passed, or none confirmed
-  return { pulse, fill: pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
+  return { pulse, fill: d.fill === "red" ? "red" : pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
 }
 
 /**
@@ -1152,7 +1152,7 @@ function baseDot(pr) {
   const run = count("pending");
   // not settled (a passed check may be a partial set): the pending state, until a check fails
   if (pr?.unsettled === true && !fail && ok) return { ring: true, fill: "amber", conflict: pr?.mergeable === "CONFLICTING" };
-  return { ring: run > 0, fill: fail ? "red" : ok ? "green" : run ? "amber" : "dim", conflict: pr?.mergeable === "CONFLICTING" };
+  return { ring: run > 0 || (pr?.unsettled === true && fail > 0), fill: fail ? "red" : ok ? "green" : run ? "amber" : "dim", conflict: pr?.mergeable === "CONFLICTING" };
 }
 
 /** The token of a PR whose head moved past the session's last reviewer PASS. */
@@ -1186,7 +1186,7 @@ export function prCard(pr) {
   // A PR known only from its session dot (jobs without names, no feed twin) has no job list to show: no invented "job N".
   const dotOnly = jobs.length > 0 && listOf(pr?.jobs).length > 0 && !str(pr?.title) && jobs.every((j) => !j.name);
   const dot = prDotState(pr);
-  const status = !dotOnly ? "" : dot.fill === "red" ? "checks failed" : dot.pulse ? "checks running" : dot.fill === "green" ? "checks passed" : "";
+  const status = !dotOnly ? "" : dot.fill === "red" ? (dot.pulse ? "checks failed, still running" : "checks failed") : dot.pulse ? "checks running" : dot.fill === "green" ? "checks passed" : "";
   const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state }));
   const group = (key, label, state) => {
     const names = named.filter((j) => j.state === state).map((j) => j.name);

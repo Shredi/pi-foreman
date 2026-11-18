@@ -43,7 +43,8 @@ class TestWakeDuringRun(ReplayCase):
         if paused:
             # The first settle has the timer still pending: a pause, no hold.
             self.assertEqual(len([c for c in calls if c[0] == "s1"]), 3, calls)
-            self.assertEqual(len([c for c in calls if c[0] == "s2"]), 6, calls)
+            # D27: the wake run takes its hold, then the open ledger item with no work since the owner prompt is a pause (no refusals)
+            self.assertEqual(len([c for c in calls if c[0] == "s2"]), 4, calls)
             self.assertEqual(len(holds), 1, "the paused run spent no hold; only the wake run is held")
         else:
             self.assertEqual(len([c for c in calls if c[0] == "s2"]), 4, calls)
@@ -57,8 +58,7 @@ class TestWakeDuringRun(ReplayCase):
         self.assertEqual(causes[0], "user", causes)
         self.assertEqual(causes.count("wake"), 1, causes)
         if paused:
-            # the wake run also takes both ceremony-gate refusals the paused run left unspent (hold + 2 refusals)
-            self.assertEqual(causes[1:], ["wake", "other", "other", "other"], causes)
+            self.assertEqual(causes[1:], ["wake", "other"], causes)
             self.assertEqual([r.get("skipped") for r in trace if r.get("event") == "finish_gate"], ["pending_wait"])
         else:
             self.assertEqual(causes[-2:], ["wake", "other"], causes)
