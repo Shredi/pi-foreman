@@ -1,5 +1,5 @@
 // A git repository built once per test file (the template) and copied into each test's own dir, instead of running init and clone again per test.
-// The copy is a plain file copy; the paths git stores in it (remote urls, worktree links, alternates) name the template's dir, so every copy
+// The copy is a plain file copy, then every file's times are set to now; the paths git stores in it (remote urls, worktree links, alternates) name the template's dir, so every copy
 // rewrites the template dir's basename to its own. The basename is unique and has no separator, so the native, forward-slash and
 // backslash-escaped spellings of a path all match. Not a test: the test glob matches only *.test.ts.
 import { after } from "node:test";
@@ -50,9 +50,9 @@ export function gitTemplate<T>(parentDir: () => string, build: (root: string) =>
       const dst = mkdirReal(tpl.parent, "pf-git-copy-");
       copies.add(dst);
       try {
-        // no preserveTimestamps: the copy's files get their own mtimes
         fs.cpSync(tpl.root, dst, { recursive: true });
         relink(tpl.root, dst);
+        freshTimes(dst);
       } catch (e) {
         fs.rmSync(dst, { recursive: true, force: true });
         copies.delete(dst);
@@ -81,6 +81,12 @@ function walkFiles(dir: string, skipDir: (name: string) => boolean, visit: (file
       visit(file);
     }
   }
+}
+
+/** Sets the atime and mtime of every regular file under `dir`, `.git` included, to now: on Windows cpSync keeps the source times even without preserveTimestamps, and the copy's files need their own (selffinish's `--since` reads them). */
+function freshTimes(dir: string): void {
+  const now = new Date();
+  walkFiles(dir, () => false, (file) => fs.utimesSync(file, now, now));
 }
 
 /** Object and reflog dirs: git writes paths there but reads none back (a clone or fetch writes the source path into logs/ and FETCH_HEAD). */
