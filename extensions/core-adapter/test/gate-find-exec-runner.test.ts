@@ -20,6 +20,12 @@ const facts: GitFacts = { currentBranch: () => "feature/x", protectedBranches: (
 const env = baseFloorEnv(wt, { home: path.join(base, "home") });
 const dangers = (line: string): string[] => gateEvaluate("bash", { command: line }, wt, { env: () => env, roots: () => roots, facts }).dangers ?? [];
 
+test("find -exec sh -c with a remover after a paren, $(, a backtick or a quote is danger-delete-unknown-target", () => {
+  for (const line of [`find . -exec sh -c '(rm -rf x)' \\;`, `find . -exec sh -c 'x=$(rm -rf y)' \\;`, "find . -exec sh -c 'x=`rm -rf y`' \\;", `find . -exec sh -c '"rm" -rf y' \\;`]) {
+    assert.ok(dangers(line).includes("danger-delete-unknown-target"), line);
+  }
+});
+
 test("find -exec sh -c with a remover is danger-delete-unknown-target, also behind ; and &&", () => {
   for (const line of [`find . -exec sh -c 'cd "$1";rm -rf *' _ {} \\;`, `find . -exec sh -c 'true&&rm -rf x' \\;`, `find . -exec sh -c 'rm -rf "$1"' _ {} \\;`]) {
     assert.ok(dangers(line).includes("danger-delete-unknown-target"), line);
