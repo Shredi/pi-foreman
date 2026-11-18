@@ -341,6 +341,8 @@ interface Session {
   /** Tool call ids of bash/powershell calls and of ask_user_question/plan_mode_question calls in flight (the warm tier reads them). */
   commandCalls: Set<string>;
   questionCalls: Set<string>;
+  /** Tool call ids of every tool call between its tool_call and tool_result (the keep-alive warms while one runs even if a message is queued). */
+  runningCalls: Set<string>;
   /** Foreman only: ms epoch of the last parent brief that lifted the caps (capsReset); persisted with reviewCount. */
   capsResetAt: number;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
@@ -923,6 +925,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       mutating: new Set(),
       commandCalls: new Set(),
       questionCalls: new Set(),
+      runningCalls: new Set(),
       capsResetAt: 0,
       pollBash: 0,
       launchNotices: new Map(),
@@ -2216,6 +2219,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.commandCalls.clear();
     s?.questionCalls.forEach(releaseQuestion);
     s?.questionCalls.clear();
+    s?.runningCalls.clear();
   });
   pi.on("turn_end", async (event, ctx) => {
     const s = sessionFor(ctx);
@@ -2484,7 +2488,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const working = open.size === 0 ? strongA === "subagent" : [...s.activeRuns].some((r) => !waiting(park?.launchFor(r))) || [...s.pendingLaunches].some((c) => !waiting(park?.launchOfCall(c))) || launchWaits.holdingWhere((r) => !waiting(park?.launchFor(r))) > 0;
     const strongWorking = working ? "subagent" : other;
     const parentWaitSince = s.isChild ? parentOpen.get(s.id)?.since ?? null : undefined;
-    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0 };
+    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0, toolRunning: s.runningCalls.size > 0 };
   }
   /** A message is queued in the session (a stale context counts as queued: no warm). */
   function warmQueued(s: Session): boolean {
@@ -3560,6 +3564,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ms && !ms.isChild) {
       capsReset(ms, event.toolCallId);
       reworkScan(ms);
+      ms.runningCalls.add(event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
       if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
@@ -4391,6 +4396,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.mutating.delete(event.toolCallId);
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
+      ms.runningCalls.delete(event.toolCallId);
       releaseQuestion(event.toolCallId);
     }
     // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
@@ -5124,6 +5130,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
+    s?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
@@ -5175,6 +5182,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.mutating.delete(event.toolCallId);
     owner?.commandCalls.delete(event.toolCallId);
     owner?.questionCalls.delete(event.toolCallId);
+    owner?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A shell command may have copied in an ask.md or a brief: the rule is evaluated again.
