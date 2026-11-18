@@ -4795,15 +4795,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /**
-   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode mark the
-   * ceremony and raise a trivial tier to standard at once (an untriaged session's later trivial
-   * triage is recorded as standard). The text added to the refusal.
+   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode a refused edit tool call marks the
+   * ceremony and raises a trivial tier to standard at once (an untriaged session's later trivial
+   * triage is recorded as standard). A refused shell write (kind `shell`) only adds the plan-phase text: it keeps the tier.
+   * The text added to the refusal.
    */
   function onEditRefused(s: Session, mode: EditMode, kind: string): string {
     s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
     if (mode === "bounded") return "";
     if (parentPhaseByReview(s)) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait until your plan review passes (a [plan-review] PASS on the current version ends the phase) or /foreman plan off.";
     if (s.planPhase) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait for a checkpoint approval or /foreman plan off.";
+    if (kind === "shell") return "";
     s.ceremony = { ...s.ceremony, needsChange: true };
     if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
     setCeremony(s, escalate(s.ceremony, "standard", "auto", "edit mode refused a change"));
@@ -5048,7 +5050,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hint = move ? null : chainHint(command, !s.isChild);
       const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : hint ? `${v.reason} ${hint}.` : v.reason;
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
-      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is no sign the task needs a builder: no tier escalation
+      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is not traced and adds no plan-phase text (a shell refusal never changes the tier)
       const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
