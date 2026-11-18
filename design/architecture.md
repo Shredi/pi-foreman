@@ -172,8 +172,8 @@ launch. A refusal is traced `launch_refused {reason: rank_policy, policy, forema
   and the brief always names `[full brief at <path>]` when that file was written, a cut brief adds
   `[... cut at 16000 characters]` before it) is prepended once to the next fresh builder launch's task, after any rung-up handoff
   (handoff, brief, task); a resume gets none. Trace `explorer_brief {role, chars}`.
-- **Child read budget.** `ceremony.childReads.<role>.{warn,deny}` (defaults builder 20/40, reviewer 15/30, explorer and
-  others none) counts a child's read, grep, find, ls and read-only bash calls (`childreads.ts`; a test or build bash
+- **Child read budget.** `ceremony.childReads.<role>.{warn,deny}` (default reviewer 15/30; builder, explorer and
+  others none unless configured; a builder's bound is `ladder.contextCap`, default 250000) counts a child's read, grep, find, ls and read-only bash calls (`childreads.ts`; a test or build bash
   call is not counted). At warn the result carries a notice; above deny the call is refused and the child is told to
   return its report with what it has, or `STATUS: stuck` (ladder trigger b). Trace `child_read_budget {role, count,
   action}`.

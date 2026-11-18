@@ -80,6 +80,16 @@ class ConfigTest(unittest.TestCase):
         self.l2({})
         self.assertNotIn("policy", self.load(trusted_project=True)["config"]["gate"])
 
+    def test_ladder_context_cap_is_user_or_overlay_only(self):
+        self.l2({"ladder": {"contextCap": {"builder": 300000, "reviewer": 0}}})
+        self.proj({"ladder": {"contextCap": {"builder": 1000}}})
+        res = self.load(trusted_project=True)
+        self.assertEqual(res["errors"], [])
+        self.assertEqual(res["config"]["ladder"]["contextCap"], {"builder": 300000, "reviewer": 0})
+        self.assertIn("project ladder.contextCap ignored", "\n".join(res["warnings"]))
+        self.l2({"ladder": {"contextCap": {"builder": -1}}})
+        self.assertTrue(self.load()["errors"])
+
     def test_ladder_keys_user_only_and_presets_valid(self):
         p1 = dict(PROV["p1"], strongAbove=6000, childMaxTurns=5, ranks=[{"match": "m-*", "tier": 2}])
         self.l2({"ladder": {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9},
@@ -89,7 +99,7 @@ class ConfigTest(unittest.TestCase):
         res = self.load(trusted_project=True)
         self.assertEqual(res["errors"], [])
         cfg = res["config"]
-        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "maxTurns": {"builder": 100}, "strongOnRevision": True, "sizing": {"enabled": True, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": None}, "reviewerClimb": {"enabled": False}, "idleDownshift": {"enabled": True, "causes": ["child", "wake", "intercom", "other"]}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
+        self.assertEqual(cfg["ladder"], {"childPolicy": "at-or-below", "strongAbove": 5000, "childMaxTurns": 9, "maxTurns": {"builder": 100}, "contextCap": {"builder": 250000}, "strongOnRevision": True, "sizing": {"enabled": True, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": None}, "reviewerClimb": {"enabled": False}, "idleDownshift": {"enabled": True, "causes": ["child", "wake", "intercom", "other"]}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
         self.assertEqual((cfg["providers"]["p1"]["ranks"], cfg["providers"]["p1"]["strongAbove"]), (p1["ranks"], 6000))
         self.assertEqual(cfg["roles"]["builder"]["childMaxTurns"], 4)
         self.assertIn("project ladder.childPolicy ignored", "\n".join(res["warnings"]))
@@ -101,7 +111,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(self.load(trusted_project=True)["config"]["childMaxThinking"], "low")
         self.l2({})
         self.assertNotIn("childMaxThinking", self.load()["config"])
-        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "maxTurns": {"builder": 100}, "strongOnRevision": True, "sizing": {"enabled": True, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": None}, "reviewerClimb": {"enabled": False}, "idleDownshift": {"enabled": True, "causes": ["child", "wake", "intercom", "other"]}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
+        self.assertEqual(self.load()["config"]["ladder"], {"strongAbove": 100000, "childMaxTurns": 60, "maxTurns": {"builder": 100}, "contextCap": {"builder": 250000}, "strongOnRevision": True, "sizing": {"enabled": True, "largeFileLines": 1500, "maxModules": 2, "strongRisks": ["guard", "permission", "parser", "concurrency", "security"], "topRisks": ["design"], "topRung": None}, "reviewerClimb": {"enabled": False}, "idleDownshift": {"enabled": True, "causes": ["child", "wake", "intercom", "other"]}, "research": {"factCriticalRung": None}, "reviewPanel": {"shadows": [], "gates": ["pre-pr"], "visible": True, "waitSeconds": 600}})
         self.l2({"ladder": {"childPolicy": "sometimes"}})
         self.assertTrue(self.load()["errors"])
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))

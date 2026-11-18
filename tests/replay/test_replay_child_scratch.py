@@ -1,6 +1,6 @@
 """Replay: programmatic child scratch (retro-harvest item 5).
 
-A builder launch gets <TMPDIR>/pi-foreman-scratch/<session>/<launch> as $FOREMAN_SCRATCH. Its
+A builder launch gets <worktree root>/.foreman/scratch/<session>/<launch> (the temp folder outside git) as $FOREMAN_SCRATCH. Its
 `cp notes.txt $FOREMAN_SCRATCH/copy.txt` is asked by the permission system (cp is not
 allowlisted), forwarded to the foreman and allowed by the review link without a model call
 (`child-scratch`). When the run ends the foreman traces `child_scratch` and the dir is gone.
@@ -41,7 +41,8 @@ class TestChildScratch(ReplayCase):
         self.assertTrue(any(r.get("kind") == "child" and r.get("tool") == "bash" and r.get("shape") == "cp <rel> <rel>" and r.get("verdict") == "allow" for r in lines), lines)
         [done] = [r for r in foreman if r.get("event") == "child_scratch"]
         self.assertEqual((done.get("role"), done.get("files"), done.get("bytes"), done.get("action")), ("builder", 1, 6, "removed"))
-        root = rig.tmp / "pi-foreman-scratch"
+        # D82: the project is a git repo, so the lane lay under its worktree root `<project>.worktrees/.foreman/scratch`, not the temp folder
+        root = rig.project.parent / (rig.project.name + ".worktrees") / ".foreman" / "scratch"
         self.assertTrue(root.is_dir())
         self.assertEqual([p for p in root.rglob("*") if p.is_file()], [])
 

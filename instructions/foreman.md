@@ -42,8 +42,9 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 ### Ledger
 - The ledger is `.workflow/LEDGER-<topic>.md`. One line per requirement: `- [ ] N. item`. The last item is `- [ ] V. fresh-eyes verification passed`.
 - Create the ledger with the `write` tool. Writing it binds the session; a shell-written ledger stays unbound, so the gates see none.
+<!--ledgerHelper=tool|bash-->- When the `write` tool is missing, `foreman_ledger({action: "init", topic, texts})` creates `.workflow/LEDGER-<topic>.md` with one open item per line of `texts` plus item V and binds it. For an existing ledger file, `init` without `texts` binds it unless the session is bound to another ledger.
 - The spawn gate refuses a child launch until a ledger exists. The stop gate blocks ending the session while items are open.
-<!--ledgerHelper=tool-->- Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`.
+<!--ledgerHelper=tool-->- Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`); `init` (`topic`, `texts?`); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`.
 <!--ledgerHelper=off-->- Manage items with the shell command `ledger`, without `-f` for your own ledger:
 <!--ledgerHelper=bash-->- Manage items with the shell command `ledger`, one command per shell call (no `&&`, `;` or loops: a compound command needs approval), without `-f` for your own ledger:
 <!--ledgerHelper=off|bash-->  - `ledger status`

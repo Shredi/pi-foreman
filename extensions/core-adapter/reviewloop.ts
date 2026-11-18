@@ -6,6 +6,7 @@
 // A PASS restarts the comparison; a FAIL with an empty sig fires nothing (there is nothing to compare). The stop
 // (`LoopStop`) refuses builder and reviewer launches (index.ts) until an owner prompt, an answered ask_user_question, a parent brief,
 // or a `/ceremony` tier change clears it.
+// Code reviews (`loopVerdictOf`): an item-only repeat (no `at:` key) is not a repeat when both rounds carry a `work` count that grew and the known state changed.
 // Plan reviews (`loopVerdictOf`): an equal set across two different plan versions is a repeat only when it holds an `at:` key; an
 // unknown state ("") equals only another unknown state. A session with a parent gets `loopRefusalParented` instead of `loopRefusal`.
 import { failedItemsOf } from "./costguard.ts";
@@ -22,6 +23,8 @@ export interface LoopRound {
   state: string;
   /** Sorted, de-duplicated finding keys of the report; empty for a PASS. */
   sig: readonly string[];
+  /** Foreman work count (`s.work.builders + s.work.edits`) when the round was recorded; absent in a record from before it. */
+  work?: number;
 }
 
 export interface LoopStop {
@@ -56,9 +59,10 @@ export function loopRefusal(stop: LoopStop): string {
   return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.`;
 }
 
-/** `loopVerdict` per review kind. A plan review that fails again on a revised plan (a new plan version) with only `item:<N>` keys in common is not a repeat: new findings under the same ledger item are progress. A located key (`at:`) in the set still stops it. Code reviews and same-version plan rounds are `loopVerdict` unchanged. */
+/** `loopVerdict` per review kind. A plan review that fails again on a revised plan (a new plan version) with only `item:<N>` keys in common is not a repeat: new findings under the same ledger item are progress. A located key (`at:`) in the set still stops it. A code review's item-only repeat is progress too when work (builder runs or project edits) happened between the two rounds and the reviewed state changed; a located key, no work, or an unchanged or unknown state still stops it. Same-version plan rounds are `loopVerdict` unchanged. */
 export function loopVerdictOf(kind: ReviewKind, prev: LoopRound | null, cur: LoopRound): LoopRule | null {
   const rule = loopVerdict(prev, cur);
+  if (kind === "code" && rule === "repeat" && prev && !cur.sig.some((k) => k.startsWith("at:")) && prev.work !== undefined && cur.work !== undefined && cur.work > prev.work && cur.state !== "" && prev.state !== "" && cur.state !== prev.state) return null;
   if (kind === "plan" && rule === "repeat" && prev && cur.state !== prev.state && !cur.sig.some((k) => k.startsWith("at:"))) return null;
   return rule;
 }

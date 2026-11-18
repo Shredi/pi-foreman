@@ -41,6 +41,8 @@ export interface FloorEnv {
   writeRoots?: string[];
   /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: none (the process environment is never read for it). */
   scratch?: string[];
+  /** The session's worktree-side scratch base (`<root>/.foreman/scratch`); counted as own temp like the temp base. */
+  scratchBase?: string;
   /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
   agentDir?: string;
   /** The dir of the session's own Pi session file: its `*.jsonl` files are floored writes (the adapter writes them through pi.appendEntry). */
@@ -323,11 +325,11 @@ function configTargets(call: GitCall): string[] {
   return dirs ? [path.join(dirs.common, "config"), path.join(dirs.gitDir, "config.worktree")] : [];
 }
 
-/** Every path is below the child's scratch root (`env.scratch`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
+/** Every path is below the child's scratch root (`env.scratch`) or the scratch base `<OS temp dir>/pi-foreman-scratch` (or the session's `env.scratchBase`), in any spelling; at least one path. */
 function inOwnTemp(paths: string[], env: FloorEnv): boolean {
   if (!paths.length) return false;
   const plat = env.platform ?? process.platform;
-  const roots = [...(env.scratch ?? []), path.join(os.tmpdir(), "pi-foreman-scratch")].filter(Boolean);
+  const roots = [...(env.scratch ?? []), path.join(os.tmpdir(), "pi-foreman-scratch"), ...(env.scratchBase ? [env.scratchBase] : [])].filter(Boolean);
   const rootForms = roots.flatMap((r) => formsOf(r, env));
   return paths.every((p) => formsOf(p, env).every((f) => rootForms.some((r) => lexUnder(plat, r, f))));
 }

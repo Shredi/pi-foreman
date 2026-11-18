@@ -157,15 +157,15 @@ exact rules are in [permissions](permissions.md#variables-in-bash-lines), includ
 
 ## Child scratch
 
-Each single-child launch gets a scratch dir under the OS temp dir (`$FOREMAN_SCRATCH`, see
-[ceremony](ceremony.md)). Writes and removes are allowed inside that dir only, never the dir itself or anything
+Each single-child launch gets a scratch dir under the session's worktree root (`<root>/.foreman/scratch/...`), or under the OS temp dir when the session has no usable root (`$FOREMAN_SCRATCH`, see
+[ceremony](ceremony.md)). The foreman's default reads and shell writes do not reach `.foreman/scratch` through the owned worktree root. Writes and removes are allowed inside that dir only, never the dir itself or anything
 outside it:
 
 - Gate (`child-write-outside`): a child is refused, not asked, any write below `/tmp` or the resolved OS temp dir outside its scratch dir and its own workspace: a write or edit tool path, a shell redirect (`> /tmp/out.txt`), and the targets of `tee`, `touch`, `mkdir`, `mv`, `cp`, `install` and `ln`. The reason names the refused path, the worktree and the sanctioned targets. A read from `/tmp` is not refused.
 - Gate (default `default-write-in`): `cp`, `mkdir`, `rm` and `cd` with every destination or operand inside a live scratch dir of the asking role, and path-tool writes inside such a dir, are allowed without the model. POSIX shell forms only. For any child (every child role, explorer included) only, a `mkdir` or `mkdir -p` of its scratch dir itself (`mkdir -p $FOREMAN_SCRATCH`) counts as inside; the main session's verdicts are unchanged; `rm`, `mv`, `touch`, a redirect or `cp` onto the scratch dir itself stay refused, and so does the dir above it.
 - The destructive guard still refuses `rm -r` with a variable operand: use the literal path.
 - The harness removes the dir at run end only after a realpath check that it is a real directory below the
-  `pi-foreman-scratch` root and neither inside nor around the repository.
+  `<root>/.foreman/scratch` base (or the `<tmp>/pi-foreman-scratch` root, for lanes of older runs) and neither inside nor around the repository.
 
 ### Kept output folder
 

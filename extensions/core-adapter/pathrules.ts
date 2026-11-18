@@ -18,6 +18,8 @@ export interface GateRoots {
   tmp: string[];
   /** `<tmp>/pi-foreman-scratch`: other sessions' scratch dirs live below it and are never a tmp default. */
   scratchBase?: string;
+  /** More scratch bases kept out of the defaults (the temp base next to a worktree-side `scratchBase`): older lanes lie there. */
+  scratchBases?: string[];
   /** Owned roots (agent dir state, handoffs, sibling worktrees); `*` stands for one path segment. Reads only. */
   owned: string[];
   /** The Pi install root, the global npm root and the bundled package roots (reads only). */
@@ -267,9 +269,11 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
     if (!r.child && HANDOFF_NOTE.test(base) && !inChildDir(r, platform, abs, ra, real) && (r.openedHandoffs ?? []).some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h))) return "handoff-ruling";
   }
   if (r.child) return null;
-  if (r.tmpAccess && r.tmp.some(inside) && !(r.scratchBase && inside(r.scratchBase))) return "tmp";
-  if (dir === "read" && r.owned.some(inside)) return "owned";
-  if (dir === "read" && (r.workFolders ?? []).some((f) => inside(f.path))) return "owned";
+  // other sessions' scratch dirs are never a default, also not as part of an owned root (the worktree root holds `.foreman/scratch`)
+  const inScratchBase = [r.scratchBase, ...(r.scratchBases ?? [])].some((b) => !!b && inside(b));
+  if (r.tmpAccess && r.tmp.some(inside) && !inScratchBase) return "tmp";
+  if (dir === "read" && !inScratchBase && r.owned.some(inside)) return "owned";
+  if (dir === "read" && !inScratchBase && (r.workFolders ?? []).some((f) => inside(f.path))) return "owned";
   return null;
 }
 
