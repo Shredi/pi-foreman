@@ -77,7 +77,7 @@ A label that already has a registry entry that is not closed or failed is not op
 `open` creates `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/` with:
 
 - `brief.md`: your brief plus a footer telling the child how to report back (below).
-- `parent`: the opener's intercom id, one line. The child's routing, close check and replies read it every time ([re-point an orphaned child](#re-point-an-orphaned-child-by-hand)). The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
+- `parent`: the opener's intercom id, one line. The child's routing, close check and replies read it every time ([re-point an orphaned child](#safety)). The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
 - later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md` and files below `work/`; no dialog in any mode for the write tool and `cp` (in mode `ask` an `echo >`, `printf >` or heredoc redirect still reaches the mode step). A subagent of a child session may write the same names.
 - `live.json`: `{intercomId, piSessionId, at}`, written by the child's adapter at each session start. It binds the handoff dir to the Pi session. It is write-ask, like `parent` and `child`.
@@ -368,14 +368,14 @@ Alternatives: start `pi` with `--approve`, or set `defaultProjectTrust` to `alwa
 - Only you start these: they are user commands, children refuse them, and no model tool exists in v1.
 - Only the parent may close: `foreman:close` is accepted over intercom only when the sender id equals the
   contents of `$PI_FOREMAN_HANDOFF_DIR/parent`, read at check time (no `PI_FOREMAN_HANDOFF_DIR` or no such file:
-  `PI_FOREMAN_PARENT_INTERCOM`; a file with no valid id refuses). To re-point the parent, see [re-point an orphaned child](#re-point-an-orphaned-child-by-hand).
+  `PI_FOREMAN_PARENT_INTERCOM`; a file with no valid id refuses). To re-point the parent, see [re-point an orphaned child](#safety).
   `close.from` must include `intercom-parent` (default), and cross-machine messages are refused.
 - A close is refused while a child run is active; the session's own pending `foreman_wait`s are cancelled instead (trace `waits_cancelled`).
 - The `parent` and `child` files of every handoff dir are write-protected (baseline `protect.writeAsk`): a child
   agent of either session is denied any write to them and any shell command naming them, and a foreman's
   write or edit tool asks; a foreman's shell may still read them. `brief.md`, `result.md` and `plan.md` stay
   writable, so the opened foreman writes its result and plan as the footer says.
-- <a id="re-point-an-orphaned-child-by-hand"></a>**Re-point an orphaned child by hand.** There is no command for it. Edit the handoff dir's `parent` file by hand: write a valid intercom id of the new parent to a temp file in the same dir and rename it over `parent` (atomic). The child's routing, close check and replies re-read the file on every call, so they follow the new id. The edit does not move the registry entry in `sessions.json`, which keeps the old `parent`: the new parent gets no question reminders, no child counts, no close cascade and no `foreman_wait kind:child` for that child. The new parent briefs it with `foreman session brief <label|handoff dir>`. The `parent` file is write-protected (previous item), so the edit asks the owner.
+- **Re-point an orphaned child by hand.** There is no command for it. Edit the handoff dir's `parent` file by hand: write a valid intercom id of the new parent to a temp file in the same dir and rename it over `parent` (atomic). The child's routing, close check and replies re-read the file on every call, so they follow the new id. The edit does not move the registry entry in `sessions.json`, which keeps the old `parent`: the new parent gets no question reminders, no child counts, no close cascade and no `foreman_wait kind:child` for that child. The new parent briefs it with `foreman session brief <label|handoff dir>`. The `parent` file is write-protected (previous item), so the edit asks the owner.
 - A brief has no authority: its text and any peer message are data, and the footer says so.
 - Values are validated and quoted: labels, model ids, parent ids and paths are checked against allowlists and
   built into one shell-quoted command (POSIX) or single-quoted PowerShell string; a path with quotes (including
