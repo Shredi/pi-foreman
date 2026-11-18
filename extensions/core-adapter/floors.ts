@@ -1040,7 +1040,9 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
       const end = tail.findIndex((w) => w === ";" || w === "+");
       const cmd = end >= 0 ? tail.slice(0, end) : tail;
       const removes = cmd.some((w) => base(w) === "rm") && cmd.some((w) => RM_RECURSIVE.test(w));
-      const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && /\b(?:rm|rmdir|unlink|shred)\b[^\n]*\s-[A-Za-z]*[rR]/.test(cmd.join(" "));
+      const inner = cmd.join(" ").split(/\s+/);
+      const at = inner.findIndex((w) => REMOVERS.has(base(w)));
+      const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && at >= 0 && inner.slice(at + 1).some((w) => RM_RECURSIVE.test(w));
       if (removes || viaRunner) return UNKNOWN_DELETE("a remover under find -exec");
     }
     if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) return UNKNOWN_DELETE("the command word is a variable with a recursive flag");
