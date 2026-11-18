@@ -6,7 +6,7 @@
 |---|---|
 | Status | Design for the `git-tools` build wave, 2026-10-11. Builders implement against this file without further decisions. |
 | Rule | The harness ships at most one optional built-in tool pack, and that pack is git. Every other tool belongs in an overlay (`docs/overlays.md`). |
-| Evidence | Read 2026-10-11 against pi-subagents@0.89.0 (launch env from `src/runs/shared/child-launch.js`, `childProcessEnv`; the binding variable from `src/runs/shared/extension-bindings.js`): the runner env is `process.env` minus git routing variables (`GIT_DIR`, `GIT_CONFIG_*` …) and `PI_SUBAGENT_EXTENSION_BINDINGS`. A `PI_FOREMAN_*` variable reaches the child. `childenv.ts` strips only the intercom and `CDPATH` variables. Every depth-0 launch is async (`forceTopLevelAsync`). |
+| Evidence | Read 2026-11-18 against pi-subagents@0.89.0 (runner env from `src/runs/background/async-execution.js:543`; the binding variable from `src/runs/shared/extension-bindings.js`): the runner env is `process.env` minus git routing variables (`GIT_DIR`, `GIT_CONFIG_*` …) and `PI_SUBAGENT_EXTENSION_BINDINGS`. A `PI_FOREMAN_*` variable reaches the child. `childenv.ts` strips the intercom ids and `CDPATH` and replaces the launch binding with a consumed marker that carries no role. Every depth-0 launch is async (`forceTopLevelAsync`). |
 | Minimum git | 2.24 (`--end-of-options` in `log` and `diff`). Older git fails the op with `git_failed`; bash git is unaffected. |
 
 ## 1. Config
