@@ -172,6 +172,6 @@ test("launch helpers: read-only roles and the cwds of a launch", () => {
   assert.equal(readonlyRoles(["reviewer", "builder"]), false);
   assert.equal(readonlyRoles([]), false);
   const cwds = launchRunCwds({ chain: [{ agent: "reviewer" }, { parallel: [{ agent: "explorer", cwd: "x" }] }], cwd: "/p" }, "/s").sort();
-  assert.deepEqual(cwds, ["/p", "/p/x"]);
+  assert.deepEqual(cwds, [path.resolve("/p"), path.resolve("/p", "x")]);
   assert.deepEqual(launchRunCwds({ agent: "reviewer" }, "/s"), ["/s"]);
 });
