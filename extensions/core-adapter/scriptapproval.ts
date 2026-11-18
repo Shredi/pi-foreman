@@ -34,7 +34,7 @@ export type ScriptRunAction = Exclude<ScriptRunKind, "undo">;
 
 export type ScriptStatus = "pending" | "approved" | "dry_ok" | "consumed" | "rejected" | "revise" | "expired";
 /** `script_child` is the adapter's (a subagent child never proposes); `script_text` is a summary text that is empty or over its limit. */
-export type ScriptRefusalCode = "undo_no_proposal" | "undo_no_marker" | "undo_not_run" | "undo_done" | "undo_attempts" | "undo_expired" | "script_child" | "script_path" | "script_no_dry_run" | "script_pending" | "script_changed" | "script_dry_required" | "script_consumed" | "script_expired" | "no_posix_shell" | "script_text";
+export type ScriptRefusalCode = "undo_no_proposal" | "undo_no_marker" | "undo_not_run" | "undo_done" | "undo_attempts" | "undo_expired" | "script_child" | "script_path" | "script_no_dry_run" | "script_pending" | "script_changed" | "script_dry_required" | "script_consumed" | "script_expired" | "no_posix_shell" | "script_text" | "script_running";
 
 export interface ScriptFix {
   /** Short hash of the approved bytes and of the bytes that run now. */
