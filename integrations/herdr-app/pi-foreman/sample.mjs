@@ -81,7 +81,7 @@ export const SAMPLE = {
       pr(103, { checks: [{ n: "lint", state: "ok" }, { n: "ci", state: "pending" }] }),
       pr(104, { checks: [{ n: "ci", state: "fail" }] }),
       pr(105, { repo: "acme/gadgets" }),
-      // At most 5 PRs per repository are drawn (OPEN_PR_CAP): the sample spreads its PRs over three repositories.
+      // Open PRs draws every PR as a line of its repository's group: the sample spreads its PRs over three repositories.
       pr(106, { repo: "acme/gadgets" }),
       pr(107, { repo: "acme/gadgets", mergeable: "CONFLICTING", mergeState: "dirty" }),
       pr(108, { repo: "acme/tools", checks: [] }),
@@ -90,5 +90,43 @@ export const SAMPLE = {
       pr(111, { repo: "acme/tools", mergeable: "UNKNOWN", mergeState: "unknown" }),
       pr(112, { checks: [{ n: "lint", state: "fail" }, { n: "ci", state: "pending" }] }),
     ],
+  },
+};
+
+// The ~40-PR feed (props `{"sample": true, "manyPrs": true}`): 40 PRs (numbers 201 to 240) over 17 neutral repositories, each entry of
+// MANY_PRS is [repository, state]. Its states: a failing check, a conflict, ready to merge, a running check, a draft. One PR (206) is
+// unreviewed: a session of the sample (`sample review`) watches it, as a session's watch is the only source of that fact. #211 has no
+// title and #219 no page address.
+const MANY_REPOS = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec"];
+const MANY_PRS = [
+  ["alpha", "fail"], ["alpha", "ready"], ["alpha", "run"], ["bravo", "conflict"], ["bravo", "ready"], ["bravo", "unreviewed"],
+  ["charlie", "ready"], ["charlie", "ready"], ["delta", "fail"], ["delta", "draft"], ["echo", "ready"], ["echo", "ready"],
+  ["foxtrot", "run"], ["foxtrot", "run"], ["golf", "ready"], ["golf", "ready"], ["hotel", "conflict"], ["hotel", "ready"],
+  ["india", "fail"], ["juliet", "ready"], ["juliet", "run"], ["kilo", "ready"], ["kilo", "run"], ["lima", "ready"],
+  ["mike", "ready"], ["mike", "run"], ["november", "draft"], ["november", "ready"], ["oscar", "ready"], ["oscar", "run"],
+  ["papa", "ready"], ["papa", "run"], ["quebec", "ready"], ["quebec", "ready"], ["alpha", "ready"], ["bravo", "ready"],
+  ["golf", "run"], ["hotel", "draft"], ["juliet", "ready"], ["kilo", "ready"],
+];
+const MANY_STATE = {
+  fail: { checks: [{ n: "ci", state: "fail" }] },
+  conflict: { mergeable: "CONFLICTING", mergeState: "dirty" },
+  run: { checks: [{ n: "ci", state: "pending" }] },
+  draft: { state: "draft" },
+  ready: {},
+  unreviewed: {},
+};
+const watchedPr = { number: 206, repo: "acme/bravo" };
+export const SAMPLE_MANY = {
+  radar: {
+    v: 1,
+    roots: [session("s-many-review", "sample review", {
+      repo: watchedPr.repo, repoUrl: `https://example.test/${watchedPr.repo}`,
+      dots: [{ n: watchedPr.number, state: "ok", label: `#${watchedPr.number}`, src: "pr", url: `https://example.test/${watchedPr.repo}/pull/${watchedPr.number}` }],
+      waits: [{ kind: "pr", note: "1 pr watch", age_s: 5, prs: [watchedPr.number], prRefs: [{ n: watchedPr.number, repo: watchedPr.repo }], unreviewed: [{ n: watchedPr.number, repo: watchedPr.repo }], review: [{ n: watchedPr.number, repo: watchedPr.repo, head: H, state: "unreviewed" }] }],
+    })],
+    openPrs: MANY_PRS.map(([repo, kind], i) => pr(201 + i, {
+      repo: `acme/${repo}`, url: `https://example.test/acme/${repo}/pull/${201 + i}`, ...MANY_STATE[kind],
+      ...(201 + i === 211 ? { title: "" } : {}), ...(201 + i === 219 ? { url: "" } : {}),
+    })),
   },
 };

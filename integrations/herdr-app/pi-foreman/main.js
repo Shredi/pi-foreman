@@ -11,7 +11,7 @@ import {
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
-import { SAMPLE } from "./sample.mjs";
+import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
 const LOCAL_MS = 3000;
 const REMOTE_MS = 15000;
@@ -24,7 +24,7 @@ const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given 
 const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
 const PRESS_MS = 1500; // a clicked element shows its pending state this long (the 1 s timer then redraws it)
 const RENDER_NOTICE_MS = 600000; // the render notice comes at most this often
-const OPEN_PR_CAP = 5; // PR chips per repository row of Open PRs; the rest is one "+k more" element
+const OPEN_PR_FOLD_AT = 15; // with more Open PRs than this, the groups without a failing check or a conflict start folded
 // exec `timeout` (ms) per job; the Promise.race watchdogs stay as the backstop for an app that ignores the option (Herdr app 0.1.13)
 const T_RADAR = 30000;
 const T_PRS = 600000; // the cap of exec
@@ -77,6 +77,10 @@ function prDot(t, st) {
       .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));
 }
 
+// An Open PRs line needs attention when a finished check failed (its dot is red) or the PR conflicts with its base (the conflict mark).
+const prFailing = (pr) => prDotState(pr).fill === "red";
+const prConflict = (pr) => prDotState(pr).conflict === true;
+
 // Conflict marker, independent of the dot: a small red disc with a bang.
 const conflictMark = (t) => h_flex().flex_none().size(11).rounded(6).bg(t.blocked).items_center().justify_center()
   .text_size(8).font_semibold().text_color(t.chrome).child("!");
@@ -96,6 +100,11 @@ const hashOf = (s) => {
 };
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
+// The counts an Open PRs group is sorted and folded by; `prs` is null for a group without a PR list.
+const openPrInfo = (g) => {
+  const prs = Array.isArray(g?.prs) ? g.prs : null;
+  return { g, prs, failing: (prs ?? []).filter(prFailing).length, conflicts: (prs ?? []).filter(prConflict).length };
+};
 // A throw about the `timeout` option itself (a synchronous TypeError for the options argument, or an option message), never a run that
 // timed out or a network text such as `dial tcp ...: i/o timeout`. Same logic as in ../pi-foreman-plan/main.js (separate mod folders, no import).
 const optionError = (e) => e instanceof TypeError || /timeout must|unknown (option|field|key)|invalid option|unexpected (option|field)/i.test(String(e?.message ?? e));
@@ -120,8 +129,9 @@ export default class ForemanAgents extends View {
     this.hcProp = given.hc;
     // The sample view (docs/development.md): the radar comes from sample.mjs once; nothing is polled and nothing is started.
     this.sample = given.sample === true;
+    this.manyPrs = given.manyPrs === true; // with the sample: the ~40-PR feed of sample.mjs (SAMPLE_MANY) instead of the legend's
     if (this.sample) {
-      const doc = parseRadarDoc(JSON.stringify(SAMPLE.radar));
+      const doc = parseRadarDoc(JSON.stringify(this.manyPrs ? SAMPLE_MANY.radar : SAMPLE.radar));
       this.radar.set("local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: null, tried: Date.now() });
     }
     this.recs = new Map(); // agent address -> {recs, tried}
@@ -436,20 +446,25 @@ export default class ForemanAgents extends View {
 
   // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one dot; a click opens its
   // page when radar gave a URL (or a repository URL to derive it from). Resting on the chip opens the hover card.
-  prChip(t, pr, href, key, more = []) {
-    return this.prGuard(() => this.prChipRaw(t, pr, href, key, more), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
+  // `line` ({title}) draws it as an Open PRs line instead (see openPrGroup): full width, no pill, the title after the dot.
+  prChip(t, pr, href, key, more = [], line = null) {
+    return this.prGuard(() => this.prChipRaw(t, pr, href, key, more, line), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
   }
 
   // `more`: further PRs of the same row; the chip then reads "#n +k" and its hover card lists them.
-  prChipRaw(t, pr, href, key, more) {
+  prChipRaw(t, pr, href, key, more, line = null) {
     const st = prDotState(pr);
-    const chip = h_flex().flex_none().h(18).px(6).gap(4).items_center().rounded(9)
-      .border(1).border_color(st.fill === "red" ? t.blocked : t.border).bg(t.raised)
-      .text_size(10.5).font_medium().text_color(st.fill === "red" ? t.blocked : t.muted)
-      .child(div().child(`⎇ #${pr.number}${more.length ? ` +${more.length}` : ""}`))
+    const red = st.fill === "red";
+    const label = `⎇ #${pr.number}${more.length ? ` +${more.length}` : ""}`;
+    const chip = (line
+      ? h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
+      : h_flex().flex_none().h(18).px(6).gap(4).items_center().rounded(9).border(1).border_color(red ? t.blocked : t.border).bg(t.raised).text_size(10.5).font_medium())
+      .text_color(red ? t.blocked : t.muted)
+      .child(line ? div().flex_none().w(52).child(label) : div().child(label))
       .when(st.conflict, (el) => el.child(conflictMark(t)))
       .when(pr.unreviewed === true, (el) => el.child(div().text_color(tones(t).amber).child(UNREVIEWED)))
-      .child(prDot(t, st));
+      .child(prDot(t, st))
+      .when(Boolean(line?.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)));
     const c = { ...prCard(pr), more: more.length ? `also ${more.map((p) => `#${p.number}`).join(", ")}` : "" };
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
@@ -470,7 +485,7 @@ export default class ForemanAgents extends View {
     // The tooltip names the state in words (the dot's colours); the hover card adds the details.
     const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
       .when(Boolean(href), (el) => el.cursor_pointer()
-        .hover((x) => x.border_color(t.working).text_color(t.foreground))
+        .hover((x) => (line ? x.bg(t.hover) : x.border_color(t.working).text_color(t.foreground)))
         .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(id, cx); this.openUrl(href, cx); }))
       .when(!href, (el) => el.on_click((_e, cx) => {
         cx.stop_propagation?.();
@@ -532,11 +547,12 @@ export default class ForemanAgents extends View {
     return { root, items: root ? root.children : [] };
   }
 
-  // The fold slot of a row with children: an svg chevron.
-  foldSlot(t, id, kids) {
-    const folded = this.folded.has(id);
+  // The fold slot of a row with children: an svg chevron. A caller whose own row takes the click passes `state` ({folded}): the chevron
+  // then only shows that state. Without it the slot toggles `this.folded` on its own click.
+  foldSlot(t, id, kids, state = null) {
+    const folded = state ? state.folded : this.folded.has(id);
     return h_flex().flex_none().size(16).items_center().justify_center().rounded(4)
-      .when(kids, (el) => el.id(`fold:${id}`).cursor_pointer().hover((x) => x.bg(t.hover))
+      .when(kids && !state, (el) => el.id(`fold:${id}`).cursor_pointer().hover((x) => x.bg(t.hover))
         .on_click((_e, cx) => { if (this.folded.has(id)) this.folded.delete(id); else this.folded.add(id); cx.notify(); }))
       .when(kids, (el) => el.child(svg(folded ? CHEVRON.closed : CHEVRON.open).size(11).text_color(t.dim)));
   }
@@ -685,43 +701,49 @@ export default class ForemanAgents extends View {
       .when(kids, (el) => el.content(this.childBody(t, items, 8)));
   }
 
-  // "Open PRs": PRs no agent works on, one row per repo. A row shows at most OPEN_PR_CAP chips, then "+k more". A row that fails to
-  // build is replaced by a plain row (its name and count), so one repository does not take the section down.
+  // "Open PRs": PRs no agent works on, one foldable group per repository (openPrGroup). Groups with a failing check or a conflict come
+  // first and start open; with more than OPEN_PR_FOLD_AT PRs the others start folded. Folding by hand (`this.folded`, `this.unfolded`)
+  // lasts while Herdr is open. A group that fails to build is replaced by a plain row (its name and count), so one repository does not
+  // take the section down.
   openPrRows(t, groups, age = "") {
     if (!groups.length) return [];
+    this.folded ??= new Set();
+    this.unfolded ??= new Set();
     const rows = [h_flex().id("op-head").px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
       .child(div().text_color(t.dim).child("Open PRs"))
       .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
-    for (const g of groups) rows.push(this.prGuard(() => this.openPrRow(t, g), null) ?? this.openPrRowFallback(t, g));
+    const info = groups.map((g) => guard(() => openPrInfo(g), { g, prs: null, failing: 0, conflicts: 0 }));
+    const total = info.reduce((n, i) => n + (i.prs?.length ?? 0), 0);
+    const attention = (i) => i.failing > 0 || i.conflicts > 0;
+    for (const i of [...info.filter(attention), ...info.filter((x) => !attention(x))]) {
+      const auto = total > OPEN_PR_FOLD_AT && !attention(i);
+      rows.push(this.prGuard(() => this.openPrGroup(t, i, auto), null) ?? this.openPrRowFallback(t, i.g));
+    }
     return rows;
   }
 
-  openPrRow(t, g) {
-    const hidden = g.prs.slice(OPEN_PR_CAP);
-    return h_flex().id(`op-${g.repo}`).pl(8).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
-      .child(div().text_color(t.dim).truncate().max_w(140).child(g.repo))
-      .children(g.prs.slice(0, OPEN_PR_CAP).map((p) => this.prChip(t, p, p.href, `op-${g.repo}`)))
-      .when(hidden.length > 0, (el) => el.child(this.openPrMore(t, g, hidden)))
-      .children(g.prs.filter((p) => p.title).slice(0, 1).map((p) => div().min_w(0).truncate().text_color(t.dim).child(p.title)));
-  }
-
-  // "+k more": the PRs past the cap. Its tooltip lists their numbers; a click opens the repository's pull list on the host of a
-  // hidden PR's page, or says there is no link when none of them has a page address (as a chip with no page does).
-  openPrMore(t, g, hidden) {
-    const id = `op-more-${g.repo}`;
-    const numbers = hidden.map((p) => `#${p.number}`).join(", ");
-    const page = hidden.map((p) => p.href).find((u) => isSafeHttpsUrl(u));
-    const origin = page ? guard(() => new URL(page).origin, "") : "";
-    return h_flex().id(id).flex_none().h(18).px(6).items_center().rounded(9).border(1).border_color(t.border).bg(t.raised)
-      .text_size(10.5).text_color(t.muted).cursor_pointer()
-      .hover((el) => el.border_color(t.working).text_color(t.foreground))
-      .tooltip(numbers)
-      .on_click((_e, cx) => {
-        cx.stop_propagation?.();
-        if (origin) this.openUrl(`${origin}/${g.repo}/pulls`, cx);
-        else guard(() => notify({ title: "No link for these pull requests", body: `${numbers} have no page address yet.`, level: "info" }));
-      })
-      .child(`+${hidden.length} more`);
+  // One repository of Open PRs: a heading (chevron, name, "N PRs" with " · k failing" and " · c conflicts" when there are some) and, unless
+  // folded, one line per PR. The heading row is the click target; the group's element keeps the id `op-<repo>` with its lines inside.
+  openPrGroup(t, { g, prs, failing, conflicts }, auto) {
+    const fid = `opg:${g.repo}`;
+    const folded = this.folded.has(fid) || (auto && !this.unfolded.has(fid));
+    const n = prs.length; // throws for a group without a PR list: the caller's fallback row takes it
+    const toggle = (_e, cx) => {
+      if (folded) { this.folded.delete(fid); this.unfolded.add(fid); } else { this.folded.add(fid); this.unfolded.delete(fid); }
+      cx.notify();
+    };
+    const counts = h_flex().flex_none().text_size(10).text_color(t.dim).child(`${n} ${n === 1 ? "PR" : "PRs"}`)
+      .when(failing > 0, (el) => el.child(div().text_color(t.blocked).child(` · ${failing} failing`)))
+      .when(conflicts > 0, (el) => el.child(div().text_color(t.blocked).child(` · ${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"}`)));
+    const head = h_flex().id(`oph-${g.repo}`).pl(8).pr(8).h(22).flex_none().gap(4).items_center().cursor_pointer()
+      .hover((x) => x.bg(t.hover)).on_click(toggle)
+      .child(this.foldSlot(t, fid, true, { folded }))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).font_medium().text_color(t.foreground).child(g.repo))
+      .child(counts);
+    const group = v_flex().id(`op-${g.repo}`).flex_none().mt(5).pt(3).border_t(1).border_color(t.border).child(head);
+    if (folded) return group;
+    return group.child(v_flex().flex_none().pl(20).pr(8).gap(1)
+      .children(prs.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, [], { title: p.title ?? "" }))));
   }
 
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.
