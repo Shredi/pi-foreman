@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { planVersionHash } from "../checkpoint.ts";
 import { restoreRoundState, ROUND_STATE_FILE } from "../roundstate.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
@@ -97,7 +98,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
       sendMessage: () => undefined,
       appendEntry: (customType: string, data: unknown) => void entries.push({ type: "custom", customType, data: JSON.parse(JSON.stringify(data)) }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null, spawner: probeSpawner() });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => entries, getBranch: () => entries },
       cwd: project,

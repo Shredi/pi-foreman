@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ details?: { decision?: string; by?: string | null }; content: { text: string }[] }> };
@@ -45,7 +46,7 @@ test("foreman_checkpoint on an unchanged approved plan: no dialog, decision appr
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   let dialogs = 0;
   const ctx = {
     sessionManager: { getSessionId: () => "reapprove-session", getSessionFile: () => undefined },

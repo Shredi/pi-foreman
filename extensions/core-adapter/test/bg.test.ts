@@ -9,6 +9,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { mapTool, isShellTool } from "../toolmap.ts";
 import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
 import { checkLogPath, parseStart, processAlive, registerWait } from "../wait.ts";
@@ -258,7 +259,7 @@ function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Pro
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const notes: string[] = [];
   const confirms: string[] = [];
   const ctx = {

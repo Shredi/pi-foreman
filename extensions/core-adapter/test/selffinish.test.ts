@@ -14,6 +14,8 @@ import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { selfFinish, spawnDetached, verifyMerged } from "../selffinish.ts";
 import type { SelfFinishDeps } from "../selffinish.ts";
+import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
+import { BARE_ORIGIN_OFF, gitTemplate } from "./_git-template.ts";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -190,37 +192,50 @@ const run = (cmd: string, args: string[], cwd: string): string => execFileSync(c
 const git = (cwd: string, ...args: string[]): string => run("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", ...args], cwd);
 const py = (args: string[]): Promise<{ code: number; out: string }> => new Promise((resolve) => execFile(PY, ["-E", "-s", SCRIPT, ...args], { encoding: "utf8", env: { ...cleanEnv(), GIT_CONFIG_GLOBAL: EMPTY_GITCONFIG } }, (err, stdout) => resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: String(stdout) })));
 
-function world() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-selffinish-")));
-  const state = path.join(root, "agent", "pi-foreman", "state");
-  fs.mkdirSync(state, { recursive: true });
+// the git part of every world is the same: built once per file (the template) and copied into each world. The build passes the housekeeping
+// settings on each git call, since cleanEnv drops the preload's GIT_CONFIG_* (a detached `git maintenance run --auto` would race the copy).
+const HOUSEKEEPING = GIT_HOUSEKEEPING_OFF.flatMap(([k, v]) => ["-c", `${k}=${v}`]);
+const tpl = gitTemplate(() => os.tmpdir(), (root) => {
   const origin = path.join(root, "origin.git");
-  run("git", ["init", "-q", "--bare", "-b", "main", origin], root);
+  run("git", [...HOUSEKEEPING, "init", "-q", "--bare", "-b", "main", origin], root);
+  for (const [k, v] of BARE_ORIGIN_OFF) run("git", ["--git-dir", origin, "config", k, v], root);
   const repo = path.join(root, "repo");
-  run("git", ["clone", "-q", origin, repo], root);
-  git(repo, "checkout", "-q", "-b", "main");
+  run("git", [...HOUSEKEEPING, "clone", "-q", origin, repo], root);
+  const g = (cwd: string, ...args: string[]): string => git(cwd, ...HOUSEKEEPING, ...args);
+  g(repo, "checkout", "-q", "-b", "main");
   fs.writeFileSync(path.join(repo, "README"), "x\n");
   fs.writeFileSync(path.join(repo, ".gitignore"), ".workflow/\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-q", "-m", "init");
-  git(repo, "push", "-q", "-u", "origin", "main");
+  g(repo, "add", ".");
+  g(repo, "commit", "-q", "-m", "init");
+  g(repo, "push", "-q", "-u", "origin", "main");
   const wt = path.join(root, "repo.worktrees", "feat");
-  git(repo, "worktree", "add", "-q", "-b", "feat", wt);
+  g(repo, "worktree", "add", "-q", "-b", "feat", wt);
   fs.writeFileSync(path.join(wt, "f.txt"), "feature\n");
-  git(wt, "add", "f.txt");
-  git(wt, "commit", "-q", "-m", "feature");
-  const tip = git(wt, "rev-parse", "HEAD");
+  g(wt, "add", "f.txt");
+  g(wt, "commit", "-q", "-m", "feature");
+  const tip = g(wt, "rev-parse", "HEAD");
   // squash merge: main gets the content as a new commit; the branch tip is not an ancestor of main
-  git(repo, "merge", "--squash", "feat");
-  git(repo, "commit", "-q", "-m", "feature (squash)");
-  git(repo, "push", "-q", "origin", "main");
+  g(repo, "merge", "--squash", "feat");
+  g(repo, "commit", "-q", "-m", "feature (squash)");
+  g(repo, "push", "-q", "origin", "main");
   fs.mkdirSync(path.join(wt, ".workflow", "scratch"), { recursive: true });
   fs.writeFileSync(path.join(wt, ".workflow", "LEDGER-x.md"), "# ledger\n- [x] 1. done\n");
   fs.writeFileSync(path.join(wt, ".workflow", "scratch", "plan.md"), "plan\n");
+  return tip;
+});
+
+/** A world: the template's copy at its own root, with a state dir and a handoff dir next to it. */
+function world() {
+  const c = tpl.copy();
+  const root = c.root;
+  const state = path.join(root, "agent", "pi-foreman", "state");
+  fs.mkdirSync(state, { recursive: true });
+  const repo = path.join(root, "repo");
+  const wt = path.join(root, "repo.worktrees", "feat");
   const handoff = path.join(root, "handoffs", "20261102-120000-demo");
   fs.mkdirSync(handoff, { recursive: true });
   const base = ["selfclean", "--ws", wt, "--branch", "feat", "--state", state, "--session", "child-1"];
-  return { root, state, repo, wt, tip, handoff, base, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, state, repo, wt, tip: c.built, handoff, base, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 test("selfclean: a squash-merged branch is refused without the verified-merged fact and ok with it (while the tip still matches)", async () => {

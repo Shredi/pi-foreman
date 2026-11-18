@@ -10,6 +10,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { ClaudeConfigWatch, takeClaudeSnapshot } from "../claudedrift.ts";
 import { bridgeLoadOrder, projectBridgeConfigRisks, userBridgeConfigRisks } from "../bridgeiso.ts";
 
@@ -125,7 +126,7 @@ test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridg
   delete process.env.PI_SUBAGENT_CHILD;
   const handlers = new Map<string, Handler>();
   const pi = { on: (n: string, h: Handler) => void handlers.set(n, h), registerCommand: () => undefined, registerTool: () => undefined, getActiveTools: () => [] as string[], setActiveTools: () => undefined, setModel: async () => true, setThinkingLevel: () => undefined };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const notes: string[] = [];
   let answer = false;
   const ctx = (provider: string | undefined, hasUI: boolean) => ({

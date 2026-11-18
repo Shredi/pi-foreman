@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { LadderState } from "../ladder.ts";
 import { launchWaitText, POLICY_BLOCK_LINE, runEndOf } from "../launchwait.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
@@ -61,7 +62,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
     sendMessage: () => undefined,
   };
   const sessionId = `r11-policy-${++rigs}`;
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined },
     cwd: project,

@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { LadderState } from "../ladder.ts";
 import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, REPEAT_STOP_REASONS, runEndOf } from "../launchwait.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
@@ -60,7 +61,7 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }) {
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
   let aborts = 0;
   const sessionId = `r12-repeat-${++rigs}`;
   const ctx = {

@@ -6,30 +6,45 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { prGateRefusal, prToolRefusal } from "../reviews.ts";
 import type { ReviewRecord } from "../reviews.ts";
+import { BARE_ORIGIN_OFF, gitTemplate } from "./_git-template.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 
 type Rig = { root: string; main: string; wt: string; g: (cwd: string, ...a: string[]) => string; commit: (cwd: string, m: string) => string };
 
-/** A bare origin, a main checkout at origin/main and a linked worktree on round/x created from origin/main (upstream = origin/main). */
-function rig(): Rig {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-prhead-")));
-  // the harness sets url.invalid-push:.pushInsteadOf for every URL; the fixture's own origin keeps its path
+/** git helpers over the fixture at `root`; the harness sets url.invalid-push:.pushInsteadOf for every URL, the fixture's own origin keeps its path. */
+function gitFns(root: string) {
   const pushKeep = `url.${path.join(root, "origin.git")}.pushInsteadOf=${path.join(root, "origin.git")}`;
   const g = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", pushKeep, ...a], { encoding: "utf8" }).trim();
   const commit = (cwd: string, m: string) => {
     g(cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", m);
     return g(cwd, "rev-parse", "HEAD");
   };
-  const origin = path.join(root, "origin.git");
-  const main = path.join(root, "main");
-  const wt = path.join(root, "wt");
-  execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
-  execFileSync("git", ["clone", "-q", origin, main], { stdio: "ignore" });
-  commit(main, "chore: base");
-  g(main, "push", "-q", "origin", "main");
-  g(main, "fetch", "-q", "origin");
-  g(main, "worktree", "add", "-q", "-b", "round/x", wt, "origin/main");
-  return { root, main, wt, g, commit };
+  return { g, commit };
+}
+
+// the fixture is the same for every test: built once per file (the template), copied into each test's own dir
+const tpl = gitTemplate(
+  () => os.tmpdir(),
+  (root) => {
+    const { g, commit } = gitFns(root);
+    const origin = path.join(root, "origin.git");
+    const main = path.join(root, "main");
+    const wt = path.join(root, "wt");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", origin]);
+    for (const [k, v] of BARE_ORIGIN_OFF) execFileSync("git", ["--git-dir", origin, "config", k, v]);
+    execFileSync("git", ["clone", "-q", origin, main], { stdio: "ignore" });
+    commit(main, "chore: base");
+    g(main, "push", "-q", "origin", "main");
+    g(main, "fetch", "-q", "origin");
+    g(main, "worktree", "add", "-q", "-b", "round/x", wt, "origin/main");
+  },
+);
+
+/** A bare origin, a main checkout at origin/main and a linked worktree on round/x created from origin/main (upstream = origin/main): a copy of the template. */
+function rig(): Rig {
+  const { root } = tpl.copy();
+  const { g, commit } = gitFns(root);
+  return { root, main: path.join(root, "main"), wt: path.join(root, "wt"), g, commit };
 }
 
 const rec = (cwd: string, head: string): ReviewRecord => ({ role: "reviewer", verdict: "pass", head, cwd });
