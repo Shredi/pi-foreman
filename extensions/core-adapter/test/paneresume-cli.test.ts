@@ -74,6 +74,17 @@ function rig(t: TestContext, sid = SID, terminal = "t1") {
 }
 const exitPi = (r: ReturnType<typeof rig>, code: number | null, signal: string | null = null): void => void r.spawns[0].child.emit("exit", code, signal);
 const tick = (): Promise<void> => new Promise((res) => setImmediate(res));
+const wait = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
+/** Polls every 50 ms until the condition holds or 10 s pass; the exact assert after it decides. */
+const until = async (pred: () => boolean, ms = 10_000): Promise<void> => {
+  const end = Date.now() + ms;
+  while (!pred() && Date.now() < end) await wait(50);
+};
+/** Then a settle: a second start has time to show before an exact count is asserted (a double start still fails). */
+const untilSettled = async (pred: () => boolean): Promise<void> => {
+  await until(pred);
+  await wait(80);
+};
 
 test("Enter starts Pi now: raw mode off and stdin released before the spawn; argv, cwd, env; the exit code passes through; note and lock go", async (t) => {
   const r = rig(t);
@@ -117,7 +128,7 @@ test("a key other than Enter cancels: the note is deleted, the hand line printed
 test("the countdown running out starts Pi", async (t) => {
   const r = rig(t);
   const done = runPaneResume(r.argv, r.deps({ countdownMs: 30 }));
-  await new Promise((res) => setTimeout(res, 120));
+  await untilSettled(() => r.spawns.length > 0);
   assert.equal(r.spawns.length, 1);
   assert.deepEqual(r.events.slice(0, 5), ["raw:true", "resume", "raw:false", "pause", "spawn"]);
   exitPi(r, 0);
@@ -128,7 +139,7 @@ test("the countdown running out starts Pi", async (t) => {
 test("a signal exit of Pi becomes 128 + the signal number; a null code without signal is 1", async (t) => {
   const r = rig(t);
   const done = runPaneResume(r.argv, r.deps({ countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 60));
+  await until(() => r.spawns.length > 0);
   exitPi(r, null, "SIGTERM");
   assert.equal(await done, 143);
 });
@@ -167,7 +178,7 @@ test("launch keys: opened-session keys are dropped, the identity entry's plan ph
   fs.appendFileSync(r.sessionFile, idn({ permsProfile: "mine", planPhase: "1", bgEnv: { PI_BG_FEATURES: "process", PI_BG_BAD: "a;b" } }));
   const env = { HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "/s/sock", PATH: process.env.PATH, PI_FOREMAN_HANDOFF_DIR: "/stale", PI_INTERCOM_STABLE_ID: "x", PI_INTERCOM_SESSION_ID: "y", PI_FOREMAN_PARENT_INTERCOM: "p", PI_FOREMAN_PARENT_LABEL: "l", PI_FOREMAN_REMOTE_PARENT: "r", PI_FOREMAN_SESSION_MODEL: "m", PI_FOREMAN_PLAN_PHASE: "1", PI_BG_FEATURES: "shell-bg", PI_BG_OTHER: "keep?", PI_FOREMAN_PERMS_PROFILE: "shellprofile" };
   const done = runPaneResume(r.argv, r.deps({ env, countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 60));
+  await until(() => r.spawns.length > 0);
   const e = r.spawns[0].env;
   for (const k of ["PI_FOREMAN_HANDOFF_DIR", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_PARENT_INTERCOM", "PI_FOREMAN_PARENT_LABEL", "PI_FOREMAN_REMOTE_PARENT", "PI_FOREMAN_SESSION_MODEL"]) assert.equal(e[k], undefined, k);
   assert.equal(e.PI_FOREMAN_PLAN_PHASE, "1", "from the identity entry");
@@ -179,7 +190,7 @@ test("launch keys: opened-session keys are dropped, the identity entry's plan ph
   // a plain session (no identity entry): the shell's profile and PI_BG_* stay, the shell's plan phase goes
   const p = rig(t);
   const d2 = runPaneResume(p.argv, p.deps({ env, countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 60));
+  await until(() => p.spawns.length > 0);
   assert.equal(p.spawns[0].env.PI_FOREMAN_PLAN_PHASE, undefined);
   assert.equal(p.spawns[0].env.PI_FOREMAN_PERMS_PROFILE, "shellprofile");
   assert.equal(p.spawns[0].env.PI_BG_FEATURES, "shell-bg");
@@ -241,7 +252,7 @@ test("row 5: a missing live record clears the note and prints the pi --session l
   const g = rig(t);
   fs.writeFileSync(path.join(g.agentDir, "foreman.json"), "{ not json");
   const d = runPaneResume(g.argv, g.deps({ countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 60));
+  await untilSettled(() => g.spawns.length > 0);
   assert.equal(g.spawns.length, 1, "unreadable config means auto");
   exitPi(g, 0);
   await d;
@@ -263,7 +274,7 @@ test("lock: two concurrent runs for one session start one Pi; two sessions in tw
   const r = rig(t);
   const a = runPaneResume(r.argv, r.deps({ countdownMs: 5 }));
   const b = runPaneResume(r.argv, r.deps({ countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 80));
+  await untilSettled(() => r.spawns.length > 0);
   assert.equal(r.spawns.length, 1, "one Pi");
   exitPi(r, 0);
   assert.deepEqual(await Promise.all([a, b]), [0, 0]);
@@ -277,7 +288,7 @@ test("lock: two concurrent runs for one session start one Pi; two sessions in tw
   writeNote(shared, { ...y.note, sessionFile: path.join(shared, "sessions", "--p--", `2026_${SID2}.jsonl`) });
   const ax = runPaneResume(x.argv, x.deps({ countdownMs: 5 }));
   const ay = runPaneResume(y.argv, { ...y.deps({ countdownMs: 5, agentDir: shared }), env: { ...(y.deps().env as Record<string, string>) }, spawnPi: x.deps().spawnPi });
-  await new Promise((res) => setTimeout(res, 80));
+  await untilSettled(() => x.spawns.length >= 2);
   assert.equal(x.spawns.length, 2, "both sessions start");
   for (const s of x.spawns) s.child.emit("exit", 0, null);
   await Promise.all([ax, ay]);
@@ -291,7 +302,7 @@ test("lock: two concurrent runs for one session start one Pi; two sessions in tw
   const old = new Date(Date.now() - LOCK_STALE_MS - 5000);
   fs.utimesSync(lock, old, old);
   const d = runPaneResume(s.argv, s.deps({ countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 80));
+  await untilSettled(() => s.spawns.length > 0);
   assert.equal(s.spawns.length, 1, "the stale lock was replaced");
   exitPi(s, 0);
   await d;
@@ -315,7 +326,7 @@ test("the fake hc through HC_BIN: the command asks `hc get t1 --json` and resume
   const d = r.deps({ countdownMs: 5, env });
   delete d.hcGet; // the real hcGet, which runs HC_BIN
   const done = runPaneResume(r.argv, d);
-  await new Promise((res) => setTimeout(res, 300));
+  await untilSettled(() => r.spawns.length > 0);
   assert.equal(fs.readFileSync(path.join(r.root, "hc.log"), "utf8").trim(), "get t1 --json");
   assert.equal(r.spawns.length, 1);
   exitPi(r, 0);
@@ -339,7 +350,7 @@ test("an invalid launch key is named (key only, no value) before the countdown",
   const entry = { type: "custom", customType: "pi-foreman-identity", data: { v: 1, piSessionId: SID, child: "c1", handoff: "/h", permsProfile: "gone-secret-value", planPhase: "2" } };
   fs.appendFileSync(r.sessionFile, `${JSON.stringify(entry)}\n`);
   const done = runPaneResume(r.argv, r.deps({ countdownMs: 5 }));
-  await new Promise((res) => setTimeout(res, 60));
+  await until(() => r.spawns.length > 0);
   const lines = r.out.filter((l) => l.includes("launch key"));
   assert.equal(lines.length, 2);
   assert.match(lines[0], /launch key permsProfile /);
