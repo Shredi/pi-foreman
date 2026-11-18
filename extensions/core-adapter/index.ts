@@ -458,6 +458,8 @@ interface Session {
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
+  /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
+  ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
   hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
@@ -1071,6 +1073,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewFailOpen: false,
       hs: new HighStakes(),
       hsReminded: null,
+      ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
@@ -1240,6 +1243,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
+  /** The ledger part of a PassMark and of the repeat-review signal: the bound path and the count of subject changes (`path#rev`), null when no ledger is bound. */
+  function ledgerSignal(s: Session): string | null {
+    const f = boundLedger(s.markerDir, s.id);
+    return f === null ? null : `${f}#${s.ledgerRev}`;
+  }
+
+  /** Whether a resolved tool path is the bound ledger (real paths compared). */
+  function isBoundLedgerPath(p: string | null, bound: string): boolean {
+    if (p === null) return false;
+    if (p === bound) return true;
+    try {
+      return fs.realpathSync(p) === fs.realpathSync(bound);
+    } catch {
+      return false;
+    }
+  }
+
+  /** A subject change to the bound ledger (an item added or rewritten, a write or edit of the file): the next reviewer launch is allowed after a PASS. Saved at once. */
+  function bumpLedgerRev(s: Session): void {
+    s.ledgerRev += 1;
+    persistCeremonyState(s);
+  }
+
   /** Append the `pi-foreman-ceremony-state` session entry (planstate.ts) when the state differs from the last one appended or restored. */
   function persistCeremonyState(s: Session): void {
     if (s.isChild || !s.ceremonyRestored) return;
@@ -1260,6 +1286,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       highStakes: s.hs.snapshot(),
       pause: s.pauseSaved,
       hsReminded: s.hsReminded,
+      ledgerRev: s.ledgerRev,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1557,6 +1584,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
+    if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
       s.work = { ...e.pause.work };
@@ -3916,7 +3944,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const signals = new Set<string>();
             for (const m of marks) {
               if (!m) continue;
-              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: boundLedger(s.markerDir, s.id), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
+              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: ledgerSignal(s), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
             }
             if (signals.size > 0) s.trace?.emit({ event: "review_dup_allowed", agent, signals: [...signals].join(",") });
             else {
@@ -4639,7 +4667,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         delete s.passMarks[k];
       }
       const at = Date.now();
-      const ledger = boundLedger(s.markerDir, s.id);
+      const ledger = ledgerSignal(s);
       for (const k of passedKeys) {
         const cwd = k === SESSION_WIDE ? (reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd) : k;
         if (k !== SESSION_WIDE) s.builderRunsByRoot[k] ??= 0;
@@ -5183,6 +5211,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let planFormNote = "";
     const wroteFile = !!owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit");
     const wrotePath = (event.input as Record<string, unknown>).path;
+    if (owner && wroteFile && typeof wrotePath === "string") {
+      const bound = boundLedger(owner.markerDir, owner.id);
+      if (bound && isBoundLedgerPath(resolveToolPath(wrotePath, ctx.cwd, os.homedir()), bound)) bumpLedgerRev(owner); // a direct write of the ledger counts, whatever it changed
+    }
     if (owner && wroteFile && isPlanPath(wrotePath, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
       const written = readPlan(wrotePath, planOpts(owner, ctx));
@@ -6022,6 +6054,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
                 const rr = renameRetry(tmp, file);
                 if (rr.error) throw rr.error;
                 out.push(`upserted ${u.item}`);
+                bumpLedgerRev(s);
               } catch (err) {
                 try {
                   fs.rmSync(tmp, { force: true });
@@ -6054,6 +6087,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const r = await runLedger(s, ["add", u.text], null);
             if (r.text) out.push(r.text);
             ok = ok && r.ok;
+            if (r.ok) bumpLedgerRev(s);
             const n = /^added (\d+):/.exec(r.text);
             if (n) traceItems = n[1];
           }
@@ -6063,6 +6097,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const r = await runLedger(s, c, null);
         if (r.text) out.push(r.text);
         ok = ok && r.ok;
+        if (r.ok && c[0] === "add") bumpLedgerRev(s);
       }
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
