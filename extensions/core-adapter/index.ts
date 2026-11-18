@@ -220,7 +220,7 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESS
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeCloseRequest, mergeCloseStarter, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
+import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -1249,15 +1249,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return f === null ? null : `${f}#${s.ledgerRev}`;
   }
 
-  /** Whether a resolved tool path is the bound ledger (real paths compared). */
+  /** Whether a resolved tool path is the bound ledger (selffinish's samePath: native real paths, Windows case and separators folded, so an 8.3 short temp path matches). */
   function isBoundLedgerPath(p: string | null, bound: string): boolean {
-    if (p === null) return false;
-    if (p === bound) return true;
-    try {
-      return fs.realpathSync(p) === fs.realpathSync(bound);
-    } catch {
-      return false;
-    }
+    return p !== null && samePath(p, bound);
   }
 
   /** A subject change to the bound ledger (an item added or rewritten, a write or edit of the file): the next reviewer launch is allowed after a PASS. Saved at once. */
