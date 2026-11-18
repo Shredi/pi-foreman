@@ -52,7 +52,7 @@ async function launch(a: Rig, input: Record<string, unknown>): Promise<{ texts: 
   return { texts: (res?.content ?? []).map((c) => c.text), input, id };
 }
 
-const NECESSARY = "a [high-stakes] review is necessary after this PASS";
+const NECESSARY = "a [high-stakes] review is due (";
 
 test("a [pre-pr] launch with a fired high-stakes trigger names pre-pr and that a [high-stakes] review is necessary; the normal model runs", async (t) => {
   const a = await setup(t);
@@ -62,6 +62,17 @@ test("a [pre-pr] launch with a fired high-stakes trigger names pre-pr and that a
   assert.ok(line, JSON.stringify(r.texts));
   assert.ok(line.includes(NECESSARY), line);
   assert.notEqual(String(r.input.model).split(":")[0], MODEL, "the high-stakes model does not apply to a [pre-pr] review");
+});
+
+test("an item review launch while a high-stakes review is due carries the reminder as its own line; without a due review it carries none; a second-opinion review carries none", async (t) => {
+  const a = await setup(t);
+  const plain = await launch(a, { agent: "reviewer", task: "review item 1" });
+  assert.ok(!plain.texts.some((x) => x.includes(NECESSARY)), JSON.stringify(plain.texts));
+  await launch(a, { agent: "builder", task: "build the widget", size: { files: ["src/a/big.ts"] }, risk: ["design"] });
+  const r = await launch(a, { agent: "reviewer", task: "review item 1" });
+  assert.ok(r.texts.includes("a [high-stakes] review is due (risk tag design); launch it if the change warrants it"), JSON.stringify(r.texts));
+  const second = await launch(a, { agent: "reviewer", task: "[second-opinion] look" });
+  assert.ok(!second.texts.some((x) => x.includes(NECESSARY)), JSON.stringify(second.texts));
 });
 
 test("a [pre-pr] launch without a fired trigger keeps the plain pre-pr line", async (t) => {

@@ -26,11 +26,13 @@ export interface SetupOpts {
   onMain?: boolean;
   /** No `/ceremony` command and no ledger: the tier comes from `ceremony.default` alone (source default). */
   noOwner?: boolean;
+  /** More options of the world (e.g. a handoff dir and a parent: a session opened by another session). */
+  world?: Record<string, unknown>;
 }
 
 export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
   const tier = o.tier ?? "standard";
-  const w = world(t, { ceremony: { default: tier, highStakes: { model: MODEL }, ...o.ceremony } });
+  const w = world(t, { ...o.world, ceremony: { default: tier, highStakes: { model: MODEL }, ...o.ceremony } });
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
   git(w.project, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(w.project, ".gitignore"), ".workflow/\n");
@@ -96,6 +98,12 @@ export const settle = async (a: Rig): Promise<string> => {
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";
 };
 export const pr = async (a: Rig, input: Record<string, unknown> = {}): Promise<string> => (await a.checkCall("create_pull_request", input))?.reason ?? "";
+/** The text the adapter adds to a successful PR tool result (the due-review reminder), "" when it adds none. */
+export const prNote = async (a: Rig, input: Record<string, unknown> = {}): Promise<string> => {
+  const r = (await a.fire("tool_result", { toolName: "create_pull_request", toolCallId: `pn${Math.random()}`, input, details: {}, content: [{ type: "text", text: "created" }], isError: false })) as { content?: { text?: string }[] } | undefined;
+  return (r?.content ?? []).map((c) => c.text ?? "").filter((x) => x !== "created").join("\n");
+};
+export const REMINDER = /a \[high-stakes\] review is due \([^)]*\); launch it if the change warrants it/;
 export const traces = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
 export const stakes = async (w: World) => (await traces(w, "review_stakes")).map((e) => e.reasons);
 

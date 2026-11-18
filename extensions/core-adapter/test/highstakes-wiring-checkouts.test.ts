@@ -68,6 +68,11 @@ const settle = async (a: Rig): Promise<string> => {
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";
 };
 const pr = async (a: Rig, input: Record<string, unknown> = {}): Promise<string> => (await a.checkCall("create_pull_request", input))?.reason ?? "";
+/** What the adapter adds to a successful PR tool result: the due-review reminder, "" when none. */
+const prNote = async (a: Rig, input: Record<string, unknown> = {}): Promise<string> => {
+  const r = (await a.fire("tool_result", { toolName: "create_pull_request", toolCallId: `pn${Math.random()}`, input, details: {}, content: [{ type: "text", text: "created" }], isError: false })) as { content?: { text?: string }[] } | undefined;
+  return (r?.content ?? []).map((c) => c.text ?? "").filter((x) => x !== "created").join("\n");
+};
 const traces = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
 /** The record of a normal PASS is written by an async chain (git calls): wait until `n` are traced. */
 const recorded = async (w: World, n: number) => {
@@ -95,10 +100,9 @@ test("item 4/6: a tagged builder in a second checkout makes the session's review
   await normalPass(a, wt2Real);
   await recorded(w, 2);
   assert.deepEqual((await traces(w, "review_stakes")).map((e) => e.reasons), ["design"]);
-  const refusal = await pr(a, { head: "other" });
-  assert.match(refusal, /\[pr_refused:high_stakes_required\]/);
-  assert.match(refusal, /\(risk tag design\)/);
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/, "the same state from the own checkout");
+  assert.equal(await pr(a, { head: "other" }), "", "a due review refuses nothing");
+  assert.match(await prNote(a, { head: "other" }), /a \[high-stakes\] review is due \(risk tag design\); launch it if the change warrants it/);
+  assert.equal(await pr(a), "", "the same state from the own checkout");
 
   // the session's first run FAILs in the second checkout; a revision and a normal PASS in the own checkout leave it uncleared
   const hs = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wt2Real });
@@ -128,7 +132,7 @@ test("item 4: a repository without a commit measures nothing and asks nothing; a
   await builder(a, undefined, { size: { files: ["src/a/big.ts"] }, risk: ["design"] });
   await normalPass(a);
   fs.rmSync(path.join(w.project, ".workflow", "LEDGER-x.md")); // the marker still names it: the bound ledger cannot be read
-  assert.match(await settle(a), /a high-stakes review must run/, "no bound ledger: asked as if every item were marked");
+  assert.match(await settle(a), /a \[high-stakes\] review is due \(risk tag design\); launch it if the change warrants it; otherwise finish again/, "no bound ledger: held as if every item were marked");
 });
 
 test("item 7/2: a high-stakes run that ends after the model was unset (a reload) is recognised by its run id: its notice marks no item and records nothing", async (t) => {
@@ -180,14 +184,14 @@ test("item 4/6: an open PR is held through the PR watch's review facts by the se
   const state = () => watches.reviewLive()[0]?.state;
   assert.equal(state(), "ok", "no high-stakes state: the head's own PASS rules");
   hs.fire(["design"]);
-  assert.equal(state(), "unreviewed", "a pass is due");
+  assert.equal(state(), "ok", "a pass is due: it holds nothing");
   hs.begin("c1", "/w/sib");
   hs.settle("c1", "run-1", false);
   hs.record("/w/sib", "fail", FAILH, "1. FAIL x");
   assert.equal(state(), "wip", "a FAIL stands");
   hs.revision("/w/sib");
   hs.normalPass("/w/sib");
-  assert.equal(state(), "unreviewed", "cleared: the second pass is due");
+  assert.equal(state(), "ok", "cleared: the second pass is due, it holds nothing");
   assert.equal(holdFacts("wip", "unreviewed"), "wip");
   assert.equal(holdFacts("unreviewed", null), "unreviewed");
   assert.equal(holdFacts("ok", null), "ok");

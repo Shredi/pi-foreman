@@ -8,13 +8,18 @@ import { fileURLToPath } from "node:url";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
-test("every installer test that spawns a process imports ./_sandbox-home.mjs", () => {
-  const offenders = fs.readdirSync(dir)
-    .filter((f) => f.endsWith(".test.mjs"))
+const testFiles = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? testFiles(path.join(d, e.name)) : e.name.endsWith(".test.mjs") ? [path.join(d, e.name)] : []));
+// spawn*, execFile*, fork, execSync and `exec` imported from child_process (not RegExp `.exec(`); a namespace or default import (`cp.exec(`, `cp.fork(`) counts too
+const SPAWNER = /spawn|execFile|\bfork\b|execSync|import\s+(?:\*\s+as\s+)?\w+\s+from\s*["'](?:node:)?child_process["']|import\s*\{[^}]*\bexec\b[^}]*\}\s*from\s*["'](?:node:)?child_process["']|child_process["']\)?\.exec\b/;
+const SANDBOX_IMPORT = /^import\s+["'](?:\.\/|\.\.\/)(?:_sandbox-home|_hermetic-env)\.mjs["'];?/m;
+
+test("every installer test (nested folders too) that starts a process imports _sandbox-home.mjs or _hermetic-env.mjs", () => {
+  const offenders = testFiles(dir)
     .filter((f) => {
-      const src = fs.readFileSync(path.join(dir, f), "utf8");
-      return /spawn|execFile/.test(src) && !/^import\s+["']\.\/_sandbox-home\.mjs["'];?/m.test(src);
-    });
+      const src = fs.readFileSync(f, "utf8");
+      return SPAWNER.test(src) && !SANDBOX_IMPORT.test(src);
+    })
+    .map((f) => path.relative(dir, f));
   assert.deepEqual(offenders, []);
 });
 

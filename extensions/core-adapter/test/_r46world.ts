@@ -9,6 +9,7 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { planVersionHash } from "../checkpoint.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Fn = (...a: unknown[]) => Promise<unknown>;
@@ -107,7 +108,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setThinkingLevel: () => undefined,
       sendMessage: (message: { customType: string; content: string }, options?: unknown) => void o.sent?.push({ message, options }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
       cwd: project,
@@ -183,6 +184,8 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
         await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
         return { blocked: null, id };
       },
+      /** The run-end event of one run with the given results (agent, output) in order, e.g. reviewer, builder, reviewer. */
+      endRunResults: (id: string, results: { agent: string; output: string }[]) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, success: true, status: "completed", results: results.map((r) => ({ ...r, status: "completed", success: true })) }),
       endRunAs: (id: string, agent: string, output: string, cwd?: string, summary?: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent, success: true, ...(summary ? { summary } : {}), status: "completed", results: [{ agent, status: "completed", success: true, output, ...(cwd ? { cwd } : {}) }] }),
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
       command: (name: string, args: string) => commands.get(name)!.handler(args, ctx),
