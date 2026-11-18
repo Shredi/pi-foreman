@@ -201,7 +201,7 @@ async function takeSettings(repo: RepoDirs, ctx: Ctx): Promise<Settings> {
     for (const [k, v] of entries) grouped.set(maskKey(k), [...(grouped.get(maskKey(k)) ?? []), `${k}\0${v}`]);
     files.set(lbl, { hash: sha(bytes), keys: new Map([...grouped].map(([k, vs]) => [k, sha(vs.join("\u0001"))])) });
     for (const [k, v] of entries) {
-      if (k === "core.hookspath" && depth === 0) hooksPath = v.replace(/^"(.*)"$/, "$1");
+      if (k === "core.hookspath") hooksPath = v.replace(/^"(.*)"$/, "$1");
       if (!/^include(if\..*)?\.path$/.test(k)) continue;
       let target = v.replace(/^"(.*)"$/, "$1");
       if (target.startsWith("~/")) target = path.join(ctx.home, target.slice(2));

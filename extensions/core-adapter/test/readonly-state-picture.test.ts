@@ -142,6 +142,31 @@ test("compareRunEnd and noticeText: outcome, names only, nothing blocked", async
   assert.deepEqual(await takeStartEntry([], home, spawnGit), { kind: "no tree" });
 });
 
+test("core.hooksPath set in an in-repo include is the effective hooks folder; the unused .git/hooks is not", async () => {
+  const cfg = path.join(repo, ".git", "config");
+  const inc = path.join(repo, ".git", "inc");
+  const orig = fs.readFileSync(cfg, "utf8");
+  const myhooks = path.join(repo, "myhooks");
+  const unused = path.join(repo, ".git", "hooks", "post-merge");
+  try {
+    fs.writeFileSync(inc, "[core]\n\thooksPath = myhooks\n");
+    fs.writeFileSync(cfg, `${orig}\n[include]\n\tpath = inc\n`);
+    fs.mkdirSync(myhooks);
+    const a = await pic();
+    fs.writeFileSync(unused, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    assert.deepEqual(diffReadonlyState(a, await end(a)), [], "a hook in the unused .git/hooks is not the effective one");
+    fs.rmSync(unused);
+    fs.writeFileSync(path.join(myhooks, "pre-commit"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const lines = diffReadonlyState(a, await end(a));
+    assert.ok(lines.some((l) => l.startsWith("hooks: ") && l.includes("pre-commit")), lines.join("|"));
+  } finally {
+    fs.rmSync(unused, { force: true });
+    fs.rmSync(myhooks, { recursive: true, force: true });
+    fs.rmSync(inc, { force: true });
+    fs.writeFileSync(cfg, orig);
+  }
+});
+
 test("launch helpers: read-only roles and the cwds of a launch", () => {
   assert.equal(readonlyRoles(["reviewer", "explorer"]), true);
   assert.equal(readonlyRoles(["reviewer", "builder"]), false);

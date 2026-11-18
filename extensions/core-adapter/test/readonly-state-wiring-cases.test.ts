@@ -109,6 +109,8 @@ test("the start picture is taken at the tool_call, before the launch result; a r
   assert.match(e.notices()[0].content ?? "", /reviewer run run-1 ended and .*HEAD aaaaaaaa -> bbbbbbbb.*Nothing was blocked or undone/);
   assert.equal(e.traces().length, 1);
   assert.equal(e.traces()[0].outcome, "changed");
+  assert.equal(typeof e.traces()[0].roots, "string", "the pictured roots ride on the trace (path-scrubbed like every trace string)");
+  assert.ok(String(e.traces()[0].roots).length > 0);
   e.probe.oid = OID_A;
   const ex = { agent: "explorer", task: "look" };
   await e.run(ex, "run-2");

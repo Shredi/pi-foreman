@@ -2617,7 +2617,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     void compareRunEnd(entry, os.homedir(), readonlyGit, deps.readonlyDeadlineMs)
       .then((r) => {
         const lines = traceLines(r);
-        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
+        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
         if (r.outcome === "unchanged") return;
         let idle = true;
         try {
