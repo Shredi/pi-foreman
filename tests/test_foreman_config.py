@@ -626,6 +626,8 @@ class PackageFilesTest(unittest.TestCase):
             ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
             # review per checkout: the finish rule names the checkout
             ("A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes.", "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."),
+            # D71 addendum: a refused shell write keeps the tier; only a refused tool edit raises it
+            ("A refused project edit makes the task standard: write the ledger and delegate.", "A refused `write`, `edit`, `foreman_move` or `foreman_copy` on a project file makes the task standard: write the ledger and delegate. A refused shell write keeps the tier, and the change still goes to a builder."),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)
