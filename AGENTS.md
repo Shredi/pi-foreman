@@ -36,6 +36,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
   an overlay, add the generic hook here and keep the specific use in the overlay. Before
   proposing or implementing anything, ask: would a stranger's installation need this? If not,
   it is overlay material.
+- Permissions are default allow: code refuses only a short fixed list of dangerous commands, and for the few risky ones the permission judge looks first and the owner is asked when the judge does not clear the call. Code that parses command text blocked harmless calls one case at a time, so add no tokenizer, no regex over a command line, no list of program names and no pinned shape for one more combination. To react to an event, use a Pi hook or a structured field (tool name, a tool input field, a launch field, an exit code, a tool result). Fix a false block by narrowing or removing the rule that misfired; a new entry on the dangerous list needs the owner's decision. The clean-up towards this is in progress; until it lands, the existing checks stay as they are.
 
 ## Public-repo rule
 
