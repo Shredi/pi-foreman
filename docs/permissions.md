@@ -484,7 +484,7 @@ A production note example: `{"host": "prod-db", "note": "production: reads and d
   |---|---|---|
   | an output redirect (`>`, `>>`, `&>`, `&>>`, `<>`, `>\|`) whose target is not the literal `/dev/null` (a non-literal target counts as not `/dev/null`); an fd dup (`2>&1`, `>&2`, `2>&-`) never counts | write-out | ask |
   | `tee`, `script`, `flock <file>` and the other writing wrappers | write-out | ask |
-  | the direct write classes `cp`, `mv`, `rm` (with literal paths), `touch`, `mkdir`, in the plain forms the harness knows (ask as `remote_write`); judge-only exceptions: a write verb called by path (`/bin/rm /etc/x`; `tee` by path still asks) and an `rm` with an editor-backup operand (`~`, `.bak`, `.orig`, `.swp`, `.#…`), which makes the segment unknown | write-in or write-out (by path) | ask |
+  | the direct write classes `cp`, `mv`, `rm` (with literal paths), `touch`, `mkdir`, in the plain forms the harness knows (ask as `remote_write`); judge-only exceptions: a write verb called by path (`/bin/rm /etc/x`; `tee` by path still asks) an `rm` with an editor-backup operand (`~`, `.bak`, `.orig`, `.swp`, `.#…`), and any operand starting with `~` (a home-directory path such as `rm ~/x`, `touch ~/x`, `cp /etc/a ~/b`; the parser marks it as an unresolved variable); each of these makes the segment unknown. `$variables` and globs in a write do the same. `echo a > ~/x` and `tee ~/x` still ask | write-in or write-out (by path) | ask |
   | the effect classes write-in, write-out, build-test | as classed | ask |
   | the effect classes read, net-read | as classed | allow |
   | effect class unknown (for example an unknown program) | unknown | the judge decides |
@@ -514,11 +514,13 @@ A production note example: `{"host": "prod-db", "note": "production: reads and d
 
   What always asks is a closed, exact list (whatever the verdict, and it holds only for a segment the harness reads, which relies on the bundled shell parser):
 
-  - a remote segment the harness classes write-in, write-out or build-test (`remote_write`), by class, not by program: plain `cp`, `mv`, `rm`, `touch`, `mkdir`, `tee` and the other writing wrappers, `>` and the other output redirects (`ssh prod-db 'echo a > /etc/app.conf'`, `ssh prod-db 'sudo echo a > /etc/app.conf'`). The classing uses the local checkout's effect context, so which build or test commands count (`npm test`, `git restore …`) depends on the local manifests. Judge-only exceptions: a write verb called by path (`/bin/rm /etc/x`; `tee` by path still asks) and an `rm` with an editor-backup operand (`~`, `.bak`, `.orig`, `.swp`, `.#…`), which makes the segment unknown;
+  - a remote segment the harness classes write-in, write-out or build-test (`remote_write`), by class, not by program: plain `cp`, `mv`, `rm`, `touch`, `mkdir`, `tee` and the other writing wrappers, `>` and the other output redirects (`ssh prod-db 'echo a > /etc/app.conf'`, `ssh prod-db 'sudo echo a > /etc/app.conf'`). The classing uses the local checkout's effect context, so which build or test commands count (`npm test` and the like) depends on the local manifests, and `git restore …` is write-in only when every path is a local test file inside the worktree. Judge-only exceptions (the segment becomes unknown): a write verb called by path (`/bin/rm /etc/x`; `tee` by path still asks), an `rm` with an editor-backup operand (`~`, `.bak`, `.orig`, `.swp`, `.#…`), and an operand of `cp`, `mv`, `rm`, `touch` or `mkdir` that starts with `~` (a home-directory path; `echo a > ~/x` and `tee ~/x` still ask). Variables and globs in a write are judge-only too;
   - the remote-opaque forms: every ask row of the remote-segment table above (a shell that reads its program from input, a syntax error and the rest), including `select`, `coproc`, C-style `for ((;;))`, `[[ ]]`, `(( ))` (`ssh prod-db 'for ((i=0;i<1;i++)); do echo a > /etc/app.conf; done'`, `ssh prod-db '[[ -n $(rm /etc/f) ]]'`), command substitution nested past 4 (`ssh prod-db 'echo $(echo $(echo $(echo $(echo $(echo a > /etc/f)))))'`), and any parser reason not named in the table;
   - effective mode `ask` (the global `gate.protected.check` or the entry's `check`) and a local opaque segment on the line (`local_opaque`);
-  - ssh with no remote command, a command-running ssh option, and any input fed into ssh (the input rules above);
-  - any failure of the judge, a non-read verdict while the owner is away (a child or a session without UI), and a `deny` that cites a `D` entry, as stated above.
+  - everything in Input into ssh and Transport opacity above;
+  - any failure of the judge and a non-read verdict while the owner is away (a child or a session without UI).
+
+  What denies: a `deny` verdict that cites an existing `D` entry.
 
   Your deny rules and the floors run first. Remote commands are classed with the local effect context, so a remote relative path resolves against the local checkout. ssh port forwards (`-L`, `-R`, `-D`) are not seen by the remote classes. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.
 
