@@ -317,7 +317,7 @@
       "id": "foreman-bg",
       "area": "tools",
       "title": "Background shell runs",
-      "purpose": "The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool.",
+      "purpose": "The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job).",
       "doc": "docs/sessions.md#background-runs",
       "keys": [],
       "commands": [],
