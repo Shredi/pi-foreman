@@ -42,11 +42,11 @@ test("blocked with unsettled checks: still pulses and says CI running", () => {
   assert.equal(prStateText(p), "CI running");
 });
 
-test("blocked with a failed check: red and still, CI failing", () => {
+test("blocked with a failed check and a check running: red and pulsing, CI failing, still running", () => {
   const p = pr({ mergeState: "blocked", checks: failed });
-  assert.deepEqual(prDotState(p), { pulse: false, fill: "red", conflict: false });
+  assert.deepEqual(prDotState(p), { pulse: true, fill: "red", conflict: false });
   assert.equal(prState(p), "fail");
-  assert.equal(prStateText(p), "CI failing");
+  assert.equal(prStateText(p), "CI failing, still running");
 });
 
 test("failed draft, tracked: red and still, CI failing, state fail", () => {
@@ -65,11 +65,11 @@ test("failed draft, dot-only (no head, merge state or review fact): red and stil
   assert.equal(prCard(p).status, "checks failed");
 });
 
-test("failed draft with a check still running: red and still", () => {
+test("failed draft with a check still running: red and pulsing, CI failing, still running", () => {
   const p = pr({ state: "draft", checks: failed });
-  assert.deepEqual(prDotState(p), { pulse: false, fill: "red", conflict: false });
+  assert.deepEqual(prDotState(p), { pulse: true, fill: "red", conflict: false });
   assert.equal(prState(p), "fail");
-  assert.equal(prStateText(p), "CI failing");
+  assert.equal(prStateText(p), "CI failing, still running");
 });
 
 test("passed draft: violet and still, work in progress", () => {

@@ -2,8 +2,8 @@
 
 The builder maps `foreman-fake/builder` (bottom) -> strong `foreman-fake/finalizer`; L1 sets
 ladder.strongOnRevision true. Builder on the bottom rung -> reviewer FAIL -> two finish attempts are
-refused with the climb hint and do not count (`finish_refused {climb_available}`, no
-`ceremony_incomplete`) -> the revision builder, launched without a model, runs on the strong rung
+refused with the climb hint; they count as the state's two refusals (`finish_refused {climb_available}`, no
+`ceremony_incomplete` yet, the revision starts a new state) -> the revision builder, launched without a model, runs on the strong rung
 (`rung_up` reason `review_fail`, usage kind `strong-relaunch`) -> re-review FAIL on the top rung ->
 the two-refusal valve ends with `ceremony_incomplete` as before.
 Same prerequisites and skips as test_replay.py.

@@ -38,7 +38,7 @@ test("r26 re-review: after a FAIL the next reviewer task names the reviewed head
   const head = git(a.project, "rev-parse", "HEAD");
   const next = reviewer();
   await a.launch(next);
-  assert.ok(next.task.startsWith(`${LINE} ${head} and run only the targeted tests the task names; do not run tsc or full suites (the foreman reports them).\n`), next.task);
+  assert.ok(next.task.startsWith(`${LINE} ${head} and run the tests the fix touches, and the full suites again when the fix since the last review can affect them.\n`), next.task);
   assert.match(next.task, /\nreview items 1\n/);
 });
 
@@ -80,7 +80,7 @@ test("r26 re-review: without a readable head the line says the reviewed head", a
   const a = await reviewed(t, "fail", false);
   const next = reviewer();
   await a.launch(next);
-  assert.ok(next.task.startsWith(`${LINE} the reviewed head and run only`), next.task);
+  assert.ok(next.task.startsWith(`${LINE} the reviewed head and run the tests the fix touches`), next.task);
 });
 
 test("r26 re-review: an owner prompt after a FAIL clears the line", async (t) => {

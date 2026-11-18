@@ -58,7 +58,7 @@ function protectedLine(task: string): string {
  * head that FAIL reviewed; null when it is unknown.
  */
 export function reReviewLine(sha: string | null): string {
-  return `[pi-foreman re-review] Review the revision diff since ${sha ?? "the reviewed head"} and run only the targeted tests the task names; do not run tsc or full suites (the foreman reports them).\n`;
+  return `[pi-foreman re-review] Review the revision diff since ${sha ?? "the reviewed head"} and run the tests the fix touches, and the full suites again when the fix since the last review can affect them.\n`;
 }
 
 /**
@@ -66,14 +66,19 @@ export function reReviewLine(sha: string | null): string {
  * chain, parallel); a resume and the entries in `skip` (rung-up handoff) get none. A reviewer step gets the re-review line first when
  * `reReview` is set (an open FAIL), except a `[plan-review]`, `[pre-pr]` or `[second-opinion]` task. Returns trace records.
  */
-export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null } | null = null): Record<string, unknown>[] {
+export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null } | null = null, pick?: (task: string) => { text: string | null; path: string | null; notice?: string }): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   if (typeof input.action === "string") return out;
   const visit = (e: unknown): void => {
     if (!isObj(e)) return;
     const role = typeof e.agent === "string" && (e.agent === "builder" || REVIEW_AGENTS.has(e.agent)) ? e.agent : null;
     if (role && typeof e.task === "string") {
-      const block = skip.has(e) ? "" : role === "builder" ? ledgerItemsBlock(ledger, e.task) : reviewLedgerBlock(ledger, e.task, ledgerPath);
+      // D31: the ledger the task names by path replaces the bound one for this entry
+      const pk = pick?.(e.task);
+      const lt = pk ? pk.text : ledger;
+      const lp = pk ? pk.path : ledgerPath;
+      let block = skip.has(e) ? "" : role === "builder" ? ledgerItemsBlock(lt, e.task) : reviewLedgerBlock(lt, e.task, lp);
+      if (block && pk?.notice) block = block.replace(/\n/, `\n${pk.notice}\n`);
       // the critic questions go into every reviewer task (a rung-up handoff entry included), after the ledger block
       const cb = role === "builder" ? "" : criticBlock(critic);
       const re = role === "reviewer" && reReview && occasionOf(e.task) === "item" ? reReviewLine(reReview.sha) : "";

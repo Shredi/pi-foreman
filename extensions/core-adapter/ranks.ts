@@ -169,6 +169,24 @@ export function explicitModelAllowed(config: Json | undefined, foremanModel: str
   return ranks.size > 0 && tierOf(ranks, childModel) !== null && rankRefusal(config, foremanModel, childModel, role) === null;
 }
 
+/** Why an explicit launch model is not honoured for `role` (null when it is): the reason a refusal or a `model switched` line gives. */
+export function explicitModelReason(config: Json | undefined, foremanModel: string | null, childModel: string, role: string): string | null {
+  const base = splitLevel(childModel.trim()).base;
+  if (!base.includes("/")) return "model id needs the provider/ prefix";
+  const ranks = ranksOf(config);
+  if (ranks.size === 0) return "no rank rules configured (run foreman config apply-preset or set providers.<p>.ranks)";
+  if (tierOf(ranks, base) === null) return "model not ranked";
+  return rankRefusal(config, foremanModel, base, role)?.message.replace(/^pi-foreman: launch refused /, "") ?? null;
+}
+
+/** The models an explicit `model` may name for `role`: the literal ranks entries and `known` models that are ranked and inside the role's rank policy. */
+export function allowedExplicitModels(config: Json | undefined, foremanModel: string | null, role: string, known: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const [provider, list] of ranksOf(config)) for (const r of list) if (!/[*?]/.test(r.match)) out.add(r.match.includes("/") ? r.match : `${provider}/${r.match}`);
+  for (const m of known) out.add(splitLevel(m.trim()).base);
+  return [...out].filter((m) => m.includes("/") && explicitModelAllowed(config, foremanModel, m, role));
+}
+
 /** Agents (roles) of the `subagent` call's entries whose launch model is `model`. */
 export function rolesOfModel(input: Json, model: string): string[] {
   const out: string[] = [];
