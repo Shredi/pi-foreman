@@ -63,8 +63,8 @@ BRIDGE_PROVIDER = "claude-bridge"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
 BRIDGE = "pi-claude-bridge@0.9.2"  # same pins as bench/harbor_agent.py
 AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.293"
-# The reviewer role's tools plus foreman_ledger, which a session adds for reviewer children
-# (scripts/foreman_config.py with_ledger_tool, ceremony.ledgerHelper "tool").
+# Pinned for comparability with older runs; no longer the reviewer role's list. The reviewer now also gets codemode by default
+# (roles.reviewer.codemode), and foreman_ledger is added for reviewer children (scripts/foreman_config.py with_ledger_tool, ceremony.ledgerHelper "tool").
 TOOLS = "read,ls,grep,find,bash,foreman_ledger"
 FACTS_SHIM = REPO / "bench" / "review_facts.mjs"
 ADAPTER = REPO / "extensions" / "core-adapter" / "index.ts"
