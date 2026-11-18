@@ -114,7 +114,7 @@ test("child lines: ready to merge once per head, merge the base on conflict, non
   assert.equal(step(base, snap({ runs: [run("a", "passed")] }), false).delta?.events.includes("ready to merge"), false);
   assert.ok(!prMessage(7, step(base, snap({ runs: [run("a", "passed")] }), false).delta!).content.includes("report to the parent"));
   const conflict = step(green.state, snap({ runs: [run("a", "passed")], mergeable: "conflicting" }), true);
-  assert.match(prMessage(7, conflict.delta!).content, /\nmerge main into the branch, then push via the parent$/);
+  assert.match(prMessage(7, conflict.delta!).content, /\nmerge main into the branch and push it$/);
   const top = step(green.state, snap({ runs: [run("a", "passed")], mergeable: "conflicting" }), false);
   assert.ok(!prMessage(7, top.delta!).content.includes("merge main into the branch"));
 });

@@ -1297,10 +1297,9 @@ test("--profile full warns about the safety relaxations; --profile standard afte
   seed(env);
   const full = run(env, ["--profile", "full"], NO_PICKER);
   assert.equal(full.code, 0, full.out);
-  assert.match(full.out, /WARN safety relaxations on: git-tools, children-may-push, workflow-scripts, remote-intercom/);
+  assert.match(full.out, /WARN safety relaxations on: git-tools, workflow-scripts, remote-intercom/);
   let cfg = foremanJson(env);
   assert.equal(cfg.tools.git, true);
-  assert.equal(cfg.safety.children.mayPush, true);
   assert.equal(cfg.safety.subagents.allowWorkflow, true);
   assert.equal(cfg.intercom.allowRemote, true);
   assert.deepEqual(pythonValidate(env).data.errors, []);
@@ -1310,7 +1309,6 @@ test("--profile full warns about the safety relaxations; --profile standard afte
   cfg = foremanJson(env);
   assert.equal(cfg.profile, "standard");
   assert.equal(cfg.tools.git, false);
-  assert.equal(cfg.safety.children.mayPush, false);
   assert.equal(cfg.safety.subagents.allowWorkflow, false);
   assert.equal(cfg.intercom.allowRemote, false);
   assert.equal(cfg.ladder.reviewerClimb.enabled, false);

@@ -1,5 +1,5 @@
-// Item 3: a refusal caused only by a parent-owned name in the own handoff dir carries handoffOnly (index.ts then skips the tier
-// escalation); a refusal with any other target, an unresolved one included, does not. Runs the real script.
+// Item 3: a refusal caused only by a parent-owned name in the own handoff dir carries handoffOnly (index.ts then skips the edit-refused
+// trace); a refusal with any other target, an unresolved one included, does not. Runs the real script.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -29,19 +29,19 @@ async function verdict(line: string) {
   return shellWriteVerdict(run, py);
 }
 
-test("a handoff-only refusal is marked handoffOnly (no escalation)", { skip: !py }, async () => {
+test("a handoff-only refusal is marked handoffOnly", { skip: !py }, async () => {
   const v = await verdict(`echo x > ${handoff}/brief.md`);
   assert.equal(v.decision, "refuse");
   assert.equal((v as { handoffOnly?: boolean }).handoffOnly, true);
 });
 
-test("a refusal with a project target is no handoff-only refusal (still escalates)", { skip: !py }, async () => {
+test("a refusal with a project target is no handoff-only refusal", { skip: !py }, async () => {
   const v = await verdict(`echo x > ${handoff}/brief.md; echo y > ${ws}/a.py`);
   assert.equal(v.decision, "refuse");
   assert.equal((v as { handoffOnly?: boolean }).handoffOnly, undefined);
 });
 
-test("an unresolved target next to a handoff refusal still escalates", { skip: !py }, async () => {
+test("an unresolved target next to a handoff refusal is no handoff-only refusal", { skip: !py }, async () => {
   const v = await verdict(`echo x > ${handoff}/brief.md; echo y > "$NOPE/a.py"`);
   assert.equal(v.decision, "refuse");
   assert.equal((v as { handoffOnly?: boolean }).handoffOnly, undefined);
@@ -53,6 +53,6 @@ test("a project-only refusal is not handoff-only", { skip: !py }, async () => {
   assert.equal((v as { handoffOnly?: boolean }).handoffOnly, undefined);
 });
 
-test("allow-list names are allowed, so nothing to escalate", { skip: !py }, async () => {
+test("allow-list names are allowed", { skip: !py }, async () => {
   assert.equal((await verdict(`echo x > ${handoff}/result.md`)).decision, "allow");
 });

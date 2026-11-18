@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { tick, world } from "./_r46world.ts";
 import type { Block } from "./_r46world.ts";
+import { PlanReviews } from "../planreview.ts";
 
 const planPhase = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_phase\]/.test(r.reason ?? "");
 const byReview = (text: string): boolean => /\[plan_phase_review\]/.test(text) && /until your plan review passes/.test(text);
@@ -166,4 +167,92 @@ test("heavy child opened plan-first: the PASS alone does not open the gate; the 
   const r = await a.checkpoint();
   assert.equal(r.decision, "approve", r.text);
   assert.equal(await a.launch("builder"), undefined);
+});
+
+// A plan edit in the tool batch of the [plan-review] launch is part of the reviewed version (the reviewer reads the bytes on disk).
+const edited = (w: ReturnType<typeof world>, tag: string): string => {
+  fs.appendFileSync(w.planFile, `\n${tag}\n`);
+  return fs.readFileSync(w.planFile, "utf8");
+};
+const kept = async (w: ReturnType<typeof world>): Promise<unknown[]> => (await w.traceEvents()).filter((e) => e.event === "plan_phase" && e.decision === "kept").map((e) => e.cause);
+
+test("a plan edit sibling to the [plan-review] launch in one batch: the PASS ends the parent-started phase", async (t) => {
+  const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const a = await w.adapter("startup");
+  await ready(w, a);
+  await triage(a, "standard");
+  const run = await a.reviewLaunch();
+  assert.equal(run.blocked, null);
+  const content = edited(w, "Sibling edit.");
+  assert.equal((await a.call("write", { path: w.planFile, content })).block, undefined);
+  a.endRun(run.id, "Overall verdict: PASS");
+  await tick();
+  assert.equal(planPhase(await a.launch("builder")), false, "the edit counts as reviewed");
+  assert.equal(entry(w).planPhase, false);
+  assert.deepEqual(await kept(w), []);
+});
+
+test("a plan write nested in a codemode call of the launch's batch: the PASS ends the phase", async (t) => {
+  const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const a = await w.adapter("startup");
+  await ready(w, a);
+  await triage(a, "standard");
+  const run = await a.reviewLaunch();
+  assert.equal(run.blocked, null);
+  const content = edited(w, "Nested edit.");
+  const input = { path: w.planFile, content };
+  await a.fire("tool_call", { toolName: "write", toolCallId: "nested-1", input }); // a codemode-nested call reaches the same hooks
+  await a.fire("tool_result", { toolName: "write", toolCallId: "nested-1", input, details: {}, content: [{ type: "text", text: "ok" }], isError: false });
+  a.endRun(run.id, "Overall verdict: PASS");
+  await tick();
+  assert.equal(planPhase(await a.launch("builder")), false);
+});
+
+test("a plan edit in a later batch than the launch keeps the phase and traces kept no_reviewed_text", async (t) => {
+  const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const a = await w.adapter("startup");
+  await ready(w, a);
+  await triage(a, "standard");
+  const run = await a.reviewLaunch();
+  assert.equal(run.blocked, null);
+  await a.fire("message_end", { message: { role: "assistant", content: [{ type: "text", text: "waiting" }] } });
+  const content = edited(w, "Later edit.");
+  await a.call("write", { path: w.planFile, content });
+  a.endRun(run.id, "Overall verdict: PASS");
+  await tick();
+  assert.ok(planPhase(await a.launch("builder")));
+  assert.deepEqual(await kept(w), ["no_reviewed_text"]);
+});
+
+test("an untriaged tier traces kept untriaged; heavy traces kept heavy", async (t) => {
+  const u = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const a = await u.adapter("startup");
+  await ready(u, a, false);
+  assert.equal(await a.review("PASS"), null);
+  assert.deepEqual(await kept(u), ["untriaged"]);
+  const h = world(t, { handoff: true, parent: true });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const b = await h.adapter("startup");
+  await ready(h, b);
+  await triage(b, "heavy");
+  assert.equal(await b.review("PASS"), null);
+  assert.deepEqual(await kept(h), ["heavy"]);
+});
+
+test("PlanReviews: a write after the launch's run ended does not refresh the finished launch", () => {
+  const pr = new PlanReviews();
+  pr.noteLaunch("/p/plan-x.md", "h1", "one", 3);
+  assert.equal(pr.refreshLaunch("/p/plan-x.md", "h2", "two", 4), false, "another batch");
+  assert.equal(pr.refreshLaunch("/p/plan-x.md", "h2", "two", 3), true, "same open batch");
+  pr.keepReviewed("/p/plan-x.md", "h2");
+  assert.equal(pr.reviewedText("/p/plan-x.md"), "two");
+  pr.noteLaunch("/p/plan-x.md", "h2", "two", 5);
+  pr.closeLaunch("/p/plan-x.md"); // the run ended
+  assert.equal(pr.refreshLaunch("/p/plan-x.md", "h3", "three", 5), false);
+  pr.keepReviewed("/p/plan-x.md", "h3");
+  assert.equal(pr.reviewedText("/p/plan-x.md"), null, "the new bytes need a new review");
 });

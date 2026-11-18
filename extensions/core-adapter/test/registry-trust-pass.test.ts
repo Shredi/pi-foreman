@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { probeSpawner } from "./_probe-memo.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -124,7 +125,7 @@ test("factory level: the index.ts default export takes over a stale foreign clai
       get: (t, k: string) => t[k] ?? (() => undefined),
     });
     try {
-      coreAdapter(fake as never);
+      coreAdapter(fake as never, { spawner: probeSpawner() });
     } catch {
       // the rest of the factory needs a full Pi; only the once-guard outcome matters here
     }

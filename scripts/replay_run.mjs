@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutSessionEnv } from "./session_env.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Modules that cannot share the machine with the pool: they start processes that wait on fixed timing windows.
@@ -71,7 +72,7 @@ function runModule(py, dir, file) {
     let spawnError = null;
     const child = spawn(py, ["-m", "unittest", "discover", "-s", dir, "-p", file, "-v"], {
       cwd: root,
-      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      env: { ...withoutSessionEnv(process.env), PYTHONUNBUFFERED: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout.setEncoding("utf8");

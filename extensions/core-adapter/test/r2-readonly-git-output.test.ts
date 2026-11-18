@@ -28,7 +28,6 @@ function show(line: string, role: string, kind: Kind): string {
   return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 }
 const REFUSED = "block child-readonly-write []";
-const LABELLED = 'undecided  ["danger-readonly-run"]';
 const FREE = "undecided  []";
 const OPAQUE = 'undecided  ["danger-opaque"]';
 
@@ -73,20 +72,20 @@ test("an opaque target word with the cwd in the worktree is refused", () => {
 
 test("stdout forms, list forms and targets in the child's own scratch dir keep their outcome", () => {
   check([
-    ["git archive HEAD", LABELLED, FREE],
-    ["git format-patch --stdout HEAD~1", LABELLED, FREE],
-    ["git bundle verify b", LABELLED, FREE],
-    ["git bundle list-heads b", LABELLED, FREE],
-    ["git bundle create - HEAD", LABELLED, FREE],
-    ["git checkout-index --stdout x", LABELLED, FREE],
-    [`git archive -o ${S}/x.tar HEAD`, LABELLED, FREE],
-    [`git format-patch -o ${S}/p HEAD~1`, LABELLED, FREE],
-    [`git bundle create ${S}/b HEAD`, LABELLED, FREE],
-    [`git checkout-index -a --prefix=${S}/o/`, LABELLED, FREE],
-    [`git -C ${S}/c archive -o x.tar HEAD`, LABELLED, FREE],
+    ["git archive HEAD", FREE, FREE],
+    ["git format-patch --stdout HEAD~1", FREE, FREE],
+    ["git bundle verify b", FREE, FREE],
+    ["git bundle list-heads b", FREE, FREE],
+    ["git bundle create - HEAD", FREE, FREE],
+    ["git checkout-index --stdout x", FREE, FREE],
+    [`git archive -o ${S}/x.tar HEAD`, FREE, FREE],
+    [`git format-patch -o ${S}/p HEAD~1`, FREE, FREE],
+    [`git bundle create ${S}/b HEAD`, FREE, FREE],
+    [`git checkout-index -a --prefix=${S}/o/`, FREE, FREE],
+    [`git -C ${S}/c archive -o x.tar HEAD`, FREE, FREE],
     [`git -C ${S}/c format-patch -1`, FREE, FREE],
     // the output lands in the scratch dir: the cwd of the segment is the scratch dir, the repository is the worktree's
-    [`cd ${S} && git --git-dir=${W}/.git archive -o x.tar HEAD`, LABELLED, FREE],
+    [`cd ${S} && git --git-dir=${W}/.git archive -o x.tar HEAD`, FREE, FREE],
   ]);
 });
 

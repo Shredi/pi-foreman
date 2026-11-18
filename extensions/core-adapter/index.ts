@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
-import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
+import { checkTrivial, cleanTreeStatus, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -23,7 +23,7 @@ import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./class
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { effectiveCheckMode } from "./protected.ts";
 import { PermStore, PERM_MODES, PROTECTED_CHECK_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
-import { folderRelaxes, mergedFactKey, redirectsInScratch, withMergedFacts } from "./defaults.ts";
+import { folderRelaxes, mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
@@ -107,7 +107,8 @@ import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { beginRun, beginUndo, cleanText, decideScript, newScriptState, proposeScript, recordRealRun, recordRun, recordUndo, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptUndoLine, scriptStatus, shortHash } from "./scriptapproval.ts";
 import type { ScriptRefusalCode, ScriptState } from "./scriptapproval.ts";
-import { runScript as runOwnerScript } from "./scriptrun.ts";
+import { runScript as runOwnerScript, runScriptDetachable } from "./scriptrun.ts";
+import type { ScriptRunDetached, ScriptRunResult } from "./scriptrun.ts";
 import { configResultText, parseConfigArgs } from "./configcmd.ts";
 import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
@@ -154,7 +155,9 @@ import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatch
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
 import { ownerFactsLines, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
-import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
+import type { DialogSpec } from "./ownerdialog.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -218,7 +221,7 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDocto
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeCloseRequest, mergeCloseStarter, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
@@ -233,7 +236,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, countsForItems, entryOccasions, keptIndices, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -341,6 +344,8 @@ interface Session {
   /** Tool call ids of bash/powershell calls and of ask_user_question/plan_mode_question calls in flight (the warm tier reads them). */
   commandCalls: Set<string>;
   questionCalls: Set<string>;
+  /** Tool call ids of every tool call between its tool_call and tool_result (the keep-alive warms while one runs even if a message is queued). */
+  runningCalls: Set<string>;
   /** Foreman only: ms epoch of the last parent brief that lifted the caps (capsReset); persisted with reviewCount. */
   capsResetAt: number;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
@@ -436,6 +441,8 @@ interface Session {
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
   ceremonyRestored: boolean;
+  /** The background-tasks add-on is present (decided at session_start): foreman_bg, which refuses then, is not offered and the tool floor does not re-add it. */
+  bgAddon: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -498,6 +505,8 @@ interface Session {
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
   script: ScriptState;
+  /** A real owner-script run that outlived the abort of its tool call (scriptrun.ts detachOnAbort): runs on, ends through `done`; null when none. */
+  scriptRun: { pid: number | undefined; since: number; stopRequested: boolean; shutdown: boolean; stop: ScriptRunDetached["stop"]; done: Promise<unknown> } | null;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
   /** Foreman only: read budget (budget.ts), in memory only. */
@@ -896,14 +905,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
     const owned = computeOwned(null, false);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
-    // A child foreman session (handoff dir set) whose last watched PR was merged closes itself (close.ts `pr-merged`, selffinish.ts); one close per tick.
-    const startMergeClose = mergeCloseStarter((c, r) => close.start(c, r), () => close.closing(s.id));
-    const mergeClose = (n: number | null): void => {
-      const ctx = s.prCtx;
-      const req = mergeCloseRequest({ handoff: process.env[HANDOFF_DIR_ENV], watched: s.prWatches.numbers(), n, parent: parentIntercomId(process.env) });
-      if (!req || !ctx) return;
-      startMergeClose(ctx, req);
-    };
+    // A child foreman session (handoff dir set) says once per merged PR that it stays open (close.ts mergeNotifier); a merge never starts a close.
+    const mergeNotice = mergeNotifier({
+      handoff: process.env[HANDOFF_DIR_ENV],
+      get parent() { return parentIntercomId(process.env); },
+      remote: process.env[REMOTE_PARENT_ENV] === "1",
+      notify: (text) => s.prCtx?.ui.notify(text, "info"),
+      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      trace: (r) => s.trace?.emit(r),
+    });
     const s: Session = {
       id,
       cwd,
@@ -925,6 +935,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       mutating: new Set(),
       commandCalls: new Set(),
       questionCalls: new Set(),
+      runningCalls: new Set(),
       capsResetAt: 0,
       pollBash: 0,
       launchNotices: new Map(),
@@ -963,10 +974,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const st = o.kind === "ran" ? o.result.state : null;
           return st === "open" || st === "merged" || st === "closed" ? st : "unknown";
         },
-        // A child foreman session (handoff dir set) whose PR was merged closes itself (close.ts `pr-merged`, selffinish.ts).
-        onMerged: (info) => mergeClose(info.key.n),
-        // The last watch ended unmerged (the host closed it) after a merge: the close the merge did not start.
-        onLastEnded: () => mergeClose(s.prWatches.mergedPrs().at(-1)?.n ?? null),
+        // A merged PR is announced once (child pane and intercom parent); the session closes only on a close request.
+        onMerged: (info) => mergeNotice(info.key.n),
         returnToBase: ({ key, cwd }) => {
           const dir = cwd || (s.prCtx?.cwd ?? s.cwd);
           return mergedReturn({
@@ -1064,6 +1073,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
+      bgAddon: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1094,6 +1104,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchTrees: new Map(),
       plan: null,
       script: newScriptState(),
+      scriptRun: null,
       planReviews: new PlanReviews(),
       budget: new ReadBudget(),
       readNotices: new Map(),
@@ -1192,7 +1203,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     refreshLedgerTier(s);
     patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir, platform, config: s.config.config });
-    if (s.isChild && get(config.config, "safety.children.mayPush") !== true) patchChildGitEnv(process.env);
+    if (s.isChild) patchChildGitEnv(process.env);
     if (!s.isChild) patchForemanGitEnv(process.env);
     if (!s.isChild && ledgerHelperMode(get(config.config, "ceremony.ledgerHelper")) !== "off") {
       const active = pi.getActiveTools();
@@ -1573,6 +1584,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.planPhase = e.planPhase;
     s.planPhaseOrigin = e.planPhaseOrigin ?? "owner"; // an entry without the field: the owner's origin (a PASS does not end it)
+    if (!s.planPhase && process.env.PI_FOREMAN_PLAN_PHASE !== undefined) {
+      // a resumed pane put the launch flag back from an identity entry written before the phase ended: drop it there too, so a later resume does not bring it back
+      delete process.env.PI_FOREMAN_PLAN_PHASE;
+      recordIdentity(s, ctx, reason, { status: "none" });
+    }
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     if (e.highStakes && s.hs.isEmpty()) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
@@ -1814,7 +1830,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -1903,6 +1919,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
+    if (!s.isChild) s.bgAddon = addonPresent((pi.getAllTools?.() ?? []).map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd }); // once per start: the request prefix stays stable
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
@@ -2038,7 +2055,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Re-activates the registered floor tools another extension's tool reset left inactive (toolfloor.ts): append only. */
   function restoreToolFloor(s: Session, ctx: ExtensionContext): string[] {
     try {
-      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) });
+      // with the add-on present foreman_bg refuses (bg_run does its job): it leaves the active tools and the floor does not bring it back
+      if (s.bgAddon && pi.getActiveTools().includes(FOREMAN_BG_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== FOREMAN_BG_TOOL));
+      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) }).filter((n) => !(s.bgAddon && n === FOREMAN_BG_TOOL));
       if (!missing.length) return [];
       pi.setActiveTools([...pi.getActiveTools(), ...missing]);
       s.trace?.emit({ event: "tools_floor_restored", names: missing.join(",") });
@@ -2103,6 +2122,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.prWatches.clear();
     s.extStatus.clear();
     s.selfWarm.onShutdown();
+    // a detached owner script does not outlive its session: killed, recorded as aborted
+    if (s.scriptRun) {
+      s.scriptRun.shutdown = true;
+      s.scriptRun.stop("aborted");
+      await s.scriptRun.done.catch(() => undefined);
+    }
     addonSeen.delete(s.id);
     if (!s.isChild) {
       syncKeepalives(s, ctx);
@@ -2238,6 +2263,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.commandCalls.clear();
     s?.questionCalls.forEach(releaseQuestion);
     s?.questionCalls.clear();
+    s?.runningCalls.clear();
   });
   pi.on("turn_end", async (event, ctx) => {
     const s = sessionFor(ctx);
@@ -2506,7 +2532,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const working = open.size === 0 ? strongA === "subagent" : [...s.activeRuns].some((r) => !waiting(park?.launchFor(r))) || [...s.pendingLaunches].some((c) => !waiting(park?.launchOfCall(c))) || launchWaits.holdingWhere((r) => !waiting(park?.launchFor(r))) > 0;
     const strongWorking = working ? "subagent" : other;
     const parentWaitSince = s.isChild ? parentOpen.get(s.id)?.since ?? null : undefined;
-    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0 };
+    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0, toolRunning: s.runningCalls.size > 0 };
   }
   /** A message is queued in the session (a stale context counts as queued: no warm). */
   function warmQueued(s: Session): boolean {
@@ -2742,11 +2768,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
-        try {
-          void Promise.resolve(close.onRunsDone(s.id)).catch(() => undefined);
-        } catch {
-          // a refused merge close is not retried
-        }
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
         if (typeof runId === "string") s.hs.ended(runId); // a run that ended, with or without a verdict, no longer counts as running
@@ -2939,6 +2960,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const rp of readPlansOnce(plans, opts)) {
         s.planReviews.record(rp.plan.path, { hash: rp.plan.hash, verdict: r.verdict, model: r.model, findings });
         s.planReviews.keepReviewed(rp.plan.path, rp.plan.hash);
+        s.planReviews.closeLaunch(rp.plan.path);
         s.show?.planReviewed(r.verdict === "pass", rp.plan.hash); // plan page state and milestone (show.ts)
         reviewed.add(rp.plan.path);
         const state = rp.plan.hash;
@@ -2956,7 +2978,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s.planReviews.lineage(p)?.latest.verdict === "pass" && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
         // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
         s.planPhase = false;
+        delete process.env.PI_FOREMAN_PLAN_PHASE; // child shells must not see the ended phase
         s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
+      } else if (s.planPhase && s.planPhaseOrigin === "parent") {
+        const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
+        s.trace?.emit({ event: "plan_phase", decision: "kept", cause });
       }
     }
     persistRounds(s);
@@ -3068,6 +3094,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(!s.isChild ? { childHandoffs: childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)) } : {}),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
+      ...(s.isChild && launchBinding?.role === "builder" ? { builder: true } : {}),
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
       agentDir: s.agentDir,
       home: os.homedir(),
@@ -3271,37 +3298,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
         return allowed("no-rule", "mode", "mode:no-rule");
-      }
-      // a line of a read-only role the gate cannot see into (danger-readonly-run): never the allow sentences' judge, never a plain mode allow; auto and allow ask the role question, ask goes to the parent.
-      // The role question only for the label alone or with danger-opaque, and only after the read question's entry check; a line with any other danger label goes to the parent ask (no role call, no allow-sentence call).
-      if (out.dangers?.includes("danger-readonly-run") && resolved.mode !== "deny") {
-        const cause = `${danger.name}: ${danger.reason}`;
-        const roleOnly = out.dangers.every((d) => d === "danger-readonly-run" || d === "danger-opaque");
-        if (roleOnly && (resolved.mode === "auto" || resolved.mode === "allow") && [true, undefined].includes(get(gs.config.config, "gate.readonlyClear") as boolean | undefined) && roots) {
-          let rc: Awaited<ReturnType<typeof rt.classifier.roleClear>> | undefined;
-          try {
-            // the read question's deterministic entry check first (a secret-path word, a writing redirect that is not named and inside the scratch dir or handoff files, a non-bash shell): a refusal is the parent ask with no model call
-            const entryOk = cmdText !== null && !!out.segments && readClearEntry(
-              { tool: event.toolName, text: cmdText, segments: out.segments, dangers: ["danger-opaque"], shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
-              floorEnvOf(gs, ctx.cwd, roots.sessionDir),
-              (seg) => redirectsInScratch(seg, roots, platform, ctx.cwd),
-            );
-            if (!entryOk) throw new Error("entry check refused");
-            rc = await rt.classifier.roleClear(
-              { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, writable: [...roots.scratch, ...(roots.childHandoff ? [roots.childHandoff] : [])], inside: insideDirs(roots) },
-              {
-                prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
-                recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
-                trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
-                notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
-              },
-            );
-          } catch {
-            // the role question is best effort: any failure asks the parent
-          }
-          if (rc?.cleared) return allowed("readonly-run", rc.cached ? "cache" : "classifier", "classifier:readonly-run");
-        }
-        return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, dangerName: danger.name });
       }
       if (resolved.mode === "allow") return allowed(danger.name, "mode", `mode:allow:${danger.name}`);
       if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
@@ -3508,15 +3504,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const where = file === "user" ? rt.store.filePath("user") : cur.projectFile;
     if (a.action === "remove" && !existing) return no(`${clean.kind} ${clean.glob} is not protected`);
     if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id}); to change its note or check, remove it and add it again`);
-    const text = a.action === "add"
-      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode). For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
-      : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
+    const spec: DialogSpec = a.action === "add"
+      ? {
+          ask: `Protect ${clean.kind} ${clean.glob}?`,
+          ...(clean.note ? { summary: clean.note } : {}),
+          detail: [`Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode)`, `File: ${where}`, "For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply."],
+          answers: "Yes: the protection is written   No: nothing changes",
+        }
+      : {
+          ask: `Remove protection from ${clean.kind} ${clean.glob}?`,
+          summary: `Its calls go back to your ask rules and the dangerous class. Entry: ${existing?.id}.`,
+          detail: [`File: ${where}`],
+          answers: "Yes: the protection is removed   No: nothing changes",
+        };
     let yes = false;
     try {
-      const confirm = blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => ctx.ui.confirm(title, msg));
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), PROTECT_CONFIRM_MS); timer.unref?.(); });
-      yes = (await Promise.race([confirm("Protected target", text), timeout])) === true;
+      const asked = withBlockedOn(herdrEvents, BLOCK_CONFIRM, cleanDialogText(spec.ask), () => shapedConfirm(ctx.ui, ctx.mode, spec));
+      yes = (await Promise.race([asked, timeout])) === true;
       if (timer) clearTimeout(timer);
     } catch {
       yes = false;
@@ -3582,6 +3588,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ms && !ms.isChild) {
       capsReset(ms, event.toolCallId);
       reworkScan(ms);
+      ms.runningCalls.add(event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
       if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
@@ -3713,6 +3720,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let notices: string[] = [];
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
+      let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Warned only once the launch passed every check (set at the end of the guard path).
@@ -3760,6 +3768,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: flags.error };
         }
+        if (flags.occasionError && !s.isChild && actionOf(input) === null) {
+          s.trace?.emit({ event: "review_occasion_unknown" });
+          return { block: true, reason: flags.occasionError };
+        }
+        takenOccasions = flags.occasions;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -3855,12 +3868,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
           return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
-        // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
-        if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
-        // A task that names both [pre-pr] and [high-stakes] in prose would silently become a high-stakes review: refused, the foreman keeps one.
-        if (namesBothTags(occasions)) {
-          s.trace?.emit({ event: "review_occasion_ambiguous" });
-          return { block: true, reason: "pi-foreman: launch refused [review_occasion_ambiguous]: the task names both [pre-pr] and [high-stakes]; keep one, or quote the other in backticks." };
+        // Review occasions (occasion.ts launchOccasion): the launch field or the head marker of each reviewer task, before any rewrite or facts block.
+        if (!s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            if (typeof e.agent !== "string") continue;
+            const r = launchOccasion(e, takenOccasions.get(e), input.reason);
+            if ("refused" in r) {
+              s.trace?.emit({ event: r.refused });
+              return { block: true, reason: r.text };
+            }
+            occasions.set(e, r.occasion);
+            // a field-only launch: the marker heads the caller's own text, so the reviewer and the later steps see the kind
+            if (r.prepend && r.occasion !== "item" && typeof e.task === "string") e.task = withOccasionMarker(e.task, r.occasion);
+          }
+        } else if (s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            const kind = takenOccasions.get(e);
+            if (kind && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = withOccasionMarker(e.task, kind);
+          }
         }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
@@ -3904,7 +3929,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const base = typeof m === "string" ? splitLevel(m.trim()).base : "";
           return base === "strong" || (base !== "" && typeof rung === "string" && base === splitLevel(rung).base);
         }));
-        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
+        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null }, occasions);
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
           return { block: true, reason: shadow.message };
@@ -3927,7 +3952,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -4244,8 +4269,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
-        const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
-          if (occasionOf(task) !== "plan-review") return null;
+        const factCount = await reviewFacts.augment(input, ctx.cwd, (task, step) => {
+          if ((occasions.get(step) ?? occasionOf(task)) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
           const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
           const rereview: string[] = [];
@@ -4265,7 +4290,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
               rereview.push(...(before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
             }
-            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text);
+            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text, s.launchBatch.generation);
           }
           // one entry per plan (a page and its copy named together are one); a plan that cannot be read stays listed
           const raws = new Set(readable.map((rp) => rp.raw));
@@ -4329,7 +4354,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger)) s.trace?.emit(r);
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
@@ -4413,6 +4438,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.mutating.delete(event.toolCallId);
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
+      ms.runningCalls.delete(event.toolCallId);
       releaseQuestion(event.toolCallId);
     }
     // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
@@ -4832,15 +4858,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /**
-   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode mark the
-   * ceremony and raise a trivial tier to standard at once (an untriaged session's later trivial
-   * triage is recorded as standard). The text added to the refusal.
+   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode a refused edit tool call marks the
+   * ceremony and raises a trivial tier to standard at once (an untriaged session's later trivial
+   * triage is recorded as standard). A refused shell write (kind `shell`) only adds the plan-phase text: it keeps the tier.
+   * The text added to the refusal.
    */
   function onEditRefused(s: Session, mode: EditMode, kind: string): string {
     s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
     if (mode === "bounded") return "";
     if (parentPhaseByReview(s)) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait until your plan review passes (a [plan-review] PASS on the current version ends the phase) or /foreman plan off.";
     if (s.planPhase) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait for a checkpoint approval or /foreman plan off.";
+    if (kind === "shell") return "";
     s.ceremony = { ...s.ceremony, needsChange: true };
     if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
     setCeremony(s, escalate(s.ceremony, "standard", "auto", "edit mode refused a change"));
@@ -5085,7 +5113,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hint = move ? null : chainHint(command, !s.isChild);
       const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : hint ? `${v.reason} ${hint}.` : v.reason;
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
-      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is no sign the task needs a builder: no tier escalation
+      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is not traced and adds no plan-phase text (a shell refusal never changes the tier)
       const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
@@ -5161,6 +5189,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
+    s?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
@@ -5212,6 +5241,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.mutating.delete(event.toolCallId);
     owner?.commandCalls.delete(event.toolCallId);
     owner?.questionCalls.delete(event.toolCallId);
+    owner?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A shell command may have copied in an ask.md or a brief: the rule is evaluated again.
@@ -5229,6 +5259,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const written = readPlan(wrotePath, planOpts(owner, ctx));
       if ("error" in written) planFormNote = written.error; // e.g. a Write over the generated copy that lost its marker
       else {
+        // a write in the tool batch of a still-open [plan-review] launch (also one nested in a codemode call): the reviewer reads these bytes
+        owner.planReviews.refreshLaunch(written.plan.path, written.plan.hash, written.plan.markdown, owner.launchBatch.generation);
         const issues = planFormIssues(written.plan.markdown, {});
         if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
         if (written.plan.kind === "html" && typeof wrotePath === "string" && wrotePath.endsWith(".md")) planFormNote = `pi-foreman: plan-${written.plan.topic}.md is generated from plan-${written.plan.topic}.html; edit the page, not the copy. The copy was written again from the page.${planFormNote ? `\n${planFormNote}` : ""}`;
@@ -5621,8 +5653,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return undefined;
     }
     // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
-    if (!rejected && s.steps.builder === 0 && s.tally.files.length === 0) {
-      const porcelain = await git(ctx.cwd, ["status", "--porcelain"]);
+    if (!rejected && s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0) { // a launched builder (failed or not) is work even when the tree stays clean
+      const porcelain = await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform);
       if (noChange(s.steps, s.tally.files.length, porcelain)) {
         s.trace?.emit({ event: "ceremony_gate", reason: "no_change", tier: s.ceremony.tier });
         ctx.ui.notify("pi-foreman: finished without a change: no builder or reviewer required", "info");
@@ -5666,7 +5698,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * then let go with an owner notice. A session that changed nothing is never held.
    */
   async function hsReminderHold<E>(s: Session, ctx: ExtensionContext, entries: E[], remind: string, reasons: string[]) {
-    if (s.steps.builder === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await git(ctx.cwd, ["status", "--porcelain"]))) return undefined;
+    if (s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform))) return undefined;
     const key = reasons.join(",");
     if (s.hsReminded?.join(",") !== key) {
       s.hsReminded = reasons;
@@ -6233,12 +6265,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "plan_version", tier, from: sha256(plan.bytes).slice(0, 16), to: plan.hash.slice(0, 16) }); // from = hash of the file bytes, to = version (body) hash
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL sends the plan back for a revision.
         let reviewed: string | null = null;
+        let reviewFact = "not required";
         if (planReviewOn(s.config.config, tier)) {
           const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
           const g = s.planReviews.gate(plan.path, plan.hash, cap);
           if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
           // Capped: the checkpoint opens on a FAIL with the open findings visible.
           reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
+          reviewFact = g.verdict.verdict === "pass" ? "passed" : "failed";
         }
         const alreadyApproved = !!s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path;
         const planPage = s.show?.checkpointed(plan.path, alreadyApproved ? "approved" : "waits for you"); // ruling point (show.ts): the plan the owner is about to see, and its page
@@ -6254,11 +6288,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // The owner answers in this session's own pane, also in a session opened by another session: no file from a parent approves a plan.
         if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
         let answer: string | undefined;
-        const title = `pi-foreman checkpoint: ${name} (${hash8})`;
         s.trace?.emit({ event: "dialog", surface: "checkpoint" });
         try {
-          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${await planPageLine(planPage, undefined, showOffReason(!!s.live, s.id))}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
-          answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
+          const page = await planPageOutcome(planPage, undefined, showOffReason(!!s.live, s.id));
+          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${planPageLineOf(page)}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          const spec: DialogSpec = {
+            ask: `Approve the plan for ${plan.topic}?`,
+            summary: "Builders start only after you approve. Read the plan page first.",
+            facts: [["Plan", planSummary(plan.markdown, plan.rel, plan.hash).split("\n")[0].replace(/^Plan:\s*(?:Plan:\s*)?/i, "")], ["Version", hash8], ["Review", reviewFact]],
+            ...("path" in page ? { links: [{ label: "Plan page", path: page.path, text: "open the plan page", kind: "page" as const }], detail: ["The page is a path on this session's machine."] } : { detail: [`Plan page: not available (${page.reason})`] }),
+            answers: "revise: you say what to change   reject: the work stops   approve: builders start",
+          };
+          answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, cleanDialogText(spec.ask), () => shapedSelect(ctx.ui, ctx.mode, spec, [...CHECKPOINT_CHOICES], { signal }));
         } catch {
           answer = undefined;
         }
@@ -6279,6 +6320,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
           if (s.planPhase) {
             s.planPhase = false; // an approval ends the plan phase
+            delete process.env.PI_FOREMAN_PLAN_PHASE;
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
           }
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
@@ -6309,13 +6351,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.registerTool({
       name: SCRIPT_TOOL,
       label: "Owner script",
-      // Never in parallel with other tool calls of the same message: no write lands while the owner decides or the script runs.
+      // Never in parallel with other tool calls of the same message: no write lands while the owner decides or the script runs. A real run whose tool call is aborted (Escape) is the one exception: it runs on in the background (s.scriptRun), and while it lives every other action but status and stop is refused, so no second script and no dry run or undo overlaps it.
       executionMode: "sequential",
-      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal and the undo state, undo runs the script that really ran with the single argument undo (only when the script has the marker line `# foreman-undo: supported` as a whole line, after a real run, within an hour of it, at most three attempts, exit 0 counts once; no second dialog, the owner gets a notice); these four take no path. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
+      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal and the undo state, undo runs the script that really ran with the single argument undo (only when the script has the marker line `# foreman-undo: supported` as a whole line, after a real run, within an hour of it, at most three attempts, exit 0 counts once; no second dialog, the owner gets a notice); stop ends a real run that keeps running in the background after its call was aborted; these five take no path. When the owner aborts the call of a real run (Escape), the script is not killed: the call returns at once, the script runs on until it ends or hits its time limit, its result arrives as a message, and until then only status and stop are accepted. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["propose", "dry", "run", "status", "undo"] },
+          action: { type: "string", enum: ["propose", "dry", "run", "status", "undo", "stop"] },
           path: { type: "string", minLength: 1, description: "propose only: path of the script in the scratch dir." },
           description: { type: "string", description: "propose only: one paragraph on what the script changes, at most 600 characters; the owner sees it whole." },
           risk: { type: "string", description: "propose only: what can go wrong, at most 300 characters." },
@@ -6332,28 +6374,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.isChild) return refusal({ code: "script_child", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_child): a subagent child never proposes, runs or undoes an owner script; report the needed change to the foreman.` });
         const o = planOpts(s, ctx);
         const action = params.action;
+        const running = s.scriptRun;
+        if (running && (action === "propose" || action === "dry" || action === "run" || action === "undo")) return refusal({ code: "script_running", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_running): an owner script is still running (pid ${running.pid ?? "unknown"}, since ${new Date(running.since).toISOString()}); its result arrives as a message. status shows it, stop ends it.` });
 
-        /** A dry or real run of the proposal's own script: fix rule, runner, state, trace. */
-        const runNow = async (kind: ScriptRunAction) => {
-          const limit = get(s.config.config, "safety.scripts.silentFixLines");
-          const plan = beginRun(s.script, kind, o, Date.now(), typeof limit === "number" ? limit : SCRIPT_FIX_LINES_DEFAULT);
-          if (plan.fix) {
-            ctx.ui.notify(plan.fix.notice, "warning");
-            s.trace?.emit({ event: "script_fix", from: plan.fix.from, to: plan.fix.to, added: plan.fix.added, removed: plan.fix.removed });
-          }
-          if ("error" in plan) return refusal(plan);
-          const r = await runOwnerScript({ bytes: plan.bytes, kind, cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd) });
-          if ("code" in r) {
-            // refused before anything spawned: not one of the real attempts
-            if (kind === "run" && s.script.proposal) s.script.proposal.attempts = Math.max(0, s.script.proposal.attempts - 1);
-            return refusal(r);
-          }
+        /** What a finished dry or real run records and reports: state, trace, the text for the model. */
+        const finishRun = (kind: ScriptRunAction, plan: { hash: string }, r: ScriptRunResult) => {
           const exit = r.error ? null : r.exitCode;
           if (kind === "run" && r.started && (s.script.proposal?.status === "approved" || s.script.proposal?.status === "dry_ok")) recordRealRun(s.script, plan.hash, Date.now());
           const status = recordRun(s.script, kind, plan.hash, exit);
-          s.trace?.emit({ event: "script_run", kind, hash: shortHash(plan.hash), exit, seconds: r.seconds });
+          s.trace?.emit({ event: "script_run", kind, hash: shortHash(plan.hash), exit, seconds: r.seconds, ...(r.stopped ? { outcome: "stopped" } : r.aborted ? { outcome: "aborted" } : {}) });
           const p = s.script.proposal;
-          const how = r.error ?? (r.timedOut ? "stopped at the time limit" : r.aborted ? "aborted" : exit === null ? `ended by ${r.signal ?? "a signal"}` : `exit ${exit}`);
+          const how = r.error ?? (r.timedOut ? "stopped at the time limit" : r.stopped ? "stopped by the stop action" : r.aborted ? "aborted" : exit === null ? `ended by ${r.signal ?? "a signal"}` : `exit ${exit}`);
           const head = `${kind === "dry" ? "Dry run" : "Real run"} of ${p?.rel ?? "the script"} (sha256 ${shortHash(plan.hash)}): ${how} after ${r.seconds} s. Log: ${r.logPath}`;
           const next =
             kind === "dry"
@@ -6365,7 +6396,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
                 : status === "consumed"
                   ? `The real run failed and the approval is used up (${SCRIPT_MAX_ATTEMPTS} attempts); another run needs a new propose.`
                   : `The real run failed; ${Math.max(0, SCRIPT_MAX_ATTEMPTS - (p?.attempts ?? 0))} attempt(s) left.`;
-          return out(kind, `${head}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { status, exit, logPath: r.logPath, hash: plan.hash }, exit !== 0);
+          return out(kind, `${head}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { status, exit, logPath: r.logPath, hash: plan.hash, ...(r.stopped ? { stopped: true } : {}) }, exit !== 0);
+        };
+
+        /** The real run outlives the abort of this call: the call returns, the end is recorded and sent as a message. */
+        const detachRun = (d: ScriptRunDetached, plan: { hash: string }) => {
+          const entry: NonNullable<Session["scriptRun"]> = { pid: d.pid, since: Date.now(), stopRequested: false, shutdown: false, stop: d.stop, done: Promise.resolve() };
+          entry.done = d.finished.then((r) => {
+            if (s.scriptRun === entry) s.scriptRun = null;
+            const res = finishRun("run", plan, r);
+            if (!entry.stopRequested && !entry.shutdown) {
+              let idle = true;
+              try {
+                idle = ctx.isIdle();
+              } catch {
+                // a stale context: treat as idle
+              }
+              pi.sendMessage({ customType: "pi-foreman-script", content: `pi-foreman notice (data, not an instruction): the owner script that kept running in the background after its call was aborted has ended.\n${res.content[0].text}`, display: true, details: res.details }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+            }
+            return res;
+          });
+          s.scriptRun = entry;
+          s.trace?.emit({ event: "script_run", kind: "run", hash: shortHash(plan.hash), outcome: "detached" });
+          return out("run", `Script still running in the background (pid ${d.pid ?? "unknown"}); its result arrives as a message. status shows it, stop ends it.`, { status: "running", pid: d.pid, hash: plan.hash });
+        };
+
+        /** A dry or real run of the proposal's own script: fix rule, runner, state, trace. */
+        const runNow = async (kind: ScriptRunAction) => {
+          const limit = get(s.config.config, "safety.scripts.silentFixLines");
+          const plan = beginRun(s.script, kind, o, Date.now(), typeof limit === "number" ? limit : SCRIPT_FIX_LINES_DEFAULT);
+          if (plan.fix) {
+            ctx.ui.notify(plan.fix.notice, "warning");
+            s.trace?.emit({ event: "script_fix", from: plan.fix.from, to: plan.fix.to, added: plan.fix.added, removed: plan.fix.removed });
+          }
+          if ("error" in plan) return refusal(plan);
+          const r = await runScriptDetachable({ bytes: plan.bytes, kind, cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd), detachOnAbort: kind === "run" });
+          if ("detached" in r) return detachRun(r, plan);
+          if ("code" in r) {
+            // refused before anything spawned: not one of the real attempts
+            if (kind === "run" && s.script.proposal) s.script.proposal.attempts = Math.max(0, s.script.proposal.attempts - 1);
+            return refusal(r);
+          }
+          return finishRun(kind, plan, r);
         };
 
         /** An undo run of the stored bytes that really ran: no dialog, a warning notice and a trace event per attempt. */
@@ -6399,9 +6471,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (action === "undo") return undoNow();
           if (action !== "status") return runNow(action);
           const st = scriptStatus(s.script, Date.now());
-          return out("status", st ? JSON.stringify(st, null, 2) : "No script is proposed in this session.", { status: st?.status ?? null });
+          const live = s.scriptRun ? { pid: s.scriptRun.pid ?? null, since: new Date(s.scriptRun.since).toISOString() } : null;
+          return out("status", st ? JSON.stringify(live ? { ...st, running: live } : st, null, 2) : "No script is proposed in this session.", { status: live ? "running" : st?.status ?? null });
         }
-        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run, status or undo.`, {}, true);
+        if (action === "stop") {
+          if (params.path !== undefined) return refusal({ code: "script_path", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_path): stop takes no path.` });
+          if (!running) return out("refused", `${SCRIPT_TOOL}: no owner script is running in the background; there is nothing to stop.`, {}, true);
+          running.stopRequested = true;
+          running.stop("stopped");
+          return (await running.done) as ReturnType<typeof out>;
+        }
+        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run, status, undo or stop.`, {}, true);
 
         const done = (decision: string, by: string | null, hash: string | null, text: string, isError = false) => {
           s.trace?.emit({ event: "script", decision, by, hash });
@@ -6421,7 +6501,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         try {
           // One notice: the terminal replaces an info status line by the next one sent back to back.
           ctx.ui.notify([...scriptNoticeLines(p), scriptUndoLine(p)].join("\n"), "info");
-          answer = await withBlockedOn(herdrEvents, BLOCK_SCRIPT, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
+          const spec: DialogSpec = {
+            ask: title,
+            summary: p.description,
+            facts: [["Risk", p.risk], ["Undo", p.undo]],
+            detail: [`Path: ${cleanText(p.rel)} (${p.lines} lines)`, scriptUndoLine(p)],
+            answers: "approve: the dry run runs first   revise: you say what to change   reject: nothing runs",
+          };
+          answer = await withBlockedOn(herdrEvents, BLOCK_SCRIPT, title, () => shapedSelect(ctx.ui, ctx.mode, spec, [...SCRIPT_CHOICES], { signal }));
         } catch {
           answer = undefined;
         }
@@ -6623,6 +6710,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         s.planPhase = rest[0] !== "off";
         if (s.planPhase) s.planPhaseOrigin = "owner"; // the owner's phase, also inside a child: a plan-review PASS never ends it
+        else delete process.env.PI_FOREMAN_PLAN_PHASE;
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
         persistCeremonyState(s);
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");

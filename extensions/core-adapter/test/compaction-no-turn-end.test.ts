@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { extractRetro, retroEntry } from "../retrodigest.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -32,7 +33,7 @@ for (const child of [false, true]) {
     else delete process.env.PI_SUBAGENT_CHILD;
     const handlers = new Map<string, Handler[]>();
     const pi = { on: (n: string, h: Handler) => void handlers.set(n, [...(handlers.get(n) ?? []), h]), registerCommand: () => undefined, registerTool: () => undefined, getActiveTools: () => [] as string[], setActiveTools: () => undefined, setModel: async () => true, setThinkingLevel: () => undefined, getSettings: () => ({}) };
-    coreAdapter(pi as never);
+    coreAdapter(pi as never, { spawner: probeSpawner() });
     let compactCalls = 0;
     const ctx = {
       sessionManager: { getSessionId: () => "no-turn-end", getSessionFile: () => undefined, getEntries: () => [] as unknown[] },

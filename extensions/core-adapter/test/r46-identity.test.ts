@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -75,7 +76,7 @@ function rig(t: TestContext) {
       getSessionName: () => names.value,
       setSessionName: (v: string) => void (names.value = v),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
     const ctx = {
       sessionManager: { getSessionId: () => id, getSessionFile: () => path.join(agentDir, "sessions", "--project--", `${id}.jsonl`), getEntries: () => entries, getBranch: () => entries },
       cwd: project,

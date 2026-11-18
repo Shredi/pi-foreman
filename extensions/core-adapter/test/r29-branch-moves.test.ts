@@ -1,6 +1,6 @@
 // r29: the foreman's branch-only git on a clean tree (branchMove) and the guard shapes it relies on.
 // Temp repositories with a bare origin; nothing outside them is touched.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -10,27 +10,47 @@ import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "../shellwriteguard.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { BARE_ORIGIN_OFF, gitTemplate } from "./_git-template.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
 
-/** A work clone with one commit on main pushed to a bare origin. `g` runs git in the work tree. */
-function fixture() {
-  const base = mkTestTmp("pf-r29-branch-");
-  const origin = path.join(base, "origin.git");
-  const work = path.join(base, "work");
+// the fixture repo is the same for every test: built once per file (its dir made on first use), copied into each test's own dir
+let tplParent: string | undefined;
+after(() => {
+  if (tplParent) rmTestTmp(tplParent);
+});
+
+/** git in the work clone `work`; `pushOrigin` keeps the fixture's own origin path. */
+function workGit(work: string, origin: string) {
   const g = (...a: string[]) => execFileSync("git", ["-C", work, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { encoding: "utf8" }).trim();
-  // the harness sets url.invalid-push:.pushInsteadOf for every URL; the fixture's own origin keeps its path
+  // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path
   const pushOrigin = (...a: string[]) => g("-c", `url.${origin}.pushInsteadOf=${origin}`, "push", ...a);
+  return { g, pushOrigin };
+}
+
+const tpl = gitTemplate(() => (tplParent ??= mkTestTmp("pf-r29-tpl-")), (root) => {
+  const origin = path.join(root, "origin.git");
+  const work = path.join(root, "work");
   execFileSync("git", ["init", "-q", "--bare", origin]);
+  for (const [k, v] of BARE_ORIGIN_OFF) execFileSync("git", ["--git-dir", origin, "config", k, v]);
   fs.mkdirSync(work);
   execFileSync("git", ["init", "-q", work]);
+  const { g, pushOrigin } = workGit(work, origin);
   g("checkout", "-q", "-b", "main");
   fs.writeFileSync(path.join(work, "README.md"), "one\n");
   g("add", "README.md");
   g("commit", "-q", "-m", "chore: one");
   g("remote", "add", "origin", origin);
   pushOrigin("-q", "-u", "origin", "main");
+});
+
+/** A work clone with one commit on main pushed to a bare origin: a copy of the template in its own dir. `g` runs git in the work tree. */
+function fixture() {
+  const base = tpl.copy().root;
+  const origin = path.join(base, "origin.git");
+  const work = path.join(base, "work");
+  const { g, pushOrigin } = workGit(work, origin);
   return { base, work, g, pushOrigin };
 }
 

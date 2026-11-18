@@ -45,7 +45,6 @@ const got = (role: Role, line: string): Got => {
   return { verdict, labels: [...(o.dangers ?? [])].sort() };
 };
 const HFL = "danger-harness-folder";
-const RO = "danger-readonly-run";
 const row = (role: Role, line: string, verdict: string, labels: string[]): void => assert.deepEqual(got(role, line), { verdict, labels }, `${role}: ${line.replaceAll(base, "<base>")}`);
 
 test("A: an unknown program naming the harness folder itself is labelled danger-harness-folder, for main and builder; the verdict is unchanged", { skip: !posix }, () => {
@@ -54,8 +53,8 @@ test("A: an unknown program naming the harness folder itself is labelled danger-
   }
 });
 
-test("A: the reviewer's unknown-program lines keep danger-readonly-run and gain the label", { skip: !posix }, () => {
-  for (const l of [`ditto d ${HF}`, `foo x ${HF}`, `foo x ${HF}/other.txt`]) row("reviewer", l, "undecided", [HFL, RO]);
+test("A: the reviewer's unknown-program lines gain the label", { skip: !posix }, () => {
+  for (const l of [`ditto d ${HF}`, `foo x ${HF}`, `foo x ${HF}/other.txt`]) row("reviewer", l, "undecided", [HFL]);
 });
 
 test("A: tar and rsync keep their floor; lines already blocked or labelled keep their outcome", { skip: !posix }, () => {
@@ -81,7 +80,7 @@ test("A exclusion: the session's own handoff, its child's handoff and its scratc
   row("builder", `echo x ${GT} ${CHILD}/ask.md`, "undecided", []);
   row("builder", `foo ${CHILD}/x`, "undecided", []);
   row("builder", `cp a ${CHILD}/result.md`, "allow default-write-in", []);
-  row("reviewer", `foo ${CHILD}/x`, "undecided", [RO]);
+  row("reviewer", `foo ${CHILD}/x`, "undecided", []);
   row("reviewer", `cp a ${CHILD}/result.md`, "allow default-write-in", []);
   row("main", `foo ${scr}/x`, "undecided", []);
 });
@@ -100,7 +99,7 @@ test("A exclusion: the wait folder gains no label (outcome of the base commit)",
 
 test("A: another session's handoff dir is labelled (the harness folder, outside the session's own dirs)", { skip: !posix }, () => {
   for (const role of ["main", "builder"] as const) row(role, `foo ${OTHER}/x`, "undecided", [HFL]);
-  row("reviewer", `foo ${OTHER}/x`, "undecided", [HFL, RO]);
+  row("reviewer", `foo ${OTHER}/x`, "undecided", [HFL]);
   row("main", `echo x ${GT} ${OTHER}/x`, "undecided", [HFL, "danger-write-outside"]);
   row("builder", `echo x ${GT} ${OTHER}/x`, "block child-write-outside", []);
   row("main", `foo x ${GT} ${HF}/n.txt`, "undecided", [HFL, "danger-write-outside"]);
@@ -123,7 +122,7 @@ test("A: a win32 spelling of the folder is labelled on a win32 rig", () => {
 const OPAQUE = "danger-opaque";
 const nl = (...l: string[]): string => l.join("\n");
 
-test("B1: a heredoc or pipe fed to a shell is labelled danger-opaque for every role; the read-only roles add danger-readonly-run", () => {
+test("B1: a heredoc or pipe fed to a shell is labelled danger-opaque for every role", () => {
   const lines = [
     nl("cat <<'EOT' | sh", `cat ${SECRET}`, "EOT"),
     nl("sh <<EOT", `cat ${SECRET}`, "EOT"),
@@ -132,8 +131,7 @@ test("B1: a heredoc or pipe fed to a shell is labelled danger-opaque for every r
     `echo 'cat ${SECRET}' | sh -s`,
   ];
   for (const l of lines) {
-    for (const role of ["main", "builder"] as const) row(role, l, "undecided", [OPAQUE]);
-    for (const role of ["reviewer", "explorer"] as const) row(role, l, "undecided", [OPAQUE, RO]);
+    for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, l, "undecided", [OPAQUE]);
   }
 });
 
@@ -151,5 +149,5 @@ test("B2: an opaque line that is not an assignment prefix gets no install label;
     row(role, "FOO=1 npm ci", "undecided", ["danger-install", OPAQUE]);
     row(role, "npm ci", "undecided", ["danger-install"]);
   }
-  for (const role of ["reviewer", "explorer"] as const) row(role, "npm ci $X", "undecided", [OPAQUE, RO]);
+  for (const role of ["reviewer", "explorer"] as const) row(role, "npm ci $X", "undecided", [OPAQUE]);
 });

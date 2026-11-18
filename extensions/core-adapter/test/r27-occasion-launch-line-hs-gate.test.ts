@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { endWith } from "./_hsrig.ts";
 import { tick, world } from "./_r46world.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -58,8 +59,7 @@ test("with no high-stakes model a fired trigger gives no suffix, as the PR gate 
 test("a heavy reason only the gate refresh records gives the suffix", async (t) => {
   const a = await setup(t, { model: "fake/hs" });
   const b = await launch(a, { agent: "builder", task: "build the widget" });
-  a.endRunAs(b.id!, "builder", "done");
-  await tick(150);
+  await endWith(a, { id: b.id! }, "builder", "done", () => a.endRunAs(b.id!, "builder", "done")); // a builder end writes no review record
   await a.command("ceremony", "heavy");
   const texts = await launch(a, { agent: "reviewer", task: "[pre-pr] review the branch" });
   const line = texts.find((x) => x.startsWith("occasion: pre-pr"));

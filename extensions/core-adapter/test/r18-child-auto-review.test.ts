@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { BINDING_NS, BINDINGS_ENV } from "../usage.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { shPath } from "./_shpath.ts";
@@ -66,7 +67,7 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }, repl
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
   // the stubbed reviewer: every model call is counted and its prompt kept
   const sent: string[] = [];
   const modelRegistry = {

@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { branchMove, setGhRunnerForTest } from "../shellwriteguard.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { BARE_ORIGIN_OFF, gitTemplate } from "./_git-template.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const win = process.platform === "win32";
@@ -18,28 +19,44 @@ const cdWord = (dir: string) => dir.split(path.sep).join("/");
 before(() => {
   setGhRunnerForTest(async () => ({ ok: false, out: "" }));
 });
+// the fixture repo is the same for every test: built once per file (its dir made on first use), copied into each test's own dir
+let tplParent: string | undefined;
 after(() => {
   setGhRunnerForTest(null);
+  if (tplParent) rmTestTmp(tplParent);
 });
 
-/** A work clone with one commit on main pushed to a bare origin (as r29-branch-moves). `g` runs git in the work tree. */
-function fixture() {
-  // the long-name path: on Windows os.tmpdir() may hold an 8.3 short name (RUNNER~1), which a cd word cannot carry
-  const base = fs.realpathSync.native(mkTestTmp("pf-r31-branch-"));
-  const origin = path.join(base, "origin.git");
-  const work = path.join(base, "work");
+/** git in the work clone `work`; `pushOrigin` keeps the fixture's own origin path. */
+function workGit(work: string, origin: string) {
   const g = (...a: string[]) => execFileSync("git", ["-C", work, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { encoding: "utf8" }).trim();
-  // the harness sets url.invalid-push:.pushInsteadOf for every URL; the fixture's own origin keeps its path
+  // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path
   const pushOrigin = (...a: string[]) => g("-c", `url.${origin}.pushInsteadOf=${origin}`, "push", ...a);
+  return { g, pushOrigin };
+}
+
+const tpl = gitTemplate(() => (tplParent ??= mkTestTmp("pf-r31-tpl-")), (root) => {
+  const origin = path.join(root, "origin.git");
+  const work = path.join(root, "work");
   execFileSync("git", ["init", "-q", "--bare", origin]);
+  for (const [k, v] of BARE_ORIGIN_OFF) execFileSync("git", ["--git-dir", origin, "config", k, v]);
   fs.mkdirSync(work);
   execFileSync("git", ["init", "-q", work]);
+  const { g, pushOrigin } = workGit(work, origin);
   g("checkout", "-q", "-b", "main");
   fs.writeFileSync(path.join(work, "README.md"), "one\n");
   g("add", "README.md");
   g("commit", "-q", "-m", "chore: one");
   g("remote", "add", "origin", origin);
   pushOrigin("-q", "-u", "origin", "main");
+});
+
+/** A work clone with one commit on main pushed to a bare origin (as r29-branch-moves): a copy of the template in its own dir. `g` runs git in the work tree. */
+function fixture() {
+  // the long-name path: on Windows os.tmpdir() may hold an 8.3 short name (RUNNER~1), which a cd word cannot carry; the copy is realpathed
+  const base = tpl.copy().root;
+  const origin = path.join(base, "origin.git");
+  const work = path.join(base, "work");
+  const { g, pushOrigin } = workGit(work, origin);
   return { base, work, g, pushOrigin };
 }
 

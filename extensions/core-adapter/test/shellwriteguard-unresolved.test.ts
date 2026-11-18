@@ -1,5 +1,6 @@
-// A refusal caused only by targets the guard cannot resolve carries unresolvedOnly (index.ts then skips the tier escalation, as for
-// handoffOnly); a refusal with a project file, a resolved bad path or a parent-owned handoff name does not. Runs the real script.
+// A refusal caused only by targets the guard cannot resolve carries unresolvedOnly (index.ts then skips the edit-refused trace, as for
+// handoffOnly); a refusal with a project file, a resolved bad path or a parent-owned handoff name does not. No shell refusal changes the tier
+// (D71 addendum). Runs the real script.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -31,7 +32,7 @@ async function verdict(line: string) {
 const flags = (v: Awaited<ReturnType<typeof verdict>>) => v as { decision: string; unresolvedOnly?: boolean; handoffOnly?: boolean; reason: string };
 
 for (const line of ['echo x > ".workflow/$V"', 'echo x > ".workflow/$(echo a)"', 'echo x > "$V/.workflow/x"', 'echo x > "$V"', 'for l in a b; do cp x ".workflow/closed/$l/"; done']) {
-  test(`unresolved-only refusal carries unresolvedOnly (no escalation): ${line}`, { skip: !py }, async () => {
+  test(`unresolved-only refusal carries unresolvedOnly: ${line}`, { skip: !py }, async () => {
     const v = flags(await verdict(line));
     assert.equal(v.decision, "refuse");
     assert.equal(v.unresolvedOnly, true);
@@ -47,7 +48,7 @@ for (const line of [
   'V=../README.md; echo x > ".workflow/$V"',
   'D=src; echo x > "$D/a.ts"',
 ]) {
-  test(`a refusal with a project file keeps escalating (no unresolvedOnly): ${line}`, { skip: !py }, async () => {
+  test(`a refusal with a project file carries no unresolvedOnly: ${line}`, { skip: !py }, async () => {
     const v = flags(await verdict(line));
     assert.equal(v.decision, "refuse");
     assert.equal(v.unresolvedOnly, undefined);
@@ -66,9 +67,9 @@ test("same-line literal assignments are allowed", { skip: !py }, async () => {
   assert.equal(flags(await verdict(`H="${handoff}"; echo x > "$H/result.md"`)).decision, "allow");
 });
 
-// The tier decision itself, through the real adapter hook (index.ts tool_call): an unresolved-only refusal leaves the tier,
-// a project-file refusal raises it.
-test("an unresolved-only refusal leaves the tier; a project-file refusal raises it", { skip: !py }, async (t) => {
+// The tier decision itself, through the real adapter hook (index.ts tool_call): neither an unresolved-only refusal nor a
+// project-file refusal raises the tier.
+test("an unresolved-only refusal and a project-file refusal both leave the tier", { skip: !py }, async (t) => {
   const a = await r11Rig(t, { default: "trivial" }, { ctx: reviewAllowOpts().ctx, config: reviewAllowOpts().config });
   const unresolved = await a.call("bash", { command: 'echo x > ".workflow/$V"' });
   assert.ok(unresolved?.block, "refused");
@@ -77,6 +78,6 @@ test("an unresolved-only refusal leaves the tier; a project-file refusal raises 
   assert.deepEqual(a.events("triage_escalated"), []);
   const project = await a.call("bash", { command: "echo x > README.md" });
   assert.ok(project?.block, "refused");
-  assert.match(project.reason ?? "", /The tier is now standard/);
-  assert.ok(a.events("triage_escalated").some((r) => r.reason === "edit_mode"), JSON.stringify(a.events("triage_escalated")));
+  assert.doesNotMatch(project.reason ?? "", /The tier is now standard/);
+  assert.deepEqual(a.events("triage_escalated"), []);
 });

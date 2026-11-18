@@ -38,7 +38,7 @@ class DenyTest(unittest.TestCase):
         self.assertEqual(out, {"type": "extension_ui_response", "id": "2", "cancelled": True})
 
     def test_checkpoint_select_is_approved_and_other_selects_are_not(self):
-        title = "pi-foreman checkpoint: plan-x.md (0123abcd)"
+        title = "Approve the plan for x?\n\nBuilders start only after you approve."
         rec = {"id": "5", "method": "select", "title": title, "options": ["revise", "reject", "approve"]}
         self.assertEqual(ws.deny_response(rec), {"type": "extension_ui_response", "id": "5", "value": "approve"})
         # the title alone is not enough: the options must be exactly the three answers

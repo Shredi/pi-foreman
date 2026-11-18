@@ -64,7 +64,7 @@ for (const who of CHILDREN) {
     const line = "mkdir -p $FOREMAN_SCRATCH && cd $FOREMAN_SCRATCH && cat > p.py <<EOF\nprint(1)\nEOF\npython3 -I p.py";
     const v = verdict(line, who);
     assert.notEqual(v?.rule, "child-write-outside", what(v));
-    // no decision for either role (the reviewer's script run carries no danger-readonly-run label here): the call falls through to the mode step
+    // no decision for either role (the reviewer's script run carries no label): the call falls through to the mode step
     assert.equal(what(v), "none", line);
   });
 

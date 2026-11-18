@@ -70,9 +70,26 @@ export class PlanReviews {
   private readonly launched = new Map<string, { hash: string; text: string }>();
   private readonly reviewed = new Map<string, { hash: string; text: string }>();
 
-  /** A `[plan-review]` launch: the text the reviewer will read. */
-  noteLaunch(planPath: string, hash: string, text: string): void {
+  /** The tool batch (LaunchBatch generation) a still-open launch started in, per plan path. */
+  private readonly open = new Map<string, number>();
+
+  /** A `[plan-review]` launch: the text the reviewer will read; `batch` is the tool batch it starts in (open until `closeLaunch` or the next batch). */
+  noteLaunch(planPath: string, hash: string, text: string, batch?: number): void {
     this.launched.set(planPath, { hash, text });
+    if (batch === undefined) this.open.delete(planPath);
+    else this.open.set(planPath, batch);
+  }
+
+  /** A plan write of tool batch `batch`: when a launch of that batch is still open, the reviewer reads these bytes, so the launch record takes them. */
+  refreshLaunch(planPath: string, hash: string, text: string, batch: number): boolean {
+    if (this.open.get(planPath) !== batch) return false;
+    this.launched.set(planPath, { hash, text });
+    return true;
+  }
+
+  /** The launch's run ended: a later write in the same batch is a change the reviewer did not read. */
+  closeLaunch(planPath: string): void {
+    this.open.delete(planPath);
   }
 
   /** The verdict is recorded for the plan version `hash`: the text noted at launch becomes the reviewed text when its hash is the same, else the reviewed text is cleared (the plan changed while the reviewer ran). */
@@ -127,10 +144,10 @@ export class PlanReviews {
 export function planReviewRefusalText(reason: PlanReviewRefusal, rel: string, tier: string, stale: boolean): string {
   const head = `pi-foreman: ${CHECKPOINT_TOOL} refused [${reason}]:`;
   if (reason === "plan_revision_required") {
-    return `${head} the plan review of ${rel} failed. Revise the plan with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, and repeat until it passes; ask nobody while the findings are defects or gaps. A finding that needs a decision goes to the checkpoint with a FAIL: call ${CHECKPOINT_TOOL} again after the revised plan has a verdict, and at the round cap (ceremony.planReviewRounds) it opens with the open findings.`;
+    return `${head} the plan review of ${rel} failed. Revise the plan with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with occasion: "plan-review" (or "[plan-review]" first in its task) on the revised plan and the ledger, and repeat until it passes; ask nobody while the findings are defects or gaps. A finding that needs a decision goes to the checkpoint with a FAIL: call ${CHECKPOINT_TOOL} again after the revised plan has a verdict, and at the round cap (ceremony.planReviewRounds) it opens with the open findings.`;
   }
   const why = stale ? "the plan changed since its last review, so that verdict no longer counts" : "the plan has no review yet";
-  return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with "[plan-review]" in its task, naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;
+  return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with occasion: "plan-review" (or "[plan-review]" first in its task), naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;
 }
 
 const one = (s: string): string => s.replace(/[\u0000-\u001f\u007f\u0080-\u009f]+/g, " ").trim().slice(0, 120);

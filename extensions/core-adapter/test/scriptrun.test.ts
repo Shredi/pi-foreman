@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
-import { freshScriptLogPath, runScript, scriptArgv, scriptEnv, scriptLogPath, scriptLogTail, scriptShell, scriptTimeoutSeconds } from "../scriptrun.ts";
+import { freshScriptLogPath, runScript, runScriptDetachable, scriptArgv, scriptEnv, scriptLogPath, scriptLogTail, scriptShell, scriptTimeoutSeconds } from "../scriptrun.ts";
 import type { ScriptRunResult } from "../scriptrun.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -225,4 +225,62 @@ test("script run: the tail is the last 40 lines, at most 4 KiB, with secrets red
   assert.ok(Buffer.byteLength(big) <= 4096);
   assert.match(big, /^\d+ y z /);
   assert.equal(scriptLogTail(path.join(d.root, "none.log")), "");
+});
+
+// D75: runScriptDetachable lets a started run outlive the abort of its tool call.
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("script run: detachOnAbort returns a detached run on abort, the process survives and finished has the real exit; the run dir goes after the exit", { skip: process.platform === "win32" }, async (t) => {
+  const d = dirs(t);
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 300);
+  const r = await runScriptDetachable({ bytes: Buffer.from("echo started\nsleep 1\necho done\nexit 0\n"), kind: "run", cwd: d.ws, logPath: d.log("detach.log"), signal: ac.signal, detachOnAbort: true, tmpDir: d.tmp });
+  assert.ok("detached" in r, JSON.stringify(r));
+  assert.ok(r.pid && isAlive(r.pid));
+  assert.equal(fs.readdirSync(d.tmp).length, 1, "the run dir stays while the script runs");
+  const end = await r.finished;
+  assert.ok(!("code" in end));
+  assert.equal(end.exitCode, 0);
+  assert.equal(end.aborted, false);
+  assert.match(end.tail, /done/);
+  assert.deepEqual(fs.readdirSync(d.tmp), []);
+});
+
+test("script run: stop on a detached run kills it and says stopped; the time limit kills a detached run too", { skip: process.platform === "win32" }, async (t) => {
+  const d = dirs(t);
+  const ac = new AbortController();
+  setTimeout(() => ac.abort(), 200);
+  const r = await runScriptDetachable({ bytes: Buffer.from("sleep 30\n"), kind: "run", cwd: d.ws, logPath: d.log("stop.log"), signal: ac.signal, detachOnAbort: true, tmpDir: d.tmp });
+  assert.ok("detached" in r);
+  r.stop("stopped");
+  const end = await r.finished;
+  assert.ok(!("code" in end));
+  assert.equal(end.stopped, true);
+  assert.equal(end.aborted, false);
+  assert.equal(isAlive(r.pid!), false);
+  const ac2 = new AbortController();
+  setTimeout(() => ac2.abort(), 200);
+  const t2 = await runScriptDetachable({ bytes: Buffer.from("sleep 30\n"), kind: "run", cwd: d.ws, logPath: d.log("limit.log"), signal: ac2.signal, detachOnAbort: true, timeoutSeconds: 1, tmpDir: d.tmp });
+  assert.ok("detached" in t2);
+  const end2 = await t2.finished;
+  assert.ok(!("code" in end2));
+  assert.equal(end2.timedOut, true);
+  assert.equal(isAlive(t2.pid!), false);
+});
+
+test("script run: detachOnAbort with a signal aborted before the start still spawns nothing", async (t) => {
+  const d = dirs(t);
+  const ac = new AbortController();
+  ac.abort();
+  const r = await runScriptDetachable({ bytes: Buffer.from("echo ran\n"), kind: "run", cwd: d.ws, logPath: d.log("pre2.log"), signal: ac.signal, detachOnAbort: true, tmpDir: d.tmp });
+  assert.ok(!("detached" in r) && !("code" in r));
+  assert.equal(r.started, false);
+  assert.equal(r.aborted, true);
 });

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { emptyState, HighStakes, prRefusal, readyOverride } from "../highstakes.ts";
 import { gatesClearFail, gatesVerdict } from "../reviewgates.ts";
-import { entryOccasions, namesBothTags } from "../occasion.ts";
+import { launchOccasion } from "../occasion.ts";
 import { build, commitIn, end, git, hsRun, launch, pr, settle, setup, traces, worktree } from "./_hsrig.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 
@@ -154,22 +154,25 @@ test("D39: a FAIL checkout outside git: a findings run that passes in the same d
   assert.doesNotMatch(fin, /FAILED|revise or answer|re-review needed/, fin);
 });
 
-test("namesBothTags: only a prose [pre-pr] next to a prose [high-stakes] counts; backticks, [second-opinion] and [plan-review] decide otherwise", () => {
-  const of = (task: string) => namesBothTags(entryOccasions({ agent: "reviewer", task }));
-  assert.equal(of("[pre-pr] and [high-stakes] review"), true);
-  assert.equal(of("[high-stakes] review, not a [pre-pr]"), true);
-  assert.equal(of("[pre-pr] review, `[high-stakes]` is quoted"), false);
-  assert.equal(of("[high-stakes] review"), false);
-  assert.equal(of("[second-opinion] [pre-pr] [high-stakes]"), false);
-  assert.equal(of("[plan-review] [pre-pr] [high-stakes]"), false);
-  assert.equal(namesBothTags(entryOccasions({ agent: "builder", task: "[pre-pr] [high-stakes]" })), false, "a builder task is no review");
+test("launchOccasion: a head run naming [pre-pr] and [high-stakes] is ambiguous; a winning [second-opinion] or [plan-review] settles it; a mid-text tag is a mention once the head names one", () => {
+  const of = (task: string, agent = "reviewer") => {
+    const r = launchOccasion({ agent, task }, undefined);
+    return "refused" in r ? r.refused : r.occasion;
+  };
+  assert.equal(of("[pre-pr] [high-stakes] review"), "review_occasion_ambiguous");
+  assert.equal(of("[pre-pr] review, [high-stakes] is mentioned"), "pre-pr");
+  assert.equal(of("[pre-pr] review, `[high-stakes]` is quoted"), "pre-pr");
+  assert.equal(of("[high-stakes] review"), "high-stakes");
+  assert.equal(of("[second-opinion] [pre-pr] [high-stakes]"), "second-opinion");
+  assert.equal(of("[plan-review] [pre-pr] [high-stakes]"), "plan-review");
+  assert.equal(of("[pre-pr] [high-stakes]", "builder"), "item", "a builder task is no review");
 });
 
 test("D23: a task naming both tags is refused and traced; a quoted tag is a normal [pre-pr]; after a high-stakes FAIL a [pre-pr] launch is accepted, its PASS clears the FAIL and opens the gate on its head", async (t) => {
   const { w, a } = await setup(t);
   commitIn(w.project, "src/a/x.ts");
   await build(a, sized(["design"]));
-  const both = await launch(a, "reviewer", "[pre-pr] review the branch; also [high-stakes]");
+  const both = await launch(a, "reviewer", "[pre-pr] [high-stakes] review the branch");
   assert.match(both.blocked ?? "", /\[review_occasion_ambiguous\]/);
   assert.equal((await traces(w, "review_occasion_ambiguous")).length, 1);
   await hsRun(a, "FAIL");

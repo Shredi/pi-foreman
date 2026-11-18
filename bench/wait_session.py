@@ -76,13 +76,13 @@ def provider_refusal_error(record):
     return _error_text(record, PROVIDER_REFUSAL)
 
 
-CHECKPOINT_PREFIX = "pi-foreman checkpoint:"
+CHECKPOINT_PREFIX = "Approve the plan for "
 CHECKPOINT_ANSWERS = ["approve", "reject", "revise"]
 
 
 def deny_response(rec):
     """The extension_ui_response that denies one dialog request; never confirms. One exception: the plan
-    checkpoint `select` (title starts with `pi-foreman checkpoint:` and the options are exactly approve,
+    checkpoint `select` (title starts with `Approve the plan for ` and the options are exactly approve,
     revise and reject, in any order) is answered `approve`, so a heavy
     bench run can proceed; the harness records it as by "rig" (`checkpoint_auto`)."""
     base = {"type": "extension_ui_response", "id": rec.get("id")}

@@ -18,7 +18,6 @@ layer: it goes through the same rules. Neither can set a key that is not in the 
 
     key                              direction (project value)
     -------------------------------  -----------------------------------------
-    safety.children.mayPush          true = permissive; only false is accepted
     safety.review.required           true = strict; only true is accepted
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
@@ -189,7 +188,6 @@ THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # project-layer tightening of safety.* (see module docstring)
 TIGHTEN = {
-    ("children", "mayPush"): "false_only",
     ("review", "required"): "true_only",
     ("requiredChildExtensions",): "union",
     ("git", "protectedBranches"): "union",
@@ -197,9 +195,9 @@ TIGHTEN = {
     ("scripts", "silentFixLines"): "lower_only",
 }
 
-# safety.git.commit.* is no longer used; every layer accepts it without a warning and the value
-# passes through the merge unchanged (only the adapter's doctor reads it).
-PASS_THROUGH = [("git", "commit")]
+# safety.git.commit.* and safety.children.mayPush are no longer used; every layer accepts them without a warning and the value
+# passes through the merge unchanged (only the adapter's doctor reads git.commit).
+PASS_THROUGH = [("git", "commit"), ("children", "mayPush")]
 
 # safety.* keys that only loosen: never from the project or session layer
 LOOSEN_ONLY = [("subagents", "allowWorkflow")]

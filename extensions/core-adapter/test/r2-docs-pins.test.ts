@@ -1,4 +1,4 @@
-// Guard round 2: pins of two claims in docs/safety.md. (1) `find <harness folder>` carries danger-harness-folder for every role (a reviewer and explorer also danger-readonly-run).
+// Guard round 2: pins of two claims in docs/safety.md. (1) `find <harness folder>` carries danger-harness-folder for every role.
 // (2) a git `--output=<file>` / `--output <file>` (log, diff) is refused for a reviewer and explorer when the file lands in the worktree, and with the cwd in the worktree
 // wherever it lands; a shell redirect into the scratch folder is free. Each row is one literal outcome "<verdict> <rule> <sorted labels>". Lines are data strings, never run.
 import { test, after } from "node:test";
@@ -34,12 +34,12 @@ function show(line: string, role: Role, cwd = wt): string {
   return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 }
 
-test("find <harness folder> is labelled danger-harness-folder for every role; reviewer and explorer also danger-readonly-run", { skip: !posix }, () => {
+test("find <harness folder> is labelled danger-harness-folder for every role", { skip: !posix }, () => {
   const line = `find ${HF}`;
   assert.equal(show(line, "main"), 'undecided  ["danger-harness-folder"]');
   assert.equal(show(line, "builder"), 'undecided  ["danger-harness-folder"]');
-  assert.equal(show(line, "reviewer"), 'undecided  ["danger-harness-folder","danger-readonly-run"]');
-  assert.equal(show(line, "explorer"), 'undecided  ["danger-harness-folder","danger-readonly-run"]');
+  assert.equal(show(line, "reviewer"), 'undecided  ["danger-harness-folder"]');
+  assert.equal(show(line, "explorer"), 'undecided  ["danger-harness-folder"]');
 });
 
 test("a child reads another session's subagent-artifacts and the agent-dir foreman.json: no rule refuses the read for any role", { skip: !posix }, () => {
@@ -54,8 +54,7 @@ test("a child reads another session's subagent-artifacts and the agent-dir forem
     const r = o.result as { block?: boolean; allow?: boolean; ask?: boolean; rule?: string } | undefined;
     return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
   };
-  const RO = '["danger-readonly-run"]';
-  for (const [role, shellLabels] of [["builder", "[]"], ["reviewer", RO], ["explorer", RO]] as const) {
+  for (const [role, shellLabels] of [["builder", "[]"], ["reviewer", "[]"], ["explorer", "[]"]] as const) {
     assert.equal(show(`cat ${cfg}`, role), `undecided  ${shellLabels}`, `${role} cat foreman.json`);
     assert.equal(decide("read", { path: cfg }, role), "undecided  []", `${role} read foreman.json`);
     assert.equal(show(`cat ${file}`, role), `undecided  ${shellLabels}`, `${role} cat subagent-artifacts`);

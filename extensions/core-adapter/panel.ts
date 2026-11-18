@@ -114,12 +114,12 @@ export interface ShadowOptions {
  * bound to the newest open pending panel of its gate that expects the model and has not launched it.
  * A launch gets the configured model clamped (cappedRung) and the primary's task behind the marker.
  */
-export function shadowLaunch(input: Json, pendings: readonly PendingView[], o: ShadowOptions): ShadowDecision {
+export function shadowLaunch(input: Json, pendings: readonly PendingView[], o: ShadowOptions, recorded?: ReadonlyMap<Json, Occasion>): ShadowDecision {
   const texts = [input.task, ...launchEntries(input).map((e) => e.task)];
   const named = texts.map(parseShadowMarker).find((m) => m !== null);
   if (!named) return { kind: "none" };
   const base = baseOf(named);
-  const gate = occasionOf(typeof input.task === "string" ? input.task : texts.find((t) => parseShadowMarker(t)));
+  const gate = recorded?.get(input) ?? occasionOf(typeof input.task === "string" ? input.task : texts.find((t) => parseShadowMarker(t)));
   const cfg = panelConfig(o.config);
   const refuse = (reason: ShadowRefusal, p?: PendingView, extra?: string): ShadowDecision => ({
     kind: "refused",
