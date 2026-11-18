@@ -163,7 +163,9 @@ When the watch reports `merged` and no other watch is open, the adapter starts t
   `workflow archive left out: <what (why)>; ...` follows (`closed/ (other rounds)`, `archive/ (earlier snapshots)`, `N links`,
   `N unreadable or special entries` (unreadable folders, files that fail `stat`, FIFOs, sockets, devices),
   `N files older than the session` (main worktree only), `N files over the 16 MiB cap: a, b, ...`). Only when nothing of the target's `.workflow/` was
-  left out does it no longer count for `ignored_files`; otherwise the refusal `ignored_files` keeps the worktree.
+  left out does it no longer count for `ignored_files`; otherwise the refusal `ignored_files` keeps the worktree. A completely archived `.workflow/` also stops
+  counting in its untracked form (a project that does not ignore `.workflow/`), as an exact top-level `?? .workflow/` record; it is refused when the folder holds a `.git` at any depth,
+  is too large to walk, or cannot be read, and an incomplete archive still refuses.
   When the adapter refuses up front (the target is the main checkout, or the head ref is the PR base branch), the session
   cwd's `.workflow/` is still snapshotted by the same rule, with the same lines; nothing is removed. Every other precondition stays: clean tree, no stash entry referencing the branch, not locked, no other live
   session with its cwd inside.
