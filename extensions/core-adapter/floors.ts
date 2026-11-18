@@ -20,14 +20,12 @@ interface FloorKeys {
   keyPatterns: string[];
   sectionNames: string[];
   remoteSubcommands: string[];
-  envPattern: string;
   protectedBranches: string[];
 }
 
 export const GIT_FLOOR_KEYS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "git-floor-keys.json");
 const KEYS = JSON.parse(fs.readFileSync(GIT_FLOOR_KEYS_FILE, "utf8")) as FloorKeys;
 const KEY_RES = KEYS.keyPatterns.map((p) => new RegExp(p));
-const ENV_RE = new RegExp(KEYS.envPattern);
 const REMOTE_SUBS = new Set(KEYS.remoteSubcommands);
 
 /** The refusal for a push by a child that is not a builder from a single launch. */
@@ -395,6 +393,7 @@ const PRIVILEGE = new Set(["sudo", "su", "doas", "pkexec", "runas"]);
 const POWER = new Set(["shutdown", "reboot", "halt", "poweroff"]);
 const DISK = new Set(["fdisk", "sfdisk", "cfdisk", "parted", "wipefs", "diskpart", "mkswap"]);
 const REMOVERS = new Set(["rm", "rmdir", "unlink", "shred", "srm", "trash", "trash-put"]);
+const OWNERS = new Set(["chmod", "chown", "chgrp"]);
 const DOWNLOAD = new Set(["curl", "wget", "fetch", "iwr", "irm", "invoke-webrequest", "invoke-restmethod", "http", "https", "xh", "aria2c"]);
 const SHELL_LIKE = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "pwsh", "powershell", "iex", "invoke-expression"]);
 const SYSTEM_DIRS = ["bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "opt", "proc", "root", "sbin", "srv", "sys", "usr", "var", "system", "library", "applications", "users", "home", "volumes", "private"];
@@ -445,7 +444,9 @@ function systemRemoval(word: string, env: FloorEnv): boolean {
   if (/^(~|\$HOME|\$\{HOME\})\/?$/.test(w)) return true;
   if (/^(~|\$HOME|\$\{HOME\})\/\.?\*?$/.test(w)) return true;
   if (w === "/" || w === "//") return true;
-  if (home && (w.replace(/\/$/, "") === home || w.replace(/\/$/, "") === slash(path.dirname(home)))) return true;
+  // a Windows home (drive letter) compares case-insensitively, whatever the host OS
+  const fold = (p: string): string => (/^[a-z]:\//i.test(home) ? p.toLowerCase() : p);
+  if (home && (fold(w.replace(/\/$/, "")) === fold(home) || fold(w.replace(/\/$/, "")) === fold(path.posix.dirname(home)))) return true;
   const lower = w.replace(/\/$/, "").toLowerCase();
   if (SYSTEM_DIRS.some((d) => lower === `/${d}`)) return true;
   return /^[a-z]:\/?$/.test(lower) || /^[a-z]:\/(windows|users|program files( \(x86\))?|programdata)$/.test(lower);
@@ -544,6 +545,10 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
     if (sys !== undefined) return hit("rm-system", `Removing '${sys}' (the file system root, the home directory or a system directory) is never allowed. Remove specific files inside the worktree, scratch or /tmp.`);
     const out = ops.find((w) => outside(w, seg.cwd ?? env.cwd, env));
     if (out !== undefined) return hit("delete-outside", `Deleting '${out}' outside the worktree, your scratch dir and /tmp is not allowed. Delete only inside those, or report the path to the user.`);
+  }
+  if (OWNERS.has(prog) && seg.argv.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) {
+    const sys = seg.argv.filter((w) => !w.startsWith("-")).find((w) => systemRemoval(w, env));
+    if (sys !== undefined) return hit("chmod-system", `A recursive \`${prog}\` on '${sys}' (the file system root, the home directory or a system directory) is never allowed. Change specific files inside the worktree, scratch or /tmp.`);
   }
   const dests = overwriteDests(seg, prog);
   const dout = dests.find((w) => w !== "" && outside(w, seg.cwd ?? env.cwd, env));
@@ -938,6 +943,123 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   return hit("secret-path", `'${x}' is a secret or key path (SSH, GnuPG, cloud or registry credentials, private keys, Pi's auth file). Never read or write it; ask the user for the value you need.`, word);
 }
 
+// ------------------------------------------------------------------ PowerShell units, deletes with an unknown target (plan PR B, O4)
+
+const PS_REMOVERS = new Set(["remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"]);
+/** `-Recurse` (any prefix of it), `/s`, and the `rm`-style `-r`, `-rf`, `-fr`. */
+const PS_RECURSE = /^(?:-r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?|\/s|-rf|-fr)$/i;
+const PS_ENCODED = /^-e(?:c|nc(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)?)?)?)?)?)?$/i;
+
+/**
+ * The PowerShell units of a line (the lexer of psunits.ts: one text per unit, the scripts of `pwsh -c` and `cmd /c` units and `$( )` substitutions included).
+ * A text that still holds a separator is a whole-line or pipeline text, not a unit.
+ */
+function psUnits(line: string): string[][] {
+  // `${env:X}` is read as `$env:X` before lexing (the lexer cuts a braced name into a block); a text substitution, the lexer is unchanged
+  return psUnitTexts(line.replace(/\$\{env:(\w+)\}/gi, "$$env:$1")).filter((t) => !/[;|&\n]/.test(t)).map((t) => t.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length > 0);
+}
+
+/** The line is read through the PowerShell units: the powershell tool (one segment, program `powershell`) or a bash line with a `pwsh`, `powershell` or `cmd` segment. */
+const foreignSegments = (segments: ShellSegment[]): boolean => segments.some((s) => ["pwsh", "powershell", "cmd"].includes(base(s.program)));
+
+/** An operand with the environment words a PowerShell or cmd unit uses replaced by fixed text: the floor env's home and `C:\Windows`; reads no environment, same on every OS. */
+function psOperand(word: string, env: FloorEnv): string {
+  const w = word.replace(/^(["'])(.*)\1$/, "$2");
+  const home = env.home ? env.home : null;
+  const homed = home ? w.replace(/^(?:~|\$home|\$env:userprofile|\$\{env:userprofile\}|%userprofile%)(?=[\\/]|$)/i, () => home) : w;
+  return homed.replace(/^(?:\$env:systemroot|\$\{env:systemroot\}|%systemroot%|\$env:windir|\$\{env:windir\}|%windir%)(?=[\\/]|$)/i, "C:\\Windows");
+}
+
+/** The remover words of a unit: the operands (flags dropped) when it is a PowerShell or cmd delete with a recursive flag, else null. */
+function psRecursiveDelete(words: string[]): string[] | null {
+  if (!PS_REMOVERS.has(base(words[0]))) return null;
+  const rest = words.slice(1);
+  if (!rest.some((w) => PS_RECURSE.test(w))) return null;
+  return rest.filter((w) => !/^-/.test(w) && !/^\/[a-z](?::\S*)?$/i.test(w));
+}
+
+/**
+ * The floors of the PowerShell units of a line (O4): a recursive delete whose target is the home directory, the file system root or a system folder
+ * (`systemRemoval`, after the fixed substitution of psOperand) is `rm-system`; `Format-Volume`, `Clear-Disk`, `Remove-Partition`, `diskpart` and `format X:` are `disk`.
+ */
+function psUnitFloors(line: string, env: FloorEnv): FloorHit | null {
+  const diskRe = RAW.find((r) => r.name === "disk")!;
+  for (const words of psUnits(line)) {
+    const text = words.join(" ");
+    if (diskRe.re.test(text) || /^format(?:\.exe|\.com)?\s+[a-z]:/i.test(text)) return hit("disk", diskRe.reason, text);
+    const ops = psRecursiveDelete(words);
+    if (!ops) continue;
+    const subst = ops.map((o) => psOperand(o, env));
+    // the unit text lost its quotes: a name with a space (`Program Files`) is also read as the rest of the words
+    const sys = [...subst, subst.join(" ")].find((o) => systemRemoval(o, env));
+    if (sys !== undefined) return hit("rm-system", `Removing '${sys}' (the file system root, the home directory or a system directory) is never allowed. Remove specific files inside the worktree, scratch or /tmp.`, text);
+  }
+  return null;
+}
+
+/** A label for the judge to look at first (no floor): a delete whose target the harness cannot read. */
+export interface UnknownDelete {
+  name: "danger-delete-unknown-target";
+  reason: string;
+}
+
+const UNKNOWN_DELETE = (why: string): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})` });
+const RM_RECURSIVE = /^-[A-Za-z]*[rR]|^--recursive$/;
+/** A recursive flag behind a command word that is itself a variable: short clusters only (`-rf`, `-R`), so a PowerShell parameter like `-Force` is none. */
+const VAR_CMD_RECURSIVE = /^-(?=[A-Za-z]{1,4}$)[A-Za-z]*[rR]|^--recursive$/;
+const EXEC_WORDS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+
+/**
+ * The judge-first label "delete with unknown target" (plan T2, from destructive_guard.py), read from the parsed line only: a recursive remover whose operand is
+ * unresolved (a variable, a substitution, an empty word), whose glob has no readable prefix or whose cwd is unresolved (a `cd` into a variable) or that runs
+ * under `xargs` or `find -exec`; a command word that is a variable with a recursive flag behind it; `git clean` with a variable operand; and, for a line read
+ * through the PowerShell units, any recursive delete word (the harness cannot read where it deletes), `-EncodedCommand` and `iex` of a computed string.
+ * A resolved variable or a glob inside the write area is none: the closed grammar of shellast.ts has already replaced it (`$FOREMAN_SCRATCH`, same-line assignments).
+ * No floor: the delete floors (`rm-system`, `delete-outside`) were judged before this is asked.
+ */
+export function unknownTargetDelete(text: string, segments: ShellSegment[], env: FloorEnv): UnknownDelete | null {
+  const win = (env.platform ?? process.platform) === "win32";
+  for (const s of segments) {
+    const prog = base(s.program);
+    const argv = s.argv;
+    if (prog === "rm" && argv.some((w) => RM_RECURSIVE.test(w))) {
+      if (s.wrappers.some((w) => base(w) === "xargs")) return UNKNOWN_DELETE("a remover under xargs");
+      const ops = deleteOperands(s, prog);
+      if ((s.opaque === "unresolved_var" || s.opaque === "process_substitution") && !homeSpelling(s)) return UNKNOWN_DELETE("an operand is a variable or a substitution");
+      if (ops.some((w) => w === "")) return UNKNOWN_DELETE("an operand is empty");
+      for (const w of ops) {
+        if (/[$`]/.test(w) && !/^\$\{?HOME\}?(?:[\\/]|$)/.test(w)) return UNKNOWN_DELETE(`'${cutFragment(w)}' holds a variable`);
+        const abs = px_(win).isAbsolute(w) || /^(?:~|\$HOME|\$\{HOME\})(?:[\\/]|$)/.test(w);
+        if (s.cwd === null && !abs) return UNKNOWN_DELETE(`'${cutFragment(w)}' is relative to a directory changed through a variable`);
+        if (/[*?[{]/.test(w) && resolveWord(w, s.cwd ?? env.cwd, env) === null) return UNKNOWN_DELETE(`the glob '${cutFragment(w)}' has no readable directory`);
+      }
+    }
+    const exec = prog === "find" ? argv.findIndex((w) => EXEC_WORDS.has(w)) : -1;
+    if (exec >= 0) {
+      const tail = argv.slice(exec + 1);
+      const end = tail.findIndex((w) => w === ";" || w === "+");
+      const cmd = end >= 0 ? tail.slice(0, end) : tail;
+      const removes = cmd.some((w) => base(w) === "rm") && cmd.some((w) => RM_RECURSIVE.test(w));
+      const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && /\b(?:rm|rmdir|unlink|shred)\b[^\n]*\s-[A-Za-z]*[rR]/.test(cmd.join(" "));
+      if (removes || viaRunner) return UNKNOWN_DELETE("a remover under find -exec");
+    }
+    if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) return UNKNOWN_DELETE("the command word is a variable with a recursive flag");
+    if (prog === "git" && argv.some((w) => /[$`]/.test(w))) {
+      const call = gitCall(s, env);
+      if (call?.sub === "clean") return UNKNOWN_DELETE("git clean with a variable operand");
+    }
+  }
+  if (foreignSegments(segments)) {
+    for (const words of psUnits(text)) {
+      if (psRecursiveDelete(words)) return UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes");
+      const p = base(words[0]);
+      if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) return UNKNOWN_DELETE("an encoded PowerShell command cannot be read");
+      if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) return UNKNOWN_DELETE("iex of a computed string cannot be read");
+    }
+  }
+  return null;
+}
+
 // ------------------------------------------------------------------ raw text
 
 const CMD = "(?:^|[;&|(\\n`]|\\$\\()\\s*(?:\\w+=\\S*\\s+)*";
@@ -952,8 +1074,8 @@ const GIT_CALL = new RegExp(
     GIT_VERB,
   "g",
 );
-/** The command position is unknown (a runner or a program built by substitution reads the text as code): git anywhere. */
-const GIT_ANY = /\b(push|remote)\b/g;
+/** The command position is unknown (a runner or a program built by substitution reads the text as code): git anywhere. The verb is a word of its own, not a piece of a path or a name (`guard-false-blocks-2-push`, `src/push.ts`). */
+const GIT_ANY = /(?<![\w./-])(push|remote)(?![\w./-])/g;
 /** `cmd`: the entry is a command-position word match for a program the segment checks name too; a clean line skips it (`cleanLine`). */
 const RAW: { name: string; re: RegExp; reason: string; cmd?: true }[] = [
   { name: "download-shell", re: /\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+\S+\s+)?(?:\/\S*\/)?(?:sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|perl|ruby|php|iex|invoke-expression|pwsh|powershell)\b/i, reason: "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked." },
@@ -961,7 +1083,7 @@ const RAW: { name: string; re: RegExp; reason: string; cmd?: true }[] = [
   { name: "download-shell", re: /\b(?:eval|iex|(?:ba|z|da|k)?sh\s+-c)\b[^\n;&|]*(?:\$\(|`)\s*(?:curl|wget|iwr|irm)\b/i, reason: "A downloaded script evaluated in the shell runs unreviewed code. Download to your scratch dir, read it, then run it." },
   { name: "privilege", re: new RegExp(`${CMD}(?:sudo|doas|su|pkexec)(?:\\s|$)`), reason: "Privilege escalation is not allowed. Run the command as the current user; ask the user when root is needed.", cmd: true },
   { name: "shutdown", re: new RegExp(`${CMD}(?:shutdown|reboot|halt|poweroff)(?:\\s|$)`), reason: "Shutting down or rebooting the machine is not allowed. Ask the user.", cmd: true },
-  { name: "disk", re: new RegExp(`${CMD}(?:mkfs\\S*|fdisk|sfdisk|parted|wipefs|diskpart)(?:\\s|$)`), reason: "Formatting or repartitioning a disk is not allowed. Ask the user.", cmd: true },
+  { name: "disk", re: new RegExp(`${CMD}(?:mkfs\\S*|fdisk|sfdisk|parted|wipefs|diskpart|format-volume|clear-disk|remove-partition)(?:\\s|$)`, "i"), reason: "Formatting or repartitioning a disk is not allowed. Ask the user.", cmd: true },
   { name: "disk", re: /\bdd\b[^\n;&|]*\bof=(?:\/dev\/|\\\\\.\\)/i, reason: "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead." },
   { name: "git-config", re: /(?:^|[\s;&|(=])GIT_CONFIG_(?:COUNT|KEY_[0-9]+|VALUE_[0-9]+|GLOBAL|SYSTEM|PARAMETERS)\s*=/, reason: "Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials. Run git without them." },
   { name: "git-config", re: /--config-env\b/, reason: "`--config-env` injects git config. Run git without it." },
@@ -1160,6 +1282,11 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
     const bd = psBuiltinDeny(text, env);
     if (bd) return bd;
   }
+  // O4: the PowerShell units of the powershell tool and of a bash line with a pwsh or cmd segment
+  if (foreignSegments(segments)) {
+    const pf = psUnitFloors(text, env);
+    if (pf) return pf;
+  }
   for (const s of segments) {
     const h = segmentFloors(s, env, segments);
     if (h) return h;
@@ -1177,6 +1304,9 @@ export function fieldLineFloors(line: string, segments: ShellSegment[], env: Flo
   const scan = maskLine(line, segments);
   const whole = rawScan(scan, cleanLine(segments));
   if (whole) return whole;
+  // a field line is read as a shell line is: the PowerShell units of a `pwsh` or `cmd` segment (O4)
+  const ps = foreignSegments(segments) ? psUnitFloors(line, env) : null;
+  if (ps) return ps;
   let ask: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
     const o = opaqueTextFloorsAt(scan, env, segments.some((s) => runsText(s) || /^[$`]/.test(s.program)));
@@ -1236,6 +1366,8 @@ const WRITE_TOOLS = new Set(["write", "edit", "foreman_move", "foreman_copy"]);
 const CONFIG_FILE = /(?:^|[\\/])foreman(?:[.-][\w.-]*)?\.json$/;
 /** The config keys no agent write may touch: safety.permissions*, safety.policy*, gate.* (read from the written text, fail closed). */
 const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
+/** The key forms of an unread line: dotted (`safety.permissions`, `gate.mode`) or quoted (`"permissions"`); a bare word in a path (`cleanup-permissions-2`) is no key. */
+const UNREAD_KEYS = /\bsafety\.(?:permissions|policy[A-Za-z]*)|\bgate\.|["'](?:permissions|policy[A-Za-z]*|gate)["']/;
 
 const foldFor = (env: FloorEnv): boolean => (env.platform ?? process.platform) === "win32" || (env.platform ?? process.platform) === "darwin";
 
@@ -1530,9 +1662,11 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   // both spellings: split on braces and commas (the pieces of a brace group) and whole (a brace group inside one word is expanded by protectedWord)
   const flat = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
   const words = [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
-  const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
+  // a Pi session file (`*.jsonl`) is no hit here: a line that only reads one (a transcript read through a path variable) is not refused; parsed write targets and path fields keep the entry
+  const unread = entries.filter((e) => e.ext === undefined);
+  const w = words.find((x) => protectedWord(x, env.cwd, env, unread));
   if (w !== undefined) return flag("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`, w);
-  if (FLOOR_KEYS.test(text)) {
+  if (UNREAD_KEYS.test(text)) {
     const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
     const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
     const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(reads.has(x) && !others.has(x)));

@@ -116,12 +116,12 @@ test("(E) a cleanly parsed read of a config file beside key words is no config-k
   const writes = [
     `git diff -- ${F} && echo gate > ${F}`,
     `echo gate > ${F} && grep gate $X`,
-    `git add ${F} && grep gate $X`,
-    `cat ${F} > out.json && grep gate $X`,
-    `git diff -- ${F} > out.json && grep gate $X`,
-    `git diff -- ${F} --output=out.json && grep gate $X`,
+    `git add ${F} && grep gate.mode $X`,
+    `cat ${F} > out.json && grep gate.mode $X`,
+    `git diff -- ${F} > out.json && grep gate.mode $X`,
+    `git diff -- ${F} --output=out.json && grep gate.mode $X`,
     `cat ${F} && $CMD gate > ${F}`,
-    `git diff -- config/foreman.json $(echo gate)`,
+    `git diff -- config/foreman.json $(echo gate.mode)`,
   ];
   for (const l of writes) for (const child of [false, true]) assert.equal(floorOf(l, child)?.rule, "floor-config-keys", `${child ? "child" : "main"}: ${l}`);
 });

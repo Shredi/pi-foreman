@@ -105,6 +105,7 @@ const POSITIVE: Record<string, Case[]> = {
   "danger-git-secret": [sh("git show HEAD:.env"), sh("git show HEAD:config/.env.production"), sh("git cat-file -p HEAD:config/.env.production"), sh("git show HEAD:~/.ssh/id_rsa")],
   // fires only with the gate's floor env (`DangerEnv.floor`), which this table's env lacks; its positives are in r2-secret-labels.test.ts
   "danger-harness-folder": [],
+  "danger-delete-unknown-target": [sh("ls | xargs rm -rf"), sh("find build -exec rm -rf {} +")],
 };
 
 const NEGATIVE: Record<string, Case[]> = {
@@ -118,6 +119,7 @@ const NEGATIVE: Record<string, Case[]> = {
   "danger-process": [sh("chmod +x src/run.sh"), sh("defaults read com.x"), sh("reg query HKCU\\x"), sh("ps aux"), sh("sleep 1 && echo done"), sh("echo a && echo b"), sh("launchctl list"), { tool: "bg_run", line: "sleep 100 &", input: { command: "sleep 100 &" } }],
   "danger-inject": [sh("herdr pane read 1-2"), sh("herdr pane list"), sh("tmux list-panes"), sh("echo herdr pane send-text hi")],
   "danger-opaque": [sh("echo hi"), sh("ls src"), sh("cat a.txt | wc -l")],
+  "danger-delete-unknown-target": [sh("echo hi"), sh("find build -name x -exec grep y {} +")],
   "danger-mcp-act": [{ tool: "mcp__chrome__list_pages", input: {} }, { tool: "mcp__chrome__take_snapshot", input: {} }, { tool: "mcp__chrome__navigate_page", input: { type: "url", url: "https://example.com/" } }, { tool: "mcp__x__get_thing", input: {} }, { tool: "mcp__x__search_things", input: {} }, { tool: "mcp__x__read_file", input: {} }, { tool: "mcp__x__find_x", input: {} }, { tool: "mcp__x__describe_x", input: {} }, { tool: "read", input: { path: "a.txt" } }],
   "danger-launch-outside": [
     { tool: "subagent", input: { agent: "builder", task: "x" } }, { tool: "subagent", input: { agent: "builder", task: "x", cwd: wt } }, { tool: "subagent", input: { agent: "reviewer", task: "x", worktree: path.join(owned, "sib") } },
