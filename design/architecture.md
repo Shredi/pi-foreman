@@ -600,7 +600,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 | Permission map | **replaced** by the own tool gate (r41); formerly `@gotgenes/pi-permission-system` 39.0.2 | n/a | Hands-on in the earlier layer notes; see `docs/permissions.md` |
 | Model review | **own** chain link `foreman-review` (replaces `pi-permission-ai-guard`) | n/a | ai-guard 0.13.0 ran with PS 39.0.2 and all verdict paths behaved, but its reviewer cannot switch with the provider without a restart. Replay covers all paths and the switch. |
 | Model review (rejected) | `@mzwing/pi-permission-auto-review` / `pi-verdict` | 0.7.0 / 0.14.0 | Auto-review needs Node ≥ 24 and PS 33–36. pi-verdict runs its own gate beside PS (double prompts). Load test only. |
-| Destructive/secret guard | **own** (vendored core) | core 0.23.0 @ fork SHA `8376da1` (latency run: `1be4960`) | CI latency run on three OSes |
+| Delete/secret floors | **own** (`floors.ts`; the vendored `destructive_guard.py` is no longer called) | n/a | Design; gate floor tests |
 | Ledger, gates, gate floors, permission overlay, bridge isolation, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
 | Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.2 (hands-on on 0.9.1) | Hands-on: child turns, thinking level reached |
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.4, pin 1.1.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |
