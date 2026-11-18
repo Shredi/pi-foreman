@@ -27,6 +27,13 @@ test("foreman env: fsmonitor off and ext transport never, existing entries kept,
   assert.deepEqual([env.GIT_CONFIG_KEY_0, env.GIT_CONFIG_KEY_1, env.GIT_CONFIG_VALUE_1, env.GIT_CONFIG_KEY_2, env.GIT_CONFIG_VALUE_2], ["user.name", "core.fsmonitor", "false", "protocol.ext.allow", "never"]);
 });
 
+test("foreman env: a bogus GIT_CONFIG_COUNT is treated as zero", () => {
+  const env: Record<string, string | undefined> = { GIT_CONFIG_COUNT: "abc" };
+  patchForemanGitEnv(env);
+  assert.equal(env.GIT_CONFIG_COUNT, "2");
+  assert.deepEqual([env.GIT_CONFIG_KEY_0, env.GIT_CONFIG_VALUE_0, env.GIT_CONFIG_KEY_1, env.GIT_CONFIG_VALUE_1], ["core.fsmonitor", "false", "protocol.ext.allow", "never"]);
+});
+
 test("config reader: sections, subsections, bare keys, comments", () => {
   assert.deepEqual(parseGitConfig('# c\n[core]\n\tfsmonitor = x ; y\n[url "ext::sh -c x"]\n\tinsteadOf = https://a\n[Remote.Origin]\n\tPushUrl\n'), [
     ["core.fsmonitor", "x ; y"],
