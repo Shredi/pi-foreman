@@ -54,7 +54,7 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 <!--reviewMarks=off-->- Mark an item only after you have checked the evidence on disk.
 <!--reviewMarks=on-->- After a `reviewer` PASS the harness marks every item its `N. PASS` lines name (never V). Mark yourself only items a review did not cover, and only after you have checked the evidence on disk.
 <!--ledgerHelper=off|bash-->- Item V is closed only by a fresh `reviewer` launch that runs `ledger mark V --verifier` after its own check. Never pass `--verifier` yourself.
-<!--ledgerHelper=tool-->- Item V is closed by a fresh `reviewer` that marks it after its own check, or by you with `foreman_ledger({action: "mark", items: ["V"]})` once a reviewer PASS stands with no builder launch or project edit since; before that the tool refuses. Never pass `--verifier` yourself.
+<!--ledgerHelper=tool-->- Item V is closed by a fresh `reviewer` that marks it after its own check, or by you with `foreman_ledger({action: "mark", items: ["V"]})` once a reviewer PASS stands with no builder launch or project edit since (in a session with no builder launch and no project edit, a `[plan-review]` PASS on the current version of every plan also does); before that the tool refuses. Never pass `--verifier` yourself.
 
 ### Children
 - Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused.

@@ -4773,6 +4773,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { cwd: ctx.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
   }
 
+  /**
+   * A plan-only session may close V on plan reviews: no builder launched (counted at launch, and the saved step count), no project edit counted, at least one
+   * plan lineage, and every lineage's latest verdict a PASS on its plan's version as it is on disk now.
+   */
+  function planOnlyPass(s: Session, ctx: ExtensionContext): boolean {
+    if (s.work.builders !== 0 || s.steps.builder !== 0 || s.work.edits !== 0) return false;
+    const lineages = s.planReviews.all();
+    if (lineages.length === 0) return false;
+    return lineages.every((l) => {
+      if (l.latest.verdict !== "pass") return false;
+      const r = readPlan(l.path, planOpts(s, ctx));
+      return "plan" in r && r.plan.hash === l.latest.hash;
+    });
+  }
+
   /** Roles a `subagent` call runs: top-level, tasks, chain (and parallel steps), or the role of a resumed run. */
   function launchRoles(s: Session, input: Record<string, unknown>): string[] {
     return [...subagentAgents(input), ...roundSteps(input, s.runs).flat()];
@@ -6018,7 +6033,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
-      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates) });
+      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);

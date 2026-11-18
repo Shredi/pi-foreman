@@ -188,9 +188,10 @@ function itemId(v: unknown): string | null {
 /**
  * Plan one `foreman_ledger` call as ledger.py argument lists (status is appended by the caller).
  * Foreman: every action; `mark V` only while the latest review verdict is PASS with no revision
- * since, then with `--verifier` and the attested note. Child (reviewer roles): only mark V.
+ * since, then with `--verifier` and the attested note; `planPass` (a session with no builder and no project edit, every plan's latest
+ * review a PASS on its current version; index.ts planOnlyPass) lets V close too. Child (reviewer roles): only mark V.
  */
-export function planLedgerCall(params: Record<string, unknown>, opts: { child: boolean; gate: GateView }): LedgerPlan {
+export function planLedgerCall(params: Record<string, unknown>, opts: { child: boolean; gate: GateView; planPass?: boolean }): LedgerPlan {
   const action = params.action;
   if (typeof action !== "string" || !(LEDGER_ACTIONS as readonly string[]).includes(action)) return { error: `${LEDGER_TOOL}: action must be one of ${LEDGER_ACTIONS.join(", ")}.` };
   const raw = params.items === undefined ? [] : Array.isArray(params.items) ? params.items : [params.items];
@@ -231,7 +232,7 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     case "mark": {
       if (items.length === 0) return { error: `${LEDGER_TOOL}: mark needs items.` };
       const v = items.includes("V");
-      if (v && !(opts.gate.last === "pass" && !opts.gate.revised)) return { error: `${LEDGER_TOOL}: refused: ${V_REFUSAL} (${opts.gate.passRun ? `last counted PASS: run ${opts.gate.passRun}` : "no counted PASS this round"}). Launch a reviewer; after its PASS mark V again.` };
+      if (v && !(opts.gate.last === "pass" && !opts.gate.revised) && !opts.planPass) return { error: `${LEDGER_TOOL}: refused: ${V_REFUSAL} (${opts.gate.passRun ? `last counted PASS: run ${opts.gate.passRun}` : "no counted PASS this round"}). Launch a reviewer; after its PASS mark V again. In a session with no builder and no project edit, a [plan-review] PASS on the current version of every plan also closes V.` };
       const nums = items.filter((x) => x !== "V");
       const calls = nums.map((n) => ["mark", n, ...(text ? [text] : [])]);
       if (v) calls.push(["mark", "V", V_ATTESTED_NOTE, "--verifier"]);
