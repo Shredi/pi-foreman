@@ -26,7 +26,7 @@ after(() => {
   if (tplParent) rmTestTmp(tplParent);
 });
 
-/** git in the work clone `work`; `pushOrigin` keeps the fixture's own origin path (the harness rewrites push urls). */
+/** git in the work clone `work`; `pushOrigin` keeps the fixture's own origin path. */
 function workGit(work: string, origin: string) {
   const g = (...a: string[]) => execFileSync("git", ["-C", work, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...a], { encoding: "utf8" }).trim();
   // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path

@@ -30,7 +30,7 @@ function build(root: string): string {
   fs.writeFileSync(path.join(repo, "README"), "x\n");
   git(repo, "add", "README");
   git(repo, "commit", "-q", "-m", "init");
-  // the harness sets url.invalid-push:.pushInsteadOf for every URL; the origin keeps its path
+  // an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path
   git(repo, "-c", `url.${origin}.pushInsteadOf=${origin}`, "push", "-q", "-u", "origin", "main");
   git(repo, "worktree", "add", "-q", "-b", "feat", path.join(root, "repo.worktrees", "feat"));
   return root;
