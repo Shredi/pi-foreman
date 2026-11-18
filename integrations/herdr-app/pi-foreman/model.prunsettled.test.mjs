@@ -19,10 +19,11 @@ test("an unsettled PR: the card and the state text never say passing", () => {
   assert.ok(!/pass/i.test(c.status), c.status);
 });
 
-test("an unsettled PR with a failed check shows fail at once", () => {
+test("an unsettled PR with a failed check shows fail at once, still pulsing while unsettled", () => {
   const pr = feed([{ n: "ci", state: "ok" }, { n: "lint", state: "fail" }], { unsettled: true });
   assert.equal(prDotState(pr).fill, "red");
-  assert.equal(prStateText(pr), "CI failing");
+  assert.equal(prDotState(pr).pulse, true);
+  assert.equal(prStateText(pr), "CI failing, still running");
 });
 
 test("a PR without the flag behaves as before", () => {
