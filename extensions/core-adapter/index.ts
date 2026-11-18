@@ -4404,7 +4404,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = sessionFor(ctx);
       // pi-subagents 0.89: the wake is a custom run with no `input`, so a notice appended with triggerTurn:false (held after an Esc, reserved, compaction) is caught up here: it is still the trailing entry before this message is saved
       if (s && !s.isChild) for (const unseen of s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? [])) onCustomMessage(s, unseen);
-      if (s) onCustomMessage(s, event.message);
+      if (s) onCustomMessage(s, event.message, true);
       if (s && !s.isChild) s.customSeen.mark(event.message);
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
@@ -4504,7 +4504,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** A custom message the foreman received: at message_end, or appended while idle and found at the next input (idlecustom.ts). */
-  function onCustomMessage(s: Session, message: unknown): void {
+  function onCustomMessage(s: Session, message: unknown, fresh = false): void {
     const m = message as { customType?: string; details?: unknown; content?: unknown };
     const live = (runId: string): boolean => isLiveRun(s, runId);
     const stale = s.supervisor.staleRequest(message, live);
@@ -4522,6 +4522,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) evalOwnAsk(s);
     if (m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender(m.details);
+    // D27: a message of the parent recorded at spawn is a prompt like the owner's: it opens a new pause window. Only the first handling (message_end) counts, never a catch-up of a message handled before; no text is read.
+    if (fresh && m.customType === INTERCOM_MESSAGE_TYPE) {
+      const parent = parentIntercomId(process.env);
+      const sender = senderOf(m.details)?.id;
+      const cross = (m.details as { message?: { crossMachine?: unknown } } | undefined)?.message?.crossMachine;
+      if (parent && sender === parent && !cross) (s.workAtPrompt = { ...s.work }), savePause(s);
+    }
     if (m.customType === INTERCOM_MESSAGE_TYPE) noteQuestion(s, m.details);
     if (m.customType === NOTIFY_TYPE) onCompletionNotice(s, m.content);
   }
