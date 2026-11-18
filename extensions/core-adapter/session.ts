@@ -34,6 +34,8 @@ import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
 import { withBlockedOn } from "./herdr.ts";
+import { cleanDialogText, ownerDialog, shapedConfirm } from "./ownerdialog.ts";
+import type { DialogSpec } from "./ownerdialog.ts";
 import type { EventBus } from "./herdr.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
@@ -52,7 +54,7 @@ const OPEN_WORKTREE_TIMEOUT_MS = 660_000;
 export const WORKTREE_MARK = "session worktree: ";
 
 export type SessionCommand =
-  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean; worktree?: boolean; base?: string }
+  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean; worktree?: boolean; base?: string; summary?: string }
   | { sub: "brief"; target: string; body: string; rework?: true }
   | { sub: "close"; target: string; path?: string }
   | { sub: "list" }
@@ -390,6 +392,8 @@ export interface SessionDeps {
   sendDetailed?: (to: string, text: string) => Promise<OutboxOutcome>;
   /** The owner's yes/no for a real open (see ownerConfirm); absent = no interactive session, so an open is refused. `signal` withdraws the dialog. */
   confirm?: (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
+  /** Like `confirm`, drawn in the owner-dialog shape (see ownerConfirmShaped); when present it is used instead of `confirm`. */
+  confirmShaped?: (spec: DialogSpec, signal?: AbortSignal) => Promise<boolean>;
   /**
    * The tool's pending state (the foreman_script proposal pattern): opens whose dialog is unanswered, by label. Without it the
    * confirm is awaited without limit (the `/foreman session open` command).
@@ -491,24 +495,52 @@ export function ownerConfirm(ctx: ExtensionContext, events: EventBus | undefined
   };
 }
 
-/** The summary the owner confirms: label, model, cwd, worktree and base, plan-first, machine, first 3 non-empty brief lines. */
-function openSummary(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string): string {
-  let brief: string;
+/** The shaped-confirm hook of one Pi context (the same rules as ownerConfirm): the dialog is drawn in the owner-dialog shape. */
+export function ownerConfirmShaped(ctx: ExtensionContext, events: EventBus | undefined): SessionDeps["confirmShaped"] {
+  if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return undefined;
+  return async (spec, signal) => {
+    try {
+      return (await withBlockedOn(events, { on: "owner", kind: "confirm" }, cleanDialogText(spec.ask), () => shapedConfirm(ctx.ui, ctx.mode, spec, signal ? { signal } : {}))) === true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** The brief's first `#` heading with markdown signs and a leading `Brief:` removed, its first letter capitalised, or null. */
+function briefHeading(file: string): string | null {
   try {
-    brief = fs.readFileSync(path.resolve(d.cwd, c.brief), "utf8").split(/\r?\n/).filter((l) => l.trim() !== "").slice(0, 3).join("\n");
+    for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+      const m = /^#\s+(.*)$/.exec(line);
+      if (!m) continue;
+      const h = cleanDialogText(m[1].replace(/[`*_]/g, "").replace(/^brief:\s*/i, ""));
+      return h === "" ? null : h.charAt(0).toUpperCase() + h.slice(1);
+    }
   } catch {
-    brief = "(brief unreadable)";
+    // unreadable: no heading
   }
-  return [
-    `label: ${c.label}`,
-    `model: ${model ?? "(default)"}`,
-    `cwd: ${cwd}`,
-    `worktree: ${c.worktree ? `yes (base ${c.base ?? "default branch"})` : "no"}`,
-    `plan-first: ${c.planFirst ? "yes" : "no"}`,
-    `machine: ${c.machine ?? "local"}`,
-    "brief:",
-    brief,
-  ].join("\n");
+  return null;
+}
+
+/** What the owner confirms: what opens and why (the asking session's `summary`, else the brief's heading), the facts, the brief's link and heading. */
+function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string): DialogSpec {
+  const file = path.resolve(d.cwd, c.brief);
+  const heading = briefHeading(file);
+  const given = c.summary === undefined ? "" : cleanDialogText(c.summary).slice(0, 300);
+  return {
+    ask: `Open a new session ${c.label}?`,
+    summary: given || heading || `A new session for ${c.label}.`,
+    facts: [
+      ["Folder", cwd],
+      ["Worktree", c.worktree ? `yes, new branch from ${c.base ?? "the default branch"}` : "no, it uses this folder as it is"],
+      ["Plan step", c.planFirst ? "yes, you approve its plan in its pane" : "no"],
+      ["Model", model ?? "(default)"],
+      ["Machine", c.machine ?? "this one"],
+    ],
+    links: [{ label: "Brief", path: file, text: "open the brief", kind: "text" }],
+    ...(heading ? { detail: [`Brief heading: ${heading}`] } : {}),
+    answers: "Yes: the session starts   No: nothing opens",
+  };
 }
 
 /** Why `file` is not a readable regular file (a short fixed phrase, never the error text with its path), or null when it is one. */
@@ -563,13 +595,17 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const open = openEntryOf(d, c.label);
   if (open) return { text: describeEntry(open, `session ${c.label} is already open`), ok: false };
   if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
-  const title = `pi-foreman: open session ${c.label}?`;
-  const message = openSummary(d, c, model, cwdArg);
+  const spec = openSpec(d, c, model, cwdArg);
+  const ask = (signal?: AbortSignal): Promise<boolean> => {
+    if (d.confirmShaped) return d.confirmShaped(spec, signal);
+    const { ask: title, body } = ownerDialog(spec, null);
+    return signal ? d.confirm!(title, body, signal) : d.confirm!(title, body);
+  };
   if (!d.pendingOpens) {
-    if ((await d.confirm(title, message)) !== true) return DECLINED(c.label);
+    if ((await ask()) !== true) return DECLINED(c.label);
     return (await spawnOpen(d, c, argv, model)).r;
   }
-  return confirmThenOpen(d, c, argv, model, title, message);
+  return confirmThenOpen(d, c, argv, model, ask);
 }
 
 const DECLINED = (label: string): SessionResult => ({ text: `session open refused [owner_declined]: the owner declined to open session ${label}`, ok: false });
@@ -585,7 +621,7 @@ interface OpenOutcome {
  * "pending", the dialog stays and its answer (Yes: the open runs; No; a failed open) is sent as a wake message. A cancelled call
  * (abort signal) withdraws the dialog and opens nothing; an answer that still arrives from a UI that could not withdraw is reported.
  */
-async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined, title: string, message: string): Promise<SessionResult> {
+async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined, ask: (signal?: AbortSignal) => Promise<boolean>): Promise<SessionResult> {
   const pend = d.pendingOpens!;
   const label = c.label;
   const have = pend.get(label);
@@ -601,7 +637,7 @@ async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub:
     d.wake?.(label, wakeText(d, label, o));
   };
   pend.set(label, entry);
-  const answer = d.confirm!(title, message, entry.abort.signal).catch(() => false);
+  const answer = ask(entry.abort.signal).catch(() => false);
   // runs when the dialog is answered, in or after the wait window
   const outcome = answer.then(async (yes): Promise<OpenOutcome> => {
     try {
@@ -704,9 +740,22 @@ function describeEntry(e: SessionEntry, lead: string, tail = ". Adopt it: forema
   ].join("; ") + tail;
 }
 
+/** Seconds the open script waits before it checks that the child started (herdr-core only). */
+const START_CHECK_SECONDS = "3";
+
+/** The open script's environment: this process's, plus the running Pi's launch words (the fallback when the child's PATH has no `pi`) and the start check. */
+function openEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+  const cli = process.argv[1];
+  if (cli && path.isAbsolute(cli) && fs.existsSync(cli) && fs.statSync(cli).isFile()) env.PI_FOREMAN_PI_ARGV = JSON.stringify([process.execPath, cli]);
+  env.PI_FOREMAN_START_CHECK_SECONDS = START_CHECK_SECONDS;
+  return env;
+}
+
 /** The spawn of `foreman_session.py open` (never killed by an abort: it ends with the registry entry or a message) and its result. */
 async function spawnOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined): Promise<OpenOutcome> {
-  const r = await d.spawner(d.python!, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
+  const r = await d.spawner(d.python!, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd, env: openEnv() });
   const out = r.stdout.trim();
   const ok = !r.error && !r.timedOut && r.code === 0;
   if (c.worktree && !c.dryRun && ok) await noteWorktree(d, c.label, out);
@@ -855,6 +904,8 @@ export async function runSessionOpenTool(d: SessionDeps, params: Record<string, 
   if (params.worktree === true) c.worktree = true;
   const base = str("base");
   if (base) c.base = base;
+  const summary = str("summary");
+  if (summary) c.summary = summary;
   if (c.base !== undefined && !c.worktree) return { text: `${SESSION_OPEN_TOOL}: base needs worktree: true.`, ok: false };
   if (c.worktree && c.machine) return { text: `${SESSION_OPEN_TOOL}: worktree cannot be combined with machine.`, ok: false };
   if (params.trust === true) c.trust = true;
@@ -958,6 +1009,7 @@ export function registerSession(
           python: s.python,
           spawner: deps.spawner,
           confirm: ownerConfirm(ctx, pi.events as EventBus | undefined),
+          confirmShaped: ownerConfirmShaped(ctx, pi.events as EventBus | undefined),
           send: (to, text) => outboxSend(pi.events, to, text, "session", SEND_WAIT_MS),
           sendDetailed: (to, text) => outboxSendDetailed(pi.events, to, text, "session", SEND_WAIT_MS),
           model: s.model,
@@ -990,6 +1042,7 @@ const OPEN_PARAMS = {
     machine: { type: "string", description: "Open the session on this remote machine (a sessions.machines name); needs cwd, the directory on that machine." },
     worktree: { type: "boolean", description: "Create the session's own linked worktree (<close.worktreeDir>/<label>, branch <sessions.worktree.branchPrefix>/<label> from the fetched default branch; npm ci only when a lockfile is declared) and open the session there. Not with machine." },
     base: { type: "string", description: "With worktree: the branch, tag or commit the new branch starts from (default: the fetched default branch of origin)." },
+    summary: { type: "string", description: "One or two plain sentences for the owner: what the new session does and why. The owner reads them in the open dialog, so write them for the owner, not for the new session. Without it the dialog shows the brief's first heading." },
     trust: { type: "boolean", description: "With machine: record the trust grant for the remote folder on that machine (a stored refusal is not overridden)." },
   },
   required: ["label", "brief"],
@@ -1025,6 +1078,7 @@ export function registerSessionOpenTool(
           python: s.python,
           spawner: deps.spawner,
           confirm: ownerConfirm(ctx, pi.events as EventBus | undefined),
+          confirmShaped: ownerConfirmShaped(ctx, pi.events as EventBus | undefined),
           pendingOpens,
           confirmWaitMs: waitSeconds > 0 ? Math.round(waitSeconds * 1000) : 0,
           signal,

@@ -2,21 +2,30 @@
 // Usage: node scripts/foreman_test_run.mjs <node args and globs...>      -> node <leading options> --test --test-concurrency=N <globs>
 //        node scripts/foreman_test_run.mjs --exec -- <command> [args...]  -> the command, lock only (no concurrency flag)
 // Leading node options (`--import ./x.mjs`, other `-x` flags) stay before `--test`; the first plain argument starts the globs.
+// A leading `--write-spawn-baseline` (npm run test:node:baseline) writes scripts/foreman_test_spawn_baseline.json, the child-process count per test file, when the run exits 0;
+// a run over the budget names the files that grew most against it. Refresh it only when the limit changes.
 // Env: FOREMAN_TEST_LOCK=0 (or a truthy CI) skips the lock; FOREMAN_TEST_CONCURRENCY=N sets --test-concurrency (default
 // half the cores); FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) is the age after which a lock counts as stale;
 // FOREMAN_TEST_LOCK_DIR overrides the lock directory (default <agentDir>/pi-foreman/state, else the temp dir).
+// The command's env has the running-session variables of extensions/core-adapter/test/session-env.json removed (the lock reads its own env first).
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutSessionEnv } from "./session_env.mjs";
 
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
 // (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process. A run that passed
 // but started any npm, or more child processes than the budget, fails. FOREMAN_TEST_SPAWN_BUDGET overrides the budget.
-// Last measured: 20904 child processes in a full `npm run test:node` run (git 16283, python 4429, node 62, npm 0, other 130).
-// The limit 22600 is the owner's decision of 2026-11-17 for the per-checkout review gate (measurement plus about 750 headroom, rounded; runs vary by several hundred); a cleanup of the per-step git and python calls is planned to bring it down; growth beyond it should be a decision.
+// Measured 2026-11-18 on macOS: 21515 child processes in a full `npm run test:node` run (git 16813, python 4509, node 62, npm 0, other 131).
+// The limit is the owner's decision of 2026-11-18: the measurement plus a 10 % margin, rounded up to the next 100 (23700), capped at 22600; one number for the whole node run.
+// The per-file counts are committed in scripts/foreman_test_spawn_baseline.json; `npm run test:node:baseline` refreshes it, only when the limit changes. On a run over the budget the runner lists the files that grew most against it.
+// The permission clean-up round is expected to lower the limit (about 6,500 starts sit in the code it removes or rewrites).
 export const DEFAULT_SPAWN_BUDGET = 22600;
+
+export const SPAWN_BASELINE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "foreman_test_spawn_baseline.json");
+export const BASELINE_COMMAND = "npm run test:node:baseline";
 
 const OPTIONS_WITH_VALUE = new Set(["--import", "--require", "-r", "--loader", "--env-file"]);
 const POLL_MS = 2000;
@@ -84,6 +93,64 @@ export function spawnGuardFailures(code, t, budget, npmFiles = []) {
   }
   if (t.total > budget) out.push(`the test run started ${t.total} child processes, over the budget of ${budget}`);
   return out;
+}
+
+/** Takes the runner's own flag off argv: only a leading `--write-spawn-baseline`; anywhere else it is left for node. */
+export function splitRunnerFlags(argv) {
+  if (argv[0] === "--write-spawn-baseline") return { writeBaseline: true, rest: argv.slice(1) };
+  return { writeBaseline: false, rest: argv };
+}
+
+/** A count record's file label with `/` separators (a baseline written on one OS compares on another). */
+const normalizeLabel = (file) => String(file).replace(/\\/g, "/");
+
+/** The child-process total per test file: { label: n }; records without a file (older shape) are "(no file)". */
+export function spawnCountsByFile(records) {
+  const byFile = {};
+  for (const r of records) {
+    const label = typeof r?.file === "string" ? normalizeLabel(r.file) : "(no file)";
+    let n = 0;
+    for (const [k, v] of Object.entries(r ?? {})) if (k !== "file" && Number.isInteger(v) && v >= 0) n += v;
+    if (n > 0) byFile[label] = (byFile[label] ?? 0) + n;
+  }
+  return byFile;
+}
+
+/** The files whose count grew against the baseline, largest growth first, at most `n`: [{ file, now, baseline, delta, isNew }]. Files missing from the baseline count fully and are new; equal or shrunk files are left out. */
+export function spawnGrowth(byFile, baseline, n = 10) {
+  const out = [];
+  for (const [file, now] of Object.entries(byFile)) {
+    const isNew = !Object.hasOwn(baseline, file);
+    const base = isNew ? 0 : baseline[file];
+    if (now > base) out.push({ file, now, baseline: base, delta: now - base, isNew });
+  }
+  out.sort((a, b) => b.delta - a.delta || (a.file < b.file ? -1 : 1));
+  return out.slice(0, n);
+}
+
+/** The baseline's `files` map from `file`, or null when it is missing, unparsable or of the wrong shape (a `files` that is not a plain object, or a count that is not a non-negative integer). */
+export function readSpawnBaseline(file) {
+  try {
+    const files = JSON.parse(fs.readFileSync(file, "utf8"))?.files;
+    if (files === null || typeof files !== "object" || Array.isArray(files)) return null;
+    for (const v of Object.values(files)) if (!Number.isInteger(v) || v < 0) return null;
+    return files;
+  } catch {
+    return null;
+  }
+}
+
+/** The text printed after a budget failure: the growth list (or why there is none) and how to refresh the baseline. `baseline` is readSpawnBaseline's result. */
+export function spawnGrowthLines(growth, baseline) {
+  if (baseline === null) return ["the per-file baseline is missing or unreadable, so no growth list (scripts/foreman_test_spawn_baseline.json)"];
+  const lines = growth.map((g) => (g.isNew ? `  +${g.delta} ${g.file} (new)` : `  +${g.delta} ${g.file} (now ${g.now}, baseline ${g.baseline})`));
+  lines.push(`refresh the list with: ${BASELINE_COMMAND} (only when the limit changes)`);
+  return lines;
+}
+
+/** Whether a run writes the baseline: it exited 0 (also when over the budget) and the flag was given. */
+export function shouldWriteBaseline(code, flag) {
+  return flag === true && code === 0;
 }
 
 /** The node argv for a test run: leading options, then `--test --test-concurrency=N`, then the globs. */
@@ -197,7 +264,8 @@ export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, std
   }
 }
 
-async function main(argv, env = process.env) {
+async function main(rawArgv, env = process.env) {
+  const { writeBaseline, rest: argv } = splitRunnerFlags(rawArgv);
   let cmd;
   let args;
   if (argv[0] === "--exec") {
@@ -217,7 +285,7 @@ async function main(argv, env = process.env) {
   }
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "pf-spawn-count-"));
   const code = await new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? { ...env, FOREMAN_SPAWN_COUNT_DIR: countDir } : env, shell: false });
+    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? { ...withoutSessionEnv(env), FOREMAN_SPAWN_COUNT_DIR: countDir } : withoutSessionEnv(env), shell: false });
     const forward = (sig) => () => child.kill(sig);
     const handlers = ["SIGINT", "SIGTERM"].map((s) => [s, forward(s)]);
     for (const [s, h] of handlers) process.on(s, h);
@@ -239,6 +307,16 @@ async function main(argv, env = process.env) {
     process.stdout.write(`${spawnSummaryLine(totals)}\n`);
     const failures = spawnGuardFailures(code, totals, spawnBudget(env), npmCountsByFile(records));
     for (const f of failures) process.stderr.write(`foreman_test_run: ${f}\n`);
+    const byFile = spawnCountsByFile(records);
+    if (code === 0 && totals.total > spawnBudget(env)) {
+      const baseline = readSpawnBaseline(SPAWN_BASELINE_FILE);
+      for (const l of spawnGrowthLines(baseline ? spawnGrowth(byFile, baseline) : [], baseline)) process.stderr.write(`foreman_test_run: ${l}\n`);
+    }
+    if (shouldWriteBaseline(code, writeBaseline)) {
+      const sorted = Object.fromEntries(Object.entries(byFile).sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+      fs.writeFileSync(SPAWN_BASELINE_FILE, `${JSON.stringify({ measured: new Date().toISOString().slice(0, 10), files: sorted }, null, 2)}\n`);
+      process.stdout.write(`wrote ${SPAWN_BASELINE_FILE}\n`);
+    }
     return failures.length ? 1 : code;
   } finally {
     fs.rmSync(countDir, { recursive: true, force: true });

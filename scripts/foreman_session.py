@@ -17,8 +17,9 @@
 
 `open` writes the handoff dir `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/`:
   brief.md  the brief file's text plus the report-back footer (message contract below)
-  parent    the opener's intercom id (the child's close check reads it: re-pointing the parent
-            is a one-file change)
+  parent    the opener's intercom id (the child's routing, close check and replies re-read it per call;
+            a hand edit, temp file then rename, to another valid intercom id re-points them but does
+            not move the registry entry: see docs/sessions.md, re-point an orphaned child)
   child     the child's intercom id `fm-<slug>-<6 hex>`
   launch.txt the exact launch line (the Herdr pane command, else this platform's fallback line)
 and records the session in `<agent dir>/pi-foreman/state/sessions.json` (atomic write).
@@ -345,7 +346,7 @@ def footer(label, plan_first):
         "`PR #n green on <sha>, mergeable, ready to merge` (a PR that is green and still a draft: `PR #n green on <sha>,",
         "mergeable, still a draft`), or, when the checks passed but a review or a branch rule holds the PR back, the",
         "line the watch gives, or that you are stuck and why; on a conflict merge the base",
-        "branch into yours yourself and push via the parent.",
+        "branch into yours yourself and push it.",
         "Your work on the PR ends at ready. Report it once, then wait: no session merges a PR, and the watch reports the",
         "merge. A review or comment that arrives meanwhile is feedback: act on it, get a reviewer PASS on the new head and",
         "report ready again.",
@@ -748,6 +749,18 @@ def hc_outlive_parent(cfg):
     return value if isinstance(value, bool) else True
 
 
+def pi_fallback_words():
+    """The running Pi's launch words (`PI_FOREMAN_PI_ARGV`, a JSON list the opening Pi sets) when no `pi` is on PATH, else None."""
+    if shutil.which("pi"):
+        return None
+    try:
+        words = json.loads(os.environ.get("PI_FOREMAN_PI_ARGV") or "null")
+    except ValueError:
+        return None
+    ok = isinstance(words, list) and words and all(isinstance(w, str) and w for w in words)
+    return words if ok else None
+
+
 def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi", banner=None):
     """The child's argv after `--` (no shell, unquoted): the TUI pane identity is dropped, the caller's PATH passed.
     `pi_word` names the Pi CLI in the PowerShell wrapper (a remote Windows child passes `pi.cmd`). `banner` (see
@@ -755,8 +768,8 @@ def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi", banne
     if platform == "win32":
         head = "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID -ErrorAction SilentlyContinue; $env:PATH = %s; " % ps_quote(path)
         return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word, banner)]
-    pi = shutil.which("pi") or "pi"
-    argv = (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
+    pi = pi_fallback_words() or [shutil.which("pi") or "pi"]
+    argv = (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + pi
             + (["--model", model] if model else []) + launch_messages(first, prompt))
     if banner:  # the printf result is ignored (`;`): the exec always runs
         return ["sh", "-c", 'printf "%s\\n" "$1"; shift; exec "$@"', "sh", banner] + argv
@@ -807,6 +820,34 @@ def open_in_hc(binary, name, cwd, child_argv, outlive, space=None, extra_labels=
     parent = reply.get("parent")
     return {"address": reply["address"], "parent": parent if isinstance(parent, str) and VALUE_RE.match(parent) else None,
             "space": space}
+
+
+START_CHECK_LINES = 20
+
+
+def start_check(binary, address):
+    """After `hc run`: with PI_FOREMAN_START_CHECK_SECONDS above 0, wait that long, then `hc get`. (exit code, the last lines
+    of the terminal) when the child already finished, else None (also when hc cannot tell). The dead terminal stays until closed."""
+    try:
+        seconds = float(os.environ.get("PI_FOREMAN_START_CHECK_SECONDS") or 0)
+    except ValueError:
+        return None
+    if not math.isfinite(seconds) or seconds <= 0:
+        return None
+    time.sleep(seconds)
+    try:
+        info = hc_read(binary, ["get", address, "--json"])
+    except HcError:
+        return None
+    if not isinstance(info, dict) or info.get("state") != "finished":
+        return None
+    code = info.get("exit_code")
+    try:
+        text = hc_read(binary, ["read", address, "--json", "--lines", str(START_CHECK_LINES)]).get("text")
+    except (HcError, AttributeError):
+        text = None
+    lines = text.rstrip().splitlines()[-START_CHECK_LINES:] if isinstance(text, str) else []
+    return (code if isinstance(code, int) else "unknown"), "\n".join(lines)
 
 
 def dig(data, *keys):
@@ -996,7 +1037,7 @@ def posix_command(env, model, prompt, first=(), banner=None):
 
 
 def _posix_command(env, model, prompt, first=()):
-    parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
+    parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + [shlex.quote(w) for w in pi_fallback_words() or ["pi"]]
     if model:
         parts += ["--model", shlex.quote(model)]
     return " ".join(parts + [shlex.quote(m) for m in launch_messages(first, prompt)])
@@ -1012,7 +1053,9 @@ def ps_quote(v):
 
 def powershell_command(env, model, prompt, first=(), pi_word="pi", banner=None):
     sets = (["Write-Host %s" % ps_quote(banner)] if banner else []) + ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
-    call = [pi_word] + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
+    words = pi_fallback_words() if pi_word == "pi" else None
+    head = ["&"] + [ps_quote(w) for w in words] if words else [pi_word]
+    call = head + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 
@@ -1297,8 +1340,14 @@ def open_session(p, remote=None):
         try:
             made = open_in_hc(binary, hc_name(child), cwd, child_argv, outlive, space, labels, bool(remote))
             entry.update(backend="hc", hc=made, status="open")
-            say("opened under herdr-core: %s (%s)" % (made["address"], "parent %s" % made["parent"] if made["parent"]
-                                                      else "not nested: no parent terminal"))
+            dead = None if remote else start_check(binary, made["address"])
+            if dead:
+                entry["status"] = "failed"
+                warn("session %s did not start: exit %s%s" % (label, dead[0], "\n" + dead[1] if dead[1] else ""))
+                code = 2
+            else:
+                say("opened under herdr-core: %s (%s)" % (made["address"], "parent %s" % made["parent"] if made["parent"]
+                                                          else "not nested: no parent terminal"))
         except HcError as e:
             entry["status"] = "failed"
             warn(str(e))

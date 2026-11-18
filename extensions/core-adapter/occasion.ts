@@ -1,5 +1,5 @@
 // Review occasions (docs/review.md): one launch path, climb rung, model rule and extractor for every
-// review, told apart by a marker in the reviewer's task text:
+// review, told apart by the launch field `occasion` or a marker at the head of the reviewer's task text (launchOccasion):
 //   [plan-review]    the plan before the checkpoint (ceremony.planReview),
 //   [high-stakes]    the extra whole-change pass of a risky change (highstakes.ts; not config-facing, never counts),
 //   [pre-pr]         the whole branch diff before a pull request,
@@ -39,9 +39,62 @@ export function occasionOf(text: unknown, reason?: unknown): Occasion {
   return "item";
 }
 
-/** A reviewer entry classed `high-stakes` whose prose also names `[pre-pr]` (a `[second-opinion]` or `[plan-review]` tag would have won): the tags contradict. */
-export const namesBothTags = (occasions: Map<Json, Occasion>): boolean =>
-  [...occasions].some(([e, o]) => o === "high-stakes" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string" && tagIn(prose(e.task), "pre-pr"));
+/** The values of the launch field `occasion` (a reviewer entry's review kind), in the precedence order of `occasionOf`. */
+export const LAUNCH_OCCASIONS = ["second-opinion", "plan-review", "high-stakes", "pre-pr"] as const;
+export type LaunchOccasion = (typeof LAUNCH_OCCASIONS)[number];
+export const isLaunchOccasion = (v: unknown): v is LaunchOccasion => typeof v === "string" && (LAUNCH_OCCASIONS as readonly string[]).includes(v);
+
+/** The occasion tags of the head run: the leading bracket tokens of the prose, each `[x]` or `[[x]]`; other tokens (`[panel-shadow:m]`, `[[replay:id]]`, `[re-review items]`) are skipped. */
+function headTags(task: string): Set<LaunchOccasion> {
+  const out = new Set<LaunchOccasion>();
+  let rest = prose(task);
+  for (;;) {
+    const m = /^\s*(?:\[\[([^[\]\n]*)\]\]|\[([^[\]\n]*)\])/.exec(rest);
+    if (!m) return out;
+    const name = (m[1] ?? m[2] ?? "").trim().toLowerCase();
+    if (isLaunchOccasion(name)) out.add(name);
+    rest = rest.slice(m[0].length);
+  }
+}
+
+/** The occasion the head run names with the precedence of `occasionOf`; "ambiguous" for `[pre-pr]` with `[high-stakes]` and neither `[second-opinion]` nor `[plan-review]`; null for none. */
+function headOccasion(tags: ReadonlySet<LaunchOccasion>): LaunchOccasion | "ambiguous" | null {
+  const first = LAUNCH_OCCASIONS.find((t) => tags.has(t)) ?? null;
+  return first === "high-stakes" && tags.has("pre-pr") ? "ambiguous" : first;
+}
+
+export type OccasionRefusal = "review_occasion_ambiguous" | "review_occasion_late";
+export type LaunchOccasionResult = { occasion: Occasion; prepend: boolean } | { refused: OccasionRefusal; text: string };
+
+/**
+ * The occasion of one launch entry. A non-reviewer entry is `item` without any text check. A reviewer entry takes it from its sources: the launch
+ * field `taken` (the validated `occasion` value), `reason: "second-opinion"` (the entry's, else the launch's) and the head run of its task; all
+ * present sources must agree. With none, a tag later in the text is refused (`review_occasion_late`); with a source, later tags are mentions.
+ * `prepend` is true when the field names a kind the head run does not: the caller puts `[<kind>] ` in front of the task.
+ */
+export function launchOccasion(entry: Json, taken: unknown, launchReason?: unknown): LaunchOccasionResult {
+  if (typeof entry.agent !== "string" || !REVIEW_ROLES.includes(entry.agent)) return { occasion: "item", prepend: false };
+  const task = typeof entry.task === "string" ? entry.task : "";
+  const tags = headTags(task);
+  const head = headOccasion(tags);
+  if (head === "ambiguous") return { refused: "review_occasion_ambiguous", text: "pi-foreman: launch refused [review_occasion_ambiguous]: the head of the reviewer task names both [pre-pr] and [high-stakes]; keep one (or set occasion on the launch and quote the other in backticks)." };
+  const sources: [string, LaunchOccasion][] = [];
+  if (isLaunchOccasion(taken)) sources.push([`occasion: "${taken}"`, taken]);
+  if ((entry.reason ?? launchReason) === "second-opinion") sources.push(['reason: "second-opinion"', "second-opinion"]);
+  if (head) sources.push([`[${head}] at the head of the task`, head]);
+  if (sources.length === 0) {
+    const t = prose(task);
+    const kind = LAUNCH_OCCASIONS.find((k) => tagIn(t, k));
+    if (!kind) return { occasion: "item", prepend: false };
+    return { refused: "review_occasion_late", text: `pi-foreman: launch refused [review_occasion_late]: the reviewer task names [${kind}] only later in the text, where it could be a mention. Fix: set occasion: "${kind}" on the launch (or put [${kind}] first in the task).` };
+  }
+  if (new Set(sources.map((x) => x[1])).size > 1) return { refused: "review_occasion_ambiguous", text: `pi-foreman: launch refused [review_occasion_ambiguous]: the reviewer launch names different review kinds (${sources.map((x) => x[0]).join(", ")}); keep one.` };
+  const occasion = sources[0][1];
+  return { occasion, prepend: isLaunchOccasion(taken) && !tags.has(occasion) && typeof entry.task === "string" };
+}
+
+/** Put the `[<kind>] ` marker of a launch field in front of a reviewer task (the head run already naming the kind: nothing). */
+export const withOccasionMarker = (task: string, kind: LaunchOccasion): string => (headTags(task).has(kind) ? task : `[${kind}] ${task}`);
 
 /** Whether a review of this occasion counts for items, the review gate, the climb and the PR gate. */
 export const countsForItems = (o: Occasion): boolean => o === "item" || o === "pre-pr";

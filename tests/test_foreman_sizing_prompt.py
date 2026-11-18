@@ -1,7 +1,9 @@
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
@@ -37,9 +39,9 @@ ROLE_PAIRS = [
     ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
     ("- Launch only the roles `explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`. Other agents are refused. `planner` only as a single launch, never in `tasks`, `chain` or `resume`; it writes only under `.workflow/`.",
      "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
-    # persistent PR watch: the watch is armed by pr_create and stays until merge or close; a child closes itself on merge
+    # persistent PR watch: the watch is armed by pr_create and stays until merge or close; a child never closes itself
     ("After you open a PR, call `pr_watch`; on its message fix failing checks or answer the comments, then get a reviewer PASS on the new head and ask for review again.",
-     "`pr_create` arms a watch that stays until the PR is merged or closed and reports each CI result, failing job, comment, review, conflict and missing CI. Act on each message. You own the PR you opened: fix its CI yourself, then get a reviewer PASS on the new head and ask for review again. A child session reports to its parent only `PR #n green on <sha>, mergeable, ready to merge`, or, when the checks passed but a draft state, a review or a branch rule holds the PR back, the line the watch gives, or that it is stuck and why. A session cannot close while its PR is open and watched (`close refused: PR #n open and watched`: wait for the merge, or `pr_unwatch`). A child session closes itself when its PR is merged: it writes `result.md` (PR numbers, merge commits, anything left open), and its worktree and local branch are removed after it exits."),
+     "`pr_create` arms a watch that stays until the PR is merged or closed and reports each CI result, failing job, comment, review, conflict and missing CI. Act on each message. You own the PR you opened: fix its CI yourself, then get a reviewer PASS on the new head and ask for review again. A child session reports to its parent only `PR #n green on <sha>, mergeable, ready to merge`, or, when the checks passed but a draft state, a review or a branch rule holds the PR back, the line the watch gives, or that it is stuck and why. A session cannot close while its PR is open and watched (`close refused: PR #n open and watched`: wait for the merge, or `pr_unwatch`). A child session never closes itself: after its PR is merged it goes on with its brief, writes `result.md` (PR numbers, merge commits, anything left open) and sends `Result from` when the brief is done; its parent reviews the result and sends `foreman:close`, and its worktree and local branch are removed after it exits."),
     # ready, then wait: no session merges
     ("removed after it exits.\n",
      "removed after it exits. Your work on a PR ends at ready: checks green, mergeable, a reviewer PASS on the head, out of draft. Say so once (a child with the watch's report line to its parent; a session without a parent to the owner, judged from the watch's check result, the mergeable state and its own PASS) and wait. No session merges a PR, its own or a child's: the owner wants a human look before anything lands, and the host decides how it lands. The watch tells you when it is merged. While you wait, a review or comment the watch reports is feedback: rework, get a reviewer PASS on the new head, and say ready again. Leave a ready PR as it stands: a moved base is no reason to merge it into the PR or to rerun CI, so merge the base in only when the PR is CONFLICTING or the base fix is needed for that branch's own CI. When the watch reports the merge, check the base's CI on the merge commit; if it is red, fix forward with a small PR.\n"),
@@ -60,6 +62,13 @@ ROLE_PAIRS = [
     # html plans: an HTML plan keeps rulings in a sidecar and any page change is a new version
     ("a body edit is a new version. After a FAIL",
      "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),
+    # review occasion: the launch field `occasion` names the kind of review; a tag first in the task still works
+    ("launch one `reviewer` with `[plan-review]` in its task on the plan file and the ledger,",
+     "launch one `reviewer` with `occasion: \"plan-review\"` on the plan file and the ledger (the field names the kind of review; a `[plan-review]` first in the task works too),"),
+    ("Add `[second-opinion]` to its task only for auth",
+     "Set `occasion: \"second-opinion\"` on it only for auth"),
+    ("on the whole branch diff with `[pre-pr]` in its task (never refused as a repeat); its PASS on the head opens the PR gate. `[second-opinion]` is optional advice: it never blocks, marks items or opens the PR gate. ",
+     "on the whole branch diff with `occasion: \"pre-pr\"` (never refused as a repeat); its PASS on the head opens the PR gate. `occasion: \"second-opinion\"` is optional advice: it never blocks, marks items or opens the PR gate. Name the review kind with the `occasion` field or a tag first in the task: a tag only later in the text is refused (`review_occasion_late`), and a tag first in the task beside a different field is refused (`review_occasion_ambiguous`). "),
 ]
 
 
@@ -87,6 +96,8 @@ class SizingPromptTest(unittest.TestCase):
     def test_sizing_off_bytes_unchanged(self):
         old = subprocess.run(["git", "show", BASE + ":instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
         if old.returncode != 0:
+            if os.environ.get("CI"):
+                self.fail(f"base commit {BASE} missing: CI checkout must use fetch-depth: 0")
             self.skipTest("base commit not available")
         text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
@@ -101,7 +112,7 @@ class SizingPromptTest(unittest.TestCase):
             old_reason = "needs a `reason` (why the default model cannot do it), and at trivial"
             new_reason = "needs a `reason` (why the default model cannot do it; a top-level key of the `subagent` call, never inside `options` or `args`), and at trivial"
             old_own = "A review never runs on your own model; the adapter swaps it."
-            new_own = "A configured reviewer pair is used as set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped. A risky change can get one more review. When the adapter reminds you of a high-stakes review, judge whether the change warrants it; if it does, launch one `reviewer` with `[high-stakes]` in its task, alone, on the whole change, after the last PASS (before a PR, after the `[pre-pr]` PASS), once the change is complete. If it reports FAIL, revise or answer the findings, then pass the normal reviewer again (before a PR, `[pre-pr]`; it gets the findings and its PASS clears the FAIL); the adapter then reminds you of a second and last high-stakes review. If that fails too, revise, pass the normal reviewer again and tell the owner in one line that the second high-stakes review failed and on what. Name each high-stakes review in the PR body, one line each: `High-stakes review: <verdict> on <sha> (<reasons>)`."
+            new_own = "A configured reviewer pair is used as set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped. A risky change can get one more review. When the adapter reminds you of a high-stakes review, judge whether the change warrants it; if it does, launch one `reviewer` with `occasion: \"high-stakes\"`, alone, on the whole change, after the last PASS (before a PR, after the pre-pr PASS), once the change is complete. If it reports FAIL, revise or answer the findings, then pass the normal reviewer again (before a PR, `occasion: \"pre-pr\"`; it gets the findings and its PASS clears the FAIL); the adapter then reminds you of a second and last high-stakes review. If that fails too, revise, pass the normal reviewer again and tell the owner in one line that the second high-stakes review failed and on what. Name each high-stakes review in the PR body, one line each: `High-stakes review: <verdict> on <sha> (<reasons>)`."
             want = render_prompt(old.stdout.decode("utf-8"), k).replace(old_launch, new_launch)
             # review per checkout: the finish rule and the repeat rule name the checkout
             old_fin = "A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes."
@@ -118,6 +129,16 @@ class SizingPromptTest(unittest.TestCase):
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))
+
+    def test_missing_base_fails_in_ci_instead_of_skipping(self):
+        # a shallow CI checkout lacks the base commit; there the test must fail, not skip
+        case = SizingPromptTest("test_sizing_off_bytes_unchanged")
+        result = unittest.TestResult()
+        with mock.patch.object(sys.modules[__name__], "BASE", "0" * 40), mock.patch.dict(os.environ, {"CI": "1"}):
+            case.run(result)
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("CI checkout must use fetch-depth: 0", result.failures[0][1])
 
 
 if __name__ == "__main__":

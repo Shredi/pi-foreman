@@ -90,8 +90,8 @@ test("joinAgents: hcTerminal, remote prefix, done filter, pid mismatch", () => {
   const remote = joinAgents(agents, tree, "box");
   assert.deepEqual([...remote.keys()], ["box/t1"]);
   assert.equal(joinAgents([{ address: "t1", pid: 100 }], tree).size, 1);
-  assert.equal(joinAgents([{ address: "t1", pid: 101 }], tree).size, 0); // both have a pid, they differ
-  assert.equal(joinAgents([{ address: "t1", foreground: { pid: 101 } }], tree).size, 0);
+  assert.equal(joinAgents([{ address: "t1", pid: 101 }], tree).size, 1); // t1 is live: it joins by address though the pids differ (D100)
+  assert.equal(joinAgents([{ address: "t1", foreground: { pid: 101 } }], tree).size, 1);
   assert.equal(joinAgents([{ address: "t2", pid: 101 }], tree).size, 1); // node t2 has no pid
   assert.equal(joinAgents("bad", tree).size, 0);
   assert.equal(joinAgents(agents, null).size, 0);

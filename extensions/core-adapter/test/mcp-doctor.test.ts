@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -43,7 +44,7 @@ test("doctor fails a subagents block whose builder tools still carry mcp:fx", as
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { piVersion: async () => "1.2.0" });
+  coreAdapter(pi as never, { piVersion: async () => "1.2.0", spawner: probeSpawner() });
   const notes: string[] = [];
   const ctx = {
     sessionManager: { getSessionId: () => "mcpdoc-1", getSessionFile: () => undefined },

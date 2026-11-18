@@ -17,20 +17,21 @@ The gate's classifier is a separate path: one cheap model call clears a dangerou
 ## Review occasions
 
 One mechanism serves every review: the same launch path, climb rung, model rule, extractor and records. The occasion
-is read from a marker in the reviewer's task text.
+is taken from the launch field `occasion` of the reviewer entry; a marker at the head of the task text works as a backup (see below).
 
-| Occasion | Marker | Reviews | Counts for items and gates |
+| Occasion | Field value and marker | Reviews | Counts for items and gates |
 |---|---|---|---|
 | `item` | none | Built ledger items | yes |
-| `plan-review` | `[plan-review]` | The plan, before the checkpoint | no |
-| `pre-pr` | `[pre-pr]` | The whole branch diff before a PR | yes |
-| `high-stakes` | `[high-stakes]` | The whole change, one extra pass on a risky change (see [High stakes](#high-stakes)) | no: marks no items, writes no normal review record |
-| `second-opinion` | `[second-opinion]` | Advice on unchanged work (also exempt from `ceremony.reviewPerRevision`) | no |
+| `plan-review` | `occasion: "plan-review"`, `[plan-review]` | The plan, before the checkpoint | no |
+| `pre-pr` | `occasion: "pre-pr"`, `[pre-pr]` | The whole branch diff before a PR | yes |
+| `high-stakes` | `occasion: "high-stakes"`, `[high-stakes]` | The whole change, one extra pass on a risky change (see [High stakes](#high-stakes)) | no: marks no items, writes no normal review record |
+| `second-opinion` | `occasion: "second-opinion"`, `[second-opinion]` | Advice on unchanged work (also exempt from `ceremony.reviewPerRevision`) | no |
 
 "Counts" means the verdict marks items, satisfies the review gate and PR gate, feeds the repeated-FAIL rule. A plan review, a second opinion and every panel shadow are recorded as findings only and never block.
 The PR gate checks the head only when the PR is created. After that the session's [PR watch](tools.md#watch) reports drift: when the PR head moves to a commit with no counting PASS (`head <sha> not reviewed (last PASS on <sha>)`, once per head), the tracker row shows `unreviewed head` and `pr_status` carries a `review` line; a PASS on the new head clears all three.
-`[second-opinion]` wins over `[plan-review]`, which wins over `[high-stakes]`, which wins over `[pre-pr]`. `high-stakes` is not a config-facing occasion: it is no `ceremony.reviewByOccasion` key and no `ladder.reviewPanel.gates` entry, so no panel shadow attaches to it. A reviewer task that names both `[pre-pr]` and `[high-stakes]` in prose (and neither `[second-opinion]` nor `[plan-review]`) is refused (`[review_occasion_ambiguous]`, traced, also with the high-stakes feature off): keep one tag, or quote the other in backticks. A launch without a tag is a normal `item` review.
-A marker counts only as a standalone token: preceded by the start of the text, whitespace or an opening bracket, and outside backtick spans, fenced blocks and `[pi-foreman ...]` harness lines. A mention in backticks is not an occasion. The `role_launch` trace of a reviewer carries `occasion`, and the launch result adds `occasion: second-opinion (advisory: marks no items, does not open the review gate)` (or the plan-review/pre-pr equivalent) when the occasion is not `item`, so a misclassified review is visible before it runs. While a high-stakes review is due (a trigger fired and none has run), the `pre-pr` line adds `; a [high-stakes] review is due (<reasons>); launch it if the change warrants it`, and an `item` review gets that reminder as a line of its own (a reminder only, nothing is refused): a fired trigger does not change the class of a `[pre-pr]` launch, whose PASS counts as pre-pr.
+**The launch field.** `occasion` (`pre-pr`, `high-stakes`, `plan-review` or `second-opinion`) is a key of each reviewer entry: of a single launch, and of each entry of `tasks`, `chain` and their `parallel` lists. Like `size` and `risk` it may arrive as JSON text, and a copy placed in `options` or `args` is moved to the entry. It never reaches pi-subagents. On a `tasks` or `chain` call itself, or with another value, the launch is refused (`[review_occasion_unknown]`); on a builder or other non-reviewer entry a valid value has no effect (an unknown value is refused on any entry), and a tag in a builder's task is no review kind. When only the field names the kind, the harness puts `[<kind>] ` in front of the reviewer's task, so the reviewer and later steps see it.
+The sources of a reviewer entry are the field, `reason: "second-opinion"` and the head run of its task: the leading `[tag]` or `[[tag]]` tokens (other tokens such as `[panel-shadow:<model>]`, `[[replay:<id>]]` or `[re-review items]` are skipped). All present sources must name one kind; otherwise the launch is refused (`[review_occasion_ambiguous]`, traced, also with the high-stakes feature off): keep one. With the sources agreeing, the head run settles by this order: `[second-opinion]` wins over `[plan-review]`, which wins over `[high-stakes]`, which wins over `[pre-pr]`; a head run that names both `[pre-pr]` and `[high-stakes]` (and neither `[second-opinion]` nor `[plan-review]`) is ambiguous whatever the field says. `high-stakes` is not a config-facing occasion: it is no `ceremony.reviewByOccasion` key and no `ladder.reviewPanel.gates` entry, so no panel shadow attaches to it. A reviewer launch with no source is a normal `item` review, unless its text names a kind tag later on: that is refused (`[review_occasion_late]`) with the fix `set occasion: "<kind>" on the launch (or put [<kind>] first in the task)`. With a source present, tags later in the text are mentions.
+A tag counts only as a standalone token: preceded by the start of the text, whitespace or an opening bracket, and outside backtick spans, fenced blocks and `[pi-foreman ...]` harness lines. A mention in backticks is not an occasion. The `role_launch` trace of a reviewer carries `occasion`, and the launch result adds `occasion: second-opinion (advisory: marks no items, does not open the review gate)` (or the plan-review/pre-pr equivalent) when the occasion is not `item`, so a misclassified review is visible before it runs. While a high-stakes review is due (a trigger fired and none has run), the `pre-pr` line adds `; a [high-stakes] review is due (<reasons>); launch it if the change warrants it`, and an `item` review gets that reminder as a line of its own (a reminder only, nothing is refused): a fired trigger does not change the class of a `[pre-pr]` launch, whose PASS counts as pre-pr.
 
 The reviewer diff-scan base is set at the first builder launch and resets on an owner prompt and when the session writes a new `.workflow/LEDGER-*.md` (the round boundary), so the next builder launch records the round's base.
 
@@ -58,7 +59,7 @@ A review launched after a FAIL checks only the items that failed: the harness pr
 
 ## One reviewer per revision
 
-With `ceremony.reviewPerRevision` (default on) a reviewer launch after a PASS is refused unless something changed since that PASS. The harness records the PASS time, the number of completed builder runs, HEAD, the working-tree content (tracked and untracked, non-ignored files; `worktreeTree`) and the bound ledger path, and compares them at the next launch; any one difference allows the launch (trace `review_dup_allowed` with `signals`). The working-tree comparison (`treeChangedSince` in `extensions/core-adapter/commentonly.ts`, not raw hash equality) ignores paths under `.workflow/` (ledger and notes), so writing those alone is no change. Otherwise the refusal reads: `pi-foreman: the last review passed at <HH:MM:SS> and nothing changed since (no builder run, HEAD, worktree or ledger change) — finish, or revise first. Ask for a second review only when warranted: put "[second-opinion]" in the reviewer task text.` (`at <HH:MM:SS>` is omitted when no PASS mark exists.) The finish gate's comment-only touch-up relief is separate and unchanged.
+With `ceremony.reviewPerRevision` (default on) a reviewer launch after a PASS is refused unless something changed since that PASS. The harness records the PASS time, the number of completed builder runs, HEAD, the working-tree content (tracked and untracked, non-ignored files; `worktreeTree`) and the bound ledger path, and compares them at the next launch; any one difference allows the launch (trace `review_dup_allowed` with `signals`). The working-tree comparison (`treeChangedSince` in `extensions/core-adapter/commentonly.ts`, not raw hash equality) ignores paths under `.workflow/` (ledger and notes), so writing those alone is no change. Otherwise the refusal reads: `pi-foreman: the last review passed at <HH:MM:SS> and nothing changed since (no builder run, HEAD, worktree or ledger change) — finish, or revise first. Ask for a second review only when warranted: set occasion: "second-opinion" on the reviewer launch (or put "[second-opinion]" first in its task).` A launch counts as a second opinion only when every reviewer entry in it has that occasion. (`at <HH:MM:SS>` is omitted when no PASS mark exists.) The finish gate's comment-only touch-up relief is separate and unchanged.
 
 ## Critique
 
@@ -202,7 +203,7 @@ no state, no trace, no requirement.
 
 User or overlay config only.
 
-**The pass.** The foreman launches one `reviewer` alone with `[high-stakes]` in its task (see [occasions](#review-occasions)).
+**The pass.** The foreman launches one `reviewer` alone with `occasion: "high-stakes"` (or `[high-stakes]` first in its task; see [occasions](#review-occasions)).
 The launch runs on `ceremony.highStakes.model` exactly as set: no pair, no different-model move, no rank refusal (trace
 `policy_override` when the policy would have refused), no climb, and no exception when the id equals the foreman's or the
 normal reviewer's. An explicit `model` in the call is replaced (trace `model_override`); thinking is capped by `maxThinking`
@@ -245,12 +246,14 @@ base. The base triggers nothing.
 |---|---|
 | `high_stakes_unset` | No model is set. |
 | `high_stakes_single` | The launch is inside a `tasks` or `chain` launch. |
-| `high_stakes_resume` | The call resumes a run. A run that ended without a verdict is launched fresh. |
+| `high_stakes_resume` | The call resumes a run. A run that ended without a verdict, or with `FAIL INCOMPLETE`, is launched fresh. |
 | `high_stakes_done` | The passes of the session are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
 | `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass is a FAIL that no normal PASS that got its findings has cleared. |
 | `high_stakes_unrevised` | A reviewer `resume` while a high-stakes FAIL of its checkout is uncleared (a resume gets no findings). A fresh normal reviewer is never refused for it. |
 
 After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.
+
+**An incomplete run.** A reviewer that must stop before it finishes, with no defect found, writes `VERDICT: FAIL INCOMPLETE` as its first line and names the checks that remain. A high-stakes run that ends so records nothing: it is no run (the two passes stay unused), the gate is unchanged, and the trace is `high_stakes {kind: incomplete}`. A fresh `[high-stakes]` launch is then judged on the state as it was before that run; there is no limit on incomplete runs, and each uses the high-stakes model. Resuming that run stays refused (`high_stakes_resume`). The adapter takes the reviewer's word: a run that writes `FAIL INCOMPLETE` although it found a defect leaves no record, and the next fresh high-stakes review checks again. A normal review with that line is a plain FAIL.
 
 **After a FAIL.** The FAIL is recorded with its head and findings, and the review gate is set to a failed verdict. It is
 cleared by a normal PASS (item or `[pre-pr]`) of a run that got the findings: in the checkout the FAIL ran in at any head
@@ -286,7 +289,7 @@ also `pr_create {cwd}` for a sibling; the refusal names the checkout of the FAIL
 session once per set of reasons (once every ledger item except V is marked; no bound ledger, or an unreadable one, counts
 as marked) with the reminder, then lets the next finish go with a one-line owner notice and the trace
 `high_stakes_skipped`; a new reason holds once more. The hold itself traces `high_stakes_reminded {reasons}`. The hold is no refusal and does not count toward the two per prompt.
-The FAIL entry of the finish gate does not depend on the ledger. A session that changed nothing is not held. A PR that is
+The FAIL entry of the finish gate does not depend on the ledger. A session that changed nothing is not held (files under `.workflow/` and the scratch dir do not count as a change; a scratch dir set to a source folder hides that folder from this check). A PR that is
 already open is held session-wide only by a FAIL: its readiness answers `wip` while a FAIL stands uncleared or when the PR
 head is the head of a high-stakes FAIL; a due pass never changes it. Under the draft flow the PR then goes back to draft until
 the FAIL was cleared and the head moved; a PR from one checkout is held by the state of the session. A PR opened from the shell is not refused; the rules text carries the duty.

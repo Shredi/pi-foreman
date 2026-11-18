@@ -454,14 +454,14 @@ export interface HsLaunchInput {
 
 /** The refusal of a `resume` of a `[high-stakes]` run. */
 export function resumeRefusal(): { reason: HsLaunchReason; text: string } {
-  return { reason: "high_stakes_resume", text: `pi-foreman: launch refused [high_stakes_resume]: a resumed run cannot be a ${HS_TAG} review; launch a fresh reviewer with ${HS_TAG}.` };
+  return { reason: "high_stakes_resume", text: `pi-foreman: launch refused [high_stakes_resume]: a resumed run cannot be a ${HS_TAG} review; launch a fresh reviewer with occasion: "high-stakes" (or ${HS_TAG} first in its task).` };
 }
 
 /** A `[high-stakes]` launch: the first refusal in the order unset, single, resume, done, early; null when it may go ahead. */
 export function launchRefusal(i: HsLaunchInput): { reason: HsLaunchReason; text: string } | null {
   const refuse = (reason: HsLaunchReason, why: string): { reason: HsLaunchReason; text: string } => ({ reason, text: `pi-foreman: launch refused [${reason}]: ${why}` });
   if (!i.model) return refuse("high_stakes_unset", "no high-stakes model is set (ceremony.highStakes.model); the owner sets it, launch the normal reviewer instead.");
-  if (!i.single) return refuse("high_stakes_single", `a ${HS_TAG} review is launched alone: one reviewer, no tasks or chain.`);
+  if (!i.single) return refuse("high_stakes_single", `a high-stakes review is launched alone: one reviewer, no tasks or chain.`);
   if (i.resume) return resumeRefusal();
   if (i.running || used(i.state)) return refuse("high_stakes_done", "the high-stakes passes of this session are used up (one ran and passed, two ran, or one is still running).");
   if (!(i.gate.last === "pass" && !i.gate.revised)) return refuse("high_stakes_early", "no normal reviewer PASS stands (none yet, or work was revised after it); pass the normal reviewer first, then launch it.");

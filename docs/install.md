@@ -91,6 +91,7 @@ ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `
 `--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]`, `--pick` and `--mods` (see
 [Profiles, features and add-ons](#profiles-features-and-add-ons), and [herdr](herdr.md#herdr-app-and-herdr-core) for `--mods`).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
+Setup checks `pi --version` for up to 90 s and tries once more after a timeout. If Pi still does not answer, setup says so (a first start after an install can be slow: run `pi --version` once, then rerun setup); the "Install Pi" hint is only for a Pi that cannot be run at all.
 
 ### npm stops with EALLOWGIT
 
@@ -555,7 +556,7 @@ On Windows setup also finds Git Bash (`%ProgramFiles%\Git\bin\bash.exe`, then `%
 
 `--dry-run` prints `shell: would write shellPath ...` and writes nothing; `--remove` and `--preview` do not touch the setting. Off Windows setup prints nothing about the shell.
 
-First check: start `pi` in a project, then ask the foreman to run `foreman_bg` with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
+First check: start `pi` in a project, then ask the foreman to run a background command (`foreman_bg`, offered only without the background-tasks add-on; with it, `bg_run`) with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
 
 ## Claude bridge: log in once
 

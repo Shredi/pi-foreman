@@ -576,8 +576,12 @@ function rangeMatches(version, range) {
   return range.split(".").every((p, i) => p === "x" || p === "*" || p === v[i]);
 }
 
+/** `pi --version` may be slow on the first start after an install: 90 s, one retry after a timeout. PI_FOREMAN_PI_VERSION_TIMEOUT_MS (tests) overrides the 90 s. */
 function checkPi(pi, lock, agentDir, cwd) {
-  const r = runPi(pi, ["--version"], { agentDir, cwd, timeoutMs: 30_000 });
+  const timeoutMs = Number(process.env.PI_FOREMAN_PI_VERSION_TIMEOUT_MS) > 0 ? Number(process.env.PI_FOREMAN_PI_VERSION_TIMEOUT_MS) : 90_000;
+  let r = runPi(pi, ["--version"], { agentDir, cwd, timeoutMs });
+  if (r.error?.code === "ETIMEDOUT") r = runPi(pi, ["--version"], { agentDir, cwd, timeoutMs });
+  if (r.error?.code === "ETIMEDOUT") throw new Fatal(`pi did not answer \`pi --version\` within ${Math.round((timeoutMs / 1000) * 10) / 10} s (tried twice). A first start after an install can be slow: run \`pi --version\` once, then rerun setup.`);
   if (r.error) throw new Fatal(`Could not run pi: ${r.error.message}. Install Pi (npm install -g ${lock.pi.name}@${lock.pi.version}) or fix PATH.`);
   const m = /(\d+\.\d+\.\d+)/.exec(`${r.stdout}\n${r.stderr}`);
   if (r.code !== 0 || !m) throw new Fatal(`\`pi --version\` gave no usable answer (exit ${r.code}).`);

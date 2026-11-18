@@ -106,7 +106,8 @@ export function joinAgents(agents, tree, machine = null, taken = new Set()) {
     const n = byTerminal.get(addr.slice(prefix.length));
     if (!n) continue;
     const pid = pidOf(a);
-    if (pid !== null && n.pid !== null && pid !== n.pid) continue;
+    const live = !isEnded(n) && n.state !== "lost" && n.state !== "stale";
+    if (!live && pid !== null && n.pid !== null && pid !== n.pid) continue;
     out.set(addr, n);
   }
   if (machine) return out;
