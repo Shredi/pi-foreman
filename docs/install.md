@@ -91,6 +91,7 @@ ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `
 `--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]`, `--pick` and `--mods` (see
 [Profiles, features and add-ons](#profiles-features-and-add-ons), and [herdr](herdr.md#herdr-app-and-herdr-core) for `--mods`).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
+Setup checks `pi --version` for up to 90 s and tries once more after a timeout. If Pi still does not answer, setup says so (a first start after an install can be slow: run `pi --version` once, then rerun setup); the "Install Pi" hint is only for a Pi that cannot be run at all.
 
 ### npm stops with EALLOWGIT
 
