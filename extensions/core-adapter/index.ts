@@ -70,7 +70,7 @@ import { bgWaitLocations, coordinationCall, launchLocations, inRecorded, noticeL
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
-import { DEFERRED_ENTRY, DEFERRED_SECTION, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
+import { DEFERRED_ENTRY, DEFERRED_SECTION, MODEL_ONLY_SECTION, modelOnlyHint, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
@@ -209,7 +209,7 @@ const BLOCK_CHECKPOINT: BlockClass = { on: "owner", kind: "checkpoint" };
 const BLOCK_SCRIPT: BlockClass = { on: "owner", kind: "script" };
 const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
 const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
-import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
+import { completedAgents, CritiqueCounter, incompleteOf, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
@@ -572,6 +572,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
+  // The model-only tools line (deferred.ts): built at the first request of a session, then fixed so the prefix stays byte-stable.
+  const modelOnly = { done: false, hint: "" };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
   const skillState = { rules: { visible: [], hidden: [] } as SkillRules, hidden: [] as SkillRef[], split: false, hint: "" };
   let toolUsage = new ToolUsageTracker(); // replaced at every session_start: /new and /resume reuse this load
@@ -1474,11 +1476,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
   }
 
-  /** A high-stakes run ended with a verdict: it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
+  /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
   function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null);
     const verdict = r?.verdict;
     if (!r || !verdict) return;
+    if (incompleteOf(r.text)) {
+      // the reviewer stopped early and found no defect: nothing is recorded (no run, no gate change), as for a run with no verdict
+      s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
+      return;
+    }
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
     if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
@@ -2056,6 +2063,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     deferred.patterns = merged.list;
     deferred.loaded = new Set(recorded?.names ?? []);
     deferred.hint = "";
+    modelOnly.done = false;
+    modelOnly.hint = "";
     deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
     deferred.trace = (r) => s.trace?.emit(r);
     let declared: string[] = [];
@@ -2287,6 +2296,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       deferred.hint = deferredHint(deferred.hidden, codemode);
       event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
     } else deferred.hint = "";
+    if (!modelOnly.done) {
+      modelOnly.done = true;
+      try {
+        if (pi.getActiveTools().includes("codemode")) modelOnly.hint = modelOnlyHint(pi.getAllTools().filter((tool) => tool.exposure === "model-only").map((tool) => tool.name));
+      } catch {
+        // no tool api: no line
+      }
+    }
+    if (modelOnly.hint) event.systemPromptOptions.sections[MODEL_ONLY_SECTION] = modelOnly.hint;
     if (!s.isChild) {
       const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
       if (Array.isArray(listed)) {
@@ -2447,7 +2465,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild) return undefined;
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
-    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
+    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [MODEL_ONLY_SECTION, modelOnly.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
     // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
     // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
