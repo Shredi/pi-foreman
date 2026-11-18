@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { countsForItems, occasionOf } from "../occasion.ts";
+import { REVIEW_ROLES, verdictOf } from "../rounds.ts";
 import { tick, world } from "./_r46world.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -83,16 +85,39 @@ export const commitIn = (dir: string, name: string, text = "x\n") => {
 export async function launch(a: Rig, agent: string, task: string, extra: Record<string, unknown> = {}) {
   const id = `k${Math.random().toString(36).slice(2, 8)}`;
   const input: Record<string, unknown> = { agent, task, ...extra };
+  const reason = input.reason; // the task is rewritten by the launch hook (facts, findings); the end reads the occasion from the text the test passed
   await a.fire("message_end", { message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } });
   const res = (await a.fire("tool_call", { toolName: "subagent", toolCallId: id, input })) as { block?: boolean; reason?: string } | undefined;
-  if (res?.block) return { blocked: res.reason ?? "blocked", id, input };
+  if (res?.block) return { blocked: res.reason ?? "blocked", id, input, task, reason };
   await a.fire("tool_result", { toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false });
-  return { blocked: null as string | null, id, input };
+  return { blocked: null as string | null, id, input, task, reason };
 }
-export const end = async (a: Rig, s: { id: string }, agent: string, output: string, cwd?: string) => {
-  a.endRunAs(s.id, agent, output, cwd);
-  await tick(150);
+
+/** A launch as `end` reads it: its run id and, for a reviewer, the task the test passed and the launch's `reason`. */
+export interface Ended { id: string; blocked?: string | null; task?: string; reason?: unknown }
+
+/** Whether the end of this run writes a review record (`review_recorded` or `review_high_stakes`): a started, counting or high-stakes reviewer whose output has a verdict. */
+const writesRecord = (s: Ended, agent: string, output: string): boolean => {
+  if (s.blocked || typeof s.task !== "string" || !REVIEW_ROLES.includes(agent) || verdictOf(output) === null) return false;
+  const occasion = occasionOf(s.task, s.reason);
+  return countsForItems(occasion) || occasion === "high-stakes";
 };
+
+/** Delivers the run end through `fire`, then waits (15 s at most) for its review record when it writes one; every other run end waits one event-loop turn. */
+export async function endWith(a: Rig, s: Ended, agent: string, output: string, fire: () => unknown): Promise<void> {
+  if (!writesRecord(s, agent, output)) {
+    fire();
+    await new Promise((r) => setImmediate(r));
+    return;
+  }
+  const before = await a.recordTraces();
+  fire();
+  const stop = Date.now() + 15000;
+  let now = await a.recordTraces();
+  while (now <= before && Date.now() < stop) now = await a.recordTraces();
+  assert.ok(now > before, `the run end of ${agent} (run-${s.id}) wrote no review record (review_recorded / review_high_stakes) within 15 s`);
+}
+export const end = (a: Rig, s: Ended, agent: string, output: string, cwd?: string) => endWith(a, s, agent, output, () => a.endRunAs(s.id, agent, output, cwd));
 export const settle = async (a: Rig): Promise<string> => {
   const r = (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as Settle;
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";

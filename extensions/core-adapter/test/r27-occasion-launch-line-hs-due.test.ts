@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { endWith } from "./_hsrig.ts";
 import { tick, world } from "./_r46world.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -42,14 +43,15 @@ async function setup(t: Parameters<typeof world>[0]) {
 }
 
 /** Launches `input` and returns its receipt texts and the input as the launch left it. */
-async function launch(a: Rig, input: Record<string, unknown>): Promise<{ texts: string[]; input: Record<string, unknown>; id: string }> {
+async function launch(a: Rig, input: Record<string, unknown>): Promise<{ texts: string[]; input: Record<string, unknown>; id: string; task: string }> {
   const id = `d${Math.random().toString(36).slice(2, 8)}`;
+  const task = String(input.task); // the launch hook rewrites input.task; the run end reads the occasion from this copy
   await a.fire("message_end", { message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } });
   const call = (await a.fire("tool_call", { toolName: "subagent", toolCallId: id, input })) as { block?: boolean; reason?: string } | undefined;
   assert.ok(!call?.block, String(call?.reason));
   const res = (await a.fire("tool_result", { toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false })) as { content?: { text: string }[] } | undefined;
   await tick(50);
-  return { texts: (res?.content ?? []).map((c) => c.text), input, id };
+  return { texts: (res?.content ?? []).map((c) => c.text), input, id, task };
 }
 
 const NECESSARY = "a [high-stakes] review is due (";
@@ -85,11 +87,9 @@ test("a [pre-pr] launch without a fired trigger keeps the plain pre-pr line", as
 test("a [high-stakes] launch gets its occasion line and the high-stakes model", async (t) => {
   const a = await setup(t);
   const b = await launch(a, { agent: "builder", task: "build the widget", size: { files: ["src/a/big.ts"] }, risk: ["design"] });
-  a.endRunAs(b.id, "builder", "done");
-  await tick(150);
+  await endWith(a, b, "builder", "done", () => a.endRunAs(b.id, "builder", "done"));
   const p = await launch(a, { agent: "reviewer", task: "[pre-pr] review the branch" });
-  a.endRunAs(p.id, "reviewer", "Overall verdict: PASS");
-  await tick(150);
+  await endWith(a, p, "reviewer", "Overall verdict: PASS", () => a.endRunAs(p.id, "reviewer", "Overall verdict: PASS"));
   const r = await launch(a, { agent: "reviewer", task: "[high-stakes] review the whole change" });
   assert.ok(r.texts.includes("occasion: high-stakes (the whole change on the high-stakes model: marks no items, opens no gate)"), JSON.stringify(r.texts));
   assert.equal(String(r.input.model).split(":")[0], MODEL);
