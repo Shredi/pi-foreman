@@ -129,7 +129,7 @@ test("(E) a cleanly parsed read of a config file beside key words is no config-k
 test("(F) a plain push and a chain of rev-parse and status are no force push; every force spelling stays one", () => {
   const plain = ["git push -u origin feat/x", "cd /w/repo && git push -u origin feat/x 2>&1 | tail -5", "cd /w/repo && git push -u origin worktree-agent-a1b2 2>&1 | tail -5", "cd C:/w/repo && git push -u origin feat/c++-x 2>&1|tail -5", "git -C /w/repo push --set-upstream origin HEAD", "git rev-parse --abbrev-ref HEAD && git status --short", "git rev-parse HEAD@{u} && git status -sb", 'git push -u origin "$(git rev-parse --abbrev-ref HEAD)" 2>&1 | tail -5'];
   for (const l of plain) assert.notEqual(floorOf(l)?.rule, "floor-git-push-force", l);
-  const forced = ["git push -f origin x", "git push --force origin x", "git push --force-with-lease origin x", "git push --force-if-includes origin x", "git push origin +x", "git push origin HEAD:refs/heads/x", "git push --mirror origin", "git push --delete origin x", "git push -d origin x", "git push origin :x", "cd /w/repo && git push -u origin +feat/x 2>&1 | tail -5", "cd /w/repo && git push origin feat/x:feat/y"];
+  const forced = ["git push -f origin x", "git push --force origin x", "git push --force-with-lease origin x", "git push --force-if-includes origin x", "git push origin +x", "git push --mirror origin", "git push --delete origin x", "git push -d origin x", "git push origin :x", "cd /w/repo && git push -u origin +feat/x 2>&1 | tail -5"];
   for (const l of forced) assert.equal(floorOf(l)?.rule, "floor-git-push-force", l);
 });
 

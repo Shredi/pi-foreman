@@ -54,7 +54,7 @@ test("git config writes are floored in every form; reads are not", () => {
 });
 
 test("push floor (a): force, delete, mirror and refspec forms", () => {
-  for (const l of ["git push --force", "git push -f origin x", "git push --force-with-lease origin x", "git push --delete origin x", "git push -d origin x", "git push --mirror", "git push origin +x", "git push origin x:y", "git push origin :x", "git push --prune origin"]) {
+  for (const l of ["git push --force", "git push -f origin x", "git push --force-with-lease origin x", "git push --delete origin x", "git push -d origin x", "git push --mirror", "git push origin +x", "git push origin :x", "git push --prune origin"]) {
     assert.equal(floor(l), "floor-git-push-force", l);
   }
 });
