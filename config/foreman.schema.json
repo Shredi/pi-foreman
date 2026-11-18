@@ -577,7 +577,7 @@
         "children": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "mayPush": { "type": "boolean", "description": "Whether children may push. A project can only set false." } }
+          "properties": { "mayPush": { "type": "boolean", "description": "No effect: builders push by default; the setting is accepted and ignored." } }
         },
         "review": {
           "type": "object",
