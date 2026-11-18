@@ -74,7 +74,7 @@ async function rig(t: import("node:test").TestContext, mode: "rpc" | "tui") {
     ui.theme = theme;
     ui.custom = async (factory: (...a: unknown[]) => { render(w: number): string[] }, options: { blocked: { kind: string; message: string } }) => {
       seen.blocked.push(options.blocked);
-      seen.drawn.push(...factory({ requestRender: () => undefined }, theme, {}, () => undefined).render(120));
+      seen.drawn.push(...factory({ requestRender: () => undefined }, theme, {}, () => undefined).render(1000));
       return "reject";
     };
   }

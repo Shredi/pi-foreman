@@ -28,7 +28,7 @@ test("real theme: SGR 1 (bold) only on the question line; the link and the answe
     { theme, links: true },
     false,
   );
-  const lines = new pi.ExtensionSelectorComponent(ask, ["revise", "reject", "approve"], () => undefined, () => undefined, { description: body }).render(100);
+  const lines = new pi.ExtensionSelectorComponent(ask, ["revise", "reject", "approve"], () => undefined, () => undefined, { description: body }).render(1000);
   const bold = lines.filter((l) => l.includes("\x1b[1m"));
   assert.equal(bold.length, 1, lines.join("\n"));
   assert.match(bold[0], /Approve the plan for demo\?/);

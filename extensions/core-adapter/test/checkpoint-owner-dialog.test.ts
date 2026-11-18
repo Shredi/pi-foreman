@@ -77,7 +77,7 @@ test("checkpoint dialog: in the TUI the dialog is Pi's selector through custom; 
   const drawn: string[] = [];
   ctx.ui.custom = async (factory: (...a: unknown[]) => { render(w: number): string[] }, options: { blocked: { kind: string; message: string } }) => {
     customs.push({ options });
-    drawn.push(...factory({ requestRender: () => undefined }, theme, {}, () => undefined).render(100));
+    drawn.push(...factory({ requestRender: () => undefined }, theme, {}, () => undefined).render(1000));
     return "approve";
   };
   initTheme("dark");
