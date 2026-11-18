@@ -41,15 +41,16 @@ test("critiqueOf counts now and later findings; no findings and defects count no
   assert.deepEqual(critiqueOf([{ kind: "now" }, { kind: "now" }, { kind: "later" }]), { now: 2, later: 1 });
 });
 
-test("the reviewer prompt carries the CRITIQUE block after the verdict", () => {
+test("the reviewer prompt asks for the verdict as a review_verdict call with now and later findings", () => {
   for (const name of ["reviewer.md"]) {
     const text = fs.readFileSync(path.join(ROOT, "agents", name), "utf8");
-    const at = text.indexOf("After the verdict, `CRITIQUE:` then one line per point, `- [now] <text>`");
+    const at = text.indexOf("give your verdict with `review_verdict`");
     assert.ok(at > 0, name);
-    assert.ok(text.indexOf("`- [later] <text>`", at) > at, name);
-    assert.ok(text.includes("`CRITIQUE: none` when there is none"), name);
+    assert.ok(text.indexOf("- `now`: a simplification one builder commit makes", at) > at, name);
+    assert.ok(text.indexOf("- `later`: a point to simplify or harden later", at) > at, name);
     assert.ok(text.includes("overengineering, niche checks beyond the item's scope, one-caller abstractions, flags or options nothing sets, tests of mocks"), name);
-    assert.match(text, /Critique never turns PASS into FAIL on its own/, name);
+    assert.ok(text.includes("findings of kind `now` or `later` stay advisory and never make a FAIL"), name);
     assert.ok(text.includes("records it in result.md"), name);
+    assert.ok(!text.includes("CRITIQUE:"), name);
   }
 });

@@ -2445,7 +2445,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) {
       const mcpNote = mcpChild?.note();
       if (mcpNote) event.systemPromptOptions.sections["pi-foreman-mcp"] = mcpNote;
-      // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
+      // every ceremony.ledgerHelper mode: reviewer roles learn to close V through review_verdict (instructions/reviewer.md).
       if (!REVIEW_ROLES.includes(s.usage.line.role)) return;
       if (reviewerInstructionsCache === undefined) {
         try {

@@ -74,8 +74,7 @@ presets turn it on. It applies only to `reviewer` launches the foreman passed no
 | `ladder.reviewerClimb.securityRung` | unset | Model of a reviewer launch on a security-shaped diff, `<provider>/<model>[:<level>]`. |
 | `ladder.reviewPanel.shadows`, `ladder.reviewPanel.gates`, `ladder.reviewPanel.visible`, `ladder.reviewPanel.waitSeconds` | `[]`, `[pre-pr]`, `true`, `600` | Shadow reviewer models the foreman launches after the primary ends, on the named occasions (`item`, `plan-review`, `pre-pr`, `second-opinion`); their findings never block. Empty `shadows` = off. `waitSeconds` is the wait before the block composes without late shadows. User or overlay config only; see [review](review.md#review-panel). |
 
-- **Repeated FAIL.** The harness reads each reviewer run's per-item `N. FAIL` lines (a list marker, backticks,
-  `**` and `N)` are accepted; fenced blocks are skipped). When the same ledger item fails in a second reviewer run,
+- **Repeated FAIL.** The harness reads the items each reviewer run's `review_verdict` record marks `fail`. When the same ledger item fails in a second reviewer run,
   the next reviewer launch goes one rung up, to `roles.reviewer.strong`: `rung_up {role: "reviewer", from, to,
   reason: "review_fail_repeat", item}`. Without a strong reviewer rung nothing happens.
 - **Security-shaped diff.** Before the reviewer's model is picked, the harness takes the work diff the reviewer will
