@@ -620,6 +620,8 @@ class PackageFilesTest(unittest.TestCase):
             ("change workspace files yourself (`write`, `edit`, `foreman_move`, `foreman_copy`), and then only", "change workspace files yourself, and then only"),
             ("launch a builder instead. `.workflow/` (ledger, notes) stays writable. Do not work", "launch a builder instead. Do not work"),
             ("stays unbound and the gates treat the session as having no ledger.", "stays unbound, so the gates see none."),
+            # D28: finish refusals are counted per unchanged state, not per user prompt
+            ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
             # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
             ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
             # review per checkout: the finish rule names the checkout

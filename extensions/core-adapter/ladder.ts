@@ -402,12 +402,12 @@ export class LadderState {
   }
 
   /** Apply the climbs: prepend handoffs to the task, consume them; the rung_up trace records. */
-  apply(climbs: Climb[], ledgerOf: (task: string) => string[]): Record<string, unknown>[] {
+  apply(climbs: Climb[], ledgerOf: (task: string, entry: Record<string, unknown>) => string[]): Record<string, unknown>[] {
     const out: Record<string, unknown>[] = [];
     for (const c of climbs) {
       if (c.handoff) {
         const task = typeof c.entry.task === "string" ? c.entry.task : "";
-        c.entry.task = handoffBlock(c.handoff, ledgerOf(task)) + task;
+        c.entry.task = handoffBlock(c.handoff, ledgerOf(task, c.entry)) + task;
         this.eligible.delete(c.role);
       }
       out.push(c.top ? { event: "rung_top", role: c.role, model: c.to, reason: c.reason, ...(c.source ? { source: c.source } : {}) } : { event: "rung_up", role: c.role, from: c.from, to: c.to, reason: c.reason });
