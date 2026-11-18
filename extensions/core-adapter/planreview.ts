@@ -70,9 +70,26 @@ export class PlanReviews {
   private readonly launched = new Map<string, { hash: string; text: string }>();
   private readonly reviewed = new Map<string, { hash: string; text: string }>();
 
-  /** A `[plan-review]` launch: the text the reviewer will read. */
-  noteLaunch(planPath: string, hash: string, text: string): void {
+  /** The tool batch (LaunchBatch generation) a still-open launch started in, per plan path. */
+  private readonly open = new Map<string, number>();
+
+  /** A `[plan-review]` launch: the text the reviewer will read; `batch` is the tool batch it starts in (open until `closeLaunch` or the next batch). */
+  noteLaunch(planPath: string, hash: string, text: string, batch?: number): void {
     this.launched.set(planPath, { hash, text });
+    if (batch === undefined) this.open.delete(planPath);
+    else this.open.set(planPath, batch);
+  }
+
+  /** A plan write of tool batch `batch`: when a launch of that batch is still open, the reviewer reads these bytes, so the launch record takes them. */
+  refreshLaunch(planPath: string, hash: string, text: string, batch: number): boolean {
+    if (this.open.get(planPath) !== batch) return false;
+    this.launched.set(planPath, { hash, text });
+    return true;
+  }
+
+  /** The launch's run ended: a later write in the same batch is a change the reviewer did not read. */
+  closeLaunch(planPath: string): void {
+    this.open.delete(planPath);
   }
 
   /** The verdict is recorded for the plan version `hash`: the text noted at launch becomes the reviewed text when its hash is the same, else the reviewed text is cleared (the plan changed while the reviewer ran). */

@@ -1,6 +1,6 @@
 // Guard round 2, step 4: the `powershell` tool goes through the gate's path checks. psWords splits a line into words with no cmdlet knowledge; each resolved word is a
 // WRITE target for the checks a bash write target gets (secret-path floor, `.git`, self-modification rules, install-root-write), never an allow; a read-only role
-// gets the label `danger-readonly-run` on every powershell line. Lines are data strings, never run.
+// gets no label of its own for a powershell line (the label `danger-readonly-run` is gone). Lines are data strings, never run.
 import { inprocSpawner } from "./_read-clear-inproc.ts"; // first: the git answers are in place before the adapter loads
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -19,7 +19,6 @@ import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
-const LABEL = "danger-readonly-run";
 const OPAQUE = "danger-opaque";
 const base = fs.realpathSync(mkTestTmp("pf-r2-ps-"));
 const home = path.join(base, "home");
@@ -269,24 +268,22 @@ test("B: a word never makes a verdict looser: the line floors still run on the l
 
 // ---------------------------------------------------------------- the label
 
-test("C: a read-only role gets danger-readonly-run beside danger-opaque on every powershell line; main and a builder get danger-opaque only", () => {
+test("C: every role gets danger-opaque only on a powershell line, a read-only role included", () => {
   for (const line of ["Get-Content a.txt", "Set-Content a.txt x", `Set-Content ${scr}/ok.txt x`, "Get-ChildItem", "git status", "npm test", "Write-Output hi", "Get-Process", `Invoke-WebRequest https://example.com -OutFile x.bin`, ""]) {
-    for (const r of ["reviewer", "explorer"] as const) assert.deepEqual(dangers(r, line), [OPAQUE, LABEL], `${r}: ${JSON.stringify(line)}`);
-    for (const r of ["foreman", "builder"] as const) assert.deepEqual(dangers(r, line), [OPAQUE], `${r}: ${JSON.stringify(line)}`);
+    for (const r of ["reviewer", "explorer", "foreman", "builder"] as const) assert.deepEqual(dangers(r, line), [OPAQUE], `${r}: ${JSON.stringify(line)}`);
   }
 });
 
-test("C: a bash line of a read-only role is unchanged: a plain read is free of the label; the label of a powershell line does not leak to bash", () => {
+test("C: a bash line of a read-only role carries no label", () => {
   assert.deepEqual(outcome("reviewer", "cat a.txt", "bash").dangers ?? [], []);
-  assert.deepEqual(outcome("reviewer", "echo hello", "bash").dangers ?? [], [LABEL]);
+  assert.deepEqual(outcome("reviewer", "echo hello", "bash").dangers ?? [], []);
 });
 
-test("Get-Content a.txt in the worktree: no verdict of the gate, danger-opaque for every role, the label added for a read-only role", () => {
+test("Get-Content a.txt in the worktree: no verdict of the gate, danger-opaque for every role", () => {
   for (const r of ROLES) {
     const o = outcome(r, "Get-Content a.txt");
     assert.equal(o.result, undefined, r);
     assert.ok((o.dangers ?? []).includes(OPAQUE), r);
-    assert.equal((o.dangers ?? []).includes(LABEL), r === "reviewer" || r === "explorer", r);
   }
 });
 
@@ -320,9 +317,8 @@ test("win32 platform: the checks run on win32 spellings (a short home spelling, 
   assert.equal(run("Set-Content C:\\wt\\.pi\\scratch\\x y"), "none");
 });
 
-// ---------------------------------------------------------------- the role question: one adapter session
+// ---------------------------------------------------------------- one adapter session
 
-const NO = { changesProject: "no", writesOutside: "no", installsOrPublishes: "no", networkWrite: "no", readsSecretOrOutside: "no" };
 const text = (t: string) => ({ content: [{ type: "text", text: t }], stopReason: "stop", usage: { input: 1, output: 1 } });
 
 async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "builder" | "main"; mode?: string; gate?: Record<string, unknown> } = {}) {
@@ -342,7 +338,6 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "bu
     getProviderAuthStatus: () => ({ configured: false }),
     complete: async (_m: unknown, c: { systemPrompt: string }) => {
       prompts.push(c.systemPrompt);
-      if (/^You are the run judge/.test(c.systemPrompt)) return text(JSON.stringify(NO));
       return text(JSON.stringify({ verdict: "allow", entry: "A1", reason: "covered" }));
     },
   };
@@ -361,43 +356,11 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "bu
   }
   return { ...r, prompts, askDir };
 }
-const runJudgeCalls = (r: { prompts: string[] }): number => r.prompts.filter((p) => /^You are the run judge/.test(p)).length;
-async function viaParent(r: Awaited<ReturnType<typeof rig>>, line: string): Promise<{ asked: boolean; res: { block?: boolean; reason?: string } | undefined }> {
-  const p = r.call("powershell", { command: line });
-  let asked = false;
-  const ask = path.join(r.askDir, "ask.md");
-  for (let i = 0; i < 300; i++) {
-    if (fs.existsSync(ask)) {
-      asked = true;
-      fs.writeFileSync(path.join(r.askDir, "ruling-1.md"), "DENY\nno\n");
-      break;
-    }
-    const settled = await Promise.race([p.then(() => true), new Promise<boolean>((res) => setTimeout(() => res(false), 10))]);
-    if (settled) break;
-  }
-  return { asked, res: (await p) as { block?: boolean; reason?: string } | undefined };
-}
-
-test("role question, modes auto and allow: a labelled powershell line of a read-only child is no read-clear entry: the parent is asked, zero model calls", async (t) => {
-  for (const mode of ["auto", "allow"]) {
-    for (const line of ["Get-Content a.txt", "Get-ChildItem"]) {
-      const r = await rig(t, { mode });
-      const v = await viaParent(r, line);
-      assert.equal(v.asked, true, `${mode}: ${line}`);
-      assert.equal(v.res?.block, true, `${mode}: ${line}`);
-      assert.match(v.res?.reason ?? "", /denied by the parent/);
-      assert.equal(r.prompts.length, 0, `${mode}: ${line}: no model call at all`);
-      assert.equal(runJudgeCalls(r), 0);
-    }
-  }
-});
-
-test("allow-sentence route, mode auto: main and a builder with a powershell line get the allow-sentence judge once and no run judge, as before", async (t) => {
-  for (const role of ["main", "builder"] as const) {
+test("allow-sentence route, mode auto: main, a builder and a read-only child with a powershell line get the allow-sentence judge once", async (t) => {
+  for (const role of ["main", "builder", "explorer"] as const) {
     const r = await rig(t, { role, mode: "auto" });
     const res = (await r.call("powershell", { command: "Get-Content a.txt" })) as { block?: boolean } | undefined;
     assert.ok(!res?.block, `${role}: ${JSON.stringify(res)}`);
-    assert.equal(runJudgeCalls(r), 0, role);
     assert.equal(r.prompts.length, 1, `${role}: one allow-sentence call`);
   }
 });
@@ -558,20 +521,4 @@ test("rig: an install-folder word of a child is refused in every mode, with no q
       assert.equal(r.prompts.length, 0, `${role} ${mode}`);
     }
   }
-});
-
-test("rig: a read-only child's powershell line with gate.readonlyClear false asks the parent with no model call; with gate.childAsk deny it is refused without a question", async (t) => {
-  for (const off of [false, "false"]) {
-    const r = await rig(t, { gate: { readonlyClear: off } });
-    const v = await viaParent(r, "Get-Content a.txt");
-    assert.equal(v.asked, true, String(off));
-    assert.equal(v.res?.block, true, String(off));
-    assert.equal(r.prompts.length, 0, String(off));
-  }
-  const deny = await rig(t, { gate: { childAsk: "deny" } });
-  const res = (await deny.call("powershell", { command: "Get-Content a.txt" })) as { block?: boolean; reason?: string } | undefined;
-  assert.equal(res?.block, true);
-  assert.match(res?.reason ?? "", /child asks are off/);
-  assert.equal(fs.existsSync(path.join(deny.askDir, "ask.md")), false);
-  assert.equal(deny.prompts.length, 0);
 });

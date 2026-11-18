@@ -10,6 +10,7 @@ import { PrWatches } from "../prwatch.ts";
 import type { StoreRead, WatchSnapshot } from "../prwatch.ts";
 import { reviewFactsForHead } from "../prready.ts";
 import type { ReviewRecord } from "../reviews.ts";
+import { endWith, type Ended } from "./_hsrig.ts";
 import { tick, world } from "./_r46world.ts";
 
 type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
@@ -53,16 +54,14 @@ const commitIn = (dir: string, name: string, n: number) => {
 async function launch(a: Rig, agent: string, task: string, extra: Record<string, unknown> = {}) {
   const id = `k${Math.random().toString(36).slice(2, 8)}`;
   const input: Record<string, unknown> = { agent, task, ...extra };
+  const reason = input.reason; // the end reads the occasion from the task the test passed, not the rewritten one
   await a.fire("message_end", { message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } });
   const res = (await a.fire("tool_call", { toolName: "subagent", toolCallId: id, input })) as { block?: boolean; reason?: string } | undefined;
-  if (res?.block) return { blocked: res.reason ?? "blocked", id, input };
+  if (res?.block) return { blocked: res.reason ?? "blocked", id, input, task, reason };
   await a.fire("tool_result", { toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false });
-  return { blocked: null as string | null, id, input };
+  return { blocked: null as string | null, id, input, task, reason };
 }
-const end = async (a: Rig, s: { id: string }, agent: string, output: string, cwd?: string) => {
-  a.endRunAs(s.id, agent, output, cwd);
-  await tick(150);
-};
+const end = (a: Rig, s: Ended, agent: string, output: string, cwd?: string) => endWith(a, s, agent, output, () => a.endRunAs(s.id, agent, output, cwd));
 const settle = async (a: Rig): Promise<string> => {
   const r = (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as Settle;
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";
