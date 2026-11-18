@@ -142,8 +142,8 @@ test("pr_watch: adds once whether it arms or finds a duplicate; non-github.com a
   assert.deepEqual(h.added, ["acme/app#7", "acme/app#7"]);
   const none = rig({ withTracker: false });
   const r = await none.call("pr_watch", { number: 7 });
-  assert.equal(r.details.decision, "host_unsupported");
-  assert.match(r.content[0].text, /^pr_watch: only github\.com PRs can be watched \(the PR tracker covers github\.com\); nothing was done\.$/);
+  assert.equal(r.details.decision, "no_repository");
+  assert.equal(r.content[0].text, "pr_watch: could not read this checkout's repository; pass repo and host; nothing was done.");
   assert.deepEqual(none.added, []);
   assert.equal(none.session.watches.size(), 0);
   assert.deepEqual([...h.spawned, ...none.spawned], []);
