@@ -16,8 +16,10 @@ import { fileURLToPath } from "node:url";
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
 // (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process. A run that passed
 // but started any npm, or more child processes than the budget, fails. FOREMAN_TEST_SPAWN_BUDGET overrides the budget.
-// Last measured: 20904 child processes in a full `npm run test:node` run (git 16283, python 4429, node 62, npm 0, other 130).
-// The limit 22600 is the owner's decision of 2026-11-17 for the per-checkout review gate (measurement plus about 750 headroom, rounded; runs vary by several hundred); a cleanup of the per-step git and python calls is planned to bring it down; growth beyond it should be a decision.
+// Measured 2026-11-18 on macOS: 21515 child processes in a full `npm run test:node` run (git 16813, python 4509, node 62, npm 0, other 131).
+// The limit is the owner's decision of 2026-11-18: the measurement plus a 10 % margin, rounded up to the next 100 (23700), capped at 22600; one number for the whole node run.
+// The per-file counts are committed in scripts/foreman_test_spawn_baseline.json; `npm run test:node:baseline` refreshes it, only when the limit changes. On a run over the budget the runner lists the files that grew most against it.
+// The permission clean-up round is expected to lower the limit (about 6,500 starts sit in the code it removes or rewrites).
 export const DEFAULT_SPAWN_BUDGET = 22600;
 
 export const SPAWN_BASELINE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "foreman_test_spawn_baseline.json");
