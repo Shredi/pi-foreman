@@ -196,7 +196,7 @@
       "id": "review-high-stakes",
       "area": "review",
       "title": "High-stakes review",
-      "purpose": "One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a risky change: a builder launch with risk tag `security`, `permission`, `guard`, `concurrency` or `design`, a heavy task that built something, or the foreman's own request. One per session; any pass opens its PRs. The PR gate and the finish gate ask for it; a FAIL gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`.",
+      "purpose": "One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a risky change: a builder launch with risk tag `security`, `permission`, `guard`, `concurrency` or `design`, a heavy task that built something, or the foreman's own request. One per session; any pass opens its PRs. A due review only reminds (PR tool answers, normal reviewer receipts, one finish hold); a FAIL blocks until a normal reviewer that got the findings passes, and gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`.",
       "doc": "docs/review.md#high-stakes",
       "keys": ["ceremony.highStakes"],
       "commands": [],
