@@ -10,6 +10,7 @@ import { preBashConfigOf, runPreBashHooks } from "../prebash.ts";
 import type { PreBashInput } from "../prebash.ts";
 import type { Spawner } from "../spawn.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 const input: PreBashInput = { command: "echo hi", cwd: "/w", tool: "bash", session: "s", role: "foreman" };
@@ -86,7 +87,7 @@ function adapter(t: import("node:test").TestContext, cfg: unknown) {
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const ctx = {
     sessionManager: { getSessionId: () => "prebash-session", getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
     cwd: project,

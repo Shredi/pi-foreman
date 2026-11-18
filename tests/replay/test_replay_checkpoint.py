@@ -20,7 +20,7 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 
 LEDGER = "# Requirements Ledger: ck\nTier: heavy\n\n- [x] 1. synthetic item\n"
 PLAN = "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"
-TITLE = "pi-foreman checkpoint: plan-ck.md ("
+TITLE = "Approve the plan for ck?"
 
 
 def script(run=""):

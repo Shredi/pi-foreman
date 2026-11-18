@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { probeSpawner } from "./_probe-memo.ts";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -121,7 +122,7 @@ test("a second copy loaded after the real one registers no tool_search", async (
   g[CORE_KEY] = { version: "0", pkgRoot: "/somewhere/else/pi-foreman", api: 1 };
   try {
     const tools: string[] = [];
-    coreAdapter({ on: () => undefined, registerTool: (d: { name: string }) => void tools.push(d.name), events: { on: () => undefined, emit: () => undefined } } as never);
+    coreAdapter({ on: () => undefined, registerTool: (d: { name: string }) => void tools.push(d.name), events: { on: () => undefined, emit: () => undefined } } as never, { spawner: probeSpawner() });
     assert.deepEqual(tools, []);
   } finally {
     if (saved === undefined) delete g[CORE_KEY];

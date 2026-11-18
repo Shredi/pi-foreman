@@ -1,5 +1,5 @@
 {
-  "_comment": "Running-session variables that every test entry point clears: the node preload (_hermetic-env.mjs), the core-adapter rig (_r46world.ts) and tests/_isolation.py. Keep PI_FOREMAN_PYTHON out: CI's Windows job sets it from outside. PI_CODING_AGENT_DIR is cleared too; the tests that need it set it themselves.",
+  "_comment": "Running-session variables that every test entry point clears: the node preload (_hermetic-env.mjs), the core-adapter rig (_r46world.ts), tests/_isolation.py, scripts/foreman_test_run.mjs (every command it starts), scripts/replay_run.mjs and the installer preload (tests/installer/_hermetic-env.mjs), the last three through scripts/session_env.mjs. The child git env (GIT_CONFIG_*, GIT_TERMINAL_PROMPT) is not listed on purpose: it keeps test code a child runs from pushing. Keep PI_FOREMAN_PYTHON out: CI's Windows job sets it from outside. PI_CODING_AGENT_DIR is cleared too; the tests that need it set it themselves.",
   "keys": [
     "PI_FOREMAN_STATE_DIR",
     "PI_CODING_AGENT_DIR",
@@ -13,10 +13,18 @@
     "PI_FOREMAN_SESSION_MODEL",
     "PI_FOREMAN_PLAN_PHASE",
     "PI_FOREMAN_PERMS_PROFILE",
+    "PI_FOREMAN_RESUMED",
+    "PI_FOREMAN_REMOTE_PARENT",
+    "PI_FOREMAN_TOOL_PACKS",
+    "PI_SUBAGENT_RUNNER_PID",
+    "PI_SUBAGENT_RUNNER_CONFIG",
+    "FOREMAN_SCRATCH",
+    "FOREMAN_OUT",
+    "FOREMAN_CHECKOUT",
     "PI_INTERCOM_SESSION_ID",
     "PI_INTERCOM_STABLE_ID",
     "HERDR_PANE_ID",
     "HERDR_ENV"
   ],
-  "prefixes": ["PI_FOREMAN_PARENT_", "PI_BG_", "PI_INTERCOM_", "HERDR_", "HC_"]
+  "prefixes": ["PI_FOREMAN_PARENT_", "PI_BG_", "PI_SUBAGENTS_", "PI_INTERCOM_", "HERDR_", "HC_"]
 }

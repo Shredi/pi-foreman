@@ -222,7 +222,9 @@ test("plan page: before the diagrams exist the fence is a code block", async (t)
   const gate = new Promise<void>((res) => void (release = res));
   const { show } = e.start({ engine: () => ({ render: async () => (await gate, SVG), close: () => undefined }) });
   show.planWritten(e.plan());
-  await new Promise((r) => setTimeout(r, 50));
+  // the write is queued: poll (about 5 s) for the file instead of a fixed sleep, then assert
+  const planPage = path.join(pagesDir(show), "plan.html");
+  for (let i = 0; i < 250 && !fs.existsSync(planPage); i++) await new Promise((r) => setTimeout(r, 20));
   assert.match(page(show, "plan.html"), /language-mermaid/);
   release();
   await show.idle();

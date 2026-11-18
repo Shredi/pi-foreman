@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -54,7 +55,7 @@ for (const [agent, skill] of cases) {
       sendMessage: () => undefined,
     };
     // no host pressure sampling: a loaded CI runner must not defer the launch (a missing pressure file reads as ok)
-    coreAdapter(pi as never, { pressureRun: async () => ({ ok: true, text: "" }) });
+    coreAdapter(pi as never, { pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
     const ctx = {
       sessionManager: { getSessionId: () => "launch-skill-session", getSessionFile: () => undefined },
       cwd: project,

@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -49,7 +50,7 @@ test("doctor lists a folder in place of a mod file as differing and still prints
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { piVersion: async () => "1.2.0" });
+  coreAdapter(pi as never, { piVersion: async () => "1.2.0", spawner: probeSpawner() });
   const notes: string[] = [];
   const ctx = {
     sessionManager: { getSessionId: () => "herdrmods-dir-1", getSessionFile: () => undefined },
