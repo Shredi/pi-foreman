@@ -345,7 +345,7 @@ def footer(label, plan_first):
         "`PR #n green on <sha>, mergeable, ready to merge` (a PR that is green and still a draft: `PR #n green on <sha>,",
         "mergeable, still a draft`), or, when the checks passed but a review or a branch rule holds the PR back, the",
         "line the watch gives, or that you are stuck and why; on a conflict merge the base",
-        "branch into yours yourself and push via the parent.",
+        "branch into yours yourself and push it.",
         "Your work on the PR ends at ready. Report it once, then wait: no session merges a PR, and the watch reports the",
         "merge. A review or comment that arrives meanwhile is feedback: act on it, get a reviewer PASS on the new head and",
         "report ready again.",
