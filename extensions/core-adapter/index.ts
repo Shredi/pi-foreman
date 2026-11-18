@@ -190,7 +190,9 @@ import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds, openChildren } from ".
 import { IntercomCarry, addresses, deliveredSendTo, isQuestion, parentIdsOf, senderOf } from "./intercomcarry.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
-import { builderLaunchRefusal, checkpointConfigRefusal, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, parentPhaseCheckpointText, PLAN_NAME, planSummary, planVersionHash, readPlan, restoreFromStore, saveStored, sha256 } from "./checkpoint.ts";
+import { builderLaunchRefusal, checkpointConfigRefusal, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, copyStale, currentPlanHash, isPlanPath, launchRefusalText, parentPhaseCheckpointText, PLAN_NAME, planSummary, readPlan, restoreFromStore, rulingsTopic, saveStored, sha256 } from "./checkpoint.ts";
+import type { PlanFile } from "./checkpoint.ts";
+import { hiddenFactsLine } from "./htmlmd.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
 import { claimCore, emitReady, installInert, markCoreStarted, missingBundled, setupInvocation } from "./registry.ts";
@@ -2261,7 +2263,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (instructionsCache === undefined) {
       try {
-        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8");
+        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", () => path.join(PKG_ROOT, "instructions", "plan-skeleton.html")); // fixed per installation: the same bytes every turn
       } catch {
         instructionsCache = null;
       }
@@ -2827,6 +2829,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return !!launch?.bind;
   }
 
+  /** The readable plans among `paths`, one per resolved plan path: a page and its markdown copy named together are one plan (checkpoint.ts readPlan returns the page's path for both). */
+  function readPlansOnce(paths: readonly string[], o: Parameters<typeof readPlan>[1]): { plan: PlanFile; raw: string }[] {
+    const seen = new Set<string>();
+    const out: { plan: PlanFile; raw: string }[] = [];
+    for (const p of paths) {
+      const rp = readPlan(p, o);
+      if ("plan" in rp && !seen.has(rp.plan.path)) {
+        seen.add(rp.plan.path);
+        out.push({ plan: rp.plan, raw: p });
+      }
+    }
+    return out;
+  }
+
   /** Plan review (planreview.ts): each primary `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
   function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
@@ -2835,23 +2851,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const r of planReviewResults(results)) {
       s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
       const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
-      for (const p of plans) {
-        const rp = readPlan(p, opts);
-        if ("plan" in rp) {
-          s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
-          s.planReviews.keepReviewed(rp.plan.path, planVersionHash(rp.plan.bytes));
-          s.show?.planReviewed(r.verdict === "pass", planVersionHash(rp.plan.bytes)); // plan page state and milestone (show.ts)
-          reviewed.add(rp.plan.path);
-          const state = planVersionHash(rp.plan.bytes);
-          s.reviewSync = s.reviewSync.then(async () => {
-            const prev = s.reviews.findLast((x) => x.kind === "plan");
-            const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.text, await findings) : [] };
-            appendReview(s.reviews, rec);
-            loopCheck(s, runId, prev, rec);
-          });
-          const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
-          saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
-        }
+      for (const rp of readPlansOnce(plans, opts)) {
+        s.planReviews.record(rp.plan.path, { hash: rp.plan.hash, verdict: r.verdict, model: r.model, findings });
+        s.planReviews.keepReviewed(rp.plan.path, rp.plan.hash);
+        s.show?.planReviewed(r.verdict === "pass", rp.plan.hash); // plan page state and milestone (show.ts)
+        reviewed.add(rp.plan.path);
+        const state = rp.plan.hash;
+        s.reviewSync = s.reviewSync.then(async () => {
+          const prev = s.reviews.findLast((x) => x.kind === "plan");
+          const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.text, await findings) : [] };
+          appendReview(s.reviews, rec);
+          loopCheck(s, runId, prev, rec);
+        });
+        const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
+        saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
       }
     }
     for (const p of reviewed) {
@@ -3818,14 +3831,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Plan form by code (ownertext.ts planFormIssues): a `[plan-review]` reviewer is not started on a plan with form faults; an unreadable plan is left to the reviewer.
         if (!s.isChild && actionOf(input) === null) {
           const faults: string[] = [];
+          const stale: string[] = [];
           for (const [e, occ] of occasions) {
             if (occ !== "plan-review" || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
-            for (const p of planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir)) {
-              const rp = readPlan(p, planOpts(s, ctx));
-              if (!("plan" in rp)) continue;
-              const issues = planFormIssues(rp.plan.bytes.toString("utf8"), {});
-              if (issues.length > 0) faults.push(`${p}: ${issues.join("; ")}`);
+            for (const rp of readPlansOnce(planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir), planOpts(s, ctx))) {
+              const issues = planFormIssues(rp.plan.markdown, {});
+              if (issues.length > 0) faults.push(`${rp.raw}: ${issues.join("; ")}`);
+              const why = copyStale(rp.plan);
+              if (why) stale.push(`${rp.raw}: ${why}`);
             }
+          }
+          if (stale.length > 0) {
+            s.trace?.emit({ event: "launch_refused", reason: "plan_copy_stale", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: reviewer launch refused [plan_copy_stale]: the markdown copy of the plan page is out of date (${stale.join(" | ")}), so the reviewer would read another version than the page. Fix the cause (delete a hand-written or locked plan-<topic>.md, or free the scratch dir) and launch again; no reviewer was started.` };
           }
           if (faults.length > 0) {
             s.trace?.emit({ event: "launch_refused", reason: "plan_form", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -4111,11 +4129,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
           const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
           const rereview: string[] = [];
-          for (const p of planPaths) {
-            // The key is the real path and the text is what the reviewer reads now; the last reviewed text is in memory only.
-            const rp = readPlan(p, planOpts(s, ctx));
-            if (!("plan" in rp)) continue;
-            const text = rp.plan.bytes.toString("utf8");
+          const hiddenFacts: string[] = [];
+          const readable = readPlansOnce(planPaths, planOpts(s, ctx));
+          for (const rp of readable) {
+            // The key is the real path and the text is what the reviewer reads now (the markdown copy of a page); the last reviewed text is in memory only.
+            const p = rp.raw;
+            const text = rp.plan.markdown;
+            if (rp.plan.kind === "html") {
+              hiddenFacts.push(`Plan page ${rp.plan.rel}: read the markdown copy ${rp.plan.copyPath} (generated from the page, which is the plan the owner approves; rulings are in rulings-${rp.plan.topic}.md).`);
+              const hidden = hiddenFactsLine(rp.plan.hidden ?? []);
+              if (hidden) hiddenFacts.push(`Hidden-style facts of ${rp.plan.rel} (CSS or attributes that hide or add words the copy does not show; judge whether the page misleads): ${hidden}`);
+            }
             const before = s.planReviews.reviewedText(rp.plan.path);
             if (s.planReviews.lineage(rp.plan.path)) {
               rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
@@ -4123,7 +4147,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             }
             s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text);
           }
-          return [planFactsBlock(planPaths, planLedger, lg), ...ownerFactsLines(planPaths, ctx.cwd), ...rereview].join("\n");
+          // one entry per plan (a page and its copy named together are one); a plan that cannot be read stays listed
+          const raws = new Set(readable.map((rp) => rp.raw));
+          const once = planPaths.filter((p) => raws.has(p) || !("plan" in readPlan(p, planOpts(s, ctx))));
+          const copyOf = new Map(readable.filter((rp) => rp.plan.kind === "html").map((rp) => [rp.raw, rp.plan.copyPath ?? rp.plan.path]));
+          return [planFactsBlock(once.map((p) => copyOf.get(p) ?? p), planLedger, lg), ...hiddenFacts, ...ownerFactsLines(once, ctx.cwd, planOpts(s, ctx)), ...rereview].join("\n");
         });
         if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
@@ -4567,10 +4595,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (tier !== "heavy" || !launchRoles(s, input).includes("builder")) return undefined;
     const o = planOpts(s, ctx);
-    const reason = builderLaunchRefusal(s.plan, tier, s.plan ? currentPlanHash(s.plan, o) : null);
+    const now = s.plan ? currentPlanHash(s.plan, o) : null;
+    const reason = builderLaunchRefusal(s.plan, tier, now);
     if (!reason) return undefined;
     s.trace?.emit({ event: "launch_refused", reason, tier, ...launchDeny(input) });
-    return launchRefusalText(reason, s.plan, o.scratchDir);
+    // an approved plan that cannot be read now (a refused rulings write, a lost marker): the readPlan error says why, not only "changed"
+    const unread = reason === "plan_changed" && s.plan && now === null ? readPlan(s.plan.path, o) : null;
+    return launchRefusalText(reason, s.plan, o.scratchDir) + (unread && "error" in unread ? ` The plan cannot be read: ${unread.error}` : "");
   }
 
   /**
@@ -4978,11 +5009,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && event.toolName === "bash") evalOwnAsk(owner);
     const pending = owner?.pendingChanges.get(event.toolCallId);
     let planFormNote = "";
-    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
+    const wroteFile = !!owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit");
+    const wrotePath = (event.input as Record<string, unknown>).path;
+    if (owner && wroteFile && isPlanPath(wrotePath, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
-      const written = readPlan((event.input as Record<string, unknown>).path, planOpts(owner, ctx));
-      const issues = "plan" in written ? planFormIssues(written.plan.bytes.toString("utf8"), {}) : [];
-      if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
+      const written = readPlan(wrotePath, planOpts(owner, ctx));
+      if ("error" in written) planFormNote = written.error; // e.g. a Write over the generated copy that lost its marker
+      else {
+        const issues = planFormIssues(written.plan.markdown, {});
+        if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
+        if (written.plan.kind === "html" && typeof wrotePath === "string" && wrotePath.endsWith(".md")) planFormNote = `pi-foreman: plan-${written.plan.topic}.md is generated from plan-${written.plan.topic}.html; edit the page, not the copy. The copy was written again from the page.${planFormNote ? `\n${planFormNote}` : ""}`;
+      }
+    } else if (owner && wroteFile) {
+      // `rulings-<topic>.md` is the rulings sidecar of an HTML plan: the copy is derived again, with or without a plan page open
+      const topic = rulingsTopic(wrotePath, planOpts(owner, ctx));
+      const abs = topic ? resolveToolPath(wrotePath, ctx.cwd, os.homedir()) : null;
+      const page = abs ? path.join(path.dirname(abs), `plan-${topic}.html`) : null;
+      if (page && fs.existsSync(page)) {
+        const r = readPlan(page, planOpts(owner, ctx));
+        if ("error" in r) planFormNote = r.error;
+        else owner.show?.rulingsWritten(r.plan.path);
+      }
     }
     // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
@@ -5849,8 +5896,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       label: "Plan checkpoint",
       // Never in parallel with other tool calls of the same message: no write lands while the owner reviews.
       executionMode: "sequential",
-      description: "Ask the owner to approve a plan file (.workflow/scratch/plan-<topic>.md) before builders start. At tier heavy no builder launches until the owner approved the current version of the plan. The owner answers approve, revise (with a note) or reject; without an answer the checkpoint stays pending.",
-      parameters: { type: "object", properties: { path: { type: "string", minLength: 1, description: "Path of the plan file, plan-<topic>.md in the scratch dir." } }, required: ["path"], additionalProperties: false } as never,
+      description: "Ask the owner to approve a plan file (.workflow/scratch/plan-<topic>.html or plan-<topic>.md) before builders start. At tier heavy no builder launches until the owner approved the current version of the plan. The owner answers approve, revise (with a note) or reject; without an answer the checkpoint stays pending.",
+      parameters: { type: "object", properties: { path: { type: "string", minLength: 1, description: "Path of the plan file, plan-<topic>.html or plan-<topic>.md in the scratch dir." } }, required: ["path"], additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
         const tier = s.ceremony.tier;
@@ -5867,7 +5914,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const r = readPlan(params.path, planOpts(s, ctx));
         if ("error" in r) return done("refused", null, r.error, true);
         const plan = r.plan;
-        const name = `plan-${plan.topic}.md`;
+        const name = path.basename(plan.path);
         const ruling = rulingPickup(s, `checkpoint ${name}`);
         if (ruling) return done("pending", null, `pi-foreman: a newer ruling arrived before the checkpoint press; ${name} is not presented. Act on it, then call ${CHECKPOINT_TOOL} again.\n${ruling}`);
         const hash8 = plan.hash.slice(0, 8);
@@ -5876,7 +5923,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let reviewed: string | null = null;
         if (planReviewOn(s.config.config, tier)) {
           const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
-          const g = s.planReviews.gate(plan.path, planVersionHash(plan.bytes), cap);
+          const g = s.planReviews.gate(plan.path, plan.hash, cap);
           if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
           // Capped: the checkpoint opens on a FAIL with the open findings visible.
           reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
@@ -5898,7 +5945,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const title = `pi-foreman checkpoint: ${name} (${hash8})`;
         s.trace?.emit({ event: "dialog", surface: "checkpoint" });
         try {
-          ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n${await planPageLine(planPage, undefined, showOffReason(!!s.live, s.id))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${await planPageLine(planPage, undefined, showOffReason(!!s.live, s.id))}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
           answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
         } catch {
           answer = undefined;

@@ -51,9 +51,9 @@ export function diffLinesOf(diff: string | null | undefined): number {
   return (diff ?? "").split(/\r?\n/).filter((l) => /^[+-]/.test(l) && !/^(?:\+\+\+|---) (?:[ab]\/|\/dev\/null)/.test(l)).length;
 }
 
-/** `plan-*.md` paths a plan-review task names, then the ledger: the files a plan review covers. */
+/** `plan-*.md` and `plan-*.html` paths a plan-review task names, then the ledger: the files a plan review covers. */
 export function planReviewFiles(task: string, ledger: string | null): string[] {
-  const plans = [...task.matchAll(/[^\s`'"()<>\[\]]*plan-[\w.-]+\.md/g)].map((m) => m[0]);
+  const plans = [...task.matchAll(/[^\s`'"()<>\[\]]*plan-[\w.-]+\.(?:md|html)/g)].map((m) => m[0]);
   return [...new Set([...plans, ...(ledger ? [ledger] : [])])];
 }
 
