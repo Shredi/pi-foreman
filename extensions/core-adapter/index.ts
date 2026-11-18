@@ -5165,17 +5165,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
     // D27: a project-file edit through the foreman's own tools is work, at every tier.
-    if (owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) owner.work.edits++;
+    const projectChanged = !!owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform });
+    if (owner && projectChanged) owner.work.edits++;
     const withNote = () => (readNote || qHint || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
-    if (owner && !owner.isChild && !event.isError && owner.hs.hasRuns() && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
+    if (owner && projectChanged && owner.hs.hasRuns()) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
       await hsRevised(owner, edited ? path.dirname(edited) : ctx.cwd);
     }
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     // The checkout of the edited file (a move: source and destination) revises its own gate entry; unresolved: every entry (reviewgates.ts).
-    if (owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
+    if (owner && projectChanged) {
       const input = event.input as Record<string, unknown>;
       const files = event.toolName === "foreman_move" ? [input.src, input.dst] : [changedFileOf(event.toolName, input)];
       const dirs = files.map((f) => resolveToolPath(f, ctx.cwd, os.homedir())).filter((f): f is string => !!f).map((f) => path.dirname(f));
@@ -5529,7 +5530,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     // D28: the count belongs to the state the refusal answers (missing steps, work, review verdict); a new state starts at zero.
-    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, gate.last ?? "", gate.failAt ?? ""].join("|");
+    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, Object.entries(s.reviewGates).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, g]) => `${k}:${g.last ?? ""}:${g.failAt ?? ""}`).join(",")].join("|"); // every checkout's verdict, not the combined one
     if (s.finishKey !== stateKey) (s.finishKey = stateKey), (s.finishRefusals = 0);
     // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this refusal
     // counts as one of the state's two refusals (same counter), with its own message.
