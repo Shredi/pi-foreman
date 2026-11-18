@@ -2,6 +2,7 @@
 // a tag only later in the text is refused, never guessed. In-process, no child process: the pure parts directly, the wiring through the adapter's
 // tool_call handler on the r11 rig with stand-ins for git, the python probe and the config CLI.
 import cp from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
@@ -291,4 +292,19 @@ test("wiring: a subagent child session still takes the field and marks a field-o
   await rig.launch(input);
   assert.ok(!("occasion" in input));
   assert.ok(String(input.task).includes("[plan-review] review the plan"), String(input.task));
+});
+
+test("wiring: a reviewer launch is refused when its record folder cannot be made (review_record_dir); a good launch gets the folder", async (t) => {
+  const rig = await launchRig(t);
+  const root = path.join(rig.agentDir, "pi-foreman", "state", "review-records");
+  fs.mkdirSync(path.dirname(root), { recursive: true });
+  fs.writeFileSync(root, "not a folder");
+  const refused = await rig.launch({ agent: "reviewer", task: "review items 1" });
+  assert.match(refused.res?.reason ?? "", /\[review_record_dir\]/);
+  assert.match(refused.res?.reason ?? "", /pi-foreman\/state\/review-records/);
+  assert.equal(rig.events("launch_refused").filter((e) => e.reason === "review_record_dir").length, 1);
+  fs.rmSync(root);
+  const ok = await rig.launch({ agent: "reviewer", task: "review items 1" });
+  assert.equal(ok.res, undefined, ok.res?.reason);
+  assert.ok(fs.existsSync(root));
 });

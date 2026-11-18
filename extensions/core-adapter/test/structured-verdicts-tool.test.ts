@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
-import { checkVerdictCall, MAX_FINDINGS, MAX_ITEMS, NO_TOOL_REASON, VERDICT_FILE, type VerdictRecord } from "../verdict.ts";
+import { checkVerdictCall, MAX_FINDINGS, MAX_ITEMS, NO_TOOL_REASON, VERDICT_FILE, VERDICT_REMINDER, type VerdictRecord } from "../verdict.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 type T = { after(fn: () => void | Promise<void>): void };
@@ -23,6 +23,7 @@ interface Child {
   record: () => VerdictRecord | null;
   files: () => string[];
   trace: (event: string) => Record<string, unknown>[];
+  settle: () => Promise<{ continue?: boolean; entries?: { customType?: string; content?: string }[] } | undefined>;
 }
 
 /**
@@ -57,6 +58,7 @@ async function child(t: T, binding: Record<string, unknown> | null, o: { dir?: b
     record: () => (fs.existsSync(path.join(dir, VERDICT_FILE)) ? (JSON.parse(fs.readFileSync(path.join(dir, VERDICT_FILE), "utf8")) as VerdictRecord) : null),
     files: () => fs.readdirSync(dir).sort(),
     trace: (event) => r.events(event),
+    settle: async () => (await r.fire("agent_before_settle", { outcome: "completed", entries: [] })) as { continue?: boolean; entries?: { customType?: string; content?: string }[] } | undefined,
   };
 }
 
@@ -197,6 +199,26 @@ test("no binding, a binding without a folder that exists, or a role that does no
   assert.match(c.text, channel);
   assert.equal(builder.record(), null);
   assert.deepEqual(none.trace("review_verdict_call").map((e) => [e.accepted, e.reason]), [[false, "no_channel"]]);
+});
+
+// ------------------------------------------------------------------ the reminder before the child settles (§2.4)
+
+test("a reviewer child that ends without a verdict is sent back once with the reminder; a recorded verdict or a second end lets it settle", async (t) => {
+  const c = await child(t, { items: [1] });
+  const first = await c.settle();
+  assert.equal(first?.continue, true);
+  assert.equal(first?.entries?.find((e) => e.customType === "pi-foreman-stop-gate")?.content, VERDICT_REMINDER);
+  assert.deepEqual(c.trace("stop_hold").map((e) => e.guard), ["review_verdict"]);
+  assert.notEqual((await c.settle())?.continue, true, "one continue per run");
+  const done = await child(t, { items: [1] });
+  assert.equal((await done.call({ verdict: "pass", items: [{ id: 1, result: "pass" }] })).isError, false);
+  assert.notEqual((await done.settle())?.continue, true, "a record owes nothing");
+  const setup = await child(t, { items: [1] }, { withTool: false });
+  assert.notEqual((await setup.settle())?.continue, true, "the setup record counts as a record");
+  const noFolder = await child(t, { items: [1] }, { dir: false });
+  assert.notEqual((await noFolder.settle())?.continue, true, "no record folder, no reminder");
+  const builder = await child(t, { role: "builder", items: [1] });
+  assert.notEqual((await builder.settle())?.continue, true, "another role is not reminded");
 });
 
 // ------------------------------------------------------------------ the setup record (A6) and the env key (T12)

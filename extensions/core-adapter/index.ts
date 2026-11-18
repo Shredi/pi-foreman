@@ -100,7 +100,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, marksVerifierCommand, mentionsLedger, planLedgerCall, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
@@ -1567,6 +1567,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function savePause(s: Session): void {
     s.pauseSaved = { work: { ...s.work }, atPrompt: { ...s.workAtPrompt }, refusals: s.finishKey ? { n: s.finishRefusals, key: s.finishKey, ...(s.incompleteKey === s.finishKey ? { done: true } : {}) } : null };
     persistCeremonyState(s);
+  }
+
+  /** A reviewer child whose record folder holds no record yet owes a verdict (the setup record of `noToolVerdict` counts as one). */
+  function verdictOwed(): boolean {
+    const b = launchBinding;
+    if (!b?.verdictDir || !REVIEW_ROLES.includes(b.role)) return false;
+    return fs.existsSync(b.verdictDir) && !fs.existsSync(path.join(b.verdictDir, VERDICT_FILE));
   }
 
   /** A reviewer child with a record folder whose active tools lack `review_verdict` (settings not regenerated, A6) writes the incomplete record itself, with the fixed setup reason: no model text enters it. */
@@ -3842,6 +3849,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "launch_refused", reason: "review_single_launch", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: "pi-foreman: launch refused [review_single_launch]: a reviewer records its verdict through a launch binding, which pi-subagents forwards only for a single launch. Launch each reviewer as its own subagent({agent, task}) call." };
         }
+        // T13: a reviewer whose record folder cannot be made could never give a verdict
+        const reviewRole = singleLaunchRole(input);
+        if (!s.isChild && actionOf(input) === null && reviewRole && REVIEW_ROLES.includes(reviewRole)) {
+          try {
+            makeRecordDir(recordSessionDir(s.agentDir, s.id));
+          } catch (err) {
+            s.trace?.emit({ event: "launch_refused", reason: "review_record_dir", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: launch refused [review_record_dir]: the reviewer's record folder cannot be made (${(err as Error).message}). Fix the folder or its permissions under the agent dir (pi-foreman/state/review-records), then launch again.` };
+          }
+        }
         launchMcp = mcpPlan.mcp;
         if (!mcpPlan.group && mcpPlan.entries[0]) {
           const mcpRole = mcpPlan.entries[0].role;
@@ -5658,11 +5675,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
-    if (!r.hold) return await ceremonyFinishGate(s, ctx, event.entries);
+    // §2.4: a reviewer child with a record folder and no record yet is held once, in the same continue as a ledger hold.
+    const owes = !s.stopContinued && verdictOwed();
+    if (!r.hold && !owes) return await ceremonyFinishGate(s, ctx, event.entries);
     s.stopContinued = true;
-    s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
+    if (r.hold) s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
+    if (owes) s.trace?.emit({ event: "stop_hold", guard: "review_verdict", decision: "continue" });
+    const reason = [r.hold ? (r.reason ?? "") : "", owes ? VERDICT_REMINDER : ""].filter(Boolean).join("\n\n");
     return {
-      entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: r.reason ?? "", display: true }],
+      entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: reason, display: true }],
       continue: true,
     };
   });

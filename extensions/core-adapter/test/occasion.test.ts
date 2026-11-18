@@ -71,7 +71,7 @@ test("run end: the record call gets the report on stdin and a file list; a findi
   const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch, rec), launch, context: ctx("r1"), tmpDir: dir }, run);
   const a = calls[0].args;
   for (const [k, v] of [["--gate", "item"], ["--model", "p/m-haiku"], ["--rung", "0"], ["--primary", "1"], ["--source", "live"], ["--role", "reviewer"], ["--run-id", "r1"], ["--verdict", "FAIL"], ["--head", "abc"], ["--secs", "4.0"], ["--session", "S"]]) assert.equal(a[a.indexOf(k) + 1], v, k);
-  assert.match(calls[0].input, /a\.ts:12 leaks/);
+  assert.deepEqual(JSON.parse(calls[0].input), { items: [], findings: [{ file: "src/deep/a.ts", line: 12, class: "resource-leak", note: "n" }] });
   assert.equal(calls[0].files, "src/a.ts\nsrc/b.ts\n");
   assert.deepEqual(fs.readdirSync(dir), []); // the list is removed
   const finding = out.traces.find((t) => t.event === "finding")!;

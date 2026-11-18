@@ -317,7 +317,7 @@ class ConfigTest(unittest.TestCase):
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role in ("explorer", "reviewer"), role)
         self.assertEqual(sub["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
+                         ["read", "ls", "grep", "find", "bash", "review_verdict"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -329,17 +329,19 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("intercom", fc.resolve_role(cfg, "builder", "p1")["tools"])
         self.assertIn("intercom", fc.resolve_role(cfg, "foreman", "p1")["tools"])
 
-    def test_ledger_helper_reviewer_tool_only_in_tool_mode(self):
+    def test_ledger_helper_reviewer_has_review_verdict_and_no_ledger_tool_in_every_mode(self):
         self.l2({"providers": PROV})
         cfg = self.load()["config"]
         self.assertEqual(cfg["ceremony"]["ledgerHelper"], "tool")
-        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
-        for role in fc.CHILD_ROLES:
-            self.assertEqual("foreman_ledger" in sub[role]["tools"], role == "reviewer", role)
-        self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
-        cfg["ceremony"]["ledgerHelper"] = "off"
-        self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
+        for mode in ("tool", "bash", "off"):
+            cfg["ceremony"]["ledgerHelper"] = mode
+            sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+            for role in fc.CHILD_ROLES:
+                self.assertEqual("review_verdict" in sub[role]["tools"], role == "reviewer", (mode, role))
+                self.assertNotIn("foreman_ledger", sub[role]["tools"], (mode, role))
+            tools = fc.resolve_role(cfg, "reviewer", "p1")["tools"]
+            self.assertIn("review_verdict", tools, mode)
+            self.assertNotIn("foreman_ledger", tools, mode)
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})

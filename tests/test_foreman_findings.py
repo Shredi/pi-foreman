@@ -1,4 +1,5 @@
-"""scripts/foreman_findings.py: the extraction half of scorer v3 and located_findings (no ground truth)."""
+"""scripts/foreman_findings.py: the path and symbol helpers of the bench scorer, and `record`, which takes the findings of a
+reviewer's verdict record as JSON (never report text)."""
 import contextlib
 import io
 import json
@@ -10,85 +11,100 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import foreman_findings as ff  # noqa: E402
 import foreman_review_bench as rb  # noqa: E402
 
 FILES = ["app/client.py", "tests/test_client.py"]
 
 
+def record(argv, stdin):
+    out, err = io.StringIO(), io.StringIO()
+    fake = mock.Mock(buffer=io.BytesIO(stdin.encode()))
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), mock.patch.object(sys, "stdin", fake):
+        rc = ff.main(argv)
+    return rc, out.getvalue(), err.getvalue()
+
+
 class Helpers(unittest.TestCase):
-    def test_reexported_by_the_bench(self):
-        for n in ("verdict_of", "items_of", "fail_units", "fail_evidence", "names_file", "patch_files", "symbols_of",
-                  "CLASSES", "CLASS_SYNONYMS", "LINE_SLACK"):
-            self.assertIs(getattr(rb, n), getattr(ff, n))
-        self.assertEqual(rb.SCORER_VERSION, 3)
+    def test_text_readers_are_gone(self):
+        for n in ("verdict_of", "items_of", "fail_units", "fail_evidence", "located_findings", "VERDICT_RE", "ITEM_RE"):
+            self.assertFalse(hasattr(ff, n), n)
+            self.assertFalse(hasattr(rb, n) and n != "located_findings", n)
+        self.assertEqual(rb.SCORER_VERSION, 4)
 
-    def test_verdict_items_units(self):
-        text = "VERDICT: FAIL\n1. PASS ok app/x.py:1\n2. FAIL app/client.py:38 logs it\n   - more\nOverall: FAIL"
-        self.assertEqual(ff.verdict_of(text), "fail")
-        self.assertEqual([(i["n"], i["verdict"]) for i in ff.items_of(text)], [(1, "PASS"), (2, "FAIL")])
-        self.assertEqual(ff.fail_units(text), [["2. FAIL app/client.py:38 logs it", "- more"]])
-
-    def test_names_file_and_spans(self):
+    def test_names_file_and_symbols(self):
         self.assertTrue(ff.names_file("see client.py:3", "app/client.py", FILES))
         self.assertFalse(ff.names_file("see client.py:3", "app/client.py", FILES + ["lib/client.py"]))
-        self.assertEqual(ff._line_spans("app/client.py:38-40 x", "app/client.py"), [(38, 40)])
-        self.assertTrue(ff._negated("this is not a race", 15))
         self.assertEqual(ff.patch_files("--- a/x.py\n+++ b/x.py\n--- /dev/null\n+++ b/y.py\n"), ["x.py", "y.py"])
+        self.assertEqual(ff.symbols_of({"description": "ReportStore.read joins paths"}), ["ReportStore"])
 
-
-class Located(unittest.TestCase):
-    def test_fail_unit_with_path_line_and_class(self):
-        r = ff.located_findings("VERDICT: FAIL\n2. FAIL app/client.py:38 logs the bearer token\n", FILES)
-        self.assertEqual(r, [{"file": "app/client.py", "line": 38, "class": "secret-log",
-                              "note": "2. FAIL app/client.py:38 logs the bearer token"}])
-
-    def test_pass_report_can_still_list_a_located_defect(self):
-        text = "VERDICT: PASS\n1. PASS ok at app/client.py:30\nNotes:\n- app/client.py:40 leaves the file handle unclosed\n"
-        r = ff.located_findings(text, FILES)
-        self.assertEqual([(f["file"], f["line"], f["class"]) for f in r], [("app/client.py", 40, "resource-leak")])
-        self.assertEqual(ff.located_findings("VERDICT: PASS\n1. PASS ok at app/client.py:30\n- none", FILES), [])
-
-    def test_negated_class_word_without_line_is_not_located(self):
-        self.assertEqual(ff.located_findings("VERDICT: FAIL\n2. FAIL app/client.py is not a race\n", FILES), [])
-        r = ff.located_findings("VERDICT: FAIL\n2. FAIL app/client.py:9 is not a race\n", FILES)
-        self.assertEqual((r[0]["line"], r[0]["class"]), (9, None))
-
-    def test_basename_ambiguity_and_no_located_finding(self):
-        text = "VERDICT: FAIL\n2. FAIL client.py:38 logs the token\n"
-        self.assertEqual(ff.located_findings(text, FILES + ["lib/client.py"]), [])
-        self.assertEqual(ff.located_findings("VERDICT: FAIL\n2. FAIL no tests were added\n", FILES), [])
-        self.assertEqual(ff.located_findings("VERDICT: PASS\n1. PASS fine", FILES), [])
-
-    def test_dedupe_and_id(self):
-        text = "VERDICT: FAIL\n2. FAIL app/client.py:38 leaks the token\n3. FAIL app/client.py:39 leaks the token\n"
-        r = ff.located_findings(text, FILES)
-        self.assertEqual(len(r), 1)
+    def test_finding_id_triple(self):
         self.assertEqual(ff.finding_id("a.py", 38, "race"), ff.finding_id("a.py", 36, "race"))
         self.assertNotEqual(ff.finding_id("a.py", 38, "race"), ff.finding_id("a.py", 38, None))
         self.assertEqual(len(ff.finding_id("a.py", None, None)), 12)
 
-    def test_extract_cli(self):
-        with tempfile.TemporaryDirectory() as d:
-            lst = Path(d) / "files.txt"
-            lst.write_text("\n".join(FILES), "utf-8")
-            stdin = mock.Mock(buffer=io.BytesIO(b"VERDICT: FAIL\n2. FAIL app/client.py:38 logs the token\n"))
-            out = io.StringIO()
-            with mock.patch.object(sys, "stdin", stdin), contextlib.redirect_stdout(out):
-                self.assertEqual(ff.main(["extract", "--files-from", str(lst)]), 0)
-            data = json.loads(out.getvalue())
-            self.assertEqual((data["verdict"], data["findings"][0]["class"], len(data["findings"][0]["id"])),
-                             ("fail", "secret-log", 12))
-            with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(ff.main(["extract"]), 2)
+
+class RecordInput(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.agent = Path(self.tmp.name) / "agent"
+        self.files = Path(self.tmp.name) / "files.txt"
+        self.files.write_text("\n".join(FILES), "utf-8")
+
+    def call(self, stdin, *extra):
+        return record(["record", "--session", "s1", "--gate", "item", "--model", "m", "--rung", "0", "--primary", "1",
+                       "--role", "reviewer", "--run-id", "r1", "--source", "live", "--head", "abc", "--verdict", "FAIL",
+                       "--agent-dir", str(self.agent), *extra], stdin)
+
+    def stored(self):
+        p = self.agent / "pi-foreman" / "state" / "findings" / "s1.jsonl"
+        return [json.loads(ln) for ln in p.read_text("utf-8").splitlines()]
+
+    def test_findings_and_items_come_from_the_json(self):
+        data = {"items": [3, 1, 1, "V", True, 0],
+                "findings": [{"file": "app/client.py", "line": 38, "class": "secret-log", "note": "logs it"},
+                             {"file": "app/client.py", "line": 39, "class": "secret-log", "note": "same band"},
+                             {"file": "app/client.py", "line": 7, "class": "no-such-class", "note": "x" * 300},
+                             {"file": "app/other.py", "line": 2, "class": "race", "note": "not in the diff"},
+                             {"file": "/etc/passwd", "line": 1}, {"file": "../x.py"}, {"line": 4}, "text", {"file": 3}]}
+        rc, out, _err = self.call(json.dumps(data), "--files-from", str(self.files))
+        self.assertEqual(rc, 0)
+        res = json.loads(out)
+        self.assertEqual(res["verdict"], "FAIL")
+        self.assertEqual(res["items"], [1, 3])
+        self.assertEqual([(f["file"], f["line"], f["class"]) for f in res["findings"]],
+                         [("app/client.py", 38, "secret-log"), ("app/client.py", 7, None)])
+        self.assertEqual(len(res["findings"][1]["note"]), ff.MAX_NOTE)
+        review, *findings = self.stored()
+        self.assertEqual((review["items"], review["findings"], review["verdict"]), ([1, 3], 2, "FAIL"))
+        self.assertEqual([f["id"] for f in findings], [f["id"] for f in res["findings"]])
+
+    def test_without_a_file_list_every_repo_relative_file_counts(self):
+        rc, out, _err = self.call(json.dumps({"findings": [{"file": "app/other.py", "line": 2}]}))
+        self.assertEqual((rc, len(json.loads(out)["findings"])), (0, 1))
+
+    def test_report_text_or_bad_json_records_the_review_without_findings(self):
+        for stdin in ("VERDICT: FAIL\n2. FAIL app/client.py:38 logs the bearer token\n", "[1, 2]"):
+            rc, out, err = self.call(stdin, "--files-from", str(self.files))
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out)["findings"], [])
+            self.assertIn("record", err)
+        self.assertEqual([r["type"] for r in self.stored()], ["review", "review"])
+
+    def test_extract_is_gone(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(ff.main(["extract", "--files-from", str(self.files)]), 2)
 
 
 class Rescoring(unittest.TestCase):
-    def test_score_identical_to_stored_pre_refactor_fixtures(self):
+    def test_score_from_the_record_of_each_fixture_cell(self):
         cells = json.loads((ROOT / "tests" / "fixtures" / "review_bench_cells.json").read_text("utf-8"))
         self.assertGreaterEqual(len(cells), 10)
         for c in cells:
-            self.assertEqual(rb.score(c["final_text"], c["ground_truth"], c["files"]), c["expected"], c["name"])
+            self.assertTrue(rb.has_record(c), c["name"])
+            self.assertEqual(rb.score(c["record"], c["ground_truth"], c["files"]), c["expected"], c["name"])
 
 
 if __name__ == "__main__":

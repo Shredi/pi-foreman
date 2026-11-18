@@ -1,6 +1,6 @@
 // Run-end findings (docs/review.md): every completed review child of a run is handed to
-// `scripts/foreman_findings.py record` (report text on stdin, the reviewed files in a temp list),
-// which appends the review to the session's findings store. Fail-soft: a failed or slow call records nothing.
+// `scripts/foreman_findings.py record` (the verdict record's item numbers and located findings as JSON on stdin, the reviewed files in a
+// temp list), which appends the review to the session's findings store. Fail-soft: a failed or slow call records nothing.
 // The located findings are the `defect` findings of the reviewer's verdict record that name a file (verdict.ts); they
 // feed the `finding` trace (file basename only) and the panel's attributed block (panel.ts PendingPanels).
 import * as crypto from "node:crypto";
@@ -71,6 +71,13 @@ export function recordArgs(r: ReviewResult, launch: ReviewLaunch | null | undefi
   return args;
 }
 
+/** The JSON on stdin of a `record` call: the numbered items the reviewer gave a result (not `open`) and its located findings. */
+export function recordInput(r: Pick<ReviewResult, "items" | "findings">): string {
+  const items = r.items.flatMap((i) => (typeof i.id === "number" && i.result !== "open" ? [i.id] : []));
+  const findings = findingsOfResult(r).map((f) => ({ file: f.file, line: f.line, class: f.class || undefined, note: f.note }));
+  return JSON.stringify({ items, findings });
+}
+
 /** Runs one `foreman_findings.py` call: args, stdin text; never throws in practice (runScript). */
 export type RecordRunner = (args: string[], input: string) => Promise<{ text: string; ok: boolean }>;
 
@@ -79,7 +86,7 @@ export async function recordReview(r: ReviewResult, launch: ReviewLaunch | null 
   const list = path.join(tmpDir, `findings-files-${process.pid}-${Date.now()}-${r.index}-${Math.random().toString(36).slice(2, 8)}.txt`);
   try {
     fs.writeFileSync(list, (launch?.files ?? []).join("\n") + "\n", "utf8");
-    await run([...recordArgs(r, launch, c), "--files-from", list], r.text);
+    await run([...recordArgs(r, launch, c), "--files-from", list], recordInput(r));
     return findingsOfResult(r);
   } catch {
     return findingsOfResult(r);

@@ -20,7 +20,8 @@ import foreman_findings as ff  # noqa: E402
 import foreman_retro as fr  # noqa: E402
 import foreman_review_bench as rb  # noqa: E402
 
-REPORT = "VERDICT: FAIL\n1. FAIL app/client.py:38 logs the bearer token\nOverall: FAIL\n"
+# stdin of a `record` call: the item numbers and defect findings of the reviewer's verdict record
+REPORT = json.dumps({"items": [1], "findings": [{"file": "app/client.py", "line": 38, "class": "secret-log", "note": "logs the bearer token"}]})
 
 
 def run(fn, argv, stdin=""):
@@ -58,10 +59,10 @@ class Store(unittest.TestCase):
         self.files = self.tmp / "files.txt"
         self.files.write_text("app/client.py\n")
 
-    def record(self, rid="r1", model="m1", primary="1", *extra, text=REPORT, agent=None):
+    def record(self, rid="r1", model="m1", primary="1", *extra, text=REPORT, agent=None, verdict="FAIL"):
         return run(ff.main, ["record", "--session", "s1", "--gate", "item", "--model", model, "--rung", "0",
                              "--primary", primary, "--role", "reviewer", "--run-id", rid, "--source", "live",
-                             "--head", "abc", "--item", "1", "--secs", "12.5", "--files-from", str(self.files),
+                             "--head", "abc", "--item", "1", "--verdict", verdict, "--secs", "12.5", "--files-from", str(self.files),
                              "--agent-dir", str(agent or self.agent)] + list(extra), text)
 
     def lines(self):
@@ -79,7 +80,7 @@ class Store(unittest.TestCase):
                          ("review", 1, [1], "FAIL", 12.5))
         self.assertEqual((finding["id"], finding["file"], finding["head"], finding["primary"]),
                          (res["findings"][0]["id"], "app/client.py", "abc", True))
-        self.record("r2", text="VERDICT: PASS\n1. PASS fine\n")
+        self.record("r2", text=json.dumps({"items": [1], "findings": []}), verdict="PASS")
         self.assertEqual([r["type"] for r in self.lines()], ["review", "finding", "review"])
 
     def test_record_fail_soft_and_no_absolute_paths(self):
@@ -96,7 +97,7 @@ class Store(unittest.TestCase):
     def test_list_unique_only_model_and_dismiss(self):
         self.record("r1", "alpha")
         self.record("r2", "beta")
-        self.record("r3", "beta", "0", text="VERDICT: FAIL\n1. FAIL app/client.py:60 ignores the error\n")
+        self.record("r3", "beta", "0", text=json.dumps({"items": [1], "findings": [{"file": "app/client.py", "line": 60, "class": "swallowed-error", "note": "ignores the error"}]}))
         rc, out, _e = run(ff.main, ["list", "--json", "--agent-dir", str(self.agent)])
         self.assertEqual(len(json.loads(out)), 3)
         _rc, out, _e = run(ff.main, ["list", "--json", "--unique", "--agent-dir", str(self.agent)])

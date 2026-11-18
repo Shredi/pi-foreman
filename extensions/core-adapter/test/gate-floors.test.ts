@@ -114,6 +114,13 @@ test("path tools: secret and key paths", () => {
 const penv: FloorEnv = { ...env, pkgRoot: "/pkg" }; // r79 item 9: FloorEnv.policyFiles is gone, so these names are ordinary files
 const A = "/h/me/.pi/agent/pi-foreman";
 
+// structured verdicts: the verdict records of reviewer launches are harness state, written only by the review_verdict tool
+test("review records: shell writes under state/review-records are floored, reads are not", () => {
+  for (const l of [`rm -r ${A}/state/review-records`, `echo '{}' > ${A}/state/review-records/s/l/verdict.json`, `cp /tmp/v.json ${A}/state/review-records/s/l/verdict.json`, `mv x ${A}/state/review-records/s`])
+    assert.equal(floor(l, penv), "floor-policy-file", l);
+  for (const l of [`cat ${A}/state/review-records/s/l/verdict.json`, `ls ${A}/state/review-records`]) assert.equal(floor(l, penv), null, l);
+});
+
 // r79 item 4: policy.md of every layer, permissions.policy.md and safety.policy.files are no longer read, so no longer write-protected (the old
 // cases below moved to the second list); the three permissions.json files take their place, matched by basename under .workflow/ and .pi/.
 test("policy and harness state files: shell writes are floored, reads are not", () => {

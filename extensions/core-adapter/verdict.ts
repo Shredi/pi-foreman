@@ -8,6 +8,8 @@ import * as path from "node:path";
 
 export const VERDICT_TOOL = "review_verdict";
 export const VERDICT_FILE = "verdict.json";
+/** The one hold of a reviewer child that ends without a record (index.ts agent_before_settle). */
+export const VERDICT_REMINDER = `Give your verdict with ${VERDICT_TOOL} before you end (pass, fail or incomplete).`;
 
 export const VERDICT_VALUES = ["pass", "fail", "incomplete"] as const;
 export type VerdictValue = (typeof VERDICT_VALUES)[number];
