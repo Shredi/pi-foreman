@@ -96,8 +96,11 @@ Look for labels that name a recurring kind of defect, such as a regression label
 Markers that record a known compromise:
 
 ```
-git grep -I -n -E '\b(TODO|FIXME|HACK|XXX)\b|workaround'
+git grep -I -n -w -E 'TODO|FIXME|HACK|XXX'
+git grep -I -n -i workaround
 ```
+
+Use `-w` for word boundaries, not `\b`, because `\b` is not portable across git builds.
 
 A marker that names something already removed is a stale doc. A marker that repeats the same text in several files is a copied workaround.
 
@@ -114,7 +117,7 @@ Count by the rule or code named in each suppression. The same rule disabled in t
 ### Skipped tests
 
 ```
-git grep -I -n -E '\.skip\(|\bxit\(|@pytest\.mark\.(skip|xfail)|t\.Skip\(|#\[ignore\]'
+git grep -I -n -E '\.skip\(|xit\(|@pytest\.mark\.(skip|xfail)|t\.Skip\(|#\[ignore\]'
 ```
 
 A skipped test with a comment naming a bug is a finding with evidence. A skipped test with no reason is a gap in runtime verification.
@@ -134,10 +137,10 @@ Note which checks run on a pull request and which run only after a merge to main
 Failure share over the most recent completed runs (GitHub):
 
 ```
-gh run list --limit 200 --json conclusion --jq 'map(.conclusion) | group_by(.) | map({conclusion: .[0], runs: length})'
+gh run list --status completed --limit 200 --json conclusion,createdAt --jq '{window: [(map(.createdAt) | min), (map(.createdAt) | max)], runs: (map(.conclusion) | group_by(.) | map({conclusion: .[0], runs: length}))}'
 ```
 
-Add `--workflow <file>` to count one workflow. Reruns of a failed run count as failures here; say so in the report. Report the window as the first and last `createdAt` of the runs you counted.
+Add `--workflow <file>` to count one workflow. Reruns of a failed run count as failures here; say so in the report. Report the `window` the command prints (first and last `createdAt` of the runs counted).
 
 ## Agent-harness notes
 
@@ -167,10 +170,10 @@ Count what is tracked (`git ls-files | grep -c -E '\.(png|gif|jpe?g)$'` for imag
 
 Use this adapter when the repository has pi-foreman's stores for this repository: `skills/` and `config/foreman.defaults.json` in the tree, and round notes in a `.workflow/` directory. The notes may be in this checkout or in another checkout of the same repository; use the notes path the caller names when one is given. A worktree's `.workflow/` may hold only the ledger and scratch files. When the local one lacks `closed/`, look in the checkout that has it.
 
-The `foreman` command is the shell wrapper `bin/foreman` in the pi-foreman checkout. Run it as a command (`bin/foreman findings list`); do not run it with `node`.
+The `foreman` command is the shell wrapper `bin/foreman` in the pi-foreman checkout. Run it as a command (`bin/foreman findings list`).
 
 - Findings store: `foreman findings list` prints the findings. The subcommands are `extract`, `record`, `list`, `dismiss` and `export`; `foreman findings` alone prints a usage error. Add `--json` to parse the output. The store belongs to the user account, not to the repository, so it holds rows from other repositories too. Filter the rows to the target repository by the paths or repository name in each row, then report how many rows belong to it and how many you kept. Group the kept rows by cause and use the finding ids as evidence.
-- Retro backlog: `foreman backlog list` prints the open items. Use `--json` to parse it, `--workspace <path>` or `--all` to choose the workspace, and `--status all` to include closed items. `foreman backlog -h` shows the `--cwd` option. Each open item is a candidate group; check whether a later round closed it.
+- Retro backlog: `foreman backlog list` prints the open items; `foreman backlog brief --min-count 2` is the ready-made list of entries seen at least twice. Use `--json` to parse it, `--workspace <path>` or `--all` to choose the workspace, and `--status all` to include closed items. `foreman backlog -h` shows the `--cwd` option. Each open item is a candidate group; check whether a later round closed it.
 - Closed rounds: `.workflow/closed/*/result.md`, the result file of each round. Its open-issues or left-open list is a source of repeated findings:
 
   ```
