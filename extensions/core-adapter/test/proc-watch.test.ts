@@ -64,10 +64,30 @@ test("the titled record names FOREMAN_TEST_FILE when set, else the script basena
 test("without FOREMAN_SPAWN_COUNT_DIR the watch is inactive", () => {
   const dir = mkTestTmp("pf-proc-watch-off-");
   try {
-    const env = cleanEnv({ NODE_OPTIONS: nodeOptionsWithWatch(undefined, WATCH) });
-    const r = spawnSync(process.execPath, ["-e", `process.title = "x";`], { env, encoding: "utf8" });
+    // the directory is the child's cwd and sits under another variable name, so a preload that wrote a record there would show
+    const env = cleanEnv({ NODE_OPTIONS: nodeOptionsWithWatch(undefined, WATCH), PF_OTHER_DIR: dir });
+    const r = spawnSync(process.execPath, ["-e", `process.title = "x";`], { cwd: dir, env, encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(fs.readdirSync(dir), []);
+  } finally {
+    rmTestTmp(dir);
+  }
+});
+
+test("a titled process killed by SIGTERM after its first second is still recorded, naming the file", { skip: process.platform === "win32" }, async () => {
+  const dir = mkTestTmp("pf-proc-watch-sigterm-");
+  try {
+    const env = cleanEnv({ FOREMAN_SPAWN_COUNT_DIR: dir, FOREMAN_TEST_FILE: "killed.test.ts", NODE_OPTIONS: nodeOptionsWithWatch(undefined, WATCH) });
+    const child = spawn(process.execPath, ["-e", `process.title = "x"; setTimeout(() => {}, 30000);`], { env, stdio: "ignore" });
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    try {
+      await sleep(1500);
+      const t0 = Date.now();
+      while (titledFiles(readSpawnCounts(dir)).length === 0 && Date.now() - t0 < 5000) await sleep(50);
+    } finally {
+      child.kill("SIGTERM");
+    }
+    assert.deepEqual(titledFiles(readSpawnCounts(dir)), ["killed.test.ts"]);
   } finally {
     rmTestTmp(dir);
   }
