@@ -139,7 +139,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, takeBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -837,8 +837,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.questionCalls.forEach(releaseQuestion);
   });
   let isoSetting: unknown = "auto";
-  // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
-  const launchBinding = readBinding(process.env);
+  // A child's launch binding is in the env while its extensions load (usage.ts); read it now. A child removes it from its env
+  // after the read, so a pi it starts has no role; the foreman's env stays as it is.
+  const launchBinding = process.env.PI_SUBAGENT_CHILD === "1" ? takeBinding(process.env) : readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.out) process.env[OUT_ENV] = launchBinding.out;
   /** A child's write roots of this kind: its scratch dir first, then its kept output dir (`$FOREMAN_OUT`). */
