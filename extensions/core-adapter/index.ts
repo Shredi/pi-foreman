@@ -23,7 +23,7 @@ import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./class
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { effectiveCheckMode } from "./protected.ts";
 import { PermStore, PERM_MODES, PROTECTED_CHECK_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
-import { folderRelaxes, mergedFactKey, redirectsInScratch, withMergedFacts } from "./defaults.ts";
+import { folderRelaxes, mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
@@ -3253,37 +3253,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
         return allowed("no-rule", "mode", "mode:no-rule");
-      }
-      // a line of a read-only role the gate cannot see into (danger-readonly-run): never the allow sentences' judge, never a plain mode allow; auto and allow ask the role question, ask goes to the parent.
-      // The role question only for the label alone or with danger-opaque, and only after the read question's entry check; a line with any other danger label goes to the parent ask (no role call, no allow-sentence call).
-      if (out.dangers?.includes("danger-readonly-run") && resolved.mode !== "deny") {
-        const cause = `${danger.name}: ${danger.reason}`;
-        const roleOnly = out.dangers.every((d) => d === "danger-readonly-run" || d === "danger-opaque");
-        if (roleOnly && (resolved.mode === "auto" || resolved.mode === "allow") && [true, undefined].includes(get(gs.config.config, "gate.readonlyClear") as boolean | undefined) && roots) {
-          let rc: Awaited<ReturnType<typeof rt.classifier.roleClear>> | undefined;
-          try {
-            // the read question's deterministic entry check first (a secret-path word, a writing redirect that is not named and inside the scratch dir or handoff files, a non-bash shell): a refusal is the parent ask with no model call
-            const entryOk = cmdText !== null && !!out.segments && readClearEntry(
-              { tool: event.toolName, text: cmdText, segments: out.segments, dangers: ["danger-opaque"], shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
-              floorEnvOf(gs, ctx.cwd, roots.sessionDir),
-              (seg) => redirectsInScratch(seg, roots, platform, ctx.cwd),
-            );
-            if (!entryOk) throw new Error("entry check refused");
-            rc = await rt.classifier.roleClear(
-              { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, writable: [...roots.scratch, ...(roots.childHandoff ? [roots.childHandoff] : [])], inside: insideDirs(roots) },
-              {
-                prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
-                recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
-                trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
-                notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
-              },
-            );
-          } catch {
-            // the role question is best effort: any failure asks the parent
-          }
-          if (rc?.cleared) return allowed("readonly-run", rc.cached ? "cache" : "classifier", "classifier:readonly-run");
-        }
-        return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, dangerName: danger.name });
       }
       if (resolved.mode === "allow") return allowed(danger.name, "mode", `mode:allow:${danger.name}`);
       if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
