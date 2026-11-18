@@ -30,9 +30,9 @@ test("standard on the defaults has no deviations; a hand-flipped toggle is named
 });
 
 test("a relaxation that is on warns, with or without a profile", () => {
-  const cfg = defaults() as { safety: { children: { mayPush: boolean } } };
-  cfg.safety.children.mayPush = true;
+  const cfg = defaults() as { safety: { subagents: { allowWorkflow: boolean } } };
+  cfg.safety.subagents.allowWorkflow = true;
   const lines = profileDoctorLines(cfg as never, cfg as never, ROOT);
-  assert.ok(lines.includes("WARN safety relaxations on: children-may-push"), lines.join("\n"));
+  assert.ok(lines.includes("WARN safety relaxations on: workflow-scripts"), lines.join("\n"));
   assert.ok(!profileDoctorLines(defaults(), defaults(), ROOT).some((l) => l.startsWith("WARN safety")));
 });

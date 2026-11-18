@@ -515,15 +515,13 @@
     {
       "id": "children-may-push",
       "area": "safety",
-      "toggle": {"on": {"safety.children.mayPush": true}, "off": {"safety.children.mayPush": false}, "relaxes": true},
       "title": "Children may push",
-      "purpose": "Lets subagent children push; by default they may commit but never push, and they never open PRs.",
+      "purpose": "The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs.",
       "doc": "docs/safety.md#what-the-gate-floors-cover",
       "keys": ["safety.children"],
       "commands": [],
-      "switch": {"key": "safety.children.mayPush", "on": "true"},
-      "state": "off",
-      "enable": "{\"safety\": {\"children\": {\"mayPush\": true}}}"
+      "state": "on",
+      "enable": ""
     },
     {
       "id": "review-required",

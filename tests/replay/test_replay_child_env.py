@@ -1,9 +1,9 @@
-"""Replay: a child's shell env carries no push credentials (security review S9).
+"""Replay: a child's shell env keeps the push credentials and gets the prompt switches.
 
 The foreman runs with dummy SSH_AUTH_SOCK and GH_TOKEN values. Its own bash call and a
 builder child's bash call each write the NAMES (never values) of the relevant variables to a
-file. The foreman keeps them; the child has them removed and gets the git prompt switches and
-GIT_CONFIG_COUNT. Same prerequisites and skips as test_replay.py.
+file. Both keep the credentials (a builder pushes its own branch); the child gets the git prompt
+switches and no injected GIT_CONFIG_COUNT. Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DUMMY = {"SSH_AUTH_SOCK": "/nonexistent/replay-agent.sock", "GH_TOKEN": "replay-
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestChildEnv(ReplayCase):
-    def test_child_env_has_no_push_credentials(self):
+    def test_child_env_keeps_push_credentials(self):
         rig = self.rig("childenv", load_fixture("child_env"))
         pi = rig.start(env=DUMMY)
         res = tool_results(pi.prompt("[[replay:e1]] start", timeout=60))
@@ -36,7 +36,7 @@ class TestChildEnv(ReplayCase):
 
         # The foreman's GIT_CONFIG_COUNT carries core.fsmonitor=false / protocol.ext.allow=never (T1).
         self.assertEqual(names("main-env.txt"), ["GCM_INTERACTIVE", "GH_TOKEN", "GIT_CONFIG_COUNT", "GIT_TERMINAL_PROMPT", "SSH_AUTH_SOCK"])
-        self.assertEqual(names("child-env.txt"), ["GCM_INTERACTIVE", "GIT_CONFIG_COUNT", "GIT_TERMINAL_PROMPT"])
+        self.assertEqual(names("child-env.txt"), ["GCM_INTERACTIVE", "GH_TOKEN", "GIT_TERMINAL_PROMPT", "SSH_AUTH_SOCK"])
 
 
 if __name__ == "__main__":

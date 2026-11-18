@@ -218,8 +218,8 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_watch",
     op: "pr_watch",
     label: "Watch PR",
-    description: "Watch a pull request in the background until it is merged or closed (pr_create arms this for the PR it opens; use this for one opened elsewhere). Each tick that finds something new sends a pi-foreman-pr message (a failed check, the CI result once all checks settled, a new comment or review, a mergeable change, no CI, a head the reviewer never passed, merged, closed); the watch stays armed, do not re-arm. Returns at once; one watch per PR; pr_unwatch ends it.",
-    parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR).") }, additionalProperties: false },
+    description: "Watch a pull request in the background until it is merged or closed (pr_create arms this for the PR it opens; use this for one opened elsewhere; from a folder that is not a git checkout pass repo, number and host). Each tick that finds something new sends a pi-foreman-pr message (a failed check, the CI result once all checks settled, a new comment or review, a mergeable change, no CI, a head the reviewer never passed, merged, closed); the watch stays armed, do not re-arm. Returns at once; one watch per PR; pr_unwatch ends it.",
+    parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR; required with repo)."), repo: str(200, "Repository as owner/name: watch that repository's PR (needs number); without it the current checkout's repository is used."), host: str(253, "A host of tools.prGithubHosts (default: its first entry); only with repo.") }, additionalProperties: false },
     foremanOnly: true,
   },
   {
@@ -377,7 +377,8 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (o.kind === "precondition") return failure(`${t.name}: ${o.message}. Nothing was changed.`, { decision: "precondition_failed", precondition: o.precondition });
           return failure(`${t.name}: ${o.message}`, { decision: "error" });
         };
-        if (typeof params.host === "string" && t.op !== "pr_unwatch") {
+        // pr_unwatch and pr_watch check their own host and repo (a watch of an explicit repo needs no checkout)
+        if (typeof params.host === "string" && t.op !== "pr_unwatch" && t.op !== "pr_watch") {
           const early = await hostRule(s, ctx, t.name, params);
           if (early) return early;
         }
@@ -547,10 +548,17 @@ export const NOT_GITHUB = "only github.com PRs can be watched (the PR tracker co
 
 const hostsOf = (s: PrPackSession): GithubHosts => s.githubHosts?.() ?? DEFAULT_HOSTS;
 const notTracked = (hosts: string[]): string => `only ${hosts.join(", ")} PRs can be watched (the PR tracker covers ${hosts.join(", ")})`;
+/** Why the current directory names no repository: no git checkout at all (a file-system walk, no spawn), or one whose repository could not be read. */
+function noRepoCause(cwd: string): string {
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, ".git"))) return "could not read this checkout's repository; pass repo and host";
+    if (path.dirname(dir) === dir) return `no git checkout in ${cwd}; pass repo and host`;
+  }
+}
 const notListed = (host: string, hosts: string[]): string => `host ${host} is not one of the hosts of tools.prGithubHosts (${hosts.join(", ")})`;
 
 type Armed =
-  | { error: string; hostUnsupported?: true; hostsError?: true; tracked?: TrackOutcome }
+  | { error: string; hostUnsupported?: true; hostsError?: true; noRepo?: true; tracked?: TrackOutcome }
   | { duplicate: true; tracked?: TrackOutcome }
   /** `snap`: the stored snap the watch started from; null: the tracker has none yet. `down`: no tracker runs. */
   | { key: PrKey; snap: WatchSnapshot | null; down: boolean; tracked?: TrackOutcome; owned?: boolean };
@@ -587,10 +595,11 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
-  const key = await watchKey(s, ctx, n, url, cwd);
+  const key = explicit ?? (await watchKey(s, ctx, n, url, cwd));
+  if (!key.repo) return { error: noRepoCause(cwd ?? ctx.cwd), noRepo: true };
   if (!isTrackedKey(key, hosts.hosts)) return { error: notTracked(hosts.hosts), hostUnsupported: true };
   const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n, key.host).catch((): TrackOutcome => "unavailable") : undefined);
   let tracked = created ? await track() : undefined;
@@ -629,6 +638,16 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
   if ("error" in hosts) return failure(`${tool}: ${hosts.error}; nothing was done.`, { decision: "hosts_unconfigured" });
   let n = params.number as number | undefined;
   let url: unknown;
+  let explicit: PrKey | undefined;
+  if (params.host !== undefined && params.repo === undefined) return failure(`${tool}: host needs repo; nothing was done.`, { decision: "bad_request" });
+  if (params.repo !== undefined) {
+    if (!validRepo(params.repo)) return failure(`${tool}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
+    if (params.host !== undefined && !validHost(params.host)) return failure(`${tool}: bad arguments (host a host name); nothing was done.`, { decision: "bad_request" });
+    if (n === undefined) return failure(`${tool}: number is required with repo; nothing was done.`, { decision: "bad_request" });
+    const host = (typeof params.host === "string" ? params.host : hosts.hosts[0]).toLowerCase();
+    if (!hosts.hosts.includes(host)) return failure(`${tool}: ${notListed(host, hosts.hosts)}; nothing was done.`, { decision: "host_unsupported" });
+    explicit = { host, repo: params.repo, n };
+  }
   if (n === undefined) {
     const st = await run("pr_status", {});
     if (st.kind !== "ran") return report(st);
@@ -636,11 +655,11 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
     url = st.result.url;
     if (n === undefined) return failure(`${tool}: the host gave no PR number; nothing was done.`, { decision: "error" });
   }
-  const armed = await armWatch(s, ctx, n, url);
+  const armed = await armWatch(s, ctx, n, url, false, undefined, undefined, false, explicit);
   const tracked = armed.tracked ? { tracked: armed.tracked } : {};
   if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate", ...tracked });
   if ("error" in armed) {
-    if (armed.hostUnsupported || armed.hostsError) return failure(`pr_watch: ${armed.error}; nothing was done.`, { decision: armed.hostsError ? "hosts_unconfigured" : "host_unsupported" });
+    if (armed.hostUnsupported || armed.hostsError || armed.noRepo) return failure(`pr_watch: ${armed.error}; nothing was done.`, { decision: armed.hostsError ? "hosts_unconfigured" : armed.noRepo ? "no_repository" : "host_unsupported" });
     return failure(`${tool}: ${armed.error}`, { decision: "error", ...tracked });
   }
   const base = { watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() };

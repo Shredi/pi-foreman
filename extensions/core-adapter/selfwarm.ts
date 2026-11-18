@@ -49,6 +49,8 @@ export interface WarmSignals {
   dialog: boolean;
   /** The session waits on a command it called directly (bash, powershell). */
   command: boolean;
+  /** A tool call of the turn is running (between its tool_call and tool_result): a queued message cannot be delivered until it ends. Absent = false. */
+  toolRunning?: boolean;
   /** `strongA` without the subagent launches that wait on an open permission ask; read for the tier only while the owner is away (`strongA` keeps the final compaction off). Absent = `strongA`. */
   strongWorking?: StrongReason | null;
   /** A child only: when its turn began to wait on its parent's ruling (ms); null or absent = not waiting. */
@@ -171,6 +173,8 @@ export class SelfWarm {
   private pending: unknown[] | null = null;
   private inFlight = false;
   private compacting = false;
+  /** The reason of the last silent skip in `fire`, traced once per stretch of equal skips. */
+  private skipNoted: string | null = null;
   private ac: AbortController | null = null;
   private gen = 0;
   private compactedForIdle = false;
@@ -305,6 +309,7 @@ export class SelfWarm {
     const d = this.deps;
     this.shared().endedBy = null; // a real request opens a new idle stretch: a miss or an error of the last one does not carry over
     this.inFlight = false;
+    this.skipNoted = null;
     if (this.pending) {
       this.captured = this.pending;
       this.pending = null;
@@ -541,15 +546,35 @@ export class SelfWarm {
     }
   }
 
+  /** A silent skip of `fire` gets one `keepalive skipped` event per stretch of the same reason. */
+  private noteSkip(reason: string): void {
+    if (this.skipNoted === reason) return;
+    this.skipNoted = reason;
+    this.deps.trace({ event: "keepalive", outcome: "skipped", reason, count: this.warmsSent });
+  }
+
+  private toolRunning(): boolean {
+    try {
+      return this.deps.signals().toolRunning === true;
+    } catch {
+      return false;
+    }
+  }
+
   private async fire(gen: number): Promise<void> {
     this.timer = null;
     try {
-      if (gen !== this.gen || this.st !== "watching") return;
+      if (gen !== this.gen || this.st !== "watching") return this.noteSkip(gen !== this.gen ? "stale" : `state_${this.st}`);
       const d = this.deps;
       const p = d.policy();
       if (!p || !this.owns() || this.shared().owner !== this) return this.end("not_owned");
-      if (this.inFlight || this.compacting) return; // the request end or the compaction end reschedules
-      if (d.queued()) return this.arm(QUEUED_RETRY_MS);
+      if (this.inFlight || this.compacting) return this.noteSkip(this.inFlight ? "in_flight" : "compacting"); // the request end or the compaction end reschedules
+      // a tool call that runs holds a queued steer back until it ends: waiting for the queue to drain would skip every warm of the call
+      if (d.queued() && !this.toolRunning()) {
+        this.noteSkip("queued");
+        return this.arm(QUEUED_RETRY_MS);
+      }
+      this.skipNoted = null;
       const due = this.dueAt();
       const tickMs = warmDelayMs(p.ttlSeconds);
       if (due === null || tickMs === null) return this.end("error");

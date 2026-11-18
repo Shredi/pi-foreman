@@ -3,9 +3,9 @@
 Per mode, the foreman triages trivial and then tries: an edit in src/, a write in .workflow/, a
 write in the scratch dir (`notes/`, outside .workflow so readonly and scratchpad differ), and the
 same two through bash. readonly refuses all but .workflow/, scratchpad also allows the scratch
-dir, bounded keeps today's chain (the trivial bound; bash may write .workflow/ only). A refusal in
-readonly/scratchpad raises trivial to standard (`triage_escalated {reason: edit_mode}`) and
-traces `foreman_edit_refused {mode, kind}`; the finish gate then wants a builder and a reviewer,
+dir, bounded keeps today's chain (the trivial bound; bash may write .workflow/ only). A refused edit
+tool call in readonly/scratchpad raises trivial to standard (`triage_escalated {reason: edit_mode}`);
+a refused bash write keeps the tier. Both trace `foreman_edit_refused {mode, kind}`; the finish gate then wants a builder and a reviewer,
 which the foreman can still launch (no deadlock). Scratch-only work stays trivial. A scratch dir
 that resolves outside the workspace is a config error and is not writable.
 
