@@ -21,6 +21,6 @@ test("repeatSignals: each signal alone allows a repeat", () => {
 
 test("dupRefusalText names what was compared and when", () => {
   const text = dupRefusalText(new Date(2026, 0, 1, 13, 4, 5).getTime());
-  assert.match(text, /passed at 13:04:05 and nothing changed since \(no builder run, HEAD, worktree or ledger change\)/);
+  assert.match(text, /passed at 13:04:05 and nothing changed since \(no builder run, new commit, changed file in the checkout, or ledger item added or rewritten\)/);
   assert.match(text, /\[second-opinion\]/);
 });
