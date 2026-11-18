@@ -21,3 +21,9 @@ test("incompleteOf: INCOMPLETE only inside the CRITIQUE block is false", () => {
   assert.equal(incompleteOf(text), false);
   assert.equal(verdictOf(text), "fail");
 });
+
+test("incompleteOf: only the first verdict line decides; a phrase quoted later is false", () => {
+  assert.equal(incompleteOf("VERDICT: FAIL\n1. FAIL: src/x.ts:3 broken\n2. PASS: agents/reviewer.md:23 adds the `VERDICT: FAIL INCOMPLETE` rule"), false);
+  assert.equal(incompleteOf("VERDICT: PASS\n1. PASS: agents/reviewer.md:23 adds the `VERDICT: FAIL INCOMPLETE` rule"), false);
+  assert.equal(incompleteOf("**VERDICT:** FAIL INCOMPLETE\n1. PASS a"), true);
+});

@@ -2273,7 +2273,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!modelOnly.done) {
       modelOnly.done = true;
       try {
-        if (pi.getActiveTools().includes("codemode")) modelOnly.hint = modelOnlyHint(pi.getAllTools().filter((tool) => (tool as { exposure?: string }).exposure === "model-only").map((tool) => tool.name));
+        if (pi.getActiveTools().includes("codemode")) modelOnly.hint = modelOnlyHint(pi.getAllTools().filter((tool) => tool.exposure === "model-only").map((tool) => tool.name));
       } catch {
         // no tool api: no line
       }

@@ -385,18 +385,9 @@ export function measure(d: Declared["size"], entryCwd: string, sessionCwd: strin
       out.invalid ??= invalid(`${f} is neither a file nor a directory`);
       return;
     }
-    if (st.size > MAX_BYTES) {
-      out.large = true;
-      return;
-    }
-    try {
-      const buf = fs.readFileSync(abs);
-      let n = 0;
-      for (const b of buf) if (b === 10) n++;
-      measuredLines = Math.max(measuredLines, n);
-    } catch {
-      out.large = true;
-    }
+    const n = linesOf(abs);
+    if (n === null) out.large = true;
+    else measuredLines = Math.max(measuredLines, n);
   });
   out.lines = Math.max(measuredLines, out.declaredLines);
   out.modules = Math.max(parts.size, out.declaredModules);
