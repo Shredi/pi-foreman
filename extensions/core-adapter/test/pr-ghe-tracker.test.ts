@@ -111,7 +111,8 @@ function rig(o: { hosts?: GithubHosts; at?: { host: string; repo: string } | nul
   registerPrFollow(reg, { isChild: false, session: async () => session });
   registerPrPack(reg, { isChild: false, session: async () => session, script: "/s.py", spawner, env: () => ({}), pushRefusal: async () => null } as never);
   const call = (name: string, params: Record<string, unknown> = {}) => tools.get(name)!.execute("id", params, undefined, undefined, { cwd: process.cwd() });
-  return { call, spawned, tracked, watches, sent, hosts };
+  const callIn = (cwd: string, name: string, params: Record<string, unknown> = {}) => tools.get(name)!.execute("id", params, undefined, undefined, { cwd });
+  return { call, callIn, spawned, tracked, watches, sent, hosts };
 }
 
 test("pr_follow: the host defaults to the first list entry, a listed host is tracked with its host, an unlisted one is refused naming the list", async () => {
@@ -363,4 +364,61 @@ test("the in-pi refresher of an adapter session with a ghe-only list searches wi
   await w.adapter();
   for (let i = 0; i < 80 && !calls().slice(before).some((c) => c.startsWith(`api graphql --hostname ${GHE} `)); i++) await tick(100);
   assert.ok(calls().slice(before).some((c) => c.startsWith(`api graphql --hostname ${GHE} `)), "the search names the ghe host");
+});
+
+// ------------------------------------------------------------------------------------------ pr_watch with repo and host (D78)
+
+const GHE_COM = "ghe.example.com";
+
+test("pr_watch {repo, host, number} from a folder that is not a git checkout arms the watch and tracks it with the host", async () => {
+  const dir = fs.realpathSync(mkTestTmp("pf-prwatch-nogit-"));
+  try {
+    const h = rig({ hosts: { hosts: ["github.com", GHE_COM] }, at: null });
+    const r = await h.callIn(dir, "pr_watch", { repo: "acme/app", host: GHE_COM.toUpperCase(), number: 7 });
+    assert.equal(r.details.decision, "watching", r.content[0].text);
+    assert.deepEqual(h.tracked, [["acme/app", 7, GHE_COM]]);
+    assert.deepEqual(h.watches.list().map((w) => [w.key.host, w.key.repo, w.n]), [[GHE_COM, "acme/app", 7]]);
+    assert.deepEqual(h.spawned, [], "no host call");
+    // the host defaults to the first list entry, as pr_follow does
+    const d = rig({ hosts: { hosts: [GHE_COM, "github.com"] }, at: null });
+    assert.equal((await d.callIn(dir, "pr_watch", { repo: "acme/app", number: 8 })).details.decision, "watching");
+    assert.deepEqual(d.watches.list().map((w) => w.key.host), [GHE_COM]);
+  } finally {
+    rmTestTmp(dir);
+  }
+});
+
+test("pr_watch without repo: a folder with no git checkout and a checkout whose repository cannot be read get different texts", async () => {
+  const dir = fs.realpathSync(mkTestTmp("pf-prwatch-nogit-"));
+  try {
+    const h = rig({ at: null });
+    const none = await h.callIn(dir, "pr_watch", { number: 7 });
+    assert.equal(none.isError, true);
+    assert.equal(none.details.decision, "no_repository");
+    assert.equal(none.content[0].text, `pr_watch: no git checkout in ${dir}; pass repo and host; nothing was done.`);
+    fs.mkdirSync(path.join(dir, "sub", "deeper"), { recursive: true });
+    fs.mkdirSync(path.join(dir, ".git"));
+    const unread = await h.callIn(path.join(dir, "sub", "deeper"), "pr_watch", { number: 7 });
+    assert.equal(unread.content[0].text, "pr_watch: could not read this checkout's repository; pass repo and host; nothing was done.");
+    assert.equal(h.watches.size(), 0);
+    assert.deepEqual(h.tracked, []);
+  } finally {
+    rmTestTmp(dir);
+  }
+});
+
+test("pr_watch with repo: a host outside the list, host without repo, repo without number and bad arguments are refused", async () => {
+  const h = rig({ hosts: { hosts: ["github.com", GHE_COM] }, at: null });
+  const unlisted = await h.call("pr_watch", { repo: "acme/app", host: "other.example.com", number: 7 });
+  assert.equal(unlisted.isError, true);
+  assert.equal(unlisted.details.decision, "host_unsupported");
+  assert.match(unlisted.content[0].text, /^pr_watch: host other\.example\.com is not one of the hosts of tools\.prGithubHosts \(github\.com, ghe\.example\.com\); nothing was done\.$/);
+  const hostOnly = await h.call("pr_watch", { host: GHE_COM, number: 7 });
+  assert.equal(hostOnly.content[0].text, "pr_watch: host needs repo; nothing was done.");
+  const noNumber = await h.call("pr_watch", { repo: "acme/app", host: GHE_COM });
+  assert.equal(noNumber.content[0].text, "pr_watch: number is required with repo; nothing was done.");
+  assert.equal((await h.call("pr_watch", { repo: "not a repo", number: 7 })).details.decision, "bad_request");
+  assert.equal((await h.call("pr_watch", { repo: "acme/app", host: "bad host", number: 7 })).details.decision, "bad_request");
+  assert.equal(h.watches.size(), 0);
+  assert.deepEqual(h.tracked, []);
 });

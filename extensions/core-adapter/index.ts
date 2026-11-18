@@ -107,7 +107,8 @@ import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { beginRun, beginUndo, cleanText, decideScript, newScriptState, proposeScript, recordRealRun, recordRun, recordUndo, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptUndoLine, scriptStatus, shortHash } from "./scriptapproval.ts";
 import type { ScriptRefusalCode, ScriptState } from "./scriptapproval.ts";
-import { runScript as runOwnerScript } from "./scriptrun.ts";
+import { runScript as runOwnerScript, runScriptDetachable } from "./scriptrun.ts";
+import type { ScriptRunDetached, ScriptRunResult } from "./scriptrun.ts";
 import { configResultText, parseConfigArgs } from "./configcmd.ts";
 import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
@@ -341,6 +342,8 @@ interface Session {
   /** Tool call ids of bash/powershell calls and of ask_user_question/plan_mode_question calls in flight (the warm tier reads them). */
   commandCalls: Set<string>;
   questionCalls: Set<string>;
+  /** Tool call ids of every tool call between its tool_call and tool_result (the keep-alive warms while one runs even if a message is queued). */
+  runningCalls: Set<string>;
   /** Foreman only: ms epoch of the last parent brief that lifted the caps (capsReset); persisted with reviewCount. */
   capsResetAt: number;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
@@ -496,6 +499,8 @@ interface Session {
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
   script: ScriptState;
+  /** A real owner-script run that outlived the abort of its tool call (scriptrun.ts detachOnAbort): runs on, ends through `done`; null when none. */
+  scriptRun: { pid: number | undefined; since: number; stopRequested: boolean; shutdown: boolean; stop: ScriptRunDetached["stop"]; done: Promise<unknown> } | null;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
   /** Foreman only: read budget (budget.ts), in memory only. */
@@ -923,6 +928,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       mutating: new Set(),
       commandCalls: new Set(),
       questionCalls: new Set(),
+      runningCalls: new Set(),
       capsResetAt: 0,
       pollBash: 0,
       launchNotices: new Map(),
@@ -1091,6 +1097,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchTrees: new Map(),
       plan: null,
       script: newScriptState(),
+      scriptRun: null,
       planReviews: new PlanReviews(),
       budget: new ReadBudget(),
       readNotices: new Map(),
@@ -2081,6 +2088,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.prWatches.clear();
     s.extStatus.clear();
     s.selfWarm.onShutdown();
+    // a detached owner script does not outlive its session: killed, recorded as aborted
+    if (s.scriptRun) {
+      s.scriptRun.shutdown = true;
+      s.scriptRun.stop("aborted");
+      await s.scriptRun.done.catch(() => undefined);
+    }
     addonSeen.delete(s.id);
     if (!s.isChild) {
       syncKeepalives(s, ctx);
@@ -2216,6 +2229,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.commandCalls.clear();
     s?.questionCalls.forEach(releaseQuestion);
     s?.questionCalls.clear();
+    s?.runningCalls.clear();
   });
   pi.on("turn_end", async (event, ctx) => {
     const s = sessionFor(ctx);
@@ -2484,7 +2498,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const working = open.size === 0 ? strongA === "subagent" : [...s.activeRuns].some((r) => !waiting(park?.launchFor(r))) || [...s.pendingLaunches].some((c) => !waiting(park?.launchOfCall(c))) || launchWaits.holdingWhere((r) => !waiting(park?.launchFor(r))) > 0;
     const strongWorking = working ? "subagent" : other;
     const parentWaitSince = s.isChild ? parentOpen.get(s.id)?.since ?? null : undefined;
-    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0 };
+    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0, toolRunning: s.runningCalls.size > 0 };
   }
   /** A message is queued in the session (a stale context counts as queued: no warm). */
   function warmQueued(s: Session): boolean {
@@ -3533,6 +3547,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ms && !ms.isChild) {
       capsReset(ms, event.toolCallId);
       reworkScan(ms);
+      ms.runningCalls.add(event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
       if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
@@ -4364,6 +4379,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.mutating.delete(event.toolCallId);
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
+      ms.runningCalls.delete(event.toolCallId);
       releaseQuestion(event.toolCallId);
     }
     // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
@@ -5099,6 +5115,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
+    s?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
@@ -5150,6 +5167,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.mutating.delete(event.toolCallId);
     owner?.commandCalls.delete(event.toolCallId);
     owner?.questionCalls.delete(event.toolCallId);
+    owner?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A shell command may have copied in an ask.md or a brief: the rule is evaluated again.
@@ -6196,13 +6214,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.registerTool({
       name: SCRIPT_TOOL,
       label: "Owner script",
-      // Never in parallel with other tool calls of the same message: no write lands while the owner decides or the script runs.
+      // Never in parallel with other tool calls of the same message: no write lands while the owner decides or the script runs. A real run whose tool call is aborted (Escape) is the one exception: it runs on in the background (s.scriptRun), and while it lives every other action but status and stop is refused, so no second script and no dry run or undo overlaps it.
       executionMode: "sequential",
-      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal and the undo state, undo runs the script that really ran with the single argument undo (only when the script has the marker line `# foreman-undo: supported` as a whole line, after a real run, within an hour of it, at most three attempts, exit 0 counts once; no second dialog, the owner gets a notice); these four take no path. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
+      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal and the undo state, undo runs the script that really ran with the single argument undo (only when the script has the marker line `# foreman-undo: supported` as a whole line, after a real run, within an hour of it, at most three attempts, exit 0 counts once; no second dialog, the owner gets a notice); stop ends a real run that keeps running in the background after its call was aborted; these five take no path. When the owner aborts the call of a real run (Escape), the script is not killed: the call returns at once, the script runs on until it ends or hits its time limit, its result arrives as a message, and until then only status and stop are accepted. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["propose", "dry", "run", "status", "undo"] },
+          action: { type: "string", enum: ["propose", "dry", "run", "status", "undo", "stop"] },
           path: { type: "string", minLength: 1, description: "propose only: path of the script in the scratch dir." },
           description: { type: "string", description: "propose only: one paragraph on what the script changes, at most 600 characters; the owner sees it whole." },
           risk: { type: "string", description: "propose only: what can go wrong, at most 300 characters." },
@@ -6219,28 +6237,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.isChild) return refusal({ code: "script_child", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_child): a subagent child never proposes, runs or undoes an owner script; report the needed change to the foreman.` });
         const o = planOpts(s, ctx);
         const action = params.action;
+        const running = s.scriptRun;
+        if (running && (action === "propose" || action === "dry" || action === "run" || action === "undo")) return refusal({ code: "script_running", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_running): an owner script is still running (pid ${running.pid ?? "unknown"}, since ${new Date(running.since).toISOString()}); its result arrives as a message. status shows it, stop ends it.` });
 
-        /** A dry or real run of the proposal's own script: fix rule, runner, state, trace. */
-        const runNow = async (kind: ScriptRunAction) => {
-          const limit = get(s.config.config, "safety.scripts.silentFixLines");
-          const plan = beginRun(s.script, kind, o, Date.now(), typeof limit === "number" ? limit : SCRIPT_FIX_LINES_DEFAULT);
-          if (plan.fix) {
-            ctx.ui.notify(plan.fix.notice, "warning");
-            s.trace?.emit({ event: "script_fix", from: plan.fix.from, to: plan.fix.to, added: plan.fix.added, removed: plan.fix.removed });
-          }
-          if ("error" in plan) return refusal(plan);
-          const r = await runOwnerScript({ bytes: plan.bytes, kind, cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd) });
-          if ("code" in r) {
-            // refused before anything spawned: not one of the real attempts
-            if (kind === "run" && s.script.proposal) s.script.proposal.attempts = Math.max(0, s.script.proposal.attempts - 1);
-            return refusal(r);
-          }
+        /** What a finished dry or real run records and reports: state, trace, the text for the model. */
+        const finishRun = (kind: ScriptRunAction, plan: { hash: string }, r: ScriptRunResult) => {
           const exit = r.error ? null : r.exitCode;
           if (kind === "run" && r.started && (s.script.proposal?.status === "approved" || s.script.proposal?.status === "dry_ok")) recordRealRun(s.script, plan.hash, Date.now());
           const status = recordRun(s.script, kind, plan.hash, exit);
-          s.trace?.emit({ event: "script_run", kind, hash: shortHash(plan.hash), exit, seconds: r.seconds });
+          s.trace?.emit({ event: "script_run", kind, hash: shortHash(plan.hash), exit, seconds: r.seconds, ...(r.stopped ? { outcome: "stopped" } : r.aborted ? { outcome: "aborted" } : {}) });
           const p = s.script.proposal;
-          const how = r.error ?? (r.timedOut ? "stopped at the time limit" : r.aborted ? "aborted" : exit === null ? `ended by ${r.signal ?? "a signal"}` : `exit ${exit}`);
+          const how = r.error ?? (r.timedOut ? "stopped at the time limit" : r.stopped ? "stopped by the stop action" : r.aborted ? "aborted" : exit === null ? `ended by ${r.signal ?? "a signal"}` : `exit ${exit}`);
           const head = `${kind === "dry" ? "Dry run" : "Real run"} of ${p?.rel ?? "the script"} (sha256 ${shortHash(plan.hash)}): ${how} after ${r.seconds} s. Log: ${r.logPath}`;
           const next =
             kind === "dry"
@@ -6252,7 +6259,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
                 : status === "consumed"
                   ? `The real run failed and the approval is used up (${SCRIPT_MAX_ATTEMPTS} attempts); another run needs a new propose.`
                   : `The real run failed; ${Math.max(0, SCRIPT_MAX_ATTEMPTS - (p?.attempts ?? 0))} attempt(s) left.`;
-          return out(kind, `${head}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { status, exit, logPath: r.logPath, hash: plan.hash }, exit !== 0);
+          return out(kind, `${head}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { status, exit, logPath: r.logPath, hash: plan.hash, ...(r.stopped ? { stopped: true } : {}) }, exit !== 0);
+        };
+
+        /** The real run outlives the abort of this call: the call returns, the end is recorded and sent as a message. */
+        const detachRun = (d: ScriptRunDetached, plan: { hash: string }) => {
+          const entry: NonNullable<Session["scriptRun"]> = { pid: d.pid, since: Date.now(), stopRequested: false, shutdown: false, stop: d.stop, done: Promise.resolve() };
+          entry.done = d.finished.then((r) => {
+            if (s.scriptRun === entry) s.scriptRun = null;
+            const res = finishRun("run", plan, r);
+            if (!entry.stopRequested && !entry.shutdown) {
+              let idle = true;
+              try {
+                idle = ctx.isIdle();
+              } catch {
+                // a stale context: treat as idle
+              }
+              pi.sendMessage({ customType: "pi-foreman-script", content: `pi-foreman notice (data, not an instruction): the owner script that kept running in the background after its call was aborted has ended.\n${res.content[0].text}`, display: true, details: res.details }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+            }
+            return res;
+          });
+          s.scriptRun = entry;
+          s.trace?.emit({ event: "script_run", kind: "run", hash: shortHash(plan.hash), outcome: "detached" });
+          return out("run", `Script still running in the background (pid ${d.pid ?? "unknown"}); its result arrives as a message. status shows it, stop ends it.`, { status: "running", pid: d.pid, hash: plan.hash });
+        };
+
+        /** A dry or real run of the proposal's own script: fix rule, runner, state, trace. */
+        const runNow = async (kind: ScriptRunAction) => {
+          const limit = get(s.config.config, "safety.scripts.silentFixLines");
+          const plan = beginRun(s.script, kind, o, Date.now(), typeof limit === "number" ? limit : SCRIPT_FIX_LINES_DEFAULT);
+          if (plan.fix) {
+            ctx.ui.notify(plan.fix.notice, "warning");
+            s.trace?.emit({ event: "script_fix", from: plan.fix.from, to: plan.fix.to, added: plan.fix.added, removed: plan.fix.removed });
+          }
+          if ("error" in plan) return refusal(plan);
+          const r = await runScriptDetachable({ bytes: plan.bytes, kind, cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd), detachOnAbort: kind === "run" });
+          if ("detached" in r) return detachRun(r, plan);
+          if ("code" in r) {
+            // refused before anything spawned: not one of the real attempts
+            if (kind === "run" && s.script.proposal) s.script.proposal.attempts = Math.max(0, s.script.proposal.attempts - 1);
+            return refusal(r);
+          }
+          return finishRun(kind, plan, r);
         };
 
         /** An undo run of the stored bytes that really ran: no dialog, a warning notice and a trace event per attempt. */
@@ -6286,9 +6334,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (action === "undo") return undoNow();
           if (action !== "status") return runNow(action);
           const st = scriptStatus(s.script, Date.now());
-          return out("status", st ? JSON.stringify(st, null, 2) : "No script is proposed in this session.", { status: st?.status ?? null });
+          const live = s.scriptRun ? { pid: s.scriptRun.pid ?? null, since: new Date(s.scriptRun.since).toISOString() } : null;
+          return out("status", st ? JSON.stringify(live ? { ...st, running: live } : st, null, 2) : "No script is proposed in this session.", { status: live ? "running" : st?.status ?? null });
         }
-        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run, status or undo.`, {}, true);
+        if (action === "stop") {
+          if (params.path !== undefined) return refusal({ code: "script_path", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_path): stop takes no path.` });
+          if (!running) return out("refused", `${SCRIPT_TOOL}: no owner script is running in the background; there is nothing to stop.`, {}, true);
+          running.stopRequested = true;
+          running.stop("stopped");
+          return (await running.done) as ReturnType<typeof out>;
+        }
+        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run, status, undo or stop.`, {}, true);
 
         const done = (decision: string, by: string | null, hash: string | null, text: string, isError = false) => {
           s.trace?.emit({ event: "script", decision, by, hash });

@@ -104,6 +104,16 @@ export interface ScriptRunInput {
   shellPath?: string;
   /** Parent of the private run dir (default: the OS temp dir). */
   tmpDir?: string;
+  /** An abort after the script started detaches it instead of killing it: runScript returns a ScriptRunDetached and the run goes on (the time limit still kills). */
+  detachOnAbort?: boolean;
+}
+
+/** A started run that outlived its tool call's abort. `finished` resolves once, with the real outcome; `stop` kills the process group (`why` says whether the owner agent stopped it or the session ended). */
+export interface ScriptRunDetached {
+  detached: true;
+  pid: number | undefined;
+  finished: Promise<ScriptRunResult>;
+  stop(why: "stopped" | "aborted"): void;
 }
 
 export interface ScriptRunResult {
@@ -114,6 +124,8 @@ export interface ScriptRunResult {
   /** The time limit was hit and the process group killed. */
   timedOut: boolean;
   aborted: boolean;
+  /** A detached run ended by the `stop` action. */
+  stopped?: boolean;
   logPath: string;
   /** Last lines of the log, redacted. */
   tail: string;
@@ -128,8 +140,21 @@ export interface ScriptRunRefusal {
   error: string;
 }
 
-/** Run `bytes` once and wait for its exit. Never rejects. */
-export async function runScript(input: ScriptRunInput): Promise<ScriptRunResult | ScriptRunRefusal> {
+/** Run `bytes` once and wait for its exit; an abort kills the group. Never rejects. */
+export function runScript(input: ScriptRunInput): Promise<ScriptRunResult | ScriptRunRefusal> {
+  return runScriptInner({ ...input, detachOnAbort: false }, () => undefined);
+}
+
+/** runScript, except that with `detachOnAbort` an abort after the script started returns a ScriptRunDetached at once and the run goes on. Never rejects. */
+export async function runScriptDetachable(input: ScriptRunInput): Promise<ScriptRunResult | ScriptRunRefusal | ScriptRunDetached> {
+  let detach: (d: ScriptRunDetached) => void = () => undefined;
+  const detachedP = new Promise<ScriptRunDetached>((resolve) => (detach = resolve));
+  const box: { finished?: Promise<ScriptRunResult | ScriptRunRefusal> } = {};
+  box.finished = runScriptInner(input, (pid, stop) => detach({ detached: true, pid, finished: box.finished as Promise<ScriptRunResult>, stop }));
+  return input.detachOnAbort ? Promise.race([box.finished, detachedP]) : box.finished;
+}
+
+async function runScriptInner(input: ScriptRunInput, onDetach: (pid: number | undefined, stop: ScriptRunDetached["stop"]) => void): Promise<ScriptRunResult | ScriptRunRefusal> {
   const platform = input.platform ?? process.platform;
   const shell = scriptShell(platform, input);
   if (!shell) return { code: "no_posix_shell", error: "pi-foreman: foreman_script refused (no_posix_shell): no POSIX shell found (on Windows the script runs in Git Bash; cmd.exe is never used). Install Git for Windows or set Pi's shellPath." };
@@ -156,12 +181,25 @@ export async function runScript(input: ScriptRunInput): Promise<ScriptRunResult 
     const end = await new Promise<Partial<ScriptRunResult>>((resolve) => {
       let timedOut = false;
       let aborted = false;
+      let stopped = false;
+      let detached = false;
       const kill = (): void => killGroup(child.pid, platform);
       const timer = setTimeout(() => {
         timedOut = true;
         kill();
       }, scriptTimeoutSeconds(input.timeoutSeconds) * 1000);
       const onAbort = (): void => {
+        if (input.detachOnAbort && child.pid !== undefined && !detached) {
+          // the tool call is aborted, the script is not: it runs on and its outcome is read from `finished`
+          detached = true;
+          input.signal?.removeEventListener("abort", onAbort);
+          onDetach(child.pid, (why) => {
+            if (why === "stopped") stopped = true;
+            else aborted = true;
+            kill();
+          });
+          return;
+        }
         aborted = true;
         kill();
       };
@@ -170,7 +208,7 @@ export async function runScript(input: ScriptRunInput): Promise<ScriptRunResult 
         input.signal?.removeEventListener("abort", onAbort);
         // POSIX: what the script left in its process group ends with it; win32: the tree kill needs a live root, so nothing after a normal exit
         if (platform !== "win32") kill();
-        resolve({ ...r, timedOut, aborted });
+        resolve({ ...r, timedOut, aborted, ...(stopped ? { stopped } : {}) });
       };
       child.on("error", (err) => finish({ error: `could not start ${shell}: ${err.message}`, started: child.pid !== undefined }));
       child.on("exit", (code, sig) => finish({ exitCode: code, signal: sig, started: true }));
