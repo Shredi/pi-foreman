@@ -11,8 +11,11 @@
 // A missing, unreadable or stale file (older than 3x resources.sampleSeconds) is "ok": a dead sampler never blocks work.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { get } from "./config.ts";
 import { subagentAgents } from "./payload.ts";
+import { groupEntryObjects } from "./usage.ts";
+import type { DialogSpec } from "./ownerdialog.ts";
 
 export type PressureLevel = "ok" | "high" | "critical";
 export interface PressureState {
@@ -160,6 +163,110 @@ export class PressureSampler {
 
 /** The text of a refused launch under critical pressure. */
 export const criticalReason = (reasons: string[]): string => `pressure critical (${reasons.join(", ") || "unknown"}): launch deferred; you will be woken when it drops`;
+
+/** The launch field with which the foreman asks the owner to let one deferred launch start at critical load. */
+export const OVERRIDE_FIELD = "pressureOverride";
+
+/**
+ * Reads and removes `pressureOverride` from a `subagent` call: the top level, else `options`/`args` of the top level (an emptied `args` box
+ * goes, as in liftSizing), and every tasks/chain/parallel entry with its boxes. `text` is the top-level text (a non-string or empty value is
+ * absent); `nested` is true when it was found only inside an entry.
+ */
+export function takePressureOverride(input: Json): { text?: string; nested: boolean } {
+  let top: string | undefined;
+  let inner: string | undefined;
+  const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+  const take = (o: Json, into: "top" | "inner"): void => {
+    const set = (v: string | undefined): void => {
+      if (v === undefined) return;
+      if (into === "top") top ??= v;
+      else inner ??= v;
+    };
+    set(text(o[OVERRIDE_FIELD]));
+    delete o[OVERRIDE_FIELD];
+    for (const key of ["options", "args"] as const) {
+      const box = o[key];
+      if (!isObj(box) || box[OVERRIDE_FIELD] === undefined) continue;
+      set(text(box[OVERRIDE_FIELD]));
+      delete box[OVERRIDE_FIELD];
+      if (key === "args" && Object.keys(box).length === 0) delete o[key];
+    }
+  };
+  if (!isObj(input)) return { nested: false };
+  take(input, "top");
+  for (const e of groupEntryObjects(input)) take(e, "inner");
+  return top !== undefined ? { text: top, nested: false } : inner !== undefined ? { text: inner, nested: true } : { nested: false };
+}
+
+export type OverrideCode = "no_ui" | "cause" | "shape" | "declined_recently";
+export type OverrideShape = "single" | "group" | "resume";
+
+/** What a launch call is: a new single launch (`agent` and `task` at the top, nothing else), a resume or other action, or a group. */
+export function overrideShape(call: Json): OverrideShape {
+  const a = call.action;
+  if (a !== undefined && a !== null && !(typeof a === "string" && a.trim() === "")) return "resume";
+  const none = ["tasks", "chain", "parallel", "workflow"].every((k) => call[k] === undefined);
+  return none && typeof call.agent === "string" && call.agent !== "" && typeof call.task === "string" ? "single" : "group";
+}
+
+/**
+ * Whether the owner can be asked to approve this deferred launch: "ok" or the first code that fails (cause, shape, no_ui, declined_recently).
+ * Only a critical level that is the load alone can be overridden; `nested`: the field was found only inside an entry.
+ */
+export function overrideAvailability(a: { reasons: string[]; call: Json; nested: boolean; ui: boolean; declinedRecently: boolean }): "ok" | OverrideCode {
+  if (a.reasons.length !== 1 || a.reasons[0] !== "load") return "cause";
+  if (a.nested || overrideShape(a.call) !== "single") return "shape";
+  if (!a.ui) return "no_ui";
+  if (a.declinedRecently) return "declined_recently";
+  return "ok";
+}
+
+/** Why a requested approval is not possible, one clause for the refusal. */
+export const OVERRIDE_UNAVAILABLE: Record<OverrideCode, string> = {
+  no_ui: "no owner can answer at this pane, so no approval is possible; wait",
+  cause: "the cause is memory or disk; an approval cannot help there; wait",
+  shape: "only a new launch of one agent can be approved: launch the urgent one alone with pressureOverride, or wait (a resume cannot be approved)",
+  declined_recently: "the owner declined or dismissed an approval; do not ask again until the owner writes",
+};
+
+/** The refusal of a launch whose approval was requested but is not possible. */
+export const overrideUnavailableReason = (reasons: string[], code: OverrideCode): string => `${criticalReason(reasons)} (${OVERRIDE_FIELD}: ${OVERRIDE_UNAVAILABLE[code]})`;
+
+/** The refusal of a launch whose approval the owner declined or dismissed. */
+export const overrideDeclinedReason = (reasons: string[]): string => `${criticalReason(reasons)} (the owner did not approve this launch; do not ask again unless the owner says so)`;
+
+/** The one sentence the refusal of a deferred launch without the field adds, by the availability code (declined_recently counts as ok). */
+export function overrideHint(code: "ok" | OverrideCode, shape: OverrideShape): string {
+  if (code === "no_ui") return "No owner can approve it at this pane; wait.";
+  if (code === "cause") return "The cause is memory or disk; an owner approval cannot help; wait.";
+  if (code === "shape") {
+    return shape === "resume"
+      ? "A resume cannot get an owner approval; wait."
+      : `If one of these launches cannot wait, launch it alone with ${OVERRIDE_FIELD}: \"<why>\"; the owner approves or declines it in a dialog.`;
+  }
+  return `If this launch cannot wait, relaunch it with the top-level key ${OVERRIDE_FIELD}: \"<why it cannot wait>\"; the owner approves or declines it in a dialog. Do not retry it unchanged.`;
+}
+
+/** Trace hash of a task: the first 16 hex of its sha256 (the trace never carries the text). */
+export const taskHash = (task: unknown): string => createHash("sha256").update(typeof task === "string" ? task : "").digest("hex").slice(0, 16);
+
+/** One line of free text: whitespace collapsed, cut to `max` characters with an ellipsis. */
+export function cutLine(text: string, max: number, firstLineOnly = false): string {
+  const src = firstLineOnly ? (text.split(/\r?\n/).find((l) => l.trim() !== "") ?? "") : text;
+  const one = src.replace(/\s+/g, " ").trim();
+  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
+}
+
+/** The owner dialog of an override request: agent, task head, reason and the load with its limit. */
+export function overrideSpec(a: { agent: string; task: string; reason: string; host: Record<string, unknown>; maxLoadPerCore: unknown }): DialogSpec {
+  const load = `1 min ${num(a.host.load1PerCore, 2)}/core, 5 min ${num(a.host.loadPerCore, 2)}/core, limit ${num(a.maxLoadPerCore, 2)}/core`;
+  return {
+    ask: "Start this launch despite high load?",
+    summary: "The host is overloaded, so launches wait. Yes starts this one launch now; No keeps it waiting.",
+    facts: [["Agent", a.agent], ["Task", cutLine(a.task, 300, true)], ["Reason", cutLine(a.reason, 300)], ["Load", load]],
+    answers: "Yes: this one launch starts now   No: it waits until the load drops",
+  };
+}
 
 /** The text of a launch queued behind another under high pressure. */
 export const queuedReason = (reasons: string[]): string =>

@@ -9,7 +9,7 @@ export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_r
 /** The families that are no blocking dialog: an ask the auto reviewer allowed without one, and a refusal. Everything else counts in `total`. */
 const NOT_BLOCKING = new Set<string>(["auto_review_allow", "self_ruling_refusal"]);
 /** `dialog` record `surface` -> family. */
-const SURFACE_FAMILY: Record<string, DialogFamily> = { checkpoint: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask", script: "script" };
+const SURFACE_FAMILY: Record<string, DialogFamily> = { checkpoint: "checkpoint", pressure_override: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask", script: "script" };
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */

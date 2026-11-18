@@ -271,7 +271,7 @@ test("critical: the launch is refused with the deferral text, a wait wakes the f
   const original = JSON.parse(JSON.stringify(input));
   await a.assistant(["c1"], () => input);
   const d = await a.launch("c1", input);
-  assert.deepEqual(d, { block: true, reason: "pressure critical (mem, disk): launch deferred; you will be woken when it drops" });
+  assert.deepEqual(d, { block: true, reason: "pressure critical (mem, disk): launch deferred; you will be woken when it drops The cause is memory or disk; an owner approval cannot help; wait." });
   assert.deepEqual(events(a, "launch_deferred").map((r) => [r.level, r.reasons]), [["critical", "mem,disk"]]);
   for (const e of ["launch_refused", "revision", "role_launch", "launch_narrowed"]) assert.deepEqual(events(a, e), [], `${e}: a deferred launch is none of these`);
 
