@@ -19,6 +19,7 @@ import { reviewsOfEntry } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import type { LoopStop } from "./reviewloop.ts";
 import type { PassMark, ReviewGate, StepCounts } from "./bound.ts";
+import { combined, type ReviewGates } from "./reviewgates.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
 
@@ -45,11 +46,38 @@ export interface PersistedLineage {
   reviews: number;
 }
 
-/** The finish gate's progress (index.ts Session.steps, reviewGate, passMark): restored on /reload of the same session, never on a fork. */
+/**
+ * The finish gate's progress (index.ts Session.steps, reviewGates, passMarks): restored on /reload of the same session, never on a fork. `reviewGate` (all entries combined)
+ * and `passMark` (the newest) are still written for an older build, which reads a strict single view; `reviewGates` and `passMarks` (per checkout, key "" = session-wide)
+ * are absent in an entry from before the per-checkout gate: it is restored as the session-wide entry.
+ */
 export interface PersistedGate {
   steps: StepCounts;
   reviewGate: ReviewGate;
   passMark: (PassMark & { cwd: string }) | null;
+  reviewGates?: ReviewGates;
+  passMarks?: Record<string, PassMark & { cwd: string }>;
+}
+
+/** The persisted gate of the session's per-checkout state. */
+export function persistedGate(steps: StepCounts, reviewGates: ReviewGates, passMarks: Record<string, PassMark & { cwd: string }>): PersistedGate {
+  const marks = Object.values(passMarks);
+  const newest = marks.reduce<(PassMark & { cwd: string }) | null>((best, m) => (!best || m.at >= best.at ? m : best), null);
+  return { steps, reviewGate: combined(reviewGates), passMark: newest, reviewGates, passMarks };
+}
+
+/** The foreman's work in a session: builder launches or builder run ends, and project-file edits through its tools (index.ts Session.work). */
+export interface WorkCount {
+  builders: number;
+  edits: number;
+}
+
+/** The pause and refusal-cap state (index.ts): work now, work at the last owner prompt, the finish refusals of the unchanged state `key`. */
+export interface PersistedWork {
+  work: WorkCount;
+  atPrompt: WorkCount;
+  /** `done`: the "ceremony incomplete" message of the state `key` is in the transcript. */
+  refusals: { n: number; key: string; done?: boolean } | null;
 }
 
 export interface CeremonyStateEntry {
@@ -78,6 +106,10 @@ export interface CeremonyStateEntry {
   reworkSeen?: number;
   /** The session-wide high-stakes state (highstakes.ts); absent in an older entry (loads as empty); an array of per-checkout records is migrated on load. */
   highStakes?: HsState;
+  /** The pause window and the refusal count (D27, D28); absent in an older entry or while all of it is empty (loads as zero). */
+  pause?: PersistedWork;
+  /** The sorted reason set the finish gate held once for with a high-stakes reminder (index.ts ceremonyFinishGate); absent: none. */
+  hsReminded?: string[];
 }
 
 /** Heads whose newest code verdict is a `[pre-pr]` PASS. */
@@ -107,7 +139,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hsReminded?: readonly string[] | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -125,8 +157,12 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.sentBackHeads && (o.sentBackHeads.length > 0 || o.sentBack) ? { sentBackHeads: [...o.sentBackHeads] } : {}),
     ...(o.reworkSeen ? { reworkSeen: o.reworkSeen } : {}),
     ...(o.highStakes && !hsEmpty(o.highStakes) ? { highStakes: JSON.parse(JSON.stringify(o.highStakes)) as HsState } : {}),
+    ...(o.pause && !pauseEmpty(o.pause) ? { pause: { work: { ...o.pause.work }, atPrompt: { ...o.pause.atPrompt }, refusals: o.pause.refusals ? { ...o.pause.refusals } : null } } : {}),
+    ...(o.hsReminded && o.hsReminded.length > 0 ? { hsReminded: [...o.hsReminded] } : {}),
   };
 }
+
+const pauseEmpty = (p: PersistedWork): boolean => p.work.builders + p.work.edits + p.atPrompt.builders + p.atPrompt.edits === 0 && !p.refusals;
 
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 const STATUS = new Set(["pending", "approved", "revise", "rejected"]);
@@ -170,9 +206,34 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     if (rw) out.reworkSeen = rw;
     const hs = hsStateOfEntry(d.highStakes);
     if (hs && !hsEmpty(hs)) out.highStakes = hs;
+    const pause = pauseOfEntry(d.pause);
+    if (pause) out.pause = pause;
+    if (Array.isArray(d.hsReminded)) {
+      const r = (d.hsReminded as unknown[]).filter((x): x is string => typeof x === "string" && x !== "");
+      if (r.length > 0) out.hsReminded = r;
+    }
     return out;
   }
   return null;
+}
+
+const workOf = (v: unknown): WorkCount | null => {
+  const w = v as Record<string, unknown> | null | undefined;
+  const builders = count(w?.builders);
+  const edits = count(w?.edits);
+  return w && typeof w === "object" && builders !== null && edits !== null ? { builders, edits } : null;
+};
+
+/** The pause state of an entry, shape-checked; null (the field is ignored) when anything is off. */
+function pauseOfEntry(v: unknown): PersistedWork | null {
+  const p = v as Record<string, unknown> | null | undefined;
+  if (!p || typeof p !== "object") return null;
+  const work = workOf(p.work);
+  const atPrompt = workOf(p.atPrompt);
+  if (!work || !atPrompt) return null;
+  const r = p.refusals as Record<string, unknown> | null | undefined;
+  const n = count(r?.n);
+  return { work, atPrompt, refusals: r && typeof r === "object" && n !== null && typeof r.key === "string" ? { n, key: r.key, ...(r.done === true ? { done: true } : {}) } : null };
 }
 
 const nullable = (v: unknown): v is string | null => v === null || typeof v === "string";
@@ -187,13 +248,47 @@ function gateOfEntry(v: unknown): PersistedGate | null {
   const reviewer = count(st?.reviewer);
   if (builder === null || reviewer === null || !rg || typeof rg !== "object") return null;
   if (!(rg.last === null || rg.last === "pass" || rg.last === "fail" || rg.last === "none") || typeof rg.revised !== "boolean") return null;
-  const reviewGate: ReviewGate = { last: rg.last as ReviewGate["last"], revised: rg.revised, ...(typeof rg.failAt === "number" && Number.isFinite(rg.failAt) ? { failAt: rg.failAt } : {}), ...(typeof rg.passRun === "string" ? { passRun: rg.passRun } : {}) };
-  const m = g.passMark as Record<string, unknown> | null | undefined;
+  const reviewGate = oneGate(rg);
+  if (!reviewGate) return null;
+  const out: PersistedGate = { steps: { builder, reviewer }, reviewGate, passMark: markOf(g.passMark) };
+  const maps = mapsOf(g.reviewGates, g.passMarks);
+  return maps ? { ...out, ...maps } : out;
+}
+
+/** One review gate, shape-checked; null when anything is off. */
+function oneGate(rg: unknown): ReviewGate | null {
+  const r = rg as Record<string, unknown> | null | undefined;
+  if (!r || typeof r !== "object") return null;
+  if (!(r.last === null || r.last === "pass" || r.last === "fail" || r.last === "none") || typeof r.revised !== "boolean") return null;
+  return { last: r.last as ReviewGate["last"], revised: r.revised, ...(typeof r.failAt === "number" && Number.isFinite(r.failAt) ? { failAt: r.failAt } : {}), ...(r.stoodAtFail === true ? { stoodAtFail: true } : {}), ...(typeof r.passRun === "string" ? { passRun: r.passRun } : {}) };
+}
+
+/** One pass mark, shape-checked; null when absent or off. */
+function markOf(v: unknown): (PassMark & { cwd: string }) | null {
+  const m = v as Record<string, unknown> | null | undefined;
   const br = count(m?.builderRuns);
-  const passMark = m && typeof m === "object" && typeof m.cwd === "string" && typeof m.at === "number" && Number.isFinite(m.at) && nullable(m.head) && nullable(m.tree) && nullable(m.ledger) && br !== null
+  return m && typeof m === "object" && typeof m.cwd === "string" && typeof m.at === "number" && Number.isFinite(m.at) && nullable(m.head) && nullable(m.tree) && nullable(m.ledger) && br !== null
     ? { cwd: m.cwd, at: m.at, head: m.head as string | null, tree: m.tree as string | null, ledger: m.ledger as string | null, builderRuns: br }
     : null;
-  return { steps: { builder, reviewer }, reviewGate, passMark };
+}
+
+/** The per-checkout maps of an entry; one bad entry drops both maps (null: the old single gate stands in for them). */
+function mapsOf(gates: unknown, marks: unknown): { reviewGates: ReviewGates; passMarks: Record<string, PassMark & { cwd: string }> } | null {
+  if (gates === undefined) return null;
+  if (!gates || typeof gates !== "object" || Array.isArray(gates) || (marks !== undefined && (!marks || typeof marks !== "object" || Array.isArray(marks)))) return null;
+  const reviewGates: ReviewGates = {};
+  for (const [k, v] of Object.entries(gates)) {
+    const one = oneGate(v);
+    if (!one) return null;
+    reviewGates[k] = one;
+  }
+  const passMarks: Record<string, PassMark & { cwd: string }> = {};
+  for (const [k, v] of Object.entries(marks ?? {})) {
+    const one = markOf(v);
+    if (!one) return null;
+    passMarks[k] = one;
+  }
+  return { reviewGates, passMarks };
 }
 
 /**

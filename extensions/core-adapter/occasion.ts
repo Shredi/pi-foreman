@@ -39,6 +39,10 @@ export function occasionOf(text: unknown, reason?: unknown): Occasion {
   return "item";
 }
 
+/** A reviewer entry classed `high-stakes` whose prose also names `[pre-pr]` (a `[second-opinion]` or `[plan-review]` tag would have won): the tags contradict. */
+export const namesBothTags = (occasions: Map<Json, Occasion>): boolean =>
+  [...occasions].some(([e, o]) => o === "high-stakes" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string" && tagIn(prose(e.task), "pre-pr"));
+
 /** Whether a review of this occasion counts for items, the review gate, the climb and the PR gate. */
 export const countsForItems = (o: Occasion): boolean => o === "item" || o === "pre-pr";
 
@@ -50,10 +54,12 @@ const OCCASION_LINES: Partial<Record<Occasion, string>> = {
 };
 
 /** The launch-result line of each non-item occasion the review children of the launch were recorded with (taken at the launch, not from the rewritten task). */
-export function occasionLinesOf(occasions: Iterable<Occasion>, hsRequired = false): string[] {
+export function occasionLinesOf(occasions: Iterable<Occasion>, hsRequired = false, reminderText: string | null = null): string[] {
   const named = new Set(occasions);
-  // `hsRequired`: a high-stakes review is still due, so a `[pre-pr]` PASS does not open the PR gate by itself.
-  return [...named].flatMap((o) => (o === "pre-pr" && hsRequired ? `${OCCASION_LINES[o]}; a [high-stakes] review is necessary after this PASS` : OCCASION_LINES[o] ?? []));
+  // `hsRequired`: a high-stakes review is due; `reminderText` only reminds, on an item or `[pre-pr]` review, the steps before the late ones (the finish hold, the PR tools).
+  const reminder = hsRequired ? reminderText : null;
+  const lines = [...named].flatMap((o) => (o === "pre-pr" && reminder ? `${OCCASION_LINES[o]}; ${reminder}` : OCCASION_LINES[o] ?? []));
+  return reminder && named.has("item") ? [...lines, reminder] : lines;
 }
 
 /** One launched child, in launch order (launchEntries entries that name an agent). */
@@ -143,6 +149,16 @@ export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | nul
     out.push({ index, role, text, verdict: verdictOf(text), model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, rung: entry?.rung ?? 0, counts: shadow === null && countsForItems(occasion) });
   });
   return out;
+}
+
+/** The children of a run-end event in result order (the event itself when it has no results). */
+export const runEndChildren = childrenOf;
+
+/** The original result positions `countingView` keeps, in order (the view re-indexes them). */
+export function keptIndices(data: unknown, results: readonly ReviewResult[]): number[] {
+  if (!isObj(data)) return [];
+  const drop = new Set(results.filter((r) => !r.counts).map((r) => r.index));
+  return childrenOf(data).map((_, i) => i).filter((i) => !drop.has(i));
 }
 
 /**

@@ -70,6 +70,12 @@ const settle = async (a: Rig): Promise<string> => {
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";
 };
 const pr = async (a: Rig): Promise<string> => (await a.checkCall("create_pull_request", {}))?.reason ?? "";
+/** What the adapter adds to a successful PR tool result: the due-review reminder, "" when none. */
+const prNote = async (a: Rig): Promise<string> => {
+  const r = (await a.fire("tool_result", { toolName: "create_pull_request", toolCallId: `pn${Math.random()}`, input: {}, details: {}, content: [{ type: "text", text: "created" }], isError: false })) as { content?: { text?: string }[] } | undefined;
+  return (r?.content ?? []).map((c) => c.text ?? "").filter((x) => x !== "created").join("\n");
+};
+const REMINDER = /a \[high-stakes\] review is due \(risk tag design\); launch it if the change warrants it/;
 const traces = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
 /** A builder tagged `design` fires the review (the size is the sizing field the launch needs when sizing is on). */
 const TAGGED = { size: { files: ["src/a/big.ts"] }, risk: ["design"] };
@@ -109,10 +115,11 @@ test("item 3: a builder launch with risk tag design fires the review; without th
   assert.deepEqual((await traces(w, "review_stakes")).map((e) => e.reasons), ["design"]);
   await end(a, b, "builder", "done");
   await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
+  assert.equal(await pr(a), "", "a due review refuses nothing");
+  assert.match(await prNote(a), REMINDER);
   // sticky: a later untagged builder does not unfire it
   await end(a, await launch(a, "builder", "build more"), "builder", "done");
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
+  assert.match(await prNote(a), REMINDER);
 });
 
 test("item 4/6: the finish gate does not ask for the pass while a ledger item other than V is open, asks once all are marked (V open does not matter); reviewGate: verdict mode: the FAIL entry holds after a high-stakes FAIL, and ends with the normal PASS after the revision", async (t) => {
@@ -121,15 +128,15 @@ test("item 4/6: the finish gate does not ask for the pass while a ledger item ot
   await buildAndPass(a, TAGGED);
   assert.doesNotMatch(await settle(a), /high-stakes/);
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [x] 1. item\n- [x] 2. other\n- [ ] V. fresh-eyes verification passed\n");
-  assert.match(await settle(a), /a high-stakes review must run/);
+  assert.match(await settle(a), REMINDER, "all items but V marked: the finish is held once with the reminder");
   const h = await launch(a, "reviewer", "[high-stakes] review");
   assert.equal(h.blocked, null, String(h.blocked));
   await end(a, h, "reviewer", "1. FAIL src/a/big.ts:1 broken\nOverall verdict: FAIL");
-  assert.match(await settle(a), /revise after the high-stakes FAIL, then pass the normal reviewer/);
+  assert.match(await settle(a), /revise or answer the high-stakes findings, then pass the normal reviewer/);
   work(w, "src/a/fix.ts", lines(2));
   await end(a, await launch(a, "builder", "fix it"), "builder", "done");
   await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
-  assert.doesNotMatch(await settle(a), /revise after the high-stakes FAIL/);
+  assert.doesNotMatch(await settle(a), /revise or answer the high-stakes findings/);
 });
 
 test("item 2: a child with a [high-stakes] launch binding has its ledger V mark refused", async (t) => {

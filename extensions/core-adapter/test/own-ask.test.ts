@@ -56,6 +56,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, o: { shim
   const reset = async (): Promise<void> => {
     for (const f of fs.readdirSync(w.handoff)) if (/^(ask|brief-.*|ruling(-.*)?|steer-.*)\.md$/.test(f)) fs.rmSync(path.join(w.handoff, f));
     await typed();
+    await wrote(path.join(w.project, `case${++n}.txt`)); // a new state: the finish refusals (two per unchanged state) start again
     zero.flag = await total.flag();
     zero.open = await total.open();
     zero.closed = await total.closed();

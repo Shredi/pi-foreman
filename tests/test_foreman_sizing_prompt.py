@@ -11,13 +11,15 @@ BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
 
 
 ROLE_PAIRS = [
+    # D28: finish refusals are counted per unchanged state, not per user prompt
+    ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
     ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),
     ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
     ("a `reviewer` (or `senior-reviewer`) PASS.", "a `reviewer` PASS."),
     ("the finalizer drafts it at heavy tier, you draft it otherwise.", "you draft it in the scratch dir at every tier."),
     ("Skip explorer, planner, reviewer and finalizer:", "Skip explorer and reviewer:"),
     ("- heavy: ledger, then `planner` (single launch; it writes `.workflow/scratch/plan-<topic>.md`), then `foreman_checkpoint({path})`, then builder(s), `finalizer`, `reviewer`, PR. Builders may fan out up to the configured width. `finalizer` closes the task; it is also required before you may finish.",
-     "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.md`, then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
+     "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.html` (an HTML page the owner reads in the browser; `plan-<topic>.md` also works), then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
     ("After a FAIL send the plan back to the planner once", "After a FAIL revise the plan once"),
     ("After a FAIL revise the plan once (`plan_revision_required`) and have the revised plan reviewed again; then the checkpoint opens and the owner sees the verdict.",
      "After a FAIL (`plan_revision_required`) revise the plan and have it reviewed again, as often as needed and without asking, while the findings are defects or gaps. A finding needs a decision when the reviewer marked it `DECISION:` or settling it means choosing scope, risk, a gate, guard or permission that loosens, a default, format or cost that changes, or a trade-off with no single sensible fix; ask then, when unsure, and when a finding comes back after you revised for it. Go to the checkpoint with a FAIL only for such findings. After every fifth failed review of the same plan in a row, say so in one line with the count (to the parent by a normal update when you have one, otherwise in your chat reply) and go on."),
@@ -47,6 +49,12 @@ ROLE_PAIRS = [
     # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
     ("on the current head; the adapter refuses it otherwise. Start",
      "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
+    # html plans: the standard line names the HTML plan form
+    ("then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it)",
+     "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it), the HTML from `{{planSkeleton}}`"),
+    # html plans: an HTML plan keeps rulings in a sidecar and any page change is a new version
+    ("a body edit is a new version. After a FAIL",
+     "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),
 ]
 
 
@@ -88,9 +96,14 @@ class SizingPromptTest(unittest.TestCase):
             old_reason = "needs a `reason` (why the default model cannot do it), and at trivial"
             new_reason = "needs a `reason` (why the default model cannot do it; a top-level key of the `subagent` call, never inside `options` or `args`), and at trivial"
             old_own = "A review never runs on your own model; the adapter swaps it."
-            new_own = "A configured reviewer pair is used as set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped. A risky change can get one more review. When the adapter asks for a high-stakes review, launch one `reviewer` with `[high-stakes]` in its task, alone, on the whole change, after the last PASS (before a PR, after the `[pre-pr]` PASS), once the change is complete. If it reports FAIL, revise and pass the normal reviewer again (before a PR, `[pre-pr]`); the adapter then asks for a second and last high-stakes review. If that fails too, revise, pass the normal reviewer again and tell the owner in one line that the second high-stakes review failed and on what. Name each high-stakes review in the PR body, one line each: `High-stakes review: <verdict> on <sha> (<reasons>)`."
+            new_own = "A configured reviewer pair is used as set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped. A risky change can get one more review. When the adapter reminds you of a high-stakes review, judge whether the change warrants it; if it does, launch one `reviewer` with `[high-stakes]` in its task, alone, on the whole change, after the last PASS (before a PR, after the `[pre-pr]` PASS), once the change is complete. If it reports FAIL, revise or answer the findings, then pass the normal reviewer again (before a PR, `[pre-pr]`; it gets the findings and its PASS clears the FAIL); the adapter then reminds you of a second and last high-stakes review. If that fails too, revise, pass the normal reviewer again and tell the owner in one line that the second high-stakes review failed and on what. Name each high-stakes review in the PR body, one line each: `High-stakes review: <verdict> on <sha> (<reasons>)`."
             want = render_prompt(old.stdout.decode("utf-8"), k).replace(old_launch, new_launch)
-            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own)):
+            # review per checkout: the finish rule and the repeat rule name the checkout
+            old_fin = "A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes."
+            new_fin = "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."
+            old_rep = "after a PASS with nothing changed, a second reviewer launch is refused."
+            new_rep = "after a PASS with nothing changed in that checkout, a second reviewer launch there is refused."
+            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own), (old_fin, new_fin), (old_rep, new_rep)):
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
             # roles-slim: the planner, finalizer and senior-reviewer roles are gone (one old/new pair per changed rendered line)

@@ -20,7 +20,7 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // `mcp_child_direct_capped` key `cap` (`provider` and `count` as above); `mcp_child_named_capped` likewise.
 // `blocked_open` / `blocked_closed` (a dialog opened or answered): `on` (owner|parent), `waitedMs`; `kind` and `label` are allowed already. `child_blocked_notice` / `child_blocked_cleared` carry `label` and `waitedMs`.
 // `mcp_launch` key `upfront` (the named-tool count of a launch; `role` and `servers` as above), `mcp_launch_whole` (`role`, `servers`, `cap`).
-// Protected-target check `protected_check`: `kinds`, `globs`, `classes`, `remoteClasses`, `opaque`, `effect`, `confidence`, `accepted`, `away`, `cached`, `entry` (the cited D entry); `entries` the matched P ids.
+// Protected-target check `protected_check`: `kinds`, `globs`, `classes`, `remoteClasses`, `opaque`, `effect`, `confidence`, `accepted`, `away`, `cached`, `entry` (the cited D entry); `entries` the matched P ids; `cause` (why the gate asks: a failure of the check or what the acceptance table changed, absent on allow and deny) and `mode` (the effective check mode) are pinned fields already.
 // Token diet `tools_deferred` (`names`, comma-joined tool names) and `tool_found` (`name`, `unhidden`; `kind` is a pinned field already).
 // Owner scripts (`script`, `script_fix`, `script_run`): `hash` (short), `added`, `seconds` (`removed`, `exit`, `kind`, `from`, `to` are pinned fields already).
 // `supervisor_reply` keys `replyTo` (the reply names a request id) and `isError`; `role` and `outcome` are pinned fields already.

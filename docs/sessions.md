@@ -654,7 +654,7 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 
 Rows of finished or lost sessions disappear from radar after `--since` hours; those files are not deleted, except a closed session's lost or stale file (see below).
 
-**Plan publication.** A session that saves a plan (the foreman's `.workflow/scratch/plan-<topic>.md`, or `<handoff dir>/plan.md` in a child) gets a
+**Plan publication.** A session that saves a plan (the foreman's `.workflow/scratch/plan-<topic>.md` or `plan-<topic>.html`, or `<handoff dir>/plan.md` in a child; a child with an HTML plan keeps the page as the shown plan and copies the generated `plan-<topic>.md` to its handoff `plan.md`) gets a
 show dir `<scratchDir>/show/<sessionId>/` with `plan.json` (path, title, version `v`, time, hashes) and two snapshots, `plan.ruled.md` and
 `plan.prev.md`, rolled at the ruling points: a `foreman_checkpoint`, a `[plan-review]` launch, and a child's `Plan from` message to its parent. The
 live file then carries `show: {dir, plan?, note?}` (`plan` and `note` are version hints), which radar passes through on the session node; the

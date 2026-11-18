@@ -51,6 +51,8 @@ export interface ShellSegment {
   argv: string[];
   redirects: ShellRedirect[];
   heredoc: boolean;
+  /** Set (true) only when stdin is fed by a pipe, a heredoc, a here-string, `<` or `<>`; an fd dup onto stdin (`<&3`) is not counted. */
+  stdinFed?: boolean;
   cwd: string | null;
   /** The wrappers this segment was unwrapped from, outermost first (`env`, `bash`, `$(`, backtick ...). */
   wrappers: string[];
@@ -228,7 +230,7 @@ function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undef
 }
 
 function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | null, c?: Cmd, cwd: string | null = sc.cwd): void {
-  sc.run.out.push({
+  const out: ShellSegment = {
     program,
     argv,
     redirects: [...(c ? c.redirs : sc.redirects)],
@@ -236,7 +238,11 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
     cwd,
     wrappers: [...sc.wrappers],
     opaque: reason ?? c?.reason ?? sc.reason,
-  });
+  };
+  // not enumerable: a segment's own keys (and so its serialised form and the pinned digests) stay as they were
+  // always set (true or false): a clone that lost the property reads as undefined, which protected.ts treats as fed
+  Object.defineProperty(out, "stdinFed", { value: Boolean(c ? c.feeds : sc.stdin), enumerable: false });
+  sc.run.out.push(out);
 }
 
 function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {

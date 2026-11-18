@@ -154,7 +154,7 @@ test("item 3: with neither a merge-base nor a recorded ancestor the task line na
   assert.match(String(s.input.task), /occasion: high-stakes \(the whole change: /);
 });
 
-test("item 6: a normal reviewer launched right after a high-stakes FAIL ended waits for the FAIL to be recorded and is refused until the revision", async (t) => {
+test("item 6: a normal reviewer launched right after a high-stakes FAIL ended waits for the FAIL to be recorded and then gets the findings (never refused for a missing revision)", async (t) => {
   const { w, a } = await setup(t);
   work(w, "src/a/big.ts", 100);
   await builder(a);
@@ -162,5 +162,6 @@ test("item 6: a normal reviewer launched right after a high-stakes FAIL ended wa
   const hs = await launch(a, "reviewer", "[high-stakes] review the whole change");
   a.endRunAs(hs.id, "reviewer", "1. FAIL a\nOverall verdict: FAIL"); // no tick: the review round is still being recorded
   const next = await launch(a, "reviewer", "[pre-pr] review the branch");
-  assert.match(next.blocked ?? "", /\[high_stakes_unrevised\]/);
+  assert.equal(next.blocked, null, String(next.blocked));
+  assert.match(String(next.input.task), /\[pi-foreman high-stakes findings\]/);
 });

@@ -55,7 +55,7 @@ All lists carry `truncated` (bool) and `total` (count before the cut). Caps: 200
 
 ### Write tools in the pack
 
-`foreman_move`, `foreman_copy` and `foreman_worktree_remove` are always registered (the foreman's `foreman_copy` may also read from its own session handoff dir; `foreman_worktree_remove` also accepts a squash-merged branch when the PR host reports its PR merged with this exact head commit (the PR lookup runs only after a `not_merged` refusal), and deletes untracked paths of `safety.ops.worktreeDisposable` first); see
+`foreman_move`, `foreman_copy` and `foreman_worktree_remove` are always registered (in a folder that is not a git repository, `foreman_move` and `foreman_copy` work inside the session working folder instead of the git workspace root, with the same limits; the foreman's `foreman_copy` may also read from its own session handoff dir; `foreman_worktree_remove` also accepts a squash-merged branch when the PR host reports its PR merged with this exact head commit (the PR lookup runs only after a `not_merged` refusal), and deletes untracked paths of `safety.ops.worktreeDisposable` first); see
 [safety](safety.md). While the pack is on they also emit a `tool_pack` trace event, so retro can compare tool use.
 
 ### Children
@@ -506,7 +506,7 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 `foreman_show({title, markdown | html})` publishes a note for the owner (foreman sessions, including child foreman sessions opened with `foreman session open`, get it; subagent children such as explorer, builder and reviewer do not). Title up to 120
 characters; exactly one of `markdown` (converted to the page) or `html` (a whole page the model wrote, stored as is, with no script or network restriction), each up to 256 KiB; larger input is refused with the limit named. It never takes a path. Each call adds a page to the panel's list (the latest note stays in `note.md`) and writes a standalone page, `pages/note-<n>.html` in the show dir (the last 20 are kept); the result is
 `shown: <title> (v<n>, <k> diagram(s)) at <path>. It writes a page the owner opens in the browser: <page>.`, and the trace gets one `show_note` event. `mermaid` fences are rendered to sidecar SVGs after the call returns; the page is written again with them. The plan (on each plan call and answer) and a session's `result.md` get pages too, and `pages.json` lists the pages and milestones; see [herdr](herdr.md#pages). Pages are in the show dir, so a child's pages go when its session closes.
-A `html` note is not checked for scripts or network use; `note.md` then only names the page.
+A `html` note is not checked for scripts or network use; `note.md` then only names the page. Notes keep both forms because a note is read once and never approved or hashed: `html` suits layout-heavy notes, and `markdown` stays the default for text, tables and diagrams. Unlike a plan, a note needs no markdown copy, so no converter runs. A session's `result.md` stays markdown for the same reason: other tools read it as text.
 The tool stays declared whatever `tools.deferred` says. See [Notes](herdr.md#notes).
 The reply never adds a hint about the note's opening; the instructions ask for a short plain opening.
 

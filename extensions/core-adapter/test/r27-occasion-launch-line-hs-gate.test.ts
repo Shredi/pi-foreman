@@ -13,7 +13,7 @@ type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
 const LEDGER = "# Ledger: x\nTier: standard\n\n- [x] 1. item\n- [x] V. fresh-eyes verification passed\n";
-const NECESSARY = "a [high-stakes] review is necessary after this PASS";
+const NECESSARY = "a [high-stakes] review is due (";
 
 async function setup(t: Parameters<typeof world>[0], highStakes: Record<string, unknown>) {
   const w = world(t, { ceremony: { default: "standard", highStakes } });

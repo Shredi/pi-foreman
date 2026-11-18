@@ -32,6 +32,10 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, o: { noPa
 
 const held = async (r: Rig): Promise<boolean> => (await r.settle())?.continue === true;
 
+/** A foreman project edit: the work count changes, so the finish refusals of the state before no longer count. */
+let edits = 0;
+const newState = (r: Rig) => r.a.fire("tool_result", { toolName: "write", toolCallId: `e${++edits}`, input: { path: path.join(r.w.project, `e${edits}.txt`) }, details: {}, content: [{ type: "text", text: "ok" }], isError: false });
+
 test("without a send the finish checks hold (the baseline of the cases below)", async (t) => {
   const r = await rig(t);
   assert.equal(await held(r), true);
@@ -73,13 +77,13 @@ test("a send to another session, a failed send and a send with no parent set no 
   const r = await rig(t);
   await r.send("some-other-session");
   assert.equal(await held(r), true, "another session");
-  await r.a.ownerPrompt(); // a refusal is spent per prompt: two, then the finish goes through
+  await newState(r); // two refusals per unchanged state, then the finish goes through: each case starts a new state
   await r.send("parent-session", { details: { error: "Session not found" }, text: "Session not found" });
   assert.equal(await held(r), true, "Session not found");
-  await r.a.ownerPrompt();
+  await newState(r);
   await r.send("parent-session", { isError: true, text: "boom" });
   assert.equal(await held(r), true, "an error result");
-  await r.a.ownerPrompt();
+  await newState(r);
   await r.send("parent-session", { details: { delivered: false }, text: "Message sent to parent-session" });
   assert.equal(await held(r), true, "delivered false");
 

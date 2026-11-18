@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -294,6 +295,67 @@ class WorktreeRemoveTest(SafeOpsCase):
     def test_unknown_base_branch(self):
         wt = self.add_worktree()
         self.failed(self.op("worktree_remove", config={"baseBranch": "no-such-branch"}, path=wt), "base_branch_unknown")
+
+
+class NonGitWorkspaceTest(SafeOpsCase):
+    """Without git, move and copy are limited to the request cwd (any folder); the other ops still need a git work tree."""
+
+    def setUp(self):
+        super().setUp()
+        self.plain = os.path.join(self.tmp, "plain")
+        os.mkdir(self.plain)
+
+    def test_move_and_copy_work_inside_the_folder(self):
+        self.write("a.txt", "x", base=self.plain)
+        self.write("d/y.txt", "y", base=self.plain)
+        res = self.op("move", cwd=self.plain, src="a.txt", dst="b.txt")
+        self.assertEqual(res["action"], "rename_file", res)
+        self.assertFalse(os.path.exists(os.path.join(self.plain, "a.txt")))
+        self.assertEqual(Path(self.plain, "b.txt").read_text("utf-8"), "x")
+        res = self.op("copy", cwd=self.plain, src="d", dst="d2")
+        self.assertEqual(res["action"], "copy_dir", res)
+        self.assertEqual(Path(self.plain, "d2", "y.txt").read_text("utf-8"), "y")
+        res = self.op("move", cwd=self.plain, src="d2", dst="d3")
+        self.assertEqual(res["action"], "rename_dir", res)
+
+    def test_a_path_outside_the_folder_and_an_existing_destination_are_refused(self):
+        self.write("a.txt", "x", base=self.plain)
+        self.write("b.txt", "keep", base=self.plain)
+        self.write("other.txt", "o", base=self.tmp)
+        self.failed(self.op("move", cwd=self.plain, src="a.txt", dst="../out.txt"), "outside_workspace")
+        self.failed(self.op("copy", cwd=self.plain, src="a.txt", dst=os.path.join(self.tmp, "out.txt")), "outside_workspace")
+        self.failed(self.op("copy", cwd=self.plain, src="../other.txt", dst="c.txt"), "outside_workspace")
+        self.failed(self.op("move", cwd=self.plain, src="a.txt", dst="b.txt"), "dst_exists")
+        self.failed(self.op("move", cwd=self.plain, src="a.txt", dst=".git/a.txt"), "inside_git_dir")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "out.txt")))
+        self.assertEqual(Path(self.plain, "b.txt").read_text("utf-8"), "keep")
+
+    def test_the_other_ops_still_need_git(self):
+        self.failed(self.op("status", cwd=self.plain), "not_a_git_repo")
+
+    def test_a_git_dir_as_the_folder_keeps_the_refusal(self):
+        self.git("init", "-q", self.repo)
+        gitdir = os.path.join(self.repo, ".git")
+        hook = os.path.join(gitdir, "hooks", "pre-commit.sample")
+        self.assertTrue(os.path.isfile(hook))
+        self.failed(self.op("copy", cwd=gitdir, src="hooks/pre-commit.sample", dst="hooks/pc-x"), "not_a_git_repo")
+        self.assertFalse(os.path.exists(os.path.join(gitdir, "hooks", "pc-x")))
+
+    def test_a_refused_owner_keeps_the_refusal(self):
+        self.git("init", "-q", self.repo)
+        self.write("a.txt", "x")
+        gitdir = os.path.join(self.repo, ".git")
+        with mock.patch.dict(os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}):
+            self.failed(self.op("move", cwd=self.repo, src="a.txt", dst="b.txt"), "not_a_git_repo")
+            self.failed(self.op("copy", cwd=gitdir, src="hooks/pre-commit.sample", dst="hooks/pc-b"), "not_a_git_repo")
+        self.assertTrue(os.path.isfile(os.path.join(self.repo, "a.txt")))
+        self.assertFalse(os.path.exists(os.path.join(gitdir, "hooks", "pc-b")))
+
+    def test_a_bare_repo_as_the_folder_keeps_the_refusal(self):
+        bare = os.path.join(self.tmp, "bare.git")
+        self.git("init", "-q", "--bare", bare, cwd=self.tmp)
+        self.failed(self.op("move", cwd=bare, src="HEAD", dst="HEAD.moved"), "not_a_git_repo")
+        self.assertTrue(os.path.isfile(os.path.join(bare, "HEAD")))
 
 
 class OpsConfigTest(unittest.TestCase):
