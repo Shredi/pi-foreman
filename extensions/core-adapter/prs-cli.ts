@@ -41,6 +41,8 @@ const MAX_COMMENTS = 100;
 const BASELINE_TTL_MS = 10 * 60_000;
 const BASELINE_KEEP_MS = 24 * 3_600_000;
 const MAX_BASELINE = 100;
+/** The learning list of a baseline (`ran`): pr_ops.py omits `learn` when it would hold more names than this. */
+const MAX_LEARN = 200;
 export const DEADLINE = "deadline";
 
 export const USAGE = "usage: foreman prs poll [--json]";
@@ -107,9 +109,13 @@ function readState(agentDir: string): StateDoc | null {
   }
   const baselines: Record<string, BaselineEntry> = {};
   if (isObj(j.baselines))
-    for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at };
+    for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at, ...learnOf(b.learn) };
   return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(finite(j.hostlessDroppedAt) ? { hostlessDroppedAt: j.hostlessDroppedAt } : {}) };
 }
+
+/** `{learn}` of a baseline answer when it is well formed (`ran` a string list of at most MAX_LEARN names, `merged` a whole number of at least 1); else `{}` (the base is not learnable). */
+const learnOf = (v: unknown): { learn?: { ran: string[]; merged: number } } =>
+  isObj(v) && Array.isArray(v.ran) && v.ran.length <= MAX_LEARN && v.ran.every((n) => typeof n === "string") && finite(v.merged) && Number.isInteger(v.merged) && v.merged >= 1 ? { learn: { ran: v.ran as string[], merged: v.merged } } : {};
 
 const validEntry = (e: Record<string, unknown>): boolean => typeof e.repo === "string" && finite(e.number) && finite(e.at);
 
@@ -340,13 +346,11 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       const row = rows.get(rk);
       const meta = row ? metaOf(row.row) : prev?.meta;
       const s = settledOf(snap.runs, snap.required);
-      // a waiting pass (only required checks without a run are missing) is held like a pass without a required set, then it is settled and carries the names
-      const waiting = waitingOf(snap.runs, snap.required);
-      const hold = sx.settleMs > 0 && ((s.result === "pass" && !snap.required?.length) || waiting.length > 0) ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
+      const hold = s.result === "pass" && sx.settleMs > 0 && !snap.required?.length ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
       const held = hold?.held ?? false;
-      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && ((!s.settled && waiting.length === 0) || held);
-      const names = !held && waiting.length > 0 ? waiting.slice(0, 10).map((n) => oneLine(n, 120)) : [];
-      prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), ...(names.length ? { waiting: names } : {}), at: now };
+      // a PR whose only missing runs are required names is decided again after the baseline step (expectSteps: merge-time, pre-merge or not learnable)
+      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && (!s.settled || held);
+      prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), at: now };
       if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(0, MAX_COMMENTS).map(cap) };
     } else if ("error" in r && r.error === DEADLINE) {
       // keeps its entry and its turn
@@ -359,7 +363,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   res.tracked = items.length;
   const commentsBefore = JSON.stringify(comments.prs); // sourceStep edits shared comment objects in place
   await sourceStep(deps, sx, pick, polls, state.prs, prs, newComments, deadline);
-  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now());
+  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now(), sx.settleMs);
 
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
   markHidden(prs, sx.hide);
@@ -516,7 +520,7 @@ function flagBaselines(pick: TrackedPr[], prs: Record<string, StateEntry>, basel
  * A row without a `baseline` field is "not asked or not available" (an older answer, a host without the field, the fallback path): a known empty baseline.
  * An asked answer that failed carries `{error}`: unknown, asked again on the next poll, and the age of the stored one is not refreshed.
  */
-function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number): void {
+function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number, settleMs: number): void {
   // hosts whose flagged row came back without the field: the host does not have it (or the batch took the fallback path), so every other entry of that host with no stored
   // baseline counts as a known empty baseline in this poll too, not as unknown; a host that has the field answers every flagged row with it
   const none = new Set<string>();
@@ -528,7 +532,7 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     if (!hit || !flagged.has(rk)) continue;
     const b = hit.row.baseline;
     if (!isObj(b)) none.add(host);
-    else if (Array.isArray(b.names) && typeof hit.row.baseRef === "string") baselines[baseKey(host, p.repo, hit.row.baseRef)] = { names: names(b.names), at: hit.startedAt };
+    else if (Array.isArray(b.names) && typeof hit.row.baseRef === "string") baselines[baseKey(host, p.repo, hit.row.baseRef)] = { names: names(b.names), at: hit.startedAt, ...learnOf(b.learn) };
   }
   pick.forEach((p, i) => {
     const r = polls[i];
@@ -550,16 +554,36 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     const upgrade = !old?.exp && !!old?.snap && head !== "" && old.snap.head === head && settledOf(old.snap.runs, old.snap.required).result === "pass" && !old.unsettled;
     const { state, facts } = expectStep(old?.exp, { head, runs: e.snap.runs, required: e.snap.required, cut: e.snap.cut === true, draft: e.meta?.draft === true, ...(old?.snap && old.snap.head !== head ? { prevRuns: old.snap.runs } : {}), upgrade, baseline }, now);
     e.exp = state;
-    const { expect: _drop, ...rest } = e.snap;
-    e.snap = facts ? { ...rest, expect: facts } : rest;
+    const { expect: _drop, learn: _old, ...rest } = e.snap;
     const open = settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed");
-    // a missing required name that is a waiting one does not veto (prwatch.ts vetoOf); a source run merged in since the hold may have ended the waiting pass
+    // every gating run passed and only required names have no run: merge-time (the base's recent merged PRs ran none of the missing names before their merge), pre-merge (one of them did)
+    // or not learnable (no complete answer); a source run merged in is counted, a failure is none of these (it is immediate)
     const waiting = waitingOf(e.snap.runs, e.snap.required);
-    if (e.waiting && waiting.length === 0) {
-      delete e.waiting;
-      if (open) e.unsettled = true;
+    const ran = waiting.length > 0 && facts && !facts.unknown ? stored?.learn?.ran : undefined;
+    const mergeTime = ran ? (e.snap.required ?? []).filter((n) => !ran.includes(n)) : [];
+    if (ran && waiting.every((n) => mergeTime.includes(n))) {
+      // case 1: the merge-time names do not veto; the pass stands at once and the names ride along
+      e.snap = { ...rest, learn: "merge-time" };
+      e.waiting = waiting.slice(0, 10).map((n) => oneLine(n, 120));
+      delete e.unsettled;
+    } else if (ran && facts) {
+      // case 2: a missing name ran before the merge on a recent merged PR, a real check still to come; only those names veto
+      e.snap = { ...rest, learn: "pre-merge", expect: { ...facts, missing: facts.missing.filter((n) => !mergeTime.includes(n)) } };
+      e.unsettled = true;
+    } else if (waiting.length > 0) {
+      // case 3: not learnable; the veto stands, the pass is not claimed, and after the settle hold the PR shows the waiting names instead of `unsettled`
+      const hold = settleMs > 0 ? holdPass(old?.passSince, head, e.snap.runs, now, settleMs) : null;
+      if (hold) e.passSince = hold.since;
+      e.snap = facts ? { ...rest, expect: facts } : rest;
+      if (hold?.held) e.unsettled = true;
+      else {
+        delete e.unsettled;
+        e.waiting = waiting.slice(0, 10).map((n) => oneLine(n, 120));
+      }
+    } else {
+      e.snap = facts ? { ...rest, expect: facts } : rest;
+      if (facts && open) e.unsettled = true;
     }
-    if (facts && open && (facts.unknown === true || facts.missing.some((n) => !waiting.includes(n)))) e.unsettled = true;
   });
 }
 

@@ -1113,6 +1113,7 @@ EXPECT_EVENTS = ("pull_request", "pull_request_target", "push")
 OWN_RUNNER = "github-actions"
 MAX_BASELINE = 100
 BASELINE_MERGED = 3
+MAX_LEARN = 200
 
 
 def _stamp(v):
@@ -1217,11 +1218,35 @@ def _is_run_error(x):
     return isinstance(path, list) and ("checkSuite" in path or "workflowRun" in path)
 
 
+def _ran_before_merge(nd, merged_at):
+    """Whether one check of a merged head ran before the merge, for the learning list: anything started before `merged_at` (a status context by its
+    creation time) whatever its event (review, comment, nightly or manual runs count; a hidden or unknown event counts, so it can never make a check
+    look merge-time), but not a merge_group run, an EXPECTED status context or a run that never started."""
+    if _node_group(nd)[1] == "missing":
+        return False
+    if nd.get("__typename") == "StatusContext":
+        stamp = nd.get("createdAt")
+    else:
+        suite = nd.get("checkSuite")
+        wf = suite.get("workflowRun") if isinstance(suite, dict) else None
+        if isinstance(wf, dict) and wf.get("event") == "merge_group":
+            return False
+        stamp = nd.get("startedAt")
+        if not stamp or stamp in ZERO_TIME:
+            return False
+    t = _stamp(stamp)
+    return t is None or t < merged_at
+
+
 def baseline_names(node, alias, base, errs):
     """The check names the newest merged pull requests into `base` ran, from the `merged` field of one repository answer: {"names": [...]}
     (at most 100; the union over the newest three by merge time; empty when none has that base) or {"error": True} when the list or a merged
-    head's commit or check list could not be read. An error under one check's check suite or workflow run only drops that run."""
-    mine = [x for x in errs if isinstance(x.get("path"), list) and x["path"][:2] == [alias, "merged"] and not _is_run_error(x)]
+    head's commit or check list could not be read. An error under one check's check suite or workflow run only drops that run.
+    `learn` {"ran": [...], "merged": n} (every check name started before the merge on the merged heads read, at most 200, and how many heads were read)
+    is added only when that list is complete: no error under the merged path at all, no head with more checks than were read, the cap not reached,
+    and at least one merged head of that base; otherwise the base is not learnable and the key is absent."""
+    all_mine = [x for x in errs if isinstance(x.get("path"), list) and x["path"][:2] == [alias, "merged"]]
+    mine = [x for x in all_mine if not _is_run_error(x)]
     merged = node.get("merged") if isinstance(node, dict) else None
     nodes = merged.get("nodes") if isinstance(merged, dict) else None
     if mine or not isinstance(nodes, list):
@@ -1233,16 +1258,30 @@ def baseline_names(node, alias, base, errs):
             cand.append((at, nd))
     cand.sort(key=lambda c: -c[0])
     names = []
+    ran = []
+    complete = not all_mine and bool(cand)
     for at, nd in cand[:BASELINE_MERGED]:
         commits = nd.get("commits")
         cn = commits.get("nodes") if isinstance(commits, dict) else None
         commit = cn[0].get("commit") if isinstance(cn, list) and cn and isinstance(cn[0], dict) else None
         roll = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
+        if commit is None:
+            complete = False
+        elif isinstance(roll, dict):
+            ctx = roll.get("contexts")
+            total = ctx.get("totalCount") if isinstance(ctx, dict) else None
+            if not isinstance(total, int) or isinstance(total, bool) or total > len(_rollup_nodes(roll)):
+                complete = False
         for c in _rollup_nodes(roll):
             name = title_or_none(_node_group(c)[0])
             if name and name not in names and _counts_expected(c, at):
                 names.append(name)
-    return {"names": names[:MAX_BASELINE]}
+            if name and name not in ran and _ran_before_merge(c, at):
+                ran.append(name)
+    out = {"names": names[:MAX_BASELINE]}
+    if complete and len(ran) < MAX_LEARN:
+        out["learn"] = {"ran": ran, "merged": min(len(cand), BASELINE_MERGED)}
+    return out
 
 
 def required_checks(pr, errs):

@@ -64,7 +64,7 @@ export interface StateEntry {
   passSince?: { head: string; sig: string; at: number };
   /** Set only while a pass is not settled (the watch's settle rule), or while expected checks are still to come: the checks seen may be a partial set. */
   unsettled?: true;
-  /** The required checks with no run while every check that ran passed and the settle hold is over (a waiting pass; at most 10 names of 120 characters): the host reports them only at merge time. Absent: none. */
+  /** The required checks with no run while every check that ran passed, for a learned merge-time check (a pass at once) or after the settle hold of a base that is not learnable (at most 10 names of 120 characters): the host reports them only at merge time. Absent: none. */
   waiting?: string[];
   /** The expected-set state of the current head (prwatch.ts expectStep); its presence marks an entry written with these facts. */
   exp?: ExpectState;
@@ -82,6 +82,8 @@ export interface StateEntry {
 export interface BaselineEntry {
   names: string[];
   at: number;
+  /** Every check name that ran before the merge on the merged PRs read, and how many were read; present only when that list is complete (scripts/pr_ops.py baseline_names); absent: the base is not learnable. */
+  learn?: { ran: string[]; merged: number };
 }
 export interface StateDoc {
   v: 1;
@@ -239,7 +241,7 @@ function parseSnap(v: unknown): StoredSnap | null {
   const mergeable: Mergeable = v.mergeable === "mergeable" || v.mergeable === "conflicting" ? v.mergeable : "unknown";
   const str = (x: unknown): string => (typeof x === "string" ? x : "");
   const required = Array.isArray(v.required) ? v.required.filter((n): n is string => typeof n === "string") : v.required === null ? null : undefined;
-  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
+  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.learn === "merge-time" || v.learn === "pre-merge" ? { learn: v.learn } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
 }
 
 /** The per-source state of a state entry (`sources.<name>`), invalid entries dropped; undefined when none is left. */
