@@ -81,6 +81,10 @@
    "event": "turn"
   },
   {
+   "event": "readonly_state_diff",
+   "role": "explorer"
+  },
+  {
    "event": "guard",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
@@ -149,6 +153,10 @@
   },
   {
    "event": "turn"
+  },
+  {
+   "event": "readonly_state_diff",
+   "role": "explorer"
   },
   {
    "event": "guard",
