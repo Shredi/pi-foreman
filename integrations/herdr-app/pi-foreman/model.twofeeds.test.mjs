@@ -47,6 +47,13 @@ test("a session PR without a repository finds its twin in the merged feed", () =
   assert.equal(enrichPrs(s.prs, feed)[0].title, "Fix the thing");
 });
 
+test("an unshown session PR without a repository lists #5 exactly once", () => {
+  const feed = mergeFeeds([[entry({ repo: "o/r" })], [entry({ repo: "O/R" })]]);
+  const s = session("s", [{ number: 5 }]);
+  const groups = openPrGroups(feed, [s], new Set());
+  assert.deepEqual(groups.flatMap((g) => g.prs.map((p) => p.number)), [5]);
+});
+
 test("twinOf compares repository and URL without case", () => {
   const byRepo = [entry({ repo: "O/R" })];
   assert.equal(twinOf({ number: 5, repo: "o/r" }, byRepo), byRepo[0]);

@@ -67,6 +67,19 @@ test("a render left open (cut short) gives a notice on the next tick", () => {
   });
 });
 
+test("a cut-short render gives one notice; a tick past the floor with no render in between gives none (the tick resets renderOpen)", () => {
+  clock((advance) => {
+    const m = mod([GOOD]);
+    m.render({});
+    m.renderOpen = true;
+    m.poll(cx);
+    assert.equal(notices().length, 1);
+    advance(FLOOR + 1000);
+    m.poll(cx);
+    assert.equal(notices().length, 1);
+  });
+});
+
 test("a cut-short render followed by a clean one still gives one notice (sticky renderBroke)", () => {
   clock(() => {
     const m = mod([GOOD]);
