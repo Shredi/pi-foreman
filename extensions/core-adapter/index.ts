@@ -21,7 +21,8 @@ import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
-import { PermStore, PERM_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
+import { effectiveCheckMode } from "./protected.ts";
+import { PermStore, PERM_MODES, PROTECTED_CHECK_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
 import { folderRelaxes, mergedFactKey, redirectsInScratch, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
@@ -3113,9 +3114,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a child or a session without UI fails closed; the owner's own session ignores presence
         const away = gs.isChild || !ctx.hasUI;
         let askCause = `${named} is protected.`;
+        const checkRaw = get(gs.config.config, "gate.protected.check");
+        const checkMode = effectiveCheckMode(checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model", m.entries);
         try {
-          const checkRaw = get(gs.config.config, "gate.protected.check");
-          const checkMode: "model" | "read-only" | "ask" = checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model";
           const ledgerFile = boundLedger(gs.markerDir, gs.id);
           const ledgerText = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
           const title = ledgerText ? /^#\s+(.+)$/m.exec(ledgerText)?.[1] : undefined;
@@ -3133,7 +3134,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           );
           gs.trace?.emit({
             event: "protected_check", rule: v.accepted === "deny" && v.entry ? `${rule};classifier.deny:${v.entry}` : rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
-            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, reason: v.reason, model: v.model, latencyMs: v.latencyMs, role,
+            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, reason: v.reason, model: v.model, latencyMs: v.latencyMs, role, mode: checkMode,
+            ...(v.cause ? { cause: v.cause } : {}),
             globs: m.entries.map((e) => e.glob).join(","),
             ...denyFields(v.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
             ...(v.accepted === "deny" && v.entry ? { entry: v.entry } : {}),
@@ -3146,7 +3148,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           askCause = `${named} is protected. The check failed (${msg}).`;
           gs.trace?.emit({
             event: "protected_check", rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
-            opaque: m.opaque || m.remoteOpaque, accepted: "ask", cause: "exception", away, globs: m.entries.map((x) => x.glob).join(","),
+            opaque: m.opaque || m.remoteOpaque, accepted: "ask", cause: "exception", away, mode: checkMode, globs: m.entries.map((x) => x.glob).join(","),
             ...denyFields(msg.slice(0, 200), event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
           });
         }
@@ -3391,12 +3393,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * `foreman_protect` and `/foreman perms protect`: validate, ask the owner (a timeout, a cancel or no UI is a refusal), then write through
    * PermStore.writeProtected and drop the gate caches. The model never writes the file; the adapter does, after the owner's yes.
    */
-  async function protectEntry(s: Session, ctx: ExtensionContext, a: { action: unknown; kind: unknown; glob: unknown; note?: unknown; file?: unknown }): Promise<{ ok: boolean; text: string }> {
+  async function protectEntry(s: Session, ctx: ExtensionContext, a: { action: unknown; kind: unknown; glob: unknown; note?: unknown; check?: unknown; file?: unknown }): Promise<{ ok: boolean; text: string }> {
     const no = (text: string) => ({ ok: false, text: `pi-foreman: not changed: ${text}` });
     if (s.isChild) return no("children never change the protected targets; the owner does, with /foreman perms protect.");
     if (a.action !== "add" && a.action !== "remove") return no("action must be add or remove");
     if (a.file !== undefined && a.file !== "project" && a.file !== "user") return no("file must be project or user");
-    const clean = cleanProtected({ kind: a.kind, glob: a.glob, note: a.note });
+    if (a.check !== undefined && !PROTECTED_CHECK_MODES.includes(a.check as never)) return no("check must be model, read-only or ask");
+    if (a.check !== undefined && a.action === "remove") return no("check is for add only; to change an entry, remove it and add it again");
+    const clean = cleanProtected({ kind: a.kind, glob: a.glob, note: a.note, check: a.check });
     if (typeof clean === "string") return no(clean);
     if (!ctx.hasUI) return no("there is no pane to ask the owner in; the owner runs /foreman perms protect add|remove <kind> <glob> in the foreman session.");
     const file = a.file === "user" ? "user" : "project";
@@ -3405,9 +3409,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const existing = cur.protected.find((e) => e.kind === clean.kind && e.glob === clean.glob);
     const where = file === "user" ? rt.store.filePath("user") : cur.projectFile;
     if (a.action === "remove" && !existing) return no(`${clean.kind} ${clean.glob} is not protected`);
-    if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id})`);
+    if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id}); to change its note or check, remove it and add it again`);
     const text = a.action === "add"
-      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; in a session with UI that is not a child, confident reads, writes and deploys can be allowed whatever the presence; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
+      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode). For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
       : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
     let yes = false;
     try {
@@ -5582,10 +5586,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       name: "foreman_protect",
       label: "Protect a target",
       description: "Add or remove a protected target (a host, a path or a command glob) in the owner's permissions, after the owner confirms in a dialog. Use it when the owner asks to protect or guard a target.",
-      parameters: { type: "object", properties: { action: { type: "string", enum: ["add", "remove"] }, kind: { type: "string", enum: ["host", "path", "command"] }, glob: { type: "string", minLength: 1, maxLength: 300 }, note: { type: "string", maxLength: 200 }, file: { type: "string", enum: ["project", "user"], description: "Default project (.workflow/permissions.json)." } }, required: ["action", "kind", "glob"], additionalProperties: false } as never,
+      parameters: { type: "object", properties: { action: { type: "string", enum: ["add", "remove"] }, kind: { type: "string", enum: ["host", "path", "command"] }, glob: { type: "string", minLength: 1, maxLength: 300 }, note: { type: "string", maxLength: 200 }, check: { type: "string", enum: ["model", "read-only", "ask"], description: "Optional stricter check mode for this entry (add only); it can never be looser than gate.protected.check. To change it, remove the entry and add it again." }, file: { type: "string", enum: ["project", "user"], description: "Default project (.workflow/permissions.json)." } }, required: ["action", "kind", "glob"], additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
-        const r = await protectEntry(s, ctx, { action: params.action, kind: params.kind, glob: params.glob, note: params.note, file: params.file });
+        const r = await protectEntry(s, ctx, { action: params.action, kind: params.kind, glob: params.glob, note: params.note, check: params.check, file: params.file });
         return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.ok ? "written" : "refused" }, ...(r.ok ? {} : { isError: true }) };
       },
     } as never);
@@ -6283,8 +6287,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return;
         }
         if (rest[0] === "protect") {
-          const usage = "Usage: /foreman perms protect add|remove <host|path|command> <glob> [--note <text>] [--user]";
-          const args = rest.slice(1);
+          const usage = "Usage: /foreman perms protect add|remove <host|path|command> <glob> [--check model|read-only|ask] [--note <text>] [--user] (--check is for add only; to change an entry, remove it and add it again)";
+          let args = rest.slice(1);
+          // `--check <mode>` comes out of the words first: `--note` takes every word after it
+          let check: string | undefined;
+          const ci = args.indexOf("--check");
+          if (ci >= 0) {
+            check = args[ci + 1];
+            args = [...args.slice(0, ci), ...args.slice(ci + 2)];
+            if (check === undefined || !PROTECTED_CHECK_MODES.includes(check as never) || args[0] === "remove") {
+              ctx.ui.notify(usage, "warning");
+              return;
+            }
+          }
           const user = args.includes("--user");
           const ni = args.indexOf("--note");
           const note = ni >= 0 ? args.slice(ni + 1).filter((w) => w !== "--user").join(" ") : undefined;
@@ -6293,7 +6308,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ctx.ui.notify(usage, "warning");
             return;
           }
-          const r = await protectEntry(s, ctx, { action: head[0], kind: head[1], glob: head.slice(2).join(" "), ...(note ? { note } : {}), file: user ? "user" : "project" });
+          const r = await protectEntry(s, ctx, { action: head[0], kind: head[1], glob: head.slice(2).join(" "), ...(note ? { note } : {}), ...(check ? { check } : {}), file: user ? "user" : "project" });
           ctx.ui.notify(r.text, r.ok ? "info" : "warning");
           return;
         }

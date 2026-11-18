@@ -450,16 +450,56 @@ A protected target is a host, a path or a command glob that you want a small mod
 { "protected": [ { "host": "prod-*.example.net", "note": "production" }, { "path": "ops/playbooks/**" }, { "command": "deploy-*" } ] }
 ```
 
-Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) and an optional `note` (200 characters). Entries are numbered `P1..` in file order. A bad entry is skipped with a notice.
+Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters), an optional `note` (200 characters) and an optional `check` (`model`, `read-only` or `ask`). Entries are numbered `P1..` in file order. A bad entry is skipped with a notice. An invalid `check` keeps the entry and treats it as `ask` (it never removes the protection), with a notice; an unknown key in an entry gives a notice and is ignored.
 
-- **What the check sees.** The matched entries with their notes, the session task (the bound ledger's title and open items, else the first user message, cut to 800 characters), the effect classes of the call and the `deny` sentences (`D1..`). The command is fenced as data.
+A production note example: `{"host": "prod-db", "note": "production: reads and diagnostics are fine, anything that changes state asks", "check": "read-only"}`.
+
+- **The note is your policy.** The judge follows the note of a matched entry. On a note that marks the target as production, calls that only read or diagnose (logs, status, versions, listings, counts, queries that change nothing) pass even when the task does not name them. Reading secrets (key files, password or token files, credential stores) asks. Every call that changes state asks: config edits, restarts, deletes, queue operations, credential changes, installs. This is an instruction to the model, not a harness rule.
+- **Per-entry check.** `check` on an entry can only tighten `gate.protected.check`: the effective mode of a call is the strictest of the global value and the `check` of every matched entry (`model` < `read-only` < `ask`). It can never be looser than the global setting. To change the `check` or the note of an entry, remove the entry and add it again.
+- **What the check sees.** The matched entries with their notes and check modes, the session task (the bound ledger's title and open items, else the first user message, cut to 800 characters), the effect classes of the call and the `deny` sentences (`D1..`). The command is fenced as data.
 - **What it may answer.** `{"verdict": "allow"|"ask"|"deny", "effect": "read"|"write"|"deploy"|"network"|"unknown", "confidence": "high"|"low", "entry": "D1"|null, "reason": "..."}`. An accepted `allow` replaces your ask rules, the dangerous-class whitelist and the ask/deny mode for this call. Floors and `deny` rules still come first.
-- **What is accepted.** `allow` needs high confidence and a line the parser states exactly. A read verdict is accepted only when no segment writes; a write, deploy or network verdict only in a session with UI that is not a child (any presence) and with `gate.protected.check` as `model`. A `deny` is accepted only when it cites a `D` entry. Everything else asks: a low confidence, an `unknown` effect, an invalid or extra-field reply, a timeout, a provider error, no model.
+- **What is accepted.** In this order, the first row that applies wins; every `ask` has a cause that the trace names:
+
+  | Step | Condition | Result (cause) |
+  |---|---|---|
+  | 1 | effective mode `ask` | ask (`mode`) |
+  | 2 | no effect class computed | ask (`no_classes`) |
+  | 3 | verdict `allow`, confidence low | ask (`low_confidence`) |
+  | 3 | verdict `allow`, a local segment the harness cannot state (opaque) | ask (`local_opaque`) |
+  | 3 | verdict `allow`, remote command opaque (see the transport list) | ask (`remote_opaque`) |
+  | 4 | verdict `allow`, a remote segment classed as a write | ask (`remote_write`), for every effect |
+  | 5 | `allow`, effect `read`, a local segment classed as a write | ask (`local_write`) |
+  | 5 | `allow`, effect `read`, otherwise | allow |
+  | 6 | `allow`, effect `write`, `deploy` or `network`, mode `read-only` | ask (`read_only`) |
+  | 6 | the same, owner away (child or no UI) | ask (`away`) |
+  | 6 | the same, otherwise (a session with UI that is not a child, any presence) | allow |
+  | 7 | `allow`, effect `unknown` | ask (`unknown_effect`) |
+  | 8 | `deny` citing an existing `D` entry | deny |
+  | 9 | anything else (verdict `ask`) | ask (`judge_ask`) |
+
+  A failure of the check (an invalid or extra-field reply, an `allow` or `ask` that cites an entry, a `deny` with no entry or citing an entry that is not a `D` entry, a timeout, a provider error, no model) asks with its own cause (`invalid_verdict`, `wrong_entry`, `timeout`, `provider_error`, `no_model`). A remote segment the harness sees as a write always asks, even when the judge says write, you are present and the mode is `model`; local writes keep the older behaviour.
+- **The remote command of `ssh <host> <cmd>`.** The harness parses the remote command and classes each segment. **The general rule: on a protected host, any part of a remote command the harness cannot read is decided by the judge alone, and such a write runs on a read verdict.** That covers a program the harness does not unwrap, a builtin that evaluates its arguments, an expansion or construct it does not walk and a parser limit. The harness only adds asks for the closed list below; the table shows the classes:
+
+  | Remote segment | Class | Read verdict, high confidence |
+  |---|---|---|
+  | an output redirect (`>`, `>>`, `&>`, `&>>`, `<>`, `>\|`) whose target is not the literal `/dev/null` (a non-literal target counts as not `/dev/null`); an fd dup (`2>&1`, `>&2`, `2>&-`) never counts | write-out | ask |
+  | `tee`, `script`, `flock <file>` and the other writing wrappers | write-out | ask |
+  | the direct write classes `cp`, `mv`, `rm` (with literal paths), `touch`, `mkdir`, in the plain forms the harness knows (ask as `remote_write`); judge-only exceptions: a write verb called by path (`/bin/rm /etc/x`; `tee` by path still asks) an `rm` with an editor-backup operand (`~`, `.bak`, `.orig`, `.swp`, `.#…`), and any operand starting with `~` (a home-directory path such as `rm ~/x`, `touch ~/x`, `cp /etc/a ~/b`; the parser marks it as an unresolved variable); each of these makes the segment unknown. `$variables` and globs in a write do the same. `echo a > ~/x` and `tee ~/x` still ask | write-in or write-out (by path) | ask |
+  | the effect classes write-in, write-out, build-test | as classed | ask |
+  | the effect classes read, net-read | as classed | allow |
+  | effect class unknown (for example an unknown program) | unknown | the judge decides |
+  | anything else the harness cannot read; for example a write command with an option it does not know (`cp -r`, `rm -i`, `touch -d`, `rm --force`), `$variables` and globs in a write, `eval "$X"`, `sed -i`, `trap '…' EXIT`, `alias`, a function definition, `zsh -c '…'`, and a runner (`sudo journalctl -n 5`, `su -c '…'`; the harness does not read the wrapped command) | unknown | the judge decides |
+  | a shell on the host that reads its program from input (`sh < /opt/x.sh`), a remote command with a syntax error, the constructs `[[ ]]`, `(( ))`, C-style `for ((i=0; i<n; i++))`, `select` and `coproc`, command substitution nested past 4, any parser reason not listed here, a remote command with no segment | remote opaque | ask |
+
+  The write rows hold only for a segment the harness reads directly, and "a segment the harness reads" relies on the bundled shell parser. Anything it does not read is judge-only: `ssh prod-db 'cp -r a b'`, `ssh prod-db 'sudo tee /etc/app.conf'`, `ssh prod-db 'su -c "rm /etc/f"'` and `ssh prod-db 'X=1 touch /etc/app.conf'` run on a read verdict. A redirect the remote shell itself performs is still seen after `sudo` (`sudo echo a > /etc/app.conf` asks), but the program's own write is not. An assignment prefix hides only a direct write class; a redirect or `tee` after it still asks (`X=1 echo a > /etc/app.conf`).
+
+- **Input into ssh.** What is sent into ssh is not in the call text, so any input always asks (remote opaque): a pipe in front of ssh, a heredoc or here-string, a `<` or `<>` from anything but `/dev/null`, and an fd dup onto stdin (`<&3`; `ssh x >&2` reads the same and also asks). An empty input (`< /dev/null`) and `ssh -n` send nothing and are exempt.
+- **Transport opacity.** These also always ask: ssh with no remote command, a command-running option (`-o ProxyCommand=`, `LocalCommand=`, `RemoteCommand=`, `-F`), rsync `-e` or `--rsh`, scp `-F` or `-S`.
 - **Owner away.** The judge treats a child or a session without UI as away; presence is not read. There only read-only verdicts allow; the rest asks (a child's ask goes to the parent pane per `gate.childAsk`; a session without UI has no pane and refuses). In a session with UI that is not a child the judge decides the same whatever presence says.
 - **The ask.** `P2 (production) is protected. The check rates this write with high confidence: <reason>.` There is no remember option.
 - **Cache.** A read-rated allow is cached for the session by tool, cwd, role, payload and entries; the owner-away rule is re-applied on every hit, the mode test comes before the cache, and a permissions change, `/foreman perms reload` or a protect change clears it.
-- **Editing.** The foreman calls `foreman_protect {action, kind, glob, note?, file?}` when you ask it to protect a target; you confirm in a dialog (a timeout, a cancel or no pane is a refusal) and the adapter writes the file. A child never has the tool. You can run `/foreman perms protect add|remove <kind> <glob> [--note <text>] [--user]` yourself. An untrusted project file, a duplicate add and a missing remove are refused.
-- **Log and trace.** Decision log layer `protected` (an accepted allow carries the model's reason); trace event `protected_check` for every verdict, with the redacted command, the matched rule (`protected:P<n>`), the entry and the matched globs. A guard block (`deny`, `blocked`) in the trace carries the redacted command, the guard name as `rule` and the matched rule text as `reason`.
+- **Editing.** The foreman calls `foreman_protect {action, kind, glob, note?, check?, file?}` when you ask it to protect a target; you confirm in a dialog (a timeout, a cancel or no pane is a refusal) and the adapter writes the file. A child never has the tool. You can run `/foreman perms protect add|remove <kind> <glob> [--check model|read-only|ask] [--note <text>] [--user]` yourself (`--check` is for add only; an invalid value or `--check` on remove prints the usage and writes nothing). An untrusted project file, a duplicate add (same kind and glob, whatever the mode) and a missing remove are refused; the refusal says to remove the entry and add it again. The confirm dialog names the entry's check mode.
+- **Log and trace.** Decision log layer `protected` (an accepted allow carries the model's reason); trace event `protected_check` for every verdict, with the redacted command, the matched rule (`protected:P<n>`), the entry, the matched globs, the effective check mode (`mode`) and, when the gate asks, the `cause` from the table above (`exception` when the check itself threw). A guard block (`deny`, `blocked`) in the trace carries the redacted command, the guard name as `rule` and the matched rule text as `reason`.
 - **Cost and latency.** An uncached check is one call to the small review model: about 1.2k to 2k input tokens, roughly 0.1 cent on a small model, 1 to 4 s, capped by `gate.reviewTimeoutMs` (a timeout asks). Read-rated allows are cached per entry set until the next permissions reload, so a repeated identical read costs nothing. Writes are never cached.
 - **What matches.**
 
@@ -470,7 +510,21 @@ Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) an
   | `command` | the program basename of any segment, regardless of effect class | those of the segment |
 
   A plain GET or HEAD never matches. A read-class segment (`cat`, `grep`, `git log`, ...) never touches a host or path entry. A command-running ssh option (`-o ProxyCommand=`, `LocalCommand=`, `RemoteCommand=`, `-F`) makes the remote command opaque, so only an ask is possible.
-- **Known limits.** A segment of class `unknown` (for example `sed -i`) rests on the model's own rating. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.
+- **Known limits.** The general rule: on a protected host, any part of a remote command the harness cannot read (a program it does not unwrap, a builtin that evaluates its arguments, an expansion or construct it does not walk, a parser limit) is decided by the judge alone, and such a write runs on a read verdict. Examples, not a list: `ssh prod-db 'sudo tee /etc/app.conf'`, `ssh prod-db 'su -c "rm /etc/f"'`, `ssh prod-db "trap 'rm /etc/f' EXIT"`, `alias`, `ssh prod-db 'eval "$X"'`, `ssh prod-db 'unset "a[\$(rm /etc/f)]"'` (bash evaluates a quoted array index in builtins such as `unset`, `local`, `read`; the exact set depends on the bash version), and `ssh prod-db 'echo ${x/$(rm /etc/f)/y}'`. The last is a known parser gap: in `${x/$(…)/y}` and `${x//$(…)/y}` the inner command's arguments and redirects are lost, so a write there is judge-only. Most remote commands that change state class `unknown` (a service restart, `sed -i`, `rm` with a glob or variable, flushing a queue), so only the judge stands between the call and the host. If it wrongly says read, the call runs: `ssh prod-db 'vendorctl status; vendorctl queue flush'` and `ssh prod-db 'for q in a b; do vendorctl purge "$q"; done'` run on a wrong read verdict. The local `privilege` floor does not reach into a remote command, so a `sudo` inside the quoted string is not floored.
+
+  What always asks is a closed, exact list (whatever the verdict, except a `deny` that cites a `D` entry, which denies; the two verdict-dependent items are marked; it holds only for a segment the harness reads, which relies on the bundled shell parser):
+
+  - a remote segment the harness classes write-in, write-out or build-test (`remote_write`), by class, not by program: plain `cp`, `mv`, `rm`, `touch`, `mkdir`, `tee` and the other writing wrappers, `>` and the other output redirects (`ssh prod-db 'echo a > /etc/app.conf'`, `ssh prod-db 'sudo echo a > /etc/app.conf'`). The classing uses the local checkout's effect context, so which build or test commands count (`npm test` and the like) depends on the local manifests, and `git restore …` is write-in only when every path is a local test file inside the worktree. Judge-only exceptions (the segment becomes unknown): a write verb called by path (`/bin/rm /etc/x`; `tee` by path still asks), an `rm` with an editor-backup operand (`~`, `.bak`, `.orig`, `.swp`, `.#…`), and an operand of `cp`, `mv`, `rm`, `touch` or `mkdir` that starts with `~` (a home-directory path; `echo a > ~/x` and `tee ~/x` still ask). Variables and globs in a write are judge-only too;
+  - the remote-opaque forms: every ask row of the remote-segment table above (a shell that reads its program from input, a syntax error and the rest), including `select`, `coproc`, C-style `for ((;;))`, `[[ ]]`, `(( ))` (`ssh prod-db 'for ((i=0;i<1;i++)); do echo a > /etc/app.conf; done'`, `ssh prod-db '[[ -n $(rm /etc/f) ]]'`), command substitution nested past 4 (`ssh prod-db 'echo $(echo $(echo $(echo $(echo $(echo a > /etc/f)))))'`), and any parser reason not named in the table;
+  - effective mode `ask` (the global `gate.protected.check` or the entry's `check`) and a local opaque segment on the line (`local_opaque`);
+  - everything in Input into ssh and Transport opacity above;
+  - any failure of the judge;
+  - verdict-dependent: a non-read verdict while the owner is away (a child or a session without UI);
+  - verdict-dependent: under effective mode `read-only`, a non-read verdict (`read_only`).
+
+  What denies: a `deny` verdict that cites an existing `D` entry. It wins over every item above except effective mode `ask` and a failed check, which ask.
+
+  Your deny rules and the floors run first. Remote commands are classed with the local effect context, so a remote relative path resolves against the local checkout. ssh port forwards (`-L`, `-R`, `-D`) are not seen by the remote classes. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.
 
 ## Decision log
 
@@ -502,7 +556,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
 | `gate.readClear` | `true` (default): the classifier model may clear a line the gate could not read when it judges the line only reads inside the session's directories, see [The read question](#the-read-question); `false` restores the dialog; it does nothing when no classifier model is configured; only the boolean `true` or an absent key turns it on | `false` only |
 | `gate.readonlyClear` | `true` (default): the classifier model may clear a `danger-readonly-run` line of a reviewer or explorer when it answers no to the five questions of [The role question](#the-role-question); `false` asks the parent without a model call | `false` only |
-| `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks) | tighten only (`ask` < `read-only` < `model`) |
+| `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes, except remote writes the harness itself sees, which always ask), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks); a protected entry's `check` can tighten it per entry | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
 | `gate.readTools` | extension tool name to path field (or null), judged like read/grep, see [Read tools](#read-tools) (default `{}`) | user or overlay only |
