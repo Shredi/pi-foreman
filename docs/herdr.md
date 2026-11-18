@@ -532,7 +532,7 @@ What pi-foreman does when the add-on is present (detected by its `bg_run` tool o
 `INFO background-tasks: present` or `absent`; with the package installed it adds an info line comparing the add-on's declared
 peer range for `@earendil-works/pi-coding-agent` with the running Pi version, never a failure):
 
-- `foreman_bg` is not used: it refuses with a pointer to `bg_run`, so detached tasks have one owner;
+- `foreman_bg` is not offered (it is dropped from the active tools at session start and the tool floor does not add it back; a call would refuse with a pointer to `bg_run`), so detached tasks have one owner. Without the add-on `foreman_bg` is offered;
 - `/foreman waits` also lists the add-on's running tasks (read from `.pi/tasks/*/*.json`, with the last 5 lines of each output);
 - `bg_run` passes the same bash guards as `bash` (overlay rules, shell-write and destructive guards), reading the command from its
   `command` field; a missing or non-string `command` is denied.

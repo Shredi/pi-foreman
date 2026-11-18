@@ -555,7 +555,7 @@ On Windows setup also finds Git Bash (`%ProgramFiles%\Git\bin\bash.exe`, then `%
 
 `--dry-run` prints `shell: would write shellPath ...` and writes nothing; `--remove` and `--preview` do not touch the setting. Off Windows setup prints nothing about the shell.
 
-First check: start `pi` in a project, then ask the foreman to run `foreman_bg` with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
+First check: start `pi` in a project, then ask the foreman to run a background command (`foreman_bg`, offered only without the background-tasks add-on; with it, `bg_run`) with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
 
 ## Claude bridge: log in once
 
