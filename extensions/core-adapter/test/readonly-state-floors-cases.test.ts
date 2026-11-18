@@ -22,9 +22,12 @@ after(() => fs.rmSync(real, { recursive: true, force: true }));
 
 const base: FloorEnv = { cwd: W, home: HOME, writeRoots: [W, S], scratch: [S], protectedBranches: [], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const ro: FloorEnv = { ...base, readOnlyChild: true };
+// win32: a native `C:\...` path in a command line is shell-escaped away, so every path under the temp root is written with `/` in the line (a no-op on POSIX)
+const under = new RegExp(`${real.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\s'"]*`, "g");
+const fwd = (line: string): string => line.replace(under, (m) => m.replace(/\\/g, "/"));
 const segs = (line: string, cwd: string | undefined = W) => parseShell(line, { ...(cwd ? { cwd } : {}), env: { FOREMAN_SCRATCH: S } });
-const rule = (line: string, e: FloorEnv = base, cwd: string | undefined = W): string | null => lineFloors(line, segs(line, cwd), e)?.rule ?? null;
-const clears = (line: string, e: FloorEnv = ro, cwd: string | undefined = W): boolean => readClearEntry({ tool: "bash", text: line, segments: segs(line, cwd), dangers: ["danger-opaque"], shellBash: () => true }, e);
+const rule = (raw: string, e: FloorEnv = base, cwd: string | undefined = W): string | null => { const line = fwd(raw); return lineFloors(line, segs(line, cwd), e)?.rule ?? null; };
+const clears = (raw: string, e: FloorEnv = ro, cwd: string | undefined = W): boolean => { const line = fwd(raw); return readClearEntry({ tool: "bash", text: line, segments: segs(line, cwd), dangers: ["danger-opaque"], shellBash: () => true }, e); };
 
 // ------------------------------------------------------------------ C.1
 
