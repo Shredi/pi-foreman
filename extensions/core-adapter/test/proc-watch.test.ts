@@ -33,19 +33,24 @@ function runWatched(code: string, extra: NodeJS.ProcessEnv = {}): Array<Record<s
   }
 }
 
-// On Windows process.title is the console title, shared by the processes on one console, so a start value can already equal the new title.
-test("the watch writes a titled record when process.title changed, and none without a change", { skip: process.platform === "win32" }, () => {
-  const titled = runWatched(`process.title = "x";`);
+// On Windows process.title is the console title, shared by the processes on one console, so every titled child gets a title unique to the call.
+let titleCounter = 0;
+function uniqueTitle(): string {
+  return `pf-title-${++titleCounter}-${process.pid}`;
+}
+
+test("the watch writes a titled record when process.title changed, and none without a change", () => {
+  const titled = runWatched(`process.title = ${JSON.stringify(uniqueTitle())};`);
   assert.equal(titled.length, 1);
   assert.equal(titled[0].titled, true);
   assert.deepEqual(runWatched(`0;`), []);
 });
 
-test("the titled record names FOREMAN_TEST_FILE when set, else the script basename, and 'test runner' under --test", { skip: process.platform === "win32" }, () => {
-  assert.equal(runWatched(`process.title = "x";`, { FOREMAN_TEST_FILE: "some/a.test.ts" })[0].file, "some/a.test.ts");
+test("the titled record names FOREMAN_TEST_FILE when set, else the script basename, and 'test runner' under --test", () => {
+  assert.equal(runWatched(`process.title = ${JSON.stringify(uniqueTitle())};`, { FOREMAN_TEST_FILE: "some/a.test.ts" })[0].file, "some/a.test.ts");
   const dir = mkTestTmp("pf-proc-watch-script-");
   try {
-    fs.writeFileSync(path.join(dir, "titled-probe.cjs"), `process.title = "x";\n`);
+    fs.writeFileSync(path.join(dir, "titled-probe.cjs"), `process.title = ${JSON.stringify(uniqueTitle())};\n`);
     const env = cleanEnv({ FOREMAN_SPAWN_COUNT_DIR: dir, NODE_OPTIONS: nodeOptionsWithWatch(undefined, WATCH) });
     const r = spawnSync(process.execPath, [path.join(dir, "titled-probe.cjs")], { env, encoding: "utf8" });
     assert.equal(r.status, 0, r.stderr);
@@ -53,7 +58,7 @@ test("the titled record names FOREMAN_TEST_FILE when set, else the script basena
 
     // The runner: `node --test` with a file that changes nothing; the runner itself changes no title, so run the runner with a title-setting preload.
     fs.writeFileSync(path.join(dir, "ok.test.cjs"), `require("node:test").test("ok", () => {});\n`);
-    fs.writeFileSync(path.join(dir, "set-title.cjs"), `if (process.execArgv.includes("--test")) process.title = "runner-title";\n`);
+    fs.writeFileSync(path.join(dir, "set-title.cjs"), `if (process.execArgv.includes("--test")) process.title = ${JSON.stringify(uniqueTitle())};\n`);
     const runner = spawnSync(process.execPath, ["--require", path.join(dir, "set-title.cjs"), "--test", path.join(dir, "ok.test.cjs")], { env, encoding: "utf8" });
     assert.equal(runner.status, 0, runner.stderr);
     assert.ok(titledFiles(readSpawnCounts(dir)).includes("test runner"), JSON.stringify(readSpawnCounts(dir)));
