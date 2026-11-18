@@ -3803,6 +3803,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
         const dupOn = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false;
         // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
+        // the FAIL record of a high-stakes run end lands in reviewSync: a fresh reviewer launch waits for it before the read
+        if (dupOn && actionOf(input) === null && hsModel(s) !== null) {
+          const roles = launchRoles(s, input);
+          if (roles.some((r) => REVIEW_ROLES.includes(r)) && !roles.includes("builder")) await s.reviewSync;
+        }
         const gotFindings = actionOf(input) === null && hsModel(s) !== null && s.hs.findingsFor() !== null;
         // the checkouts the reviewers run in (a resumed one: those of its target run; none recorded or one unresolved: null, which reads every entry)
         let dupRoots: (string | null)[] = [];
