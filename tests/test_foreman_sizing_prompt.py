@@ -61,7 +61,7 @@ ROLE_PAIRS = [
     ("Add `[second-opinion]` to its task only for auth",
      "Set `occasion: \"second-opinion\"` on it only for auth"),
     ("on the whole branch diff with `[pre-pr]` in its task (never refused as a repeat); its PASS on the head opens the PR gate. `[second-opinion]` is optional advice: it never blocks, marks items or opens the PR gate. ",
-     "on the whole branch diff with `occasion: \"pre-pr\"` (never refused as a repeat); its PASS on the head opens the PR gate. `occasion: \"second-opinion\"` is optional advice: it never blocks, marks items or opens the PR gate. Name the review kind with the `occasion` field or a tag first in the task: a tag only later in the text is refused (`review_occasion_late`), and a tag in the text beside a different field is refused (`review_occasion_ambiguous`). "),
+     "on the whole branch diff with `occasion: \"pre-pr\"` (never refused as a repeat); its PASS on the head opens the PR gate. `occasion: \"second-opinion\"` is optional advice: it never blocks, marks items or opens the PR gate. Name the review kind with the `occasion` field or a tag first in the task: a tag only later in the text is refused (`review_occasion_late`), and a tag first in the task beside a different field is refused (`review_occasion_ambiguous`). "),
 ]
 
 
