@@ -45,15 +45,16 @@ export interface DialogStyle {
 
 const isFormatChar = (c: number): boolean => c === 0x061c || (c >= 0x200b && c <= 0x200f) || c === 0x2028 || c === 0x2029 || c === 0xfeff || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069);
 
-/** Code point ranges as [from, to] pairs, turned into a character-class source without writing the characters or escapes in this file. */
-const classOf = (ranges: Array<[number, number]>): string => ranges.map(([a, b]) => String.fromCharCode(92) + "u{" + a.toString(16) + "}" + (b > a ? "-" + String.fromCharCode(92) + "u{" + b.toString(16) + "}" : "")).join("");
-/** Characters that draw nothing: soft hyphen, combining grapheme joiner, Mongolian vowel separator, word joiner and invisible operators, deprecated format characters, tag characters, variation selectors. */
-const INVISIBLE = new RegExp("[" + classOf([[0xad, 0xad], [0x34f, 0x34f], [0x180e, 0x180e], [0x2060, 0x2064], [0x206a, 0x206f], [0xe0000, 0xe007f], [0xfe00, 0xfe0f], [0xe0100, 0xe01ef]]) + "]", "gu");
-/** The marker sign of the real answers line (black right-pointing small triangle) and its look-alikes; cleaned text never holds one. */
+/** Characters that draw blank though they are not whitespace: Braille blank and the Hangul fillers (the fillers are Default_Ignorable, so they turn into a space before the invisible strip). */
+const FILLERS = /[\u{2800}\u{3164}\u{115f}\u{1160}\u{ffa0}]/gu;
+/** Characters that draw nothing: Default_Ignorable (soft hyphen, joiners, invisible operators, variation selectors, tags, interlinear anchors, ...), format, private-use and unassigned code points. */
+const INVISIBLE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\p{Co}\p{Cn}]/gu;
+/** The marker sign of the real answers line (black right-pointing small triangle); cleaned text never holds one. */
 const ANSWERS_SIGN = String.fromCodePoint(0x25b8);
-const SIGN_LIKE = new RegExp("[" + classOf([[0x25b6, 0x25bb], [0x2023, 0x2023], [0x27a4, 0x27a4]]) + "]", "gu");
-/** Whitespace plus the characters that draw blank (Braille blank, Hangul fillers). */
-const BLANK_RUN = new RegExp("[\\s" + classOf([[0x2800, 0x2800], [0x3164, 0x3164], [0x115f, 0x1160], [0xffa0, 0xffa0]]) + "]+", "gu");
+/** Whole sign blocks that could pass for the marker: Arrows, some Math Operators (triangles), Misc Technical, Box Drawing / Block Elements / Geometric Shapes, Dingbat arrows, Supplemental Arrows-A and -B, Misc Symbols and Arrows, Geometric Shapes Extended and Supplemental Arrows-C, plus bullet and angle quotation look-alikes. */
+const SIGN_LIKE = /[\u{2190}-\u{21ff}\u{22b2}-\u{22b5}\u{2300}-\u{23ff}\u{2500}-\u{25ff}\u{2794}-\u{27bf}\u{27f0}-\u{27ff}\u{2900}-\u{297f}\u{2b00}-\u{2bff}\u{1f780}-\u{1f8ff}\u{2023}\u{1405}\u{ff1e}\u{203a}\u{bb}]/gu;
+/** Whitespace plus the characters that draw blank. */
+const BLANK_RUN = /[\s\p{Zs}\p{Zl}\p{Zp}\u{2800}\u{3164}\u{115f}\u{1160}\u{ffa0}]+/gu;
 
 /** Every caller- or model-provided string: escape sequences, control characters and bidi/format characters out, one line. */
 export function cleanDialogText(s: string): string {
@@ -62,6 +63,7 @@ export function cleanDialogText(s: string): string {
     .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/[^ -~]/g, (ch) => (isFormatChar(ch.charCodeAt(0)) ? " " : ch))
+    .replace(FILLERS, " ")
     .replace(INVISIBLE, "")
     .replace(SIGN_LIKE, "")
     // blank-looking characters and long runs of spaces become one space; a run of up to three plain spaces is the dialogs' own separator

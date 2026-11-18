@@ -15,6 +15,7 @@ initTheme("dark");
 const theme = { fg: (tok: string, s: string) => `<${tok}:${s}>`, underline: (s: string) => `_${s}_` };
 const OSC8 = /\x1b\]8;;([^\x1b]*)\x1b\\/;
 const ESC = /\x1b/;
+const cp = (...c: number[]): string => String.fromCodePoint(...c);
 
 function spec(over: Partial<DialogSpec> = {}): DialogSpec {
   return {
@@ -261,8 +262,6 @@ test("shapedConfirm: plain mode calls confirm with the question and the plain bo
   assert.equal(await shapedConfirm(odd, "rpc", spec()), false);
 });
 
-const cp = (...c: number[]): string => String.fromCodePoint(...c);
-
 test("cleanDialogText: every blank-looking character and run of whitespace becomes one space", () => {
   const blanks = [0xa0, 0x1680, 0x2000, 0x2003, 0x200a, 0x202f, 0x205f, 0x3000, 0x2800, 0x3164, 0x115f, 0x1160, 0xffa0];
   for (const c of blanks) assert.equal(cleanDialogText(`a${cp(c).repeat(50)}b`), "a b", `U+${c.toString(16)}`);
@@ -274,7 +273,7 @@ test("cleanDialogText: every blank-looking character and run of whitespace becom
 test("cleanDialogText: invisible characters are stripped", () => {
   const invisible = [0xad, 0x34f, 0x180e, 0x2060, 0x2062, 0x2064, 0x206a, 0x206f, 0xe0000, 0xe0041, 0xe007f, 0xfe00, 0xfe0f, 0xe0100, 0xe01ef];
   for (const c of invisible) assert.equal(cleanDialogText(`a${cp(c)}b`), "ab", `U+${c.toString(16)}`);
-  assert.equal(cleanDialogText("ab"), "ab");
+  assert.equal(cleanDialogText(`a${cp(0xad)}b`), "ab");
 });
 
 test("a forged summary does not render a row of its own through Pi's Text at width 40 and 80", async () => {
@@ -319,5 +318,41 @@ test("a word-filled forged summary at width 80 and 40 leaves exactly one marker 
     assert.equal(marked.length, 1, rows.join("\n"));
     const at = rows.findIndex((r) => r.startsWith(cp(0x25b8)));
     assert.ok(!rows.slice(at).includes(""), rows.join("\n"));
+  }
+});
+
+test("cleanDialogText strips Default_Ignorable, format, private-use and unassigned code points", () => {
+  for (const c of [0x17b4, 0x180b, 0x1d173, 0x2065, 0xfff9, 0xe000, 0x378]) assert.equal(cleanDialogText(`a${cp(c)}b`), "ab", `U+${c.toString(16)}`);
+});
+
+test("cleanDialogText strips whole sign blocks and keeps ordinary text", () => {
+  const signs = [0x2190, 0x21ff, 0x22b2, 0x22b5, 0x2300, 0x23f5, 0x23fa, 0x2500, 0x25ff, 0x2794, 0x27bf, 0x27f0, 0x27ff, 0x2900, 0x297f, 0x2b00, 0x2bc8, 0x2bff, 0x1f780, 0x1f8ff, 0x2023, 0x1405, 0xff1e, 0x203a, 0xbb];
+  for (const c of signs) assert.equal(cleanDialogText(`a${cp(c)}b`), "ab", `U+${c.toString(16)}`);
+  const ordinary = `Gr${cp(0xfc)}ße 日本 123 > Yes: ok ${cp(0x1f600)} one   two`;
+  assert.equal(cleanDialogText(ordinary), ordinary);
+});
+
+test("forged rows built from sign blocks or Default_Ignorable gaps never add a marker, Folder or Yes row", async () => {
+  const { Text } = await import("@earendil-works/pi-tui");
+  const filler = "word ".repeat(16).trim();
+  for (const sign of [0x23f5, 0x2bc8]) {
+    const summary = `${filler} ${cp(sign)} Yes: nothing opens   No: the session starts`;
+    const { body } = ownerDialog(spec({ summary, facts: [["Folder", "/work/demo"]], links: [], detail: [], answers: "Yes: opens   No: stays" }), null);
+    for (const width of [40, 80]) {
+      const rows = new Text(body, 0, 0).render(width).map((r) => r.trim());
+      const marked = rows.filter((r) => r.startsWith(cp(0x25b8)));
+      assert.equal(marked.length, 1, rows.join("\n"));
+      assert.equal(rows.findLastIndex((r) => r.startsWith(cp(0x25b8))), rows.length - 1, rows.join("\n"));
+    }
+  }
+  for (const gap of [0x17b4, 0x1d173]) {
+    const summary = "Tidy docs." + (" " + cp(gap)).repeat(100) + "Yes: nothing opens" + (" " + cp(gap)).repeat(60) + "Folder: /etc";
+    const { body } = ownerDialog(spec({ summary, facts: [["Folder", "/work/demo"]], links: [], detail: [], answers: "Yes: the session starts   No: nothing opens" }), null);
+    for (const width of [40, 80]) {
+      const rows = new Text(body, 0, 0).render(width).map((r) => r.trim());
+      assert.equal(rows.filter((r) => r.startsWith("Folder:")).length, 1, rows.join("\n"));
+      assert.equal(rows.filter((r) => r.startsWith("Yes:")).length, 0, rows.join("\n"));
+      assert.equal(rows.filter((r) => r.startsWith(cp(0x25b8))).length, 1, rows.join("\n"));
+    }
   }
 });
