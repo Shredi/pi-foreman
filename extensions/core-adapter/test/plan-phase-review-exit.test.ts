@@ -80,7 +80,8 @@ test("standard child opened plan-first: a plan-review FAIL on the current versio
   assert.equal(entry(w).planPhase, true, "no exit is persisted");
 });
 
-test("standard child opened plan-first: one run with two [plan-review] results, PASS then FAIL, leaves the phase on (the latest verdict counts)", async (t) => {
+// a group launch of reviewers is refused (review_single_launch): it gets no verdict binding, so no verdict of it can end the phase
+test("standard child opened plan-first: a launch with two [plan-review] reviewers is refused and leaves the phase on", async (t) => {
   const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
   process.env.PI_FOREMAN_PLAN_PHASE = "1";
   const a = await w.adapter("startup");
@@ -90,12 +91,11 @@ test("standard child opened plan-first: one run with two [plan-review] results, 
   const input = { tasks: [{ agent: "reviewer", task }, { agent: "reviewer", task }] };
   w.state.answer = "allow once"; // a multi-child launch asks the owner
   await a.fire("message_end", { message: { role: "assistant", content: [{ type: "toolCall", id: "two", name: "subagent", arguments: input }] } });
-  assert.equal(await a.fire("tool_call", { toolName: "subagent", toolCallId: "two", input }), undefined);
-  await a.fire("tool_result", { toolName: "subagent", toolCallId: "two", input, details: { runId: "run-two" }, content: [{ type: "text", text: "started" }], isError: false });
-  a.endRunMany("two", ["Overall verdict: PASS", "Overall verdict: FAIL"]);
-  await tick();
-  assert.equal((await w.traceEvents()).filter((e) => e.event === "plan_review").length, 2, "both results are plan-review verdicts");
-  assert.ok(planPhase(await a.launch("builder")), "the latest verdict is a FAIL: the phase stays on");
+  const res = (await a.fire("tool_call", { toolName: "subagent", toolCallId: "two", input })) as { block?: boolean; reason?: string } | undefined;
+  assert.equal(res?.block, true);
+  assert.match(res?.reason ?? "", /\[review_single_launch\]/);
+  assert.equal((await w.traceEvents()).filter((e) => e.event === "plan_review").length, 0);
+  assert.ok(planPhase(await a.launch("builder")), "no verdict: the phase stays on");
   assert.equal(entry(w).planPhase, true, "no exit is persisted");
 });
 

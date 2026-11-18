@@ -72,8 +72,8 @@ export function writeFromReport(input: unknown, output: unknown): boolean {
 /** The text a run end carries first among `results`' outputs that names a verdict (the data shape of a run-end event). */
 export function reportOf(data: Json): string {
   const results = Array.isArray(data.results) ? (data.results as Json[]) : [];
-  const withVerdict = results.map((r) => r.output).find((o) => legacySpec(o, [Number.MAX_SAFE_INTEGER]) !== null);
-  return typeof withVerdict === "string" ? withVerdict : typeof results[0]?.output === "string" ? (results[0].output as string) : "";
+  const withVerdict = [...results.map((r) => r.output), data.summary, data.output].find((o) => legacySpec(o, [Number.MAX_SAFE_INTEGER]) !== null);
+  return typeof withVerdict === "string" ? withVerdict : typeof results[0]?.output === "string" ? (results[0].output as string) : typeof data.summary === "string" ? data.summary : typeof data.output === "string" ? data.output : "";
 }
 
 /** A passing record call (no items given). */
