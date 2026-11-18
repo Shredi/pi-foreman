@@ -305,7 +305,8 @@ const pidOf = (a) => int(a?.pid) ?? int(a?.foreground?.pid);
 
 /** Map agent address -> session node. Join on `hcTerminal` == the agent's terminal address (`machine/` prefix for an agent of
  *  a remote space: pass that machine), only nodes that are not done and not themselves remote; when both sides have a pid
- *  they must match. An agent without a `hcTerminal` match joins the live local node with the same pid (a session started by hand
+ *  they must match, unless the node is live (not lost, stale or ended): a resumed session's terminal pid is its shell's, so a
+ *  live node joins by the address alone. An agent without a `hcTerminal` match joins the live local node with the same pid (a session started by hand
  *  in an hc terminal); a node matched by `hcTerminal` or in `taken` is never used for that. */
 export function joinAgents(agents, tree, machine = null, taken = new Set()) {
   const out = new Map();
@@ -321,7 +322,8 @@ export function joinAgents(agents, tree, machine = null, taken = new Set()) {
     const n = byTerminal.get(addr.slice(prefix.length));
     if (!n) continue;
     const pid = pidOf(a);
-    if (pid !== null && n.pid !== null && pid !== n.pid) continue;
+    const live = !isEnded(n) && n.state !== "lost" && n.state !== "stale";
+    if (!live && pid !== null && n.pid !== null && pid !== n.pid) continue;
     out.set(addr, n);
   }
   if (machine) return out;
@@ -344,12 +346,27 @@ export function joinAgents(agents, tree, machine = null, taken = new Set()) {
 
 /** Map pane-less child terminal address -> session node. `kids` are terminal records (herdr `terminals()`), joined like agents on
  *  `hcTerminal` == the address (`machine/` prefix: pass that machine). Nodes in `taken` (already shown under a paned agent) are
- *  not used; a node joins one terminal only. */
+ *  not used; a node joins one terminal only. A live node (not lost or stale, not ended) joins its terminal by the address alone: a
+ *  pane-less child's pid is its launch shell's, not the session's. The other records go through joinAgents (its pid rules). */
 export function joinChildren(kids, tree, machine = null, taken = new Set()) {
   const out = new Map();
   const used = new Set(taken);
+  const prefix = machine ? `${machine}/` : "";
+  const byTerminal = new Map();
+  for (const n of allSessions(tree)) {
+    if (!n.hcTerminal || n.state === "done" || isEnded(n) || n.machine || n.state === "lost" || n.state === "stale") continue;
+    byTerminal.set(n.hcTerminal, [...(byTerminal.get(n.hcTerminal) ?? []), n]);
+  }
+  for (const k of Array.isArray(kids) ? kids : []) {
+    const addr = str(k?.address);
+    if (!addr || (machine ? !addr.startsWith(prefix) : addr.includes("/"))) continue;
+    const n = (byTerminal.get(addr.slice(prefix.length)) ?? []).find((x) => !used.has(x));
+    if (!n) continue;
+    used.add(n);
+    out.set(addr, n);
+  }
   for (const [addr, n] of joinAgents(kids, tree, machine, taken)) {
-    if (used.has(n)) continue;
+    if (out.has(addr) || used.has(n)) continue;
     used.add(n);
     out.set(addr, n);
   }
@@ -745,7 +762,8 @@ function twinIndex(feed) {
   ix = { len: feed.length, byNumber: new Map(), byUrl: new Map() };
   feed.forEach((f, i) => {
     if (!isObj(f)) return;
-    const rec = { f, i, url: prUrl(null, { url: f.url }), repo: nameOf(f.repo) };
+    // repository and URL compare in lower case, as GitHub does (see twinOf)
+    const rec = { f, i, url: prUrl(null, { url: f.url }).toLowerCase(), repo: nameOf(f.repo).toLowerCase() };
     const push = (m, k) => { const l = m.get(k); if (l) l.push(rec); else m.set(k, [rec]); };
     if (f.number === f.number) push(ix.byNumber, f.number);
     if (rec.url) push(ix.byUrl, rec.url);
@@ -755,10 +773,11 @@ function twinIndex(feed) {
 }
 
 /** The feed entry a PR is: same URL when both have one; else same number and repository when both know it; else the same
- *  number when exactly one feed entry has it. null when none (the PR is its own entry). */
+ *  number when exactly one feed entry has it. null when none (the PR is its own entry). The repository and the URL are compared
+ *  in lower case. */
 export function twinOf(pr, feed, fallbackRepo = "") {
-  const repo = nameOf(pr.repo || fallbackRepo);
-  const url = prUrl(null, { url: pr.url });
+  const repo = nameOf(pr.repo || fallbackRepo).toLowerCase();
+  const url = prUrl(null, { url: pr.url }).toLowerCase();
   const number = pr.number;
   const ix = twinIndex(feed);
   const same = number === number ? ix.byNumber.get(number) ?? [] : [];
@@ -769,6 +788,54 @@ export function twinOf(pr, feed, fallbackRepo = "") {
     if (r.f.number !== number) return false;
     return repo && r.repo ? repo === r.repo : same.length === 1;
   })?.f ?? null;
+}
+
+// The identity of a feed entry for the merge: its repository (own name, else the part of its page address before `/pull/<n>`) in
+// lower case, and its number. null when it has no repository or no number: such an entry has no identity and is kept as it is.
+const feedKey = (p) => {
+  const repo = (nameOf(p.repo) || nameOf(str(p.url).replace(/\/pull\/\d+\/?$/, ""))).toLowerCase();
+  const number = int(p.number);
+  return repo && number !== null ? `${repo}#${number}` : null;
+};
+const hostOfEntry = (p) => hostOf(p.url) || hostOf(p.repo);
+const gap = (v) => v === undefined || v === null || v === "";
+// Plain fields a later copy fills in where the first entry has none
+const FILL = ["url", "repo", "headRepo", "title", "bodyText", "branch", "baseRef", "state", "mergeable", "head", "mergeState"];
+// The check block: taken as one, never mixed
+const BLOCK = ["checks", "jobs", "unsettled"];
+
+// The first entry, with the gaps of `later` filled in and its check block replaced when it has no jobs and `later` has some. A new object.
+function mergeEntry(first, later) {
+  const m = { ...first };
+  for (const f of FILL) if (gap(m[f]) && !gap(later[f])) m[f] = later[f];
+  if (!listOf(first.jobs).length && listOf(later.jobs).length) {
+    for (const b of BLOCK) delete m[b];
+    for (const b of BLOCK) if (later[b] !== undefined) m[b] = later[b];
+  }
+  if (later.hiddenRepo === true) m.hiddenRepo = true;
+  return m;
+}
+
+/** One open-PR list from the feeds of all machines (`this.radar` order): one entry per PR, in first-seen order. Two entries are one PR
+ *  when their repository (lower case) and number match and their hosts are equal or one of them is unknown; the first entry stays,
+ *  filled by the later copies (see mergeEntry). Entries without an identity are kept as they are; non-array feeds are skipped. */
+export function mergeFeeds(feeds) {
+  const out = [];
+  const at = new Map(); // feedKey -> indexes in `out`
+  for (const feed of Array.isArray(feeds) ? feeds : []) {
+    for (const p of Array.isArray(feed) ? feed : []) {
+      const key = isObj(p) ? feedKey(p) : null;
+      if (key === null) { out.push(p); continue; }
+      const list = at.get(key) ?? [];
+      const same = list.find((i) => {
+        const a = hostOfEntry(out[i]), b = hostOfEntry(p);
+        return !a || !b || a === b;
+      });
+      if (same === undefined) { at.set(key, [...list, out.length]); out.push(p); }
+      else out[same] = mergeEntry(out[same], p);
+    }
+  }
+  return out;
 }
 
 /** The "Open PRs" section. A PR is listed once, at the first place of: (a) the row of a shown session (then not here at all),
@@ -786,9 +853,9 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
   const idOf = (s, pr) => {
     const twin = twinOf(pr, feed, s?.repoUrl);
     if (twin) return `f:${feed.indexOf(twin)}`;
-    const url = prUrl(s, pr);
+    const url = prUrl(s, pr).toLowerCase();
     if (url) return `u:${url}`;
-    const repo = nameOf(pr.repo || s?.repoUrl);
+    const repo = nameOf(pr.repo || s?.repoUrl).toLowerCase();
     return repo ? `r:${repo}#${pr.number}` : "";
   };
   const sessions = allSessions(tops);
