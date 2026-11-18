@@ -621,6 +621,8 @@ class PackageFilesTest(unittest.TestCase):
             ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
             # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
             ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
+            # review per checkout: the finish rule names the checkout
+            ("A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes.", "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)

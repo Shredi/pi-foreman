@@ -21,7 +21,8 @@ import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
-import { PermStore, PERM_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
+import { effectiveCheckMode } from "./protected.ts";
+import { PermStore, PERM_MODES, PROTECTED_CHECK_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
 import { folderRelaxes, mergedFactKey, redirectsInScratch, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
@@ -47,7 +48,8 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
+import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd } from "./bound.ts";
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
@@ -87,12 +89,12 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { dueReasons, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepScratch } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepScratch } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
@@ -229,10 +231,10 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, keptIndices, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, countsForItems, entryOccasions, keptIndices, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -389,8 +391,8 @@ interface Session {
   launchedRoles: Map<string, string[]>;
   /** Required steps completed in this session (ceremony.required). */
   steps: StepCounts;
-  /** The reviewer step under ceremony.reviewGate "pass": latest verdict and a revision since (bound.ts). */
-  reviewGate: ReviewGate;
+  /** The reviewer step under ceremony.reviewGate "pass" per checkout (reviewgates.ts; key "" = session-wide): latest verdict and a revision since (bound.ts). */
+  reviewGates: ReviewGates;
   /** A parent sent the work back (rework marker, reworkScan) and no `[pre-pr]` PASS followed; the highest handled marker number (its own watermark). Both persisted in the ceremony entry. */
   sentBack: boolean;
   /** The heads a send-back covered that no `[pre-pr]` PASS on the head has cleared (planstate.ts sentBackMark); persisted beside the flag. */
@@ -452,6 +454,10 @@ interface Session {
   reviewFailOpen: boolean;
   /** The session-wide high-stakes state (highstakes.ts); persisted with the ceremony state. */
   hs: HighStakes;
+  /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
+  hsReminded: string[] | null;
+  /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
+  hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
   hsOwn: string | null;
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -461,12 +467,20 @@ interface Session {
   /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; the run records come back from the session entries after a reload. */
   ledgerByCall: Map<string, LedgerRoute>;
   ledgerByRun: Map<string, LedgerRoute>;
-  /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
-  passSnap: TreeSnap | null;
-  /** Foreman only: builder runs, HEAD, tree and ledger at the latest review PASS; a reviewer launch is no repeat once one of them changed (bound.ts repeatSignals). */
-  passMark: (PassMark & { cwd: string }) | null;
-  /** Foreman only: builder runs launched after a PASS; a comment-only result withdraws their revision. */
-  touchUps: Set<string>;
+  /** Foreman only: the working tree at the latest review PASS per checkout (commentonly.ts; key "" = session-wide). */
+  passSnaps: Record<string, TreeSnap>;
+  /** Foreman only: builder runs, HEAD, tree and ledger at the latest review PASS per checkout; a reviewer launch is no repeat once one of them changed (bound.ts repeatSignals). */
+  passMarks: Record<string, PassMark & { cwd: string }>;
+  /** Foreman only: builder launches per checkout since the session began (memory; an unknown-root builder counts for all; a restore seeds each root from its mark). */
+  builderRunsByRoot: Record<string, number>;
+  /** Foreman only: the checkouts a builder run worked in, by run id (null = unknown); a resume of the run revises the same ones. Memory only. */
+  builderRoots: Map<string, string[] | null>;
+  /** Foreman only: the checkouts a reviewer launch covers, by tool call id until the launch result names the run (null = one is unknown). */
+  reviewRootsByCall: Map<string, string[] | null>;
+  /** Foreman only: the same by run id; the verdict at the run end is applied to these checkouts. Memory only. */
+  reviewRoots: Map<string, string[] | null>;
+  /** Foreman only: builder runs launched after a PASS (run id -> the one checkout they worked in); a comment-only result withdraws their revision there. */
+  touchUps: Map<string, string>;
   /** Foreman only: HEAD per directory at launch, by tool call id until the launch result names the run. */
   launchHeadsByCall: Map<string, Map<string, string | null>>;
   /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
@@ -813,6 +827,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
+  if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.out) process.env[OUT_ENV] = launchBinding.out;
+  /** A child's write roots of this kind: its scratch dir first, then its kept output dir (`$FOREMAN_OUT`). */
+  const childScratchDirs = launchBinding?.scratch ? [launchBinding.scratch, ...(launchBinding.out ? [launchBinding.out] : [])] : [];
   // a worktree child gets the foreman's checkout in its env
   if (process.env.PI_SUBAGENT_CHILD === "1") Object.assign(process.env, checkoutEnv(launchBinding));
   // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
@@ -1018,7 +1035,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pendingChanges: new Map(),
       launchedRoles: new Map(),
       steps: emptySteps(),
-      reviewGate: initialReviewGate(),
+      reviewGates: {},
       sentBack: false,
       sentBackHeads: [],
       reworkSeen: 0,
@@ -1049,14 +1066,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviews: [],
       reviewFailOpen: false,
       hs: new HighStakes(),
+      hsReminded: null,
+      hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
       ledgerByCall: new Map(),
       ledgerByRun: new Map(),
-      passSnap: null,
-      passMark: null,
-      touchUps: new Set(),
+      passSnaps: {},
+      passMarks: {},
+      builderRunsByRoot: {},
+      builderRoots: new Map(),
+      reviewRootsByCall: new Map(),
+      reviewRoots: new Map(),
+      touchUps: new Map(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
       launchTreesByCall: new Map(),
@@ -1225,12 +1248,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: s.planPhaseOrigin,
       reviews: s.reviews,
       loopStop: s.loopStop,
-      gate: { steps: { ...s.steps }, reviewGate: s.reviewGate, passMark: s.passMark },
+      gate: persistedGate({ ...s.steps }, s.reviewGates, s.passMarks),
       sentBack: s.sentBack,
       sentBackHeads: s.sentBackHeads,
       reworkSeen: s.reworkSeen,
       highStakes: s.hs.snapshot(),
       pause: s.pauseSaved,
+      hsReminded: s.hsReminded,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1252,9 +1276,50 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return s.hsOwn;
   }
 
+  // ------------------------------------------------------------------ review gates per checkout (reviewgates.ts)
+
+  /** The checkouts of `dirs` (toplevelOf each); null when there is none or one does not resolve (an unknown checkout acts on every gate entry). */
+  const rootMemo = new Map<string, string>(); // a resolved checkout of a directory (a miss is not kept: the directory may appear later)
+  async function rootOf(d: string): Promise<string | null> {
+    const known = rootMemo.get(d);
+    if (known !== undefined) return known;
+    const r = await toplevelOf(d);
+    if (r !== null) rootMemo.set(d, r);
+    return r;
+  }
+  async function rootsOf(dirs: readonly string[]): Promise<string[] | null> {
+    const roots = await Promise.all(dirs.map(rootOf));
+    return roots.length > 0 && roots.every((r): r is string => r !== null) ? [...new Set(roots)] : null;
+  }
+
+  /** The directory of each reviewer entry of a fresh launch (not `launchCwds`, which always adds the session cwd). */
+  const reviewDirs = (ctx: ExtensionContext, input: Record<string, unknown>, keep: (e: Record<string, unknown>) => boolean = () => true): string[] => launchEntries(input).filter((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && keep(e)).map((e) => hsDirOf(ctx, input, e));
+
+  /** Work happened in `roots` (null: unknown): their gate entries go stale; a builder raises the builder count of each (an unknown root: of every counted one). */
+  function reviseGates(s: Session, roots: readonly string[] | null, builder: boolean): void {
+    if (roots === null) {
+      s.reviewGates = gatesRevise(s.reviewGates, null);
+      if (builder) for (const k of Object.keys(s.builderRunsByRoot)) s.builderRunsByRoot[k]++;
+      return;
+    }
+    for (const r of roots) {
+      s.reviewGates = gatesRevise(s.reviewGates, r);
+      if (builder) s.builderRunsByRoot[r] = (s.builderRunsByRoot[r] ?? 0) + 1;
+    }
+  }
+
+  /** The key of the pass mark that applies to `root`: its own, else the session-wide one; null = the newest mark; undefined when there is none. */
+  function markKeyOf(s: Session, root: string | null): string | undefined {
+    if (root !== null) return s.passMarks[root] ? root : s.passMarks[SESSION_WIDE] ? SESSION_WIDE : undefined;
+    return Object.entries(s.passMarks).reduce<[string, number] | undefined>((best, [k, m]) => (!best || m.at >= best[1] ? [k, m.at] : best), undefined)?.[0];
+  }
+
+  /** Builder launches counted for a pass-mark key (the session-wide mark counts the finished builder runs of the session, as before). */
+  const builderRunsOf = (s: Session, key: string): number => (key === SESSION_WIDE ? s.steps.builder : (s.builderRunsByRoot[key] ?? 0));
+
   /** The checkout `dir` belongs to, its repository noted as seen (the first HEAD is the review base when no merge-base resolves); null outside git. */
   async function hsSee(s: Session, dir: string): Promise<string | null> {
-    const root = await toplevelOf(dir);
+    const root = await rootOf(dir);
     if (!root) return null;
     const key = await repoKeyOf(root);
     const head = key && !s.hs.base(key) ? await headOf(root) : null;
@@ -1302,15 +1367,32 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** A revision happened in the checkout of `dir` (a builder run, a project edit): an uncleared high-stakes FAIL that ran there counts as revised. */
   async function hsRevised(s: Session, dir: string | null): Promise<void> {
     if (!hsModel(s) || !s.hs.hasRuns()) return;
-    const root = await toplevelOf(dir ?? s.cwd);
+    const root = await rootOf(dir ?? s.cwd);
     if (root && s.hs.revision(root)) persistCeremonyState(s);
   }
 
-  /** A normal PASS (item or [pre-pr]) was recorded in `cwd`: after the revision it clears an uncleared high-stakes FAIL that ran there. */
-  async function hsNormalPass(s: Session, cwd: string): Promise<void> {
-    if (!hsModel(s) || !s.hs.hasRuns()) return;
-    const root = await toplevelOf(cwd);
-    if (root && s.hs.normalPass(root)) persistCeremonyState(s);
+  /** The checkout key of a directory outside git (and of a launch's root there): its realpath, else the resolved path; both sides of a same-directory compare use it. */
+  const realDir = (d: string): string => {
+    try {
+      return fs.realpathSync.native(d);
+    } catch {
+      return path.resolve(d);
+    }
+  };
+
+  /**
+   * A normal PASS (item or [pre-pr]) of run `runId` was recorded in `cwd` at `head`: when the run got the findings of the uncleared high-stakes FAIL it clears it, in the FAIL's
+   * checkout at any head, elsewhere when the PASS head descends from the FAIL head (highstakes.ts descendsFrom). The FAIL's review gate entry then passes too, when its PASS stood just before the FAIL and no work happened there since (work during the high-stakes run keeps it open).
+   */
+  async function hsNormalPass(s: Session, cwd: string, runId: string, head: string | null): Promise<void> {
+    if (!hsModel(s)) return;
+    const fail = s.hs.openFail();
+    if (!fail) return;
+    const root = (await rootOf(cwd)) ?? realDir(cwd);
+    const descends = root !== fail.cwd && (await descendsFrom(fail, root, head));
+    if (!s.hs.clearBy(root, { runId, head, descends })) return;
+    s.reviewGates = gatesClearFail(s.reviewGates, fail.gateKey === undefined ? SESSION_WIDE : fail.gateKey, fail.failAt, Date.now(), runId); // an old run without gateKey: the session-wide entry
+    persistCeremonyState(s);
   }
 
   /** The directory a launch entry runs in. */
@@ -1323,11 +1405,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /**
-   * The guards of the `[high-stakes]` launch (highstakes.ts launchRefusal, in the plan's order), of a normal reviewer launch while a high-stakes FAIL awaits its
-   * revision and of a reviewer resume while it is not cleared. Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
+   * The guards of the `[high-stakes]` launch (highstakes.ts launchRefusal, in the plan's order) and of a reviewer resume while a high-stakes FAIL is not cleared
+   * (a fresh normal reviewer is never refused: it gets the findings). Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
    * and the base its facts are collected against; null otherwise.
    */
-  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; base: string | null } | null> {
+  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; gateKey: string; base: string | null } | null> {
     const refused = (r: { reason: string; text: string }): string => {
       s.trace?.emit({ event: "review_high_stakes_refused", reason: r.reason });
       return r.text;
@@ -1341,7 +1423,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (model && launchRoles(s, input).some((r) => REVIEW_ROLES.includes(r))) {
         await s.reviewSync; // a FAIL still being recorded lands before it is read
         for (const d of launchCwds(input, ctx.cwd)) {
-          const root = await toplevelOf(d);
+          const root = await rootOf(d);
           const r = root ? unrevisedRefusal(s.hs.state(), { resume: true, builder: false, cwd: root }) : null;
           if (r) return refused(r);
         }
@@ -1351,21 +1433,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (action !== null) return null;
     const reviews = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
     const marked = reviews.filter(([, o]) => o === "high-stakes").map(([e]) => e);
-    if (model && reviews.length > 0) {
-      await s.reviewSync; // a review round still being recorded (a high-stakes FAIL) lands before the checkout's state is read
-      const builder = launchRoles(s, input).includes("builder");
-      for (const [e, o] of reviews) {
-        if (o !== "item" && o !== "pre-pr") continue;
-        const root = await toplevelOf(hsDirOf(ctx, input, e));
-        const r = root ? unrevisedRefusal(s.hs.state(), { resume: false, builder, cwd: root }) : null;
-        if (r) return refused(r);
-      }
-    }
     if (marked.length === 0) return null;
     await s.reviewSync; // a review round still being recorded lands before the gate is read
     const dir = hsDirOf(ctx, input, marked[0]);
-    const root = (await toplevelOf(dir)) ?? dir;
-    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: s.reviewGate });
+    const top = await rootOf(dir);
+    const root = top ?? realDir(dir);
+    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top) }); // an unresolved checkout reads every entry
     if (r) return refused(r);
     // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
     const key = await repoKeyOf(root);
@@ -1376,7 +1449,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (typeof e.task === "string") e.task = taskLine(base) + e.task;
       hsEntries.add(e);
     }
-    return { root, base };
+    return { root, gateKey: top ?? SESSION_WIDE, base };
   }
 
   /** The review results of a run end; a run of a high-stakes launch (its id is kept in the state) reads as `high-stakes` and counts nowhere, with or without bookkeeping. */
@@ -1390,11 +1463,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null);
     const verdict = r?.verdict;
     if (!r || !verdict) return;
-    if (verdict === "fail") s.reviewGate = onReviewVerdicts(s.reviewGate, ["fail"], Date.now(), runId);
+    const failAt = Date.now();
+    const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
+    if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
     s.reviewSync = s.reviewSync.then(async () => {
       const dir = r.cwd ?? root;
       const h = await reviewedHeadVia(start, trees, dir, await headOf(dir));
-      const n = s.hs.record(root, verdict, h.head, r.text);
+      const n = verdict === "fail" ? s.hs.recordFail(root, h.head, r.text, { repoKey: await repoKeyOf(root), gateKey: key || null, failAt }) : s.hs.record(root, verdict, h.head, r.text);
       if (n === 0) return;
       s.trace?.emit({ event: "review_high_stakes", verdict, head: h.head, count: n });
       persistCeremonyState(s);
@@ -1402,7 +1477,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The finish gate's high-stakes entries and hint (the pass only once every ledger item but V is marked). */
-  async function hsFinish(s: Session): Promise<{ missing: string[]; hint: string }> {
+  async function hsFinish(s: Session): Promise<ReturnType<typeof finishNeeds>> {
     if (!hsModel(s)) return { missing: [], hint: "" };
     hsRefresh(s);
     const file = boundLedger(s.markerDir, s.id);
@@ -1422,18 +1497,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function restoreGate(s: Session, e: CeremonyStateEntry): void {
     if (e.gate) {
       s.steps = { ...e.gate.steps };
-      s.reviewGate = e.gate.reviewGate;
-      s.passMark = e.gate.passMark;
-      s.passSnap = e.gate.passMark?.tree ? { cwd: e.gate.passMark.cwd, tree: e.gate.passMark.tree } : null;
+      // an entry from before the per-checkout gate: its single gate and mark are the session-wide entry (strict: it reads for every checkout without an entry)
+      const old = e.gate.reviewGate.last === null && !e.gate.reviewGate.revised ? {} : { [SESSION_WIDE]: e.gate.reviewGate };
+      s.reviewGates = e.gate.reviewGates ? { ...e.gate.reviewGates } : old;
+      s.passMarks = e.gate.reviewGates ? { ...(e.gate.passMarks ?? {}) } : e.gate.passMark ? { [SESSION_WIDE]: e.gate.passMark } : {};
+      s.passSnaps = {};
+      for (const [k, m] of Object.entries(s.passMarks)) {
+        if (m.tree) s.passSnaps[k] = { cwd: m.cwd, tree: m.tree };
+        if (k !== SESSION_WIDE) s.builderRunsByRoot[k] = m.builderRuns;
+      }
       return;
     }
     const last = e.reviews.findLast((r) => r.kind !== "plan");
     if (!last || last.verdict !== "pass") return;
     s.steps = { builder: Math.max(s.steps.builder, 1), reviewer: Math.max(s.steps.reviewer, 1) };
-    s.reviewGate = { last: "pass", revised: false };
+    const key = last.cwd ?? SESSION_WIDE;
+    s.reviewGates = { [key]: { last: "pass", revised: false } };
     if (last.head) s.reviewSync = s.reviewSync.then(async () => {
-      const cur = await headOf(s.cwd);
-      if (cur !== last.head && s.reviewGate.last === "pass") s.reviewGate = onRevision(s.reviewGate);
+      const cur = await headOf(last.cwd ?? s.cwd);
+      if (cur !== last.head && s.reviewGates[key]?.last === "pass") s.reviewGates = gatesRevise(s.reviewGates, key === SESSION_WIDE ? null : key);
     });
   }
 
@@ -1469,6 +1551,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (e.highStakes && s.hs.isEmpty()) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
+    if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
       s.work = { ...e.pause.work };
@@ -1703,7 +1786,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
-    const scratch = s ? (s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null)) : [];
+    const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
     return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
   }
 
@@ -1764,6 +1847,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
+    if (!s.isChild) {
+      try {
+        sweepKept(s.agentDir);
+      } catch {
+        // a failed sweep never stops the session
+      }
+    }
     if (s.live && !s.isChild) {
       s.paneResume = PaneResume.start({
         agentDir: piAgentDir(process.env, os.homedir()),
@@ -2683,10 +2773,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
-          const verdicts = reviewVerdictsOfRunEnd(counted);
-          s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now(), runId);
+          const got = reviewVerdictsOfRunEnd(counted);
+          // fewer counting results than counting entries: a PASS cannot be assigned to a checkout, so it is no verdict
+          const owed = reviewLaunch?.entries.filter((e) => REVIEW_ROLES.includes(e.role) && e.shadow === null && countsForItems(e.occasion)).length ?? 0;
+          const finished = reviewResults.filter((r) => r.counts).length;
+          const verdicts = finished < owed && !got.includes("fail") ? [] : got;
+          const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
+          s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
           persistCeremonyState(s);
-          if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0, { data, kept: keptIndices(data, reviewResults) });
+          if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0, roots, { data, kept: keptIndices(data, reviewResults) });
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
           if (!s.isChild && verdicts.length) for (const [f, items] of hintTargets(s, runId, cited)) writeHint(f, items, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
@@ -2709,10 +2804,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const cwd = r.cwd ?? s.cwd;
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
-              const top = await toplevelOf(cwd);
+              const top = await rootOf(cwd);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
-              if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd).catch(() => undefined); // clears a high-stakes FAIL after its revision
+              if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
               s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
               s.live?.flush(); // the pill's review facts
@@ -2922,7 +3017,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return {
       worktree,
       ...(roundReadOnly ? { roundReadOnly } : {}),
-      scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
+      scratch: s.isChild ? childScratchDirs : s.scratch.live(null),
+      ...(s.isChild && launchBinding?.scratch && launchBinding.out ? { out: launchBinding.out } : {}),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
@@ -3078,9 +3174,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a child or a session without UI fails closed; the owner's own session ignores presence
         const away = gs.isChild || !ctx.hasUI;
         let askCause = `${named} is protected.`;
+        const checkRaw = get(gs.config.config, "gate.protected.check");
+        const checkMode = effectiveCheckMode(checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model", m.entries);
         try {
-          const checkRaw = get(gs.config.config, "gate.protected.check");
-          const checkMode: "model" | "read-only" | "ask" = checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model";
           const ledgerFile = boundLedger(gs.markerDir, gs.id);
           const ledgerText = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
           const title = ledgerText ? /^#\s+(.+)$/m.exec(ledgerText)?.[1] : undefined;
@@ -3098,7 +3194,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           );
           gs.trace?.emit({
             event: "protected_check", rule: v.accepted === "deny" && v.entry ? `${rule};classifier.deny:${v.entry}` : rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
-            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, reason: v.reason, model: v.model, latencyMs: v.latencyMs, role,
+            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, reason: v.reason, model: v.model, latencyMs: v.latencyMs, role, mode: checkMode,
+            ...(v.cause ? { cause: v.cause } : {}),
             globs: m.entries.map((e) => e.glob).join(","),
             ...denyFields(v.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
             ...(v.accepted === "deny" && v.entry ? { entry: v.entry } : {}),
@@ -3111,7 +3208,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           askCause = `${named} is protected. The check failed (${msg}).`;
           gs.trace?.emit({
             event: "protected_check", rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
-            opaque: m.opaque || m.remoteOpaque, accepted: "ask", cause: "exception", away, globs: m.entries.map((x) => x.glob).join(","),
+            opaque: m.opaque || m.remoteOpaque, accepted: "ask", cause: "exception", away, mode: checkMode, globs: m.entries.map((x) => x.glob).join(","),
             ...denyFields(msg.slice(0, 200), event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
           });
         }
@@ -3356,12 +3453,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * `foreman_protect` and `/foreman perms protect`: validate, ask the owner (a timeout, a cancel or no UI is a refusal), then write through
    * PermStore.writeProtected and drop the gate caches. The model never writes the file; the adapter does, after the owner's yes.
    */
-  async function protectEntry(s: Session, ctx: ExtensionContext, a: { action: unknown; kind: unknown; glob: unknown; note?: unknown; file?: unknown }): Promise<{ ok: boolean; text: string }> {
+  async function protectEntry(s: Session, ctx: ExtensionContext, a: { action: unknown; kind: unknown; glob: unknown; note?: unknown; check?: unknown; file?: unknown }): Promise<{ ok: boolean; text: string }> {
     const no = (text: string) => ({ ok: false, text: `pi-foreman: not changed: ${text}` });
     if (s.isChild) return no("children never change the protected targets; the owner does, with /foreman perms protect.");
     if (a.action !== "add" && a.action !== "remove") return no("action must be add or remove");
     if (a.file !== undefined && a.file !== "project" && a.file !== "user") return no("file must be project or user");
-    const clean = cleanProtected({ kind: a.kind, glob: a.glob, note: a.note });
+    if (a.check !== undefined && !PROTECTED_CHECK_MODES.includes(a.check as never)) return no("check must be model, read-only or ask");
+    if (a.check !== undefined && a.action === "remove") return no("check is for add only; to change an entry, remove it and add it again");
+    const clean = cleanProtected({ kind: a.kind, glob: a.glob, note: a.note, check: a.check });
     if (typeof clean === "string") return no(clean);
     if (!ctx.hasUI) return no("there is no pane to ask the owner in; the owner runs /foreman perms protect add|remove <kind> <glob> in the foreman session.");
     const file = a.file === "user" ? "user" : "project";
@@ -3370,9 +3469,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const existing = cur.protected.find((e) => e.kind === clean.kind && e.glob === clean.glob);
     const where = file === "user" ? rt.store.filePath("user") : cur.projectFile;
     if (a.action === "remove" && !existing) return no(`${clean.kind} ${clean.glob} is not protected`);
-    if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id})`);
+    if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id}); to change its note or check, remove it and add it again`);
     const text = a.action === "add"
-      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; in a session with UI that is not a child, confident reads, writes and deploys can be allowed whatever the presence; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
+      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode). For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
       : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
     let yes = false;
     try {
@@ -3603,7 +3702,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let shadow: ShadowDecision = { kind: "none" };
       /** The `[high-stakes]` entries of this launch (highstakes.ts) and the checkout they review. */
       const hsEntries = new Set<Json>();
-      let hsLaunch: { root: string; base: string | null } | null = null;
+      let hsLaunch: { root: string; gateKey: string; base: string | null } | null = null;
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -3720,6 +3819,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
+        // A task that names both [pre-pr] and [high-stakes] in prose would silently become a high-stakes review: refused, the foreman keeps one.
+        if (namesBothTags(occasions)) {
+          s.trace?.emit({ event: "review_occasion_ambiguous" });
+          return { block: true, reason: "pi-foreman: launch refused [review_occasion_ambiguous]: the task names both [pre-pr] and [high-stakes]; keep one, or quote the other in backticks." };
+        }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
         // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.
@@ -3768,7 +3872,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: shadow.message };
         }
         if (shadow.kind === "launch") input.task = shadow.task;
-        // High stakes (highstakes.ts): the `[high-stakes]` launch's refusals, a normal reviewer launch or resume while a high-stakes FAIL awaits its revision.
+        // High stakes (highstakes.ts): the `[high-stakes]` launch's refusals, a reviewer resume while a high-stakes FAIL is uncleared (a fresh normal reviewer gets the findings).
         if (!s.isChild && shadow.kind !== "launch") {
           const hs = await hsLaunchGuard(s, ctx, input, occasions, hsEntries);
           if (typeof hs === "string") return { block: true, reason: hs };
@@ -3776,19 +3880,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused (a pre-pr, high-stakes or plan review is no repeat).
         const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
-        const dup = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false ? dupReview(s.reviewGate, launchRoles(s, input), input) : null;
+        const dupOn = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false;
+        // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
+        const gotFindings = actionOf(input) === null && hsModel(s) !== null && s.hs.findingsFor() !== null;
+        // the checkouts the reviewers run in (a resumed one: those of its target run; none recorded or one unresolved: null, which reads every entry)
+        let dupRoots: (string | null)[] = [];
+        if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
+        else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
           else {
             // The mark is taken asynchronously at the PASS; wait for it, then compare builder runs, HEAD, worktree (incl. untracked) and ledger.
             await s.reviewSync;
-            const mark = s.passMark;
-            const signals = mark ? repeatSignals(mark, { head: await headOf(mark.cwd), tree: mark.tree && (await treeChangedSince(mark.cwd, mark.tree)) ? "changed" : mark.tree, ledger: boundLedger(s.markerDir, s.id), builderRuns: s.steps.builder }) : [];
-            if (signals.length > 0) s.trace?.emit({ event: "review_dup_allowed", agent, signals: signals.join(",") });
+            const marks = dupRoots.map((r) => markKeyOf(s, r)).map((k) => (k === undefined ? undefined : { key: k, mark: s.passMarks[k] }));
+            const signals = new Set<string>();
+            for (const m of marks) {
+              if (!m) continue;
+              for (const x of repeatSignals(m.mark, { head: await headOf(m.mark.cwd), tree: m.mark.tree && (await treeChangedSince(m.mark.cwd, m.mark.tree)) ? "changed" : m.mark.tree, ledger: boundLedger(s.markerDir, s.id), builderRuns: builderRunsOf(s, m.key) })) signals.add(x); // a change in any checkout of the launch lifts the refusal
+            }
+            if (signals.size > 0) s.trace?.emit({ event: "review_dup_allowed", agent, signals: [...signals].join(",") });
             else {
               s.trace?.emit({ event: "review_dup_refused", agent });
-              return { block: true, reason: dupRefusalText(mark?.at) };
+              return { block: true, reason: dupRefusalText(marks.find((m) => m)?.mark.at) };
             }
           }
         }
@@ -3842,14 +3957,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const noStrong = "no strong rung mapped";
         if (steps.length > 0) {
           const answeredBefore = s.round.revisionAnswered === true;
+          // the review gate of the builder's checkouts: the revision climbs when one of them last failed (an unknown checkout reads every entry)
+          const builderRoots = resumed ? null : await rootsOf(builderDirs(ctx, input));
+          const failedHere = builderRoots === null ? combined(s.reviewGates).last === "fail" : builderRoots.some((r) => gateOf(s.reviewGates, r).last === "fail");
           rounds = walkLaunch(s.round, steps);
           // A further fresh builder in the same prompt, after a revision already answered the open FAIL, is a revision too (no extra round).
-          const again = !resumed && rounds.revisions === 0 && answeredBefore && s.reviewGate.last === "fail" && steps.some((g) => g.includes("builder"));
+          const again = !resumed && rounds.revisions === 0 && answeredBefore && failedHere && steps.some((g) => g.includes("builder"));
           const revision = rounds.revisions > 0 || again;
           const keyword = typeof input.model === "string" && (STRENGTHS as readonly string[]).includes(splitLevel(input.model.trim()).base);
-          // ladder.ts revisionClimb: review_fail while the review gate's latest verdict is FAIL (s.reviewGate.last, not the run's own
+          // ladder.ts revisionClimb: review_fail while the review gate of the builder's checkouts last failed (`failedHere`, not the run's own
           // verdict), else only with providers.<p>.strongOnRevision true. LadderState.plan targets max(current, strong) by rank.
-          revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, s.reviewGate.last === "fail") : null;
+          revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, failedHere) : null;
           const noStrongAsked = revClimb !== null && !hasStrongRung(resolution.roles, "builder");
           if (revClimb !== null && !hasStrongRung(resolution.roles, "builder")) {
             s.trace?.emit({ event: "revision_no_strong", role: "builder" });
@@ -4108,6 +4226,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const [heads, trees] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot)]);
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
           capSet(s.launchTreesByCall, event.toolCallId, trees);
+          // the checkouts the verdict applies to (reviewgates.ts): each reviewer entry's own dir; a resume keeps its target's; one unresolved: unknown
+          if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, (e) => { const o = occasions.get(e); return o !== undefined && countsForItems(o); })));
         }
       }
       // Kept for the tool result only once the launch passed every check.
@@ -4205,23 +4325,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (actionOf(input) === null) for (const [e, o] of occasions) {
           if ((o !== "item" && o !== "pre-pr") || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent) || typeof e.task !== "string") continue;
-          const root = await toplevelOf(hsDirOf(ctx, input, e));
-          const found = root ? s.hs.pendingFindings(root) : null;
-          if (!root || !found) continue;
+          const found = s.hs.findingsFor();
+          if (!found) continue;
           if (!hsCited.has(event.toolCallId)) capSet(hsCited, event.toolCallId, citedItems(subagentTaskText(input)));
           e.task = findingsBlock(found) + e.task;
-          s.hs.handed(root);
+          s.hs.markHanded(event.toolCallId);
           persistCeremonyState(s);
         }
       }
       if (event.toolName === "subagent" && !s.isChild && hsLaunch) {
         // the launch passed every check: it counts as running; the foreman's own request is a reason too (foreman)
-        s.hs.begin(event.toolCallId, hsLaunch.root);
+        s.hs.beginKeyed(event.toolCallId, hsLaunch.root, hsLaunch.gateKey);
         hsFire(s, ["foreman"]);
         persistCeremonyState(s);
       }
       if (event.toolName === "subagent") {
         const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}) });
+        if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) {
@@ -4468,7 +4588,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
-  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean, whole: { data: unknown; kept: number[] }): void {
+  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean, roots: readonly string[] | null, whole: { data: unknown; kept: number[] }): void {
     // the counting view re-indexes its results: map each back to its position in the event and the launch entries
     const kids = whole.data && typeof whole.data === "object" ? runEndChildren(whole.data as Record<string, unknown>) : [];
     const pass = reviewerPassesOfRunEnd(data).map((p) => {
@@ -4478,24 +4598,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
     if (pass.length > 0) markByReview(s, runId, pass, kids.length);
     if (verdict) {
-      const passed = s.reviewGate.last === "pass";
-      const cwd = reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd;
-      s.passSnap = null;
-      s.passMark = null;
+      // the run's checkouts (unknown: the session-wide entry); a verdict that left no PASS drops the marks of the entries it hit (an unknown FAIL hit all)
+      const keys = roots ?? [SESSION_WIDE];
+      const passedKeys = keys.filter((k) => s.reviewGates[k]?.last === "pass");
+      for (const k of roots === null && passedKeys.length === 0 ? Object.keys(s.passMarks) : keys) {
+        delete s.passSnaps[k];
+        delete s.passMarks[k];
+      }
       const at = Date.now();
       const ledger = boundLedger(s.markerDir, s.id);
-      const builderRuns = s.steps.builder;
-      if (passed) s.reviewSync = s.reviewSync.then(async () => {
-        const [tree, head] = await Promise.all([worktreeTree(cwd), headOf(cwd)]);
-        if (s.reviewGate.last !== "pass") return;
-        s.passSnap = tree ? { cwd, tree } : null;
-        s.passMark = { cwd, at, head, tree, ledger, builderRuns };
-        persistCeremonyState(s);
-      });
+      for (const k of passedKeys) {
+        const cwd = k === SESSION_WIDE ? (reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd) : k;
+        if (k !== SESSION_WIDE) s.builderRunsByRoot[k] ??= 0;
+        const builderRuns = builderRunsOf(s, k);
+        s.reviewSync = s.reviewSync.then(async () => {
+          const [tree, head] = await Promise.all([worktreeTree(cwd), headOf(cwd)]);
+          if (s.reviewGates[k]?.last !== "pass") return;
+          if (tree) s.passSnaps[k] = { cwd, tree };
+          else delete s.passSnaps[k];
+          s.passMarks[k] = { cwd, at, head, tree, ledger, builderRuns };
+          persistCeremonyState(s);
+        });
+      }
     }
-    if (s.touchUps.delete(runId)) s.reviewSync = s.reviewSync.then(async () => {
-      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) {
-        s.reviewGate = { ...s.reviewGate, revised: false };
+    const touchUp = s.touchUps.get(runId);
+    s.touchUps.delete(runId);
+    if (touchUp !== undefined) s.reviewSync = s.reviewSync.then(async () => {
+      const g = s.reviewGates[touchUp];
+      if (g?.last === "pass" && g.revised && (await commentOnlyNow(s, touchUp))) {
+        s.reviewGates = { ...s.reviewGates, [touchUp]: { ...g, revised: false } };
         persistCeremonyState(s);
       }
     });
@@ -4558,8 +4689,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The working tree differs from the PASS snapshot only in comments or docs (commentonly.ts); traced revision_comment_only. */
-  async function commentOnlyNow(s: Session): Promise<boolean> {
-    const files = s.passSnap ? await commentOnlySince(s.passSnap) : null;
+  async function commentOnlyNow(s: Session, root: string): Promise<boolean> {
+    const snap = s.passSnaps[root];
+    const files = snap ? await commentOnlySince(snap) : null;
     if (files) s.trace?.emit({ event: "revision_comment_only", files: files.length });
     return files !== null;
   }
@@ -4799,7 +4931,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.reworkSeen = k;
     s.sentBack = true;
     s.sentBackHeads = sentBackMark(s.sentBackHeads, s.reviews);
-    s.reviewGate = onRevision(s.reviewGate);
+    reviseGates(s, null, false); // the parent's rework names no checkout: every entry goes stale
     void hsRevised(s, s.cwd);
     persistCeremonyState(s);
     void s.prWatches.reconcileOwned().finally(() => s.live?.flush());
@@ -5026,13 +5158,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const to = deliveredSendTo(event);
       if (to) onSendDelivered(owner, to);
     }
+    // A PR tool the review gate covers: while a high-stakes review is due, its answer carries the same reminder as the receipts (never a refusal).
+    const prNote = owner && !owner.isChild && !event.isError && isPrToolName(event.toolName) && get(owner.config.config, "ceremony.reviewBeforePr") !== false && hsRequired(owner) ? `pi-foreman: ${dueReminder(hsDue(owner))}.` : "";
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
-    const withNote = () => (readNote || qHint || planFormNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : [])] } : undefined);
     // D27: a project-file edit through the foreman's own tools is work, at every tier.
     if (owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) owner.work.edits++;
+    const withNote = () => (readNote || qHint || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
     if (owner && !owner.isChild && !event.isError && owner.hs.hasRuns() && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
@@ -5040,13 +5174,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
-    if (owner && !owner.isChild && !event.isError && (owner.reviewGate.last !== null && !owner.reviewGate.revised) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
-      const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
+    // The checkout of the edited file (a move: source and destination) revises its own gate entry; unresolved: every entry (reviewgates.ts).
+    if (owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
+      const input = event.input as Record<string, unknown>;
+      const files = event.toolName === "foreman_move" ? [input.src, input.dst] : [changedFileOf(event.toolName, input)];
+      const dirs = files.map((f) => resolveToolPath(f, ctx.cwd, os.homedir())).filter((f): f is string => !!f).map((f) => path.dirname(f));
+      const roots = dirs.length === files.length ? await rootsOf(dirs) : null;
+      const only = roots !== null && roots.length === 1 ? roots[0] : null;
+      const g = only !== null ? owner.reviewGates[only] : undefined;
+      const touchUp = only !== null && g !== undefined && stands(g) && (await owner.reviewSync, await commentOnlyNow(owner, only));
       if (!touchUp) {
-        owner.reviewGate = onRevision(owner.reviewGate);
+        const before = JSON.stringify(owner.reviewGates);
+        reviseGates(owner, roots, false);
         persistCeremonyState(owner);
-        owner.live?.flush();
-        void owner.prWatches.reconcileOwned().finally(() => owner.live?.flush());
+        if (JSON.stringify(owner.reviewGates) !== before) {
+          owner.live?.flush();
+          void owner.prWatches.reconcileOwned().finally(() => owner.live?.flush());
+        }
       }
     }
     if (owner && event.toolName === "bash") recordBashLog(owner, event.details);
@@ -5075,6 +5219,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const trees = s.launchTreesByCall.get(event.toolCallId);
         s.launchTreesByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
+        if (runId && s.reviewRootsByCall.has(event.toolCallId)) capSet(s.reviewRoots, runId, s.reviewRootsByCall.get(event.toolCallId) ?? null);
+        s.reviewRootsByCall.delete(event.toolCallId);
         const boundId = boundLaunchId(event.input);
         if (boundId && runId && !s.isChild) parkFor(s).noteRun(runId, boundId); // a later resume of this run finds its launch
         const launched = s.scratch.onLaunched(boundId, runId);
@@ -5083,6 +5229,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         askLine = closeChildAsk(s, launched ?? resumedLaunch);
         s.ladder.onLaunched(event.toolCallId, runId);
         // a `[high-stakes]` launch: the run id is kept in the state (persisted); a failed launch drops the running mark
+        if (!s.isChild) s.hs.settleHanded(event.toolCallId, runId, event.isError);
         if (!s.isChild && s.hs.settle(event.toolCallId, runId, event.isError) !== null && runId) persistCeremonyState(s);
         if (runId && !s.isChild) {
           const rowRoles = s.launchedRoles.get(runId) ?? [];
@@ -5131,14 +5278,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const [f, items] of hintTargets(s, runId, cited)) writeHint(f, items, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
             s.budget.onLaunch();
             if (roles.includes("builder")) {
-              for (const d of builderDirs(ctx, event.input as Record<string, unknown>)) await hsRevised(s, d); // a builder run is a revision of its checkout
-              if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
-              s.reviewGate = onRevision(s.reviewGate);
+              const input = event.input as Record<string, unknown>;
+              for (const d of builderDirs(ctx, input)) await hsRevised(s, d); // a builder run is a revision of its checkout
+              // the checkouts it worked in: a resume revises its target's (none recorded: unknown), a fresh run each entry's own dir
+              const roots = actionOf(input) === "resume" ? (s.builderRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(builderDirs(ctx, input));
+              capSet(s.builderRoots, runId, roots);
+              // a touch-up candidate: one known checkout whose own PASS stands and no reviewer in the launch
+              if (roots?.length === 1 && stands(s.reviewGates[roots[0]] ?? { last: null, revised: false }) && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.set(runId, roots[0]);
+              reviseGates(s, roots, true);
               persistCeremonyState(s);
               s.live?.flush();
               void s.prWatches.reconcileOwned().finally(() => s.live?.flush());
             }
-            const after = reopened(s.reviewGate);
+            const after = reopened(combined(s.reviewGates));
             if (after) for (const role of roles.filter((r) => REVIEW_ROLES.includes(r))) s.trace?.emit({ event: "rereview", role, after });
           }
         }
@@ -5152,7 +5304,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
       launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, recordedOccasions.includes("pre-pr") && hsRequired(s)) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, (recordedOccasions.includes("pre-pr") || recordedOccasions.includes("item")) && hsRequired(s), dueReminder(hsDue(s))) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
@@ -5346,15 +5498,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
     // A parent ruling never satisfies the gate (R6 lane 4c, ruling 3); after a FAIL the refusal names it.
-    const gate = s.reviewGate;
+    const gate = combined(s.reviewGates); // every checkout with work or a review must have a standing PASS
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
     // High stakes (highstakes.ts): the pass that must run and the FAIL not yet cleared, for standard and heavy sessions.
-    const hsNeeds = s.ceremony.tier === "standard" || s.ceremony.tier === "heavy" ? await hsFinish(s) : { missing: [] as string[], hint: "" };
+    const hsNeeds: ReturnType<typeof finishNeeds> = s.ceremony.tier === "standard" || s.ceremony.tier === "heavy" ? await hsFinish(s) : { missing: [], hint: "" };
     missing.push(...hsNeeds.missing);
-    if (missing.length === 0) return undefined;
+    if (missing.length === 0) return hsNeeds.remind ? await hsReminderHold(s, ctx, entries, hsNeeds.remind, hsNeeds.reasons ?? []) : undefined;
     // D27: open ledger items and no builder run or foreman edit since the last owner prompt: a pause, not a finish.
     const lf = boundLedger(s.markerDir, s.id);
     const openLedger = (() => { try { return lf ? hasOpenLedgerLine(fs.readFileSync(lf, "utf8")) : false; } catch { return false; } })();
@@ -5386,7 +5538,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       savePause(s);
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
-        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], reviewHint(gate)) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(s.reviewGates, { cwd: s.cwd, own: await hsOwnRoot(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
@@ -5403,9 +5555,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     savePause(s);
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(gate) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(s.reviewGates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
+  }
+
+  /**
+   * The finish with every other step done and a high-stakes review still due: held once per reason set with the reminder (not a refusal: it is not counted),
+   * then let go with an owner notice. A session that changed nothing is never held.
+   */
+  async function hsReminderHold<E>(s: Session, ctx: ExtensionContext, entries: E[], remind: string, reasons: string[]) {
+    if (s.steps.builder === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await git(ctx.cwd, ["status", "--porcelain"]))) return undefined;
+    const key = reasons.join(",");
+    if (s.hsReminded?.join(",") !== key) {
+      s.hsReminded = reasons;
+      persistCeremonyState(s);
+      s.trace?.emit({ event: "high_stakes_reminded", reasons: key });
+      return { entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: `pi-foreman: ${remind}; otherwise finish again.`, display: true }], continue: true };
+    }
+    if (!s.hsSkipped.has(key)) {
+      s.hsSkipped.add(key);
+      s.trace?.emit({ event: "high_stakes_skipped", reasons: key });
+      ctx.ui.notify(`pi-foreman: finished while a high-stakes review is due (${key})`, "info");
+    }
+    return undefined;
   }
 
   /** Pushed branches without a PR: evaluated in the background, one display-only warning each (pushnotice.ts). */
@@ -5434,7 +5607,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** `/foreman close`: the required steps still open and what the parent would have to rule ("" = none). */
   function closeCeremonyNote(s: Session): string {
     if (s.isChild || !isTriaged(s.ceremony)) return "";
-    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), s.reviewGate));
+    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), combined(s.reviewGates)));
   }
 
   /** The parent ruling file newer than the last FAIL, named in the finish refusal ("" = none). */
@@ -5622,10 +5795,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       name: "foreman_protect",
       label: "Protect a target",
       description: "Add or remove a protected target (a host, a path or a command glob) in the owner's permissions, after the owner confirms in a dialog. Use it when the owner asks to protect or guard a target.",
-      parameters: { type: "object", properties: { action: { type: "string", enum: ["add", "remove"] }, kind: { type: "string", enum: ["host", "path", "command"] }, glob: { type: "string", minLength: 1, maxLength: 300 }, note: { type: "string", maxLength: 200 }, file: { type: "string", enum: ["project", "user"], description: "Default project (.workflow/permissions.json)." } }, required: ["action", "kind", "glob"], additionalProperties: false } as never,
+      parameters: { type: "object", properties: { action: { type: "string", enum: ["add", "remove"] }, kind: { type: "string", enum: ["host", "path", "command"] }, glob: { type: "string", minLength: 1, maxLength: 300 }, note: { type: "string", maxLength: 200 }, check: { type: "string", enum: ["model", "read-only", "ask"], description: "Optional stricter check mode for this entry (add only); it can never be looser than gate.protected.check. To change it, remove the entry and add it again." }, file: { type: "string", enum: ["project", "user"], description: "Default project (.workflow/permissions.json)." } }, required: ["action", "kind", "glob"], additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
-        const r = await protectEntry(s, ctx, { action: params.action, kind: params.kind, glob: params.glob, note: params.note, file: params.file });
+        const r = await protectEntry(s, ctx, { action: params.action, kind: params.kind, glob: params.glob, note: params.note, check: params.check, file: params.file });
         return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.ok ? "written" : "refused" }, ...(r.ok ? {} : { isError: true }) };
       },
     } as never);
@@ -5743,7 +5916,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (mode !== "tool" || !REVIEW_ROLES.includes(s.usage.line.role)) return refuse(`${LEDGER_TOOL} is not available to this role.`);
         // A `[high-stakes]` review (highstakes.ts) marks nothing: its launch binding carries the marker, V included.
         if (launchBinding?.highStakes) return refuse(`${LEDGER_TOOL}: a [high-stakes] review marks no ledger item, item V included; give the verdict in your report.`);
-        const plan = planLedgerCall(params, { child: true, gate: s.reviewGate });
+        const plan = planLedgerCall(params, { child: true, gate: combined(s.reviewGates) });
         if ("error" in plan) return refuse(plan.error);
         const file = childLedgerFile(s, params.path);
         if ("error" in file) return refuse(file.error);
@@ -5753,7 +5926,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
-      const plan = planLedgerCall(params, { child: false, gate: s.reviewGate });
+      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);
@@ -6323,8 +6496,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return;
         }
         if (rest[0] === "protect") {
-          const usage = "Usage: /foreman perms protect add|remove <host|path|command> <glob> [--note <text>] [--user]";
-          const args = rest.slice(1);
+          const usage = "Usage: /foreman perms protect add|remove <host|path|command> <glob> [--check model|read-only|ask] [--note <text>] [--user] (--check is for add only; to change an entry, remove it and add it again)";
+          let args = rest.slice(1);
+          // `--check <mode>` comes out of the words first: `--note` takes every word after it
+          let check: string | undefined;
+          const ci = args.indexOf("--check");
+          if (ci >= 0) {
+            check = args[ci + 1];
+            args = [...args.slice(0, ci), ...args.slice(ci + 2)];
+            if (check === undefined || !PROTECTED_CHECK_MODES.includes(check as never) || args[0] === "remove") {
+              ctx.ui.notify(usage, "warning");
+              return;
+            }
+          }
           const user = args.includes("--user");
           const ni = args.indexOf("--note");
           const note = ni >= 0 ? args.slice(ni + 1).filter((w) => w !== "--user").join(" ") : undefined;
@@ -6333,7 +6517,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ctx.ui.notify(usage, "warning");
             return;
           }
-          const r = await protectEntry(s, ctx, { action: head[0], kind: head[1], glob: head.slice(2).join(" "), ...(note ? { note } : {}), file: user ? "user" : "project" });
+          const r = await protectEntry(s, ctx, { action: head[0], kind: head[1], glob: head.slice(2).join(" "), ...(note ? { note } : {}), ...(check ? { check } : {}), file: user ? "user" : "project" });
           ctx.ui.notify(r.text, r.ok ? "info" : "warning");
           return;
         }

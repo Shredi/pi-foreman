@@ -12,6 +12,8 @@ export interface GateRoots {
   worktree: string;
   /** The session's live scratch dirs (a child: its own `$FOREMAN_SCRATCH`). */
   scratch: string[];
+  /** A child's kept output dir (`$FOREMAN_OUT`, launch binding `out`); also the second entry of `scratch`, so every scratch rule covers it. */
+  out?: string;
   /** The OS temp dirs (real spelling) and `/tmp`. */
   tmp: string[];
   /** `<tmp>/pi-foreman-scratch`: other sessions' scratch dirs live below it and are never a tmp default. */

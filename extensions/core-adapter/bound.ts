@@ -254,6 +254,8 @@ export interface ReviewGate {
   revised: boolean;
   /** When `last` became FAIL (ms); a newer parent ruling is named in the refusal (R6 lane 4c), it never satisfies the gate. */
   failAt?: number;
+  /** A high-stakes FAIL was set on an entry whose PASS stood just before it; only such an entry passes when a normal PASS elsewhere clears that FAIL. */
+  stoodAtFail?: boolean;
   /** The run id of the last counted PASS (kept across later verdicts); the V refusal and the finish hint name it. */
   passRun?: string;
 }

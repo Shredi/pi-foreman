@@ -11,7 +11,7 @@ export type ReviewFacts = "ok" | "wip" | "unreviewed";
 export type Readiness = "wip" | "running" | "red" | "unreviewed" | "ready";
 
 /**
- * The review facts for the host's `head`. `revised`: work started after the last verdict (Session.reviewGate.revised); `sentBack`: the parent sent the
+ * The review facts for the host's `head`. `revised`: work started after the last verdict (the review gate entries of `reviewgates.ts`, read combined); `sentBack`: the parent sent the
  * work back (phase B sets it; false until then). Plan reviews never count.
  */
 export function reviewFactsOf(records: readonly ReviewRecord[], head: string, revised: boolean, sentBack: boolean): ReviewFacts {
