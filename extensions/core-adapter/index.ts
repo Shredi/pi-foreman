@@ -23,7 +23,7 @@ import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./class
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { effectiveCheckMode } from "./protected.ts";
 import { PermStore, PERM_MODES, PROTECTED_CHECK_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
-import { folderRelaxes, mergedFactKey, redirectsInScratch, withMergedFacts } from "./defaults.ts";
+import { folderRelaxes, mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
@@ -2917,6 +2917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const rp of readPlansOnce(plans, opts)) {
         s.planReviews.record(rp.plan.path, { hash: rp.plan.hash, verdict: r.verdict, model: r.model, findings });
         s.planReviews.keepReviewed(rp.plan.path, rp.plan.hash);
+        s.planReviews.closeLaunch(rp.plan.path);
         s.show?.planReviewed(r.verdict === "pass", rp.plan.hash); // plan page state and milestone (show.ts)
         reviewed.add(rp.plan.path);
         const state = rp.plan.hash;
@@ -2935,6 +2936,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
         s.planPhase = false;
         s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
+      } else if (s.planPhase && s.planPhaseOrigin === "parent") {
+        const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
+        s.trace?.emit({ event: "plan_phase", decision: "kept", cause });
       }
     }
     persistRounds(s);
@@ -3250,37 +3254,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
         return allowed("no-rule", "mode", "mode:no-rule");
-      }
-      // a line of a read-only role the gate cannot see into (danger-readonly-run): never the allow sentences' judge, never a plain mode allow; auto and allow ask the role question, ask goes to the parent.
-      // The role question only for the label alone or with danger-opaque, and only after the read question's entry check; a line with any other danger label goes to the parent ask (no role call, no allow-sentence call).
-      if (out.dangers?.includes("danger-readonly-run") && resolved.mode !== "deny") {
-        const cause = `${danger.name}: ${danger.reason}`;
-        const roleOnly = out.dangers.every((d) => d === "danger-readonly-run" || d === "danger-opaque");
-        if (roleOnly && (resolved.mode === "auto" || resolved.mode === "allow") && [true, undefined].includes(get(gs.config.config, "gate.readonlyClear") as boolean | undefined) && roots) {
-          let rc: Awaited<ReturnType<typeof rt.classifier.roleClear>> | undefined;
-          try {
-            // the read question's deterministic entry check first (a secret-path word, a writing redirect that is not named and inside the scratch dir or handoff files, a non-bash shell): a refusal is the parent ask with no model call
-            const entryOk = cmdText !== null && !!out.segments && readClearEntry(
-              { tool: event.toolName, text: cmdText, segments: out.segments, dangers: ["danger-opaque"], shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
-              floorEnvOf(gs, ctx.cwd, roots.sessionDir),
-              (seg) => redirectsInScratch(seg, roots, platform, ctx.cwd),
-            );
-            if (!entryOk) throw new Error("entry check refused");
-            rc = await rt.classifier.roleClear(
-              { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, writable: [...roots.scratch, ...(roots.childHandoff ? [roots.childHandoff] : [])], inside: insideDirs(roots) },
-              {
-                prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
-                recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
-                trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
-                notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
-              },
-            );
-          } catch {
-            // the role question is best effort: any failure asks the parent
-          }
-          if (rc?.cleared) return allowed("readonly-run", rc.cached ? "cache" : "classifier", "classifier:readonly-run");
-        }
-        return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, dangerName: danger.name });
       }
       if (resolved.mode === "allow") return allowed(danger.name, "mode", `mode:allow:${danger.name}`);
       if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
@@ -4244,7 +4217,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
               rereview.push(...(before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
             }
-            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text);
+            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text, s.launchBatch.generation);
           }
           // one entry per plan (a page and its copy named together are one); a plan that cannot be read stays listed
           const raws = new Set(readable.map((rp) => rp.raw));
@@ -4796,15 +4769,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /**
-   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode mark the
-   * ceremony and raise a trivial tier to standard at once (an untriaged session's later trivial
-   * triage is recorded as standard). The text added to the refusal.
+   * Item 13: a change the edit mode refused needs a builder. Trace it; outside bounded mode a refused edit tool call marks the
+   * ceremony and raises a trivial tier to standard at once (an untriaged session's later trivial
+   * triage is recorded as standard). A refused shell write (kind `shell`) only adds the plan-phase text: it keeps the tier.
+   * The text added to the refusal.
    */
   function onEditRefused(s: Session, mode: EditMode, kind: string): string {
     s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
     if (mode === "bounded") return "";
     if (parentPhaseByReview(s)) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait until your plan review passes (a [plan-review] PASS on the current version ends the phase) or /foreman plan off.";
     if (s.planPhase) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait for a checkpoint approval or /foreman plan off.";
+    if (kind === "shell") return "";
     s.ceremony = { ...s.ceremony, needsChange: true };
     if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
     setCeremony(s, escalate(s.ceremony, "standard", "auto", "edit mode refused a change"));
@@ -5049,7 +5024,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hint = move ? null : chainHint(command, !s.isChild);
       const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : hint ? `${v.reason} ${hint}.` : v.reason;
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
-      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is no sign the task needs a builder: no tier escalation
+      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is not traced and adds no plan-phase text (a shell refusal never changes the tier)
       const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
@@ -5189,6 +5164,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const written = readPlan(wrotePath, planOpts(owner, ctx));
       if ("error" in written) planFormNote = written.error; // e.g. a Write over the generated copy that lost its marker
       else {
+        // a write in the tool batch of a still-open [plan-review] launch (also one nested in a codemode call): the reviewer reads these bytes
+        owner.planReviews.refreshLaunch(written.plan.path, written.plan.hash, written.plan.markdown, owner.launchBatch.generation);
         const issues = planFormIssues(written.plan.markdown, {});
         if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
         if (written.plan.kind === "html" && typeof wrotePath === "string" && wrotePath.endsWith(".md")) planFormNote = `pi-foreman: plan-${written.plan.topic}.md is generated from plan-${written.plan.topic}.html; edit the page, not the copy. The copy was written again from the page.${planFormNote ? `\n${planFormNote}` : ""}`;

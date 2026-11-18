@@ -98,7 +98,7 @@
       "area": "tools",
       "toggle": {"on": {"roles.foreman.codemode": true}, "off": {"roles.foreman.codemode": false}},
       "title": "Codemode per role",
-      "purpose": "Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default).",
+      "purpose": "Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman, explorer and reviewer by default).",
       "doc": "docs/ceremony.md#triage-and-delegation",
       "keys": ["roles.<x>.codemode", "providers.<x>.roles.<x>.codemode"],
       "commands": [],

@@ -17,9 +17,8 @@ const roots = (role: string, readOnly: boolean): GateRoots => ({ worktree: wt, s
 const run = (command: string, role: string, readOnly: boolean) => gateEvaluate("bash", { command }, wt, { env: (cwd) => baseFloorEnv(cwd, role === "foreman" ? {} : { child: true }), roots: () => roots(role, readOnly) });
 
 const ROLES = [["foreman", false], ["builder", false], ["reviewer", true], ["explorer", true]] as const;
-const withRole = (role: string, labels: string[]): string[] => (role === "reviewer" || role === "explorer" ? [...labels, "danger-readonly-run"] : labels).sort();
 
-// line -> labels of the main and builder session (a read-only role adds danger-readonly-run)
+// line -> labels, the same for the main session, a builder and a read-only role
 const ROWS: [string, string[]][] = [
   ["npm ci", ["danger-install"]],
   ["FOO=1 npm ci", ["danger-install", "danger-opaque"]],
@@ -42,7 +41,7 @@ for (const [line, labels] of ROWS) {
     for (const [role, ro] of ROLES) {
       const o = run(line, role, ro);
       assert.deepEqual(o.result ?? {}, {}, `${role}`);
-      assert.deepEqual([...(o.dangers ?? [])].sort(), withRole(role, labels), `${role}`);
+      assert.deepEqual([...(o.dangers ?? [])].sort(), [...labels].sort(), `${role}`);
     }
   });
 }

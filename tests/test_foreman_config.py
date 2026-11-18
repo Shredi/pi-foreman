@@ -315,9 +315,9 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("foreman", sub["agentOverrides"])
         for role, entry in sub["agentOverrides"].items():
             self.assertIsInstance(entry["tools"], list)
-            self.assertEqual("codemode" in entry["tools"], role == "explorer", role)
+            self.assertEqual("codemode" in entry["tools"], role in ("explorer", "reviewer"), role)
         self.assertEqual(sub["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search"])
+                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -339,7 +339,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
         cfg["ceremony"]["ledgerHelper"] = "off"
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search"])
+                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})
@@ -627,6 +627,8 @@ class PackageFilesTest(unittest.TestCase):
             # builders push (PR-B): the child push line names who pushes
             ("- Children run detached with a strict tool allowlist. They never push.",
              "- Children run detached with a strict tool allowlist. A builder from a single launch pushes its own branch; other children never push, and a builder from a `tasks` or `chain` launch does not either (the foreman pushes for it, or launches a builder that must push on its own). No child opens or merges a PR."),
+            # D71 addendum: a refused shell write keeps the tier; only a refused tool edit raises it
+            ("A refused project edit makes the task standard: write the ledger and delegate.", "A refused `write`, `edit`, `foreman_move` or `foreman_copy` on a project file makes the task standard: write the ledger and delegate. A refused shell write keeps the tier, and the change still goes to a builder."),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)
