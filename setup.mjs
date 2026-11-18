@@ -356,7 +356,7 @@ function parseArgs(argv) {
   if (o.noAddons && o.skipAddon.length) throw new Fatal("--no-addons already skips every add-on; drop --skip-addon.", 2);
   // the shipped add-on is a no-op: `--addon` then installs exactly the others (none when it names only that one); the flag still counts as given
   o.shippedAddon = o.addon.includes(SHIPPED_ADDON) || o.skipAddon.includes(SHIPPED_ADDON);
-  if (o.addon.length && o.addon.every((id) => id === SHIPPED_ADDON)) o.noAddons = true;
+  o.addonOnlyShipped = o.addon.length > 0 && o.addon.every((id) => id === SHIPPED_ADDON);
   o.addon = o.addon.filter((id) => id !== SHIPPED_ADDON);
   o.skipAddon = o.skipAddon.filter((id) => id !== SHIPPED_ADDON);
   return o;
@@ -1420,7 +1420,7 @@ async function main(argv) {
       // a declined default counts as offered, so a later plain run does not install it
       const declined = opts.noAddons ? addonRegistry.filter((a) => a.default && !installedBefore.some((i) => i.id === a.id)).map((a) => a.id) : opts.skipAddon.filter((id) => addonRegistry.some((a) => a.id === id && a.default));
       if (opts.addon.length) offeredNow = [...opts.addon];
-      else if (!opts.noAddons && newlyDefault.length) {
+      else if (!opts.noAddons && !opts.addonOnlyShipped && newlyDefault.length) {
         if (st.allowed && !hasFlags && !opts.pick) addonIds = await askNewAddons(addonRegistry.filter((a) => newlyDefault.includes(a.id)));
         else {
           addonIds = [...newlyDefault];

@@ -197,12 +197,13 @@ test("a user-level npm: copy of the bundled background-tasks package is removed 
 test("--addon and --skip-addon background-tasks print that it ships with pi-foreman and exit 0", () => {
   const env = fresh();
   seed(env);
-  for (const flag of ["--addon", "--skip-addon"]) {
-    const r = run(env, [flag, "background-tasks"], NO_PICKER);
-    assert.equal(r.code, 0, r.out);
-    assert.match(r.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
-  }
+  const only = run(env, ["--addon", "background-tasks"], NO_PICKER);
+  assert.equal(only.code, 0, only.out);
+  assert.match(only.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
   assert.deepEqual(installs(env), []);
+  const skip = run(env, ["--skip-addon", "background-tasks"], NO_PICKER);
+  assert.equal(skip.code, 0, skip.out);
+  assert.match(skip.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
 });
 
 test("without a pi-foreman package entry setup prints the install line and fails", () => {

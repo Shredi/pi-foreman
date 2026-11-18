@@ -55,6 +55,8 @@ test("the peer-range line finds the bundled copy under <root>/node_modules", (t)
   assert.equal(addonPackageDir(dirs), dir);
   assert.equal(addonPeerRangeLine(dirs, "1.2.0"), "INFO pi-background-tasks peer range for @earendil-works/pi-coding-agent: ^1.2.0; running Pi 1.2.0 is inside it");
   assert.equal(addonPackageDir({ ...dirs, bundledRoot: undefined }), null, "without bundledRoot the lookup is the old one");
+  const outside = addonPeerRangeLine(dirs, "9.0.0");
+  assert.equal(outside, "INFO pi-background-tasks peer range for @earendil-works/pi-coding-agent: ^1.2.0; running Pi 9.0.0 is outside it (the copy bundled with pi-foreman; a newer one arrives with a pi-foreman update)");
 });
 
 test("TOOL_FLOOR holds bg_run and no longer foreman_bg", () => {

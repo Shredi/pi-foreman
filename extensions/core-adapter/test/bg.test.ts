@@ -1,5 +1,5 @@
-// The background-tasks add-on beside the core adapter (readers, `/foreman waits`, doctor lines, guard parity of bg_run). Temp dirs only; the only
-// command run is a short `node -e` through spawnDetached; guard cases pass command STRINGS that are refused before any spawn.
+// The background-tasks add-on beside the core adapter (readers, `/foreman waits`, doctor lines, guard parity of bg_run). Temp dirs only;
+// guard cases pass command STRINGS that are refused before any spawn.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -10,7 +10,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { mapTool, isShellTool } from "../toolmap.ts";
-import { addonPresent, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
+import { addonPresent, formatWaits, lastLines, readAddonTasks } from "../bg.ts";
 import { checkLogPath, parseStart, registerWait } from "../wait.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 
@@ -58,6 +58,14 @@ test("foreman_bg is not registered: foreman_wait is the only tool registerWait a
   assert.deepEqual([...h.tools.keys()], ["foreman_wait"]);
 });
 
+test("registerWait registers no tool in a child session", (t) => {
+  process.env.PI_SUBAGENT_CHILD = "1";
+  t.after(() => delete process.env.PI_SUBAGENT_CHILD);
+  const tools: string[] = [];
+  registerWait({ on: () => undefined, registerTool: (x: Tool) => void tools.push(x.name) } as never, { session: async () => ({}) as never, home: "/h", platform: process.platform });
+  assert.deepEqual(tools, []);
+});
+
 test("foreman_wait pid and ci accept log; a log outside the bound is refused", (t) => {
   const root = tmp(t, "pf-bglog-");
   const cwd = path.join(root, "proj");
@@ -85,32 +93,12 @@ test("a pid wait with a log lists it; the wake line names it", async (t) => {
   assert.equal(h.handle.active("s1")[0].log, log);
 });
 
-const noBash = (): never => {
-  throw new Error("no bash");
-};
-
-test("shellFor, spawnDetached and lastLines", async (t) => {
-  assert.deepEqual(shellFor("echo x", "win32", { getShellConfig: noBash }).args.slice(0, 3), ["/d", "/s", "/c"]);
-  const sh = shellFor("echo x", "linux");
-  assert.deepEqual(sh.args, ["-c", "echo x"]);
+test("lastLines: the last 5 non-empty lines of a log; a missing file gives none", (t) => {
   const dir = tmp(t, "pf-bgsp-");
-  const log = path.join(dir, "a", "b.log");
-  const r = spawnDetached(`node -e "for(let i=1;i<=9;i++)console.log('l'+i)"`, dir, log);
-  assert.ok("pid" in r, JSON.stringify(r));
-  for (let i = 0; i < 50 && lastLines(log).length < 5; i++) await sleep(100);
+  const log = path.join(dir, "b.log");
+  fs.writeFileSync(log, `${Array.from({ length: 9 }, (_, i) => `l${i + 1}`).join("\n")}\n`);
   assert.deepEqual(lastLines(log), ["l5", "l6", "l7", "l8", "l9"]);
   assert.deepEqual(lastLines(path.join(dir, "missing.log")), []);
-  const bad = spawnDetached("true", path.join(dir, "no-such-dir"), path.join(dir, "c.log"));
-  if ("pid" in bad) await sleep(50);
-});
-
-test("shellFor win32 without Git Bash: cmd /d /s /c with the command wrapped in one more pair of quotes, verbatim; POSIX unchanged", () => {
-  const win32 = (c: string) => shellFor(c, "win32", { getShellConfig: noBash });
-  const command = `node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y"`;
-  assert.deepEqual(win32(command), { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y""`], verbatim: true });
-  assert.deepEqual(win32("echo x").args, ["/d", "/s", "/c", '"echo x"']);
-  assert.deepEqual(shellFor(command, "linux").args, ["-c", command]);
-  assert.equal(shellFor(command, "linux").verbatim, false);
 });
 
 function fakeTasks(cwd: string): void {

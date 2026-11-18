@@ -83,7 +83,8 @@ it by hand).
 
 **Upgrading from the separate `pi-background-tasks` add-on.** The add-on now ships with pi-foreman, so a second copy would stop
 Pi at start with a tool conflict. Run `foreman setup` from the pi-foreman clone (or `/foreman setup` in a Pi that still starts);
-it removes a user or project `npm:pi-background-tasks` entry (pinned or not) with `pi remove`. Heads-ups:
+a plain run removes the user `npm:pi-background-tasks` entry (pinned or not) with `pi remove`. A project copy stays: run
+`foreman setup --project` in that project, or `pi remove -l npm:pi-background-tasks`. Heads-ups:
 
 - Pi stops at start while the separate copy is still listed, so run the setup command from a shell, not from inside Pi.
 - A git or path install of the add-on is not detected: remove it by hand with `pi remove <source>`.

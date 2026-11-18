@@ -133,6 +133,20 @@ test("background-tasks ships with pi-foreman: --addon and --skip-addon backgroun
   assert.equal(fs.existsSync(rc) && fs.readFileSync(rc, "utf8").includes("PI_BG_FEATURES"), false);
 });
 
+test("--addon background-tasks alone declines nothing: a later plain run still offers polish, quiver and memory", () => {
+  const env = fresh();
+  const only = run(env, ["--addon", "background-tasks"]);
+  assert.equal(only.code, 0, only.out);
+  assert.deepEqual(installs(env), []);
+  const m = fs.existsSync(path.join(env.agentDir, "pi-foreman", "managed.json")) ? managed(env) : {};
+  assert.deepEqual(m.addonsOffered ?? [], [], "nothing recorded as offered or declined");
+  assert.deepEqual(Object.keys(m.addons ?? {}), []);
+  const plain = run(env, []);
+  assert.equal(plain.code, 0, plain.out);
+  assert.deepEqual(installs(env), specs);
+  assert.deepEqual(managed(env).addonsOffered, DEFAULTS);
+});
+
 test("envTarget picks the profile by shell and platform; mergeBlock replaces in place and is idempotent", () => {
   const home = path.join(path.sep, "h");
   assert.equal(envTarget({ platform: "linux", home, shell: "/usr/bin/zsh" }).file, path.join(home, ".zshrc"));

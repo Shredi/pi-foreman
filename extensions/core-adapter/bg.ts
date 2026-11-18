@@ -3,13 +3,11 @@
 // destructive guard and the config-change check) and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
 //
 // The add-on package is never imported or required. It is detected by its tool `bg_run` (or its package directory), and `/foreman waits`
-// lists its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`. The spawn helpers below serve other runs (safe-ops scripts).
-// This file only reads and spawns; it never decides.
-import { spawn } from "node:child_process";
+// lists its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`. What else stays here: `bgSpawnFlags` (scriptrun.ts and
+// presence.ts spawn their runs with it), `shellPathSetting` (index.ts, the win32 shell resolution) and the `ShellConfigFn` type.
+// This file only reads; it never decides.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
-import { msysEnv } from "./env.ts";
 
 /** One line, control characters dropped, capped (same rule as wait.ts oneLine; kept here to avoid an import cycle). */
 function oneLine(v: unknown, max: number): string {
@@ -17,8 +15,6 @@ function oneLine(v: unknown, max: number): string {
   return s.length > max ? s.slice(0, max) : s;
 }
 
-/** Label of the error texts of the spawn helpers. */
-const BG_LABEL = "background run";
 /** Tool name of the optional add-on that marks it present. */
 export const ADDON_RUN_TOOL = "bg_run";
 export const ADDON_PACKAGE = "pi-background-tasks";
@@ -26,28 +22,8 @@ export const LOG_TAIL_LINES = 5;
 const TAIL_BYTES = 8192;
 const MAX_ADDON_TASKS = 20;
 
-/**
- * The shell that runs the command: bash (else sh) on POSIX; on Windows the bash tool's shell, Pi's `getShellConfig(shellPath)`
- * (Git Bash, `-c`), so the guards' bash reading matches what runs. Only when that throws (no bash found) or wants the command on
- * stdin (legacy WSL bash) it is `cmd /d /s /c`: with `/s /c`, cmd strips the first and the last quote of its command line, so the
- * command is wrapped in one more pair of quotes (what Node's `shell: true` does on win32); without them a quoted `node -e "..."`
- * loses its quotes and cmd parses `<`, `>`, `&` inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting).
- * Known limit: the cmd.exe fallback runs the command under cmd.exe while the guards classify it as bash (docs/safety.md).
- */
+/** Pi's `getShellConfig(shellPath)`: the shell, its arguments and how it takes the command. */
 export type ShellConfigFn = (shellPath?: string) => { shell: string; args: string[]; commandTransport?: string };
-
-export function shellFor(command: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string } = {}): { file: string; args: string[]; verbatim: boolean } {
-  if (platform === "win32") {
-    try {
-      const cfg = (opts.getShellConfig ?? piGetShellConfig)(opts.shellPath || undefined);
-      if (cfg.commandTransport !== "stdin") return { file: cfg.shell, args: [...cfg.args, command], verbatim: false };
-    } catch {
-      // no bash found: cmd.exe below
-    }
-    return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
-  }
-  return { file: fs.existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh", args: ["-c", command], verbatim: false };
-}
 
 /**
  * The spawn flags of a background run (safe-ops scripts, the presence probe). POSIX: detached (own process group). win32: not detached, as
@@ -58,58 +34,6 @@ export function shellFor(command: string, platform: string = process.platform, o
  */
 export function bgSpawnFlags(platform: string = process.platform): { detached: boolean; windowsHide: boolean } {
   return { detached: platform !== "win32", windowsHide: true };
-}
-
-type SpawnOpts = { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv };
-
-/** Creates `logPath` exclusively and spawns `command` detached (bgSpawnFlags) with stdout and stderr going to it; the pid, or why not (`exists` when the log name was taken). `spawnFn` is a test seam. */
-export function spawnIntoNewLog(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: SpawnOpts = {}, spawnFn: typeof spawn = spawn): { pid: number } | { error: string; exists?: true } {
-  let fd: number | null = null;
-  let taken = false;
-  try {
-    fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
-    // Exclusive create ("wx"/"ax": EEXIST when the name is taken), so a run never truncates or interleaves with an earlier run's log, even when two runs pick the same name at once.
-    // win32: node's "a" opens the handle with FILE_APPEND_DATA only; the MSYS runtime of Git Bash takes such a handle as not writable, so a bash builtin
-    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access, and the file is new, so nothing is truncated.
-    try {
-      fd = fs.openSync(logPath, platform === "win32" ? "wx" : "ax", 0o600);
-    } catch (err) {
-      taken = (err as NodeJS.ErrnoException).code === "EEXIST";
-      throw err;
-    }
-    const sh = shellFor(command, platform, opts);
-    // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
-    const child = spawnFn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
-    child.on("error", () => undefined);
-    child.unref();
-    if (!child.pid) return { error: `${BG_LABEL}: could not start ${sh.file}.` };
-    return { pid: child.pid };
-  } catch (err) {
-    const error = `${BG_LABEL}: could not start the command (${oneLine((err as Error).message, 160)}).`;
-    return taken ? { error, exists: true } : { error };
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
-  }
-}
-
-/** Spawn `command` detached (bgSpawnFlags) with stdout and stderr going to `logPath`; the pid, or why not. An existing log is never truncated or appended to: the call then fails. */
-export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv } = {}): { pid: number } | { error: string } {
-  const run = spawnIntoNewLog(command, cwd, logPath, platform, opts);
-  return "pid" in run ? run : { error: run.error };
-}
-
-/** Number of log names `spawnWithFreshLog` tries before it gives up. */
-export const BG_LOG_TRIES = 5;
-
-/** `spawnIntoNewLog` with a new log name (`nextLog`) for each try that finds the name taken; at most `BG_LOG_TRIES` tries. The pid and the log used, or why not. */
-export function spawnWithFreshLog(command: string, cwd: string, nextLog: () => string, platform: string = process.platform, opts: SpawnOpts = {}, spawnFn: typeof spawn = spawn): { pid: number; log: string } | { error: string } {
-  for (let i = 0; i < BG_LOG_TRIES; i++) {
-    const log = nextLog();
-    const run = spawnIntoNewLog(command, cwd, log, platform, opts, spawnFn);
-    if ("pid" in run) return { pid: run.pid, log };
-    if (!run.exists) return { error: run.error };
-  }
-  return { error: `${BG_LABEL}: could not create a new log file after ${BG_LOG_TRIES} tries; the log names are taken.` };
 }
 
 /** Pi's `shellPath` setting: the project's `.pi/settings.json` over the agent dir's `settings.json`; undefined when unset. */
@@ -253,6 +177,8 @@ export function addonPeerRangeLine(dirs: { agentDir: string; cwd: string; bundle
   const fits = rangeAllows(range, piVersion);
   if (fits === null) return `${head} ${r}; running Pi ${piVersion} (range not checked)`;
   if (fits) return `${head} ${r}; running Pi ${piVersion} is inside it`;
+  const bundled = dirs.bundledRoot !== undefined && dir === path.join(dirs.bundledRoot, "node_modules", ADDON_PACKAGE);
+  if (bundled) return `${head} ${r}; running Pi ${piVersion} is outside it (the copy bundled with pi-foreman; a newer one arrives with a pi-foreman update)`;
   return `${head} ${r}; running Pi ${piVersion} is outside it (npm may warn on install; check for a newer ${ADDON_PACKAGE})`;
 }
 
