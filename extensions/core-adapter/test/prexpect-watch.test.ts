@@ -130,6 +130,7 @@ test("a managed draft whose required check never starts in draft (base not learn
   await x.tick(snap({ ...part, runs: [run("lint", "passed"), run("ci-ok", "passed")], draft: false }), BOUND * 3);
   await x.tick(snap({ ...part, runs: [run("lint", "passed"), run("ci-ok", "passed")], draft: false }), BOUND * 3 + SETTLE);
   assert.equal(finished(x.sent).length, 1, "the real result on the non-draft PR");
+  assert.match(finished(x.sent)[0], /checks finished: pass/);
 });
 
 test("a readable required list with zero runs: no no-checks line, the label rule says running, the leave-draft step waits, the pill's no-checks input stays false", async () => {
