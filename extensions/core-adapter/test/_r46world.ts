@@ -32,6 +32,10 @@ export interface WorldOpts {
   ceremony?: Record<string, unknown>;
   /** Production wiring of the launch snapshot (no `worktreeSnapshot` dependency); by default the rig passes a no-op. */
   realSnapshot?: boolean;
+  /** The session has no UI (a headless parent: no pane, no owner dialog). */
+  headless?: boolean;
+  /** More top-level keys of the agent's foreman.json (e.g. `gate: { childAsk: "deny" }`). */
+  config?: Record<string, unknown>;
   /** Collects the custom messages the adapter sends (`pi.sendMessage`) with their options. */
   sent?: { message: { customType: string; content: string }; options: unknown }[];
 }
@@ -57,7 +61,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
   fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   const roles = ["explorer", "builder", "reviewer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, radar: { openPrs: { enabled: false } }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, radar: { openPrs: { enabled: false } }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony }, ...o.config }));
   const sessionId = `r46-${++n}`;
   const sessionFile = path.join(agentDir, "sessions", "--project--", `2026_${sessionId}.jsonl`);
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
@@ -123,7 +127,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       cwd: project,
       model: { provider: "fake", id: "foreman" },
       mode: "tui",
-      hasUI: true,
+      hasUI: !o.headless,
       isProjectTrusted: () => false,
       isIdle: () => true,
       // the gate reviews the foreman's own subagent launches: the review model answers allow (no review model is a dialog)
@@ -190,6 +194,8 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
         writeFromReport(inputs.get(id), output);
         return channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] });
       },
+      /** A raw `subagent:async-complete` event (the run end of a run no `reviewLaunch` id names, e.g. a resumed run). */
+      endEvent: (data: Record<string, unknown>) => channels.get("subagent:async-complete")!(data),
       /** The run end of call `id` after the reviewer's `review_verdict` call `spec`; `output` is the report text (no verdict word needed). */
       endRunRecord: (id: string, spec: RecSpec, output = "report") => {
         writeSpec(inputs.get(id), spec);

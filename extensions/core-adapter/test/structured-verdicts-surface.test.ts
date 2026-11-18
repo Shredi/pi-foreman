@@ -30,7 +30,8 @@ test("loop keys: a defect with a file keys on file, line/5 and class; no class e
 
 test("critique counter: raised counts now and later together, applied only the now findings", () => {
   const c = new CritiqueCounter();
-  const raised = c.onReview([{ kind: "now", text: "a" }, { kind: "later", text: "b" }, { kind: "defect", text: "c", file: "x.ts", line: 1 }], "reviewer", "r1", 9);
+  const findings = [{ kind: "now", text: "a" }, { kind: "later", text: "b" }, { kind: "defect", text: "c", file: "x.ts", line: 1 }];
+  const raised = c.onReview(findings, "reviewer", "r1", 9);
   assert.equal(raised?.count, 2, "defects are not critique");
   assert.equal(c.onBuilder()?.count, 1, "applied: the now finding");
 });
