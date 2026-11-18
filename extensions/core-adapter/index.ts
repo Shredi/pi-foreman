@@ -1896,7 +1896,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
-    if (!s.isChild) s.bgAddon = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd }); // once per start: the request prefix stays stable
+    if (!s.isChild) s.bgAddon = addonPresent((pi.getAllTools?.() ?? []).map((t) => t.name), { agentDir: s.agentDir, cwd: ctx.cwd }); // once per start: the request prefix stays stable
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
