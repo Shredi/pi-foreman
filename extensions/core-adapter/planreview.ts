@@ -144,10 +144,10 @@ export class PlanReviews {
 export function planReviewRefusalText(reason: PlanReviewRefusal, rel: string, tier: string, stale: boolean): string {
   const head = `pi-foreman: ${CHECKPOINT_TOOL} refused [${reason}]:`;
   if (reason === "plan_revision_required") {
-    return `${head} the plan review of ${rel} failed. Revise the plan with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, and repeat until it passes; ask nobody while the findings are defects or gaps. A finding that needs a decision goes to the checkpoint with a FAIL: call ${CHECKPOINT_TOOL} again after the revised plan has a verdict, and at the round cap (ceremony.planReviewRounds) it opens with the open findings.`;
+    return `${head} the plan review of ${rel} failed. Revise the plan with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with occasion: "plan-review" (or "[plan-review]" first in its task) on the revised plan and the ledger, and repeat until it passes; ask nobody while the findings are defects or gaps. A finding that needs a decision goes to the checkpoint with a FAIL: call ${CHECKPOINT_TOOL} again after the revised plan has a verdict, and at the round cap (ceremony.planReviewRounds) it opens with the open findings.`;
   }
   const why = stale ? "the plan changed since its last review, so that verdict no longer counts" : "the plan has no review yet";
-  return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with "[plan-review]" in its task, naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;
+  return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with occasion: "plan-review" (or "[plan-review]" first in its task), naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;
 }
 
 const one = (s: string): string => s.replace(/[\u0000-\u001f\u007f\u0080-\u009f]+/g, " ").trim().slice(0, 120);

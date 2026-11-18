@@ -17,6 +17,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Step, TrivialBound } from "./bound.ts";
 import { diffWithFacts, git, isTestPath, type DiffFact } from "./diffscan.ts";
+import { scratchParts } from "./editmode.ts";
+import { workflowDirs } from "./triage.ts";
 
 export type TrivialReason = "test_file" | "files" | "signature" | "schema" | "bound" | "no_test" | "unmeasured";
 
@@ -182,6 +184,27 @@ export async function checkTrivial(dirs: readonly [string, string | null][], cwd
     merged.covered = merged.covered && (f.source.length === 0 || f.covered);
   }
   return trivialVerdict(merged, bound);
+}
+
+/**
+ * `git status --porcelain` of the whole checkout of `cwd` (`:/`), without the `.workflow/` folders from `cwd` up to the toplevel and the scratch dir
+ * (structured pathspecs, anchored at the toplevel, literal). Null when git fails or `cwd` is no work tree (fail closed).
+ */
+export async function cleanTreeStatus(cwd: string, scratchDir: string, platform: string = process.platform): Promise<string | null> {
+  const topRaw = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
+  if (!topRaw) return null;
+  let top: string;
+  let realCwd: string;
+  try {
+    top = fs.realpathSync.native(topRaw);
+    realCwd = fs.realpathSync.native(cwd);
+  } catch {
+    return null;
+  }
+  const excludes = workflowDirs(realCwd, top, platform).map((d) => path.relative(top, d).split(path.sep).join("/"));
+  const parts = scratchParts(scratchDir);
+  if (parts && parts[0] !== ".workflow") excludes.push(parts.join("/"));
+  return git(cwd, ["status", "--porcelain", "--", ":/", ...excludes.map((e) => `:(top,exclude,literal)${e}`)]);
 }
 
 /** The text added to the finish refusal after an escalation. */

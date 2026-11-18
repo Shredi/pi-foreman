@@ -4,7 +4,7 @@
 // pane keyboard, which `herdr agent prompt` drives), and an inbound pi-intercom message whose text
 // is exactly `foreman:close` or `foreman:close <path>` (when "intercom-parent" is in close.from and
 // the sender's session id equals the parent: the contents of `$PI_FOREMAN_HANDOFF_DIR/parent` when
-// that file exists (read at every check, so re-pointing the parent is a one-file change), else
+// that file exists (read at every check, see the re-point section of docs/sessions.md), else
 // PI_FOREMAN_PARENT_INTERCOM, the parent recorded at spawn). A refused request is traced and
 // otherwise stays plain data. An accepted intercom close replies `foreman:closed <result path>`
 // to the sender before the shutdown.
@@ -24,9 +24,10 @@
 // run foreman_sync.py, write a stub result when the file is still missing, then ctx.shutdown().
 // The close turn passes the permission system, triage gate and drift checks like any other turn.
 // A session that watches an open PR refuses the close (`PR #n open and watched`); with a watch held, request/closeTurn first run
-// one fresh pr_status per watched PR (phase `refreshing`). Source `pr-merged` (a child whose PR merged) adds the self-finish:
-// result in the handoff dir, parent report, cleanup checks, detached cleanup (selffinish.ts, docs/close.md). A child that saw its
-// watched PR merged (CloseDeps.mergedPr) runs the same self-finish when a close of any other source comes first or after a refusal.
+// one fresh pr_status per watched PR (phase `refreshing`). A session never closes itself on a PR merge: a merge only gives
+// mergeNotifier's notice (pane, once to the intercom parent). A child that saw its watched PR merged (CloseDeps.mergedPr) runs the
+// self-finish (cleanup checks, detached cleanup, selffinish.ts, docs/close.md) when a close of any source comes (the parent's,
+// a remote parent's, the owner's `/foreman close`).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -77,8 +78,7 @@ export const INTERCOM_OUTBOX_EVENT = "intercom:outbox-request";
 /** customType of the close prompt a triggerTurn intercom run carries (before_agent_start). */
 export const CLOSE_MESSAGE_TYPE = "foreman_close";
 export const CLOSE_SOURCES = ["herdr", "intercom-parent", "remote-parent"] as const;
-/** `pr-merged`: the adapter's own close of a child session whose watched PR was merged (not a `close.from` source). */
-export type CloseSource = (typeof CLOSE_SOURCES)[number] | "pr-merged";
+export type CloseSource = (typeof CLOSE_SOURCES)[number];
 
 /** Result path text (security review S4): a fixed charset and a `.md` suffix, both sources. */
 export const RESULT_PATH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
@@ -225,7 +225,7 @@ export interface CloseDeps {
   watchedPrs?: () => number[];
   /** One fresh pr_status per watched PR; a merged or closed one ends its watch. Awaited before a close refuses on a watch. */
   refreshWatched?: () => Promise<void>;
-  /** `pr-merged`: the checks of the self-finish (after the report and markClosed); the lines for result.md and the parent, and the last step (detached cleanup). */
+  /** The checks of the self-finish (after the report and markClosed); the lines for result.md and the parent, and the last step (detached cleanup). */
   selfFinish?: (req: CloseRequest) => Promise<SelfFinish>;
   /** A child foreman session: the number of the watched PR it saw merged (the watch's merged event or a pre-close status), else null. A close from any source then runs the self-finish for it. */
   mergedPr?: () => number | null;
@@ -292,41 +292,40 @@ export interface CloseRequest {
   shown?: string;
   /** Intercom sender to answer a refusal (and the `foreman:closed` ack) to. */
   replyTo?: string;
-  /** `pr-merged`: the close prompt text, and the parent that gets `PR #n merged, closing` and the result report. */
-  prompt?: string;
-  pr?: { n: number; parent?: string; label: string };
+  /** The merged PR a self-finish runs for (set from `CloseDeps.mergedPr`, never by a requester). */
+  pr?: { n: number; label: string };
 }
 
-/** Who hears a refusal of `req`: its requester; for the adapter's own `pr-merged` close, the parent named in `pr`. */
-const answerTo = (req: CloseRequest): string | undefined => req.replyTo ?? (req.source === "pr-merged" ? req.pr?.parent : undefined);
-
-/** The `pr-merged` close prompt: the result file asks for the PR numbers, the merge commits and what is left open. */
-export function prMergedPrompt(file: string, n: number): string {
-  return `pi-foreman close: PR #${n} was merged and this session closes now. Write your result file at ${file} (the PR numbers, the merge commits, anything left open; link the PR and the commits). Do not start new work.`;
+/** The child's label in messages: its handoff dir name without the timestamp, `child` when that is not a plain name. */
+export function childLabel(handoff: string): string {
+  const label = path.basename(handoff.trim()).replace(/^\d{8}-\d{6}-/, "");
+  return /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child";
 }
 
 /**
- * The `pr-merged` close request of a child session (handoff dir set) once no watch is left, naming the merged PR `n`; null while a watch remains,
- * with no handoff dir or with no merged PR.
+ * The merge notice of one session: `(n)` for a merged PR says so once per PR number, in the pane and (unless the parent is remote)
+ * to the intercom parent. A session with no handoff dir (a main session) says nothing. It never starts a close.
  */
-export function mergeCloseRequest(o: { handoff: string | undefined; watched: readonly number[]; n: number | null | undefined; parent: string | undefined }): CloseRequest | null {
-  const handoff = o.handoff?.trim();
-  if (!handoff || o.watched.length > 0 || o.n === null || o.n === undefined) return null;
-  const label = path.basename(handoff).replace(/^\d{8}-\d{6}-/, "");
-  const file = path.join(handoff, "result.md");
-  return { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, o.n), pr: { n: o.n, parent: o.parent, label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } };
-}
-
-/**
- * The merge-close starter of one session: a close is started once at a time. `closing` only turns true after `start` has awaited the session,
- * so a synchronous in-flight flag, set before `start` runs and cleared when its promise settles, skips a second merge on the same tick.
- */
-export function mergeCloseStarter(start: (ctx: ExtensionContext, req: CloseRequest) => Promise<void>, closing: () => boolean): (ctx: ExtensionContext, req: CloseRequest) => void {
-  let inFlight = false;
-  return (ctx, req) => {
-    if (inFlight || closing()) return;
-    inFlight = true;
-    void start(ctx, req).catch(() => undefined).finally(() => { inFlight = false; });
+export function mergeNotifier(d: { handoff: string | undefined; parent: string | undefined; remote: boolean; notify: (text: string) => void; reply: (to: string, text: string) => unknown; trace: (rec: Record<string, unknown>) => void }): (n: number) => void {
+  const seen = new Set<number>();
+  return (n) => {
+    const handoff = d.handoff?.trim();
+    if (!handoff || seen.has(n)) return;
+    seen.add(n);
+    const label = childLabel(handoff);
+    const text = `PR #${n} merged; ${label} stays open: it sends Result from when its brief is done, then close it with foreman:close (a session never closes itself)`;
+    d.trace({ event: "close", cause: "merge", decision: "noticed" });
+    try {
+      d.notify(`pi-foreman: ${text}`);
+    } catch {
+      // stale context
+    }
+    if (d.remote || !d.parent) return;
+    try {
+      void Promise.resolve(d.reply(d.parent, text)).catch(() => undefined); // best effort, as the ack
+    } catch {
+      // best effort
+    }
   };
 }
 
@@ -341,10 +340,6 @@ export class CloseFlow {
   /** The close prompt passed the `input` handlers / reached the model (security review S5). */
   private promptSeen = false;
   private started = false;
-  /** A `pr-merged` close refused for active runs: tried once more by onRunsDone. */
-  private pending: CloseRequest | null = null;
-  /** The request onRunsDone retries now: its own refusal is final. */
-  private retried: CloseRequest | null = null;
   private clearDeadline: (() => void) | null = null;
   private readonly d: CloseDeps;
 
@@ -366,13 +361,10 @@ export class CloseFlow {
 
   private waitsBlock(req: CloseRequest): boolean {
     const source = req.source;
-    const replyTo = answerTo(req);
+    const replyTo = req.replyTo;
     const runs = this.d.activeRuns();
     if (runs > 0) {
-      // the adapter's own `pr-merged` close is tried once more when the last run ends (onRunsDone); a retry that is refused again is final
-      const again = source === "pr-merged" && req !== this.retried;
-      if (again) this.pending = req;
-      this.refuse(again ? `${runs} child run(s) still active; this close is tried again once they end` : `${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
+      this.refuse(`${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
       return true;
     }
     const prs = this.d.watchedPrs?.() ?? [];
@@ -413,7 +405,7 @@ export class CloseFlow {
    * the close turn and no close prompt is sent; the caller awaits the promise before it claims the run.
    */
   request(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake = false, inRun = false): void | Promise<void> {
-    // only the requester hears this: the adapter's own `pr-merged` close must not tell the parent a refusal while the parent's close is the one running
+    // only the requester hears this
     if (this.phase) return this.refuse("a close is already in progress", req.source, req.replyTo);
     if (!this.holdsWatch()) return this.begin(req, ctx, viaIntercomWake, false, inRun);
     this.phase = "refreshing";
@@ -429,8 +421,6 @@ export class CloseFlow {
       this.wakePending = false;
       return;
     }
-    this.pending = null;
-    if (req !== this.retried) this.retried = null;
     this.req = req;
     this.wakePending = viaIntercomWake;
     this.d.trace({ event: "close", cause: req.source, decision: "accepted" });
@@ -441,7 +431,7 @@ export class CloseFlow {
     if (inRun || ctx.isIdle()) {
       this.closeTurn(refreshed, inRun).catch((e) => {
         this.reset();
-        this.refuse(`${CLOSE_START_FAILED_REASON} ${e instanceof Error ? e.message : String(e)}`, req.source, answerTo(req));
+        this.refuse(`${CLOSE_START_FAILED_REASON} ${e instanceof Error ? e.message : String(e)}`, req.source, req.replyTo);
       });
     }
     else this.phase = "idle-wait";
@@ -474,7 +464,7 @@ export class CloseFlow {
   }
 
   private prompt(): string {
-    return this.req?.prompt ?? closePrompt(this.req?.shown ?? this.req?.file ?? "");
+    return closePrompt(this.req?.shown ?? this.req?.file ?? "");
   }
 
   /** Start deadline: the close turn never reached the model (an `input` handler or check swallowed it). */
@@ -482,7 +472,7 @@ export class CloseFlow {
     if (this.phase !== "result-turn" || this.started || !this.req) return;
     const req = this.req;
     this.reset();
-    this.refuse(`the close turn did not start within ${CLOSE_START_DEADLINE_MS / 1000} s (a check or another handler stopped it); nothing was synced. Send the close again`, req.source, answerTo(req));
+    this.refuse(`the close turn did not start within ${CLOSE_START_DEADLINE_MS / 1000} s (a check or another handler stopped it); nothing was synced. Send the close again`, req.source, req.replyTo);
   }
 
   /** `agent_start` after the close prompt passed `input`: the close run began, the start deadline is met (N3). */
@@ -517,15 +507,6 @@ export class CloseFlow {
     return false;
   }
 
-  /** The last child run ended: try the refused `pr-merged` close once more (no close phase active and no run left). */
-  onRunsDone(ctx: { isIdle(): boolean }): void | Promise<void> {
-    const req = this.pending;
-    if (!req || this.phase || this.d.activeRuns() > 0) return;
-    this.pending = null;
-    this.retried = req;
-    return this.request(req, ctx);
-  }
-
   /** `agent_settled`: advance the sequence. */
   async onSettled(ctx: { isIdle(): boolean; shutdown(): void }): Promise<void> {
     if (!this.phase || !this.req) return;
@@ -538,7 +519,7 @@ export class CloseFlow {
     if (!this.started) {
       const req = this.req;
       this.reset();
-      return this.refuse("the close turn was stopped before it produced a reply (a check or another handler stopped it); nothing was synced. Send the close again", req.source, answerTo(req));
+      return this.refuse("the close turn was stopped before it produced a reply (a check or another handler stopped it); nothing was synced. Send the close again", req.source, req.replyTo);
     }
     this.phase = "finishing";
     const req = this.req;
@@ -579,8 +560,8 @@ export class CloseFlow {
     }
     let spawn: (() => void) | undefined;
     let shown = req.file; // the result file as the later messages name it
-    const remembered = req.source === "pr-merged" ? null : this.d.mergedPr?.() ?? null;
-    const selfReq: CloseRequest | null = req.source === "pr-merged" ? (req.pr ? req : null) : remembered === null ? null : { ...req, pr: { n: remembered, label: "" } };
+    const remembered = this.d.mergedPr?.() ?? null;
+    const selfReq: CloseRequest | null = remembered === null ? null : { ...req, pr: { n: remembered, label: "" } };
     if (selfReq?.pr) {
       let fin: SelfFinish;
       try {
@@ -596,7 +577,7 @@ export class CloseFlow {
         // the lines still go to the parent
       }
       this.d.notify(fin.lines.join("\n"), spawn ? "info" : "warning");
-      if (spawn && req.source !== "pr-merged" && fin.keepResult) {
+      if (spawn && fin.keepResult) {
         try {
           shown = fin.keepResult(req.file);
         } catch (err) {
@@ -604,15 +585,7 @@ export class CloseFlow {
         }
       }
       const tail = spawn || fin.lines.length === 0 ? "" : ` (${fin.lines.join("; ")})`; // a refusal goes to the parent too
-      if (req.pr?.parent) {
-        const to = req.pr.parent;
-        try {
-          await this.d.reply(to, `PR #${req.pr.n} merged, closing${tail}`.replace(/[\r\n]+/g, " "));
-          await this.d.reply(to, `Result from ${req.pr.label}: ${shown}`);
-        } catch {
-          // best effort, as the ack
-        }
-      } else if (!req.pr && req.replyTo && tail) {
+      if (req.replyTo && tail) {
         // a close from the parent after the merge: the reason is its own reply, before the `foreman:closed` line (that line is parsed)
         try {
           await this.d.reply(req.replyTo, `PR #${selfReq.pr.n} merged, closing${tail}`.replace(/[\r\n]+/g, " "));
@@ -627,7 +600,7 @@ export class CloseFlow {
       } catch {
         // the ack is best effort; the close itself is done
       }
-    } else if (req.source === "remote-parent" || (req.source === "pr-merged" && process.env[REMOTE_PARENT_ENV] === "1")) {
+    } else if (req.source === "remote-parent") {
       try {
         await this.d.remoteReply?.("closed", report ? (report.ready ? "ready" : "open") : undefined);
       } catch (e) {
@@ -658,7 +631,7 @@ export class CloseFlow {
 
 /** Stub writer: create-only, and only while the path still resolves inside `.workflow/`. */
 export function writeStubFile(file: string, text: string, cwd: string, platform: string, handoffDir?: string): void {
-  // a `pr-merged` close writes its result in the handoff dir (the worktree is removed afterwards)
+  // a result file in the handoff dir is allowed (the worktree is removed afterwards)
   const inHandoff = !!handoffDir && path.dirname(path.resolve(file)) === path.resolve(handoffDir);
   const again = inHandoff ? null : resultPath(file, { cwd, sessionId: "", now: new Date(), platform });
   if (again && ("error" in again || again.path !== file)) throw new Error("the result path no longer resolves inside .workflow/");
@@ -691,7 +664,7 @@ export interface CloseSession {
   watchedPrs?: () => number[];
   /** One fresh pr_status per watched PR (merged or closed ones end their watch). */
   refreshWatched?: () => Promise<void>;
-  /** `pr-merged` close: verify, archive `.workflow/`, check the worktree; the lines and the detached cleanup (see SelfFinish). */
+  /** Self-finish of a close after a merge: verify, archive `.workflow/`, check the worktree; the lines and the detached cleanup (see SelfFinish). */
   selfFinish?: (ctx: ExtensionContext, req: CloseRequest) => Promise<SelfFinish>;
   /** The number of the watched PR this child session saw merged, else null (see CloseDeps.mergedPr). */
   mergedPr?: () => number | null;
@@ -744,7 +717,7 @@ export async function outboxSend(events: Bus, to: string, message: string, kind:
 export function registerClose(
   pi: ExtensionAPI,
   deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; activeRuns: (sessionId: string) => number; cancelWaits?: (sessionId: string) => string[]; platform: string },
-): { command: (args: string, ctx: ExtensionContext) => Promise<void>; start: (ctx: ExtensionContext, req: CloseRequest) => Promise<void>; closing: (sessionId: string) => boolean; onRunsDone: (sessionId: string) => void | Promise<void> } {
+): { command: (args: string, ctx: ExtensionContext) => Promise<void>; closing: (sessionId: string) => boolean } {
   const flows = new Map<string, { flow: CloseFlow; ctx: ExtensionContext }>();
   const flowFor = (s: CloseSession, ctx: ExtensionContext): CloseFlow => {
     const slot = flows.get(s.id);
@@ -872,11 +845,6 @@ export function registerClose(
   return {
     /** True while this session's close flow is active (a triggered run was claimed as the close turn). */
     closing: (sessionId) => flows.get(sessionId)?.flow.active === true,
-    /** A child run of the session ended: the flow tries a refused `pr-merged` close once more. */
-    onRunsDone: (sessionId) => {
-      const slot = flows.get(sessionId);
-      return slot ? slot.flow.onRunsDone(slot.ctx) : undefined;
-    },
     command: async (args, ctx) => {
       const s = await deps.session(ctx);
       if (s.isChild) {
@@ -889,11 +857,6 @@ export function registerClose(
       const file = resultPath(raw || undefined, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
       if ("error" in file) return flow.refuse(file.error, "herdr");
       await flow.request({ source: "herdr", file: file.path, shown: file.shown }, ctx);
-    },
-    /** The adapter's own close of a child session whose PR was merged (`pr-merged`). */
-    start: async (ctx: ExtensionContext, req: CloseRequest): Promise<void> => {
-      const s = await deps.session(ctx);
-      await flowFor(s, ctx).request(req, ctx);
     },
   };
 }

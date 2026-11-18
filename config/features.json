@@ -269,7 +269,7 @@
       "id": "ceremony-tiers",
       "area": "ceremony",
       "title": "Tiers and finish gates",
-      "purpose": "The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier.",
+      "purpose": "The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a work tree clean of project files: the harness's own `.workflow/` and scratch files do not count). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier.",
       "doc": "docs/ceremony.md#triage-and-delegation",
       "keys": ["ceremony.default", "ceremony.heavySignals", "ceremony.heavyFileCount", "ceremony.heavyThreshold", "ceremony.overrides", "ceremony.requireTriage", "ceremony.required", "ceremony.trivialBound", "ceremony.foremanEdits", "ceremony.scratchDir", "ceremony.reviewGate", "ceremony.reviewPerRevision", "ceremony.ledgerHelper", "ceremony.budgetUsd"],
       "commands": ["/ceremony", "/foreman plan"],
@@ -317,7 +317,7 @@
       "id": "foreman-bg",
       "area": "tools",
       "title": "Background shell runs",
-      "purpose": "The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool.",
+      "purpose": "The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job).",
       "doc": "docs/sessions.md#background-runs",
       "keys": [],
       "commands": [],
@@ -515,15 +515,13 @@
     {
       "id": "children-may-push",
       "area": "safety",
-      "toggle": {"on": {"safety.children.mayPush": true}, "off": {"safety.children.mayPush": false}, "relaxes": true},
       "title": "Children may push",
-      "purpose": "Lets subagent children push; by default they may commit but never push, and they never open PRs.",
+      "purpose": "The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs.",
       "doc": "docs/safety.md#what-the-gate-floors-cover",
       "keys": ["safety.children"],
       "commands": [],
-      "switch": {"key": "safety.children.mayPush", "on": "true"},
-      "state": "off",
-      "enable": "{\"safety\": {\"children\": {\"mayPush\": true}}}"
+      "state": "on",
+      "enable": ""
     },
     {
       "id": "review-required",

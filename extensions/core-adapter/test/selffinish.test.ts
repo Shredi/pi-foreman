@@ -5,7 +5,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CloseFlow, prMergedPrompt } from "../close.ts";
+import { CloseFlow } from "../close.ts";
 import type { CloseDeps, SelfFinish } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
 import { storeFromPoll } from "./_storefake.ts";
@@ -14,6 +14,8 @@ import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { selfFinish, spawnDetached, verifyMerged } from "../selffinish.ts";
 import type { SelfFinishDeps } from "../selffinish.ts";
+import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
+import { BARE_ORIGIN_OFF, gitTemplate } from "./_git-template.ts";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -42,50 +44,44 @@ function flowRig(fin: SelfFinish | (() => Promise<SelfFinish>)) {
     report: async () => (log.push("report"), null),
     selfFinish: async () => (log.push("selfFinish"), typeof fin === "function" ? fin() : fin),
     appendResult: (f, t) => void files.set(f, (files.get(f) ?? "") + t),
+    mergedPr: () => 7, // the merge the session remembers (the watch's merged event)
   };
   const ctx = { isIdle: () => true, shutdown: () => void log.push("shutdown") };
   return { log, files, flow: new CloseFlow(deps), ctx };
 }
 
 const FILE = "/h/20261102-120000-demo/result.md";
-const merged = { source: "pr-merged" as const, file: FILE, shown: FILE, prompt: prMergedPrompt(FILE, 7), pr: { n: 7, parent: "parent-1", label: "demo" } };
+const closeReq = { source: "intercom-parent" as const, file: FILE, shown: FILE, replyTo: "parent-1" };
 
 async function drive(r: ReturnType<typeof flowRig>) {
-  r.flow.request(merged, r.ctx);
-  r.flow.onInput(prMergedPrompt(FILE, 7), "extension");
+  r.flow.request(closeReq, r.ctx);
+  r.flow.onInput(r.flow.closeText(), "extension");
   r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
 }
 
-test("pr-merged: the close prompt asks for the PR number, the merge commit and what is left open", () => {
-  const p = prMergedPrompt(FILE, 7);
-  assert.match(p, /PR #7 was merged/);
-  assert.ok(p.includes(FILE));
-  assert.match(p, /merge commit/);
-  assert.match(p, /left open/);
-});
-
-test("pr-merged: result.md, the parent report (merged, closing + Result from), then the cleanup spawn, then shutdown", async () => {
+test("merged then a parent close: result.md, the cleanup lines, the closed ack to the parent, then the cleanup spawn, then shutdown", async () => {
   const r = flowRig({ lines: ["cleanup: ok"], spawn: () => void r.log.push("spawn") });
   r.files.set(FILE, "written by the model");
   await drive(r);
   const seq = r.log.filter((l) => /^(prompt|sync|report|markClosed|selfFinish|reply|spawn|shutdown)/.test(l));
-  assert.deepEqual(seq, [`prompt:${prMergedPrompt(FILE, 7)}`, "sync", "report", "markClosed", "selfFinish", "reply:parent-1:PR #7 merged, closing", `reply:parent-1:Result from demo: ${FILE}`, "spawn", "shutdown"]);
+  assert.deepEqual(seq, [`prompt:pi-foreman close: write your result file now at ${FILE} (summary, commits, open items). Do not start new work.`, "sync", "report", "markClosed", "selfFinish", `reply:parent-1:foreman:closed ${FILE}`, "spawn", "shutdown"]);
   assert.match(r.files.get(FILE)!, /## Merge cleanup\n\ncleanup: ok/);
   assert.ok(r.log.includes("trace:cleanup"));
 });
 
-test("pr-merged: a refused precondition lands in result.md and the parent report; no spawn", async () => {
+test("merged then a parent close: a refused precondition lands in result.md and in the reply before foreman:closed; no spawn", async () => {
   const r = flowRig({ lines: ["cleanup: not started (worktree_dirty); the worktree and branch feat stay"] });
   r.files.set(FILE, "x");
   await drive(r);
-  assert.ok(r.log.some((l) => l === "reply:parent-1:PR #7 merged, closing (cleanup: not started (worktree_dirty); the worktree and branch feat stay)"));
+  const reasonAt = r.log.indexOf("reply:parent-1:PR #7 merged, closing (cleanup: not started (worktree_dirty); the worktree and branch feat stay)");
+  assert.ok(reasonAt >= 0 && reasonAt < r.log.indexOf(`reply:parent-1:foreman:closed ${FILE}`), r.log.join("|"));
   assert.match(r.files.get(FILE)!, /worktree_dirty/);
   assert.ok(r.log.includes("trace:no-cleanup") && !r.log.includes("spawn"));
   assert.equal(r.log.at(-1), "shutdown");
 });
 
-test("pr-merged: a self-finish that throws is a refusal line, not a failed close", async () => {
+test("merged then a parent close: a self-finish that throws is a refusal line, not a failed close", async () => {
   const r = flowRig(async () => { throw new Error("python missing"); });
   r.files.set(FILE, "x");
   await drive(r);
@@ -190,37 +186,50 @@ const run = (cmd: string, args: string[], cwd: string): string => execFileSync(c
 const git = (cwd: string, ...args: string[]): string => run("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", ...args], cwd);
 const py = (args: string[]): Promise<{ code: number; out: string }> => new Promise((resolve) => execFile(PY, ["-E", "-s", SCRIPT, ...args], { encoding: "utf8", env: { ...cleanEnv(), GIT_CONFIG_GLOBAL: EMPTY_GITCONFIG } }, (err, stdout) => resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, out: String(stdout) })));
 
-function world() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-selffinish-")));
-  const state = path.join(root, "agent", "pi-foreman", "state");
-  fs.mkdirSync(state, { recursive: true });
+// the git part of every world is the same: built once per file (the template) and copied into each world. The build passes the housekeeping
+// settings on each git call, since cleanEnv drops the preload's GIT_CONFIG_* (a detached `git maintenance run --auto` would race the copy).
+const HOUSEKEEPING = GIT_HOUSEKEEPING_OFF.flatMap(([k, v]) => ["-c", `${k}=${v}`]);
+const tpl = gitTemplate(() => os.tmpdir(), (root) => {
   const origin = path.join(root, "origin.git");
-  run("git", ["init", "-q", "--bare", "-b", "main", origin], root);
+  run("git", [...HOUSEKEEPING, "init", "-q", "--bare", "-b", "main", origin], root);
+  for (const [k, v] of BARE_ORIGIN_OFF) run("git", ["--git-dir", origin, "config", k, v], root);
   const repo = path.join(root, "repo");
-  run("git", ["clone", "-q", origin, repo], root);
-  git(repo, "checkout", "-q", "-b", "main");
+  run("git", [...HOUSEKEEPING, "clone", "-q", origin, repo], root);
+  const g = (cwd: string, ...args: string[]): string => git(cwd, ...HOUSEKEEPING, ...args);
+  g(repo, "checkout", "-q", "-b", "main");
   fs.writeFileSync(path.join(repo, "README"), "x\n");
   fs.writeFileSync(path.join(repo, ".gitignore"), ".workflow/\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-q", "-m", "init");
-  git(repo, "push", "-q", "-u", "origin", "main");
+  g(repo, "add", ".");
+  g(repo, "commit", "-q", "-m", "init");
+  g(repo, "push", "-q", "-u", "origin", "main");
   const wt = path.join(root, "repo.worktrees", "feat");
-  git(repo, "worktree", "add", "-q", "-b", "feat", wt);
+  g(repo, "worktree", "add", "-q", "-b", "feat", wt);
   fs.writeFileSync(path.join(wt, "f.txt"), "feature\n");
-  git(wt, "add", "f.txt");
-  git(wt, "commit", "-q", "-m", "feature");
-  const tip = git(wt, "rev-parse", "HEAD");
+  g(wt, "add", "f.txt");
+  g(wt, "commit", "-q", "-m", "feature");
+  const tip = g(wt, "rev-parse", "HEAD");
   // squash merge: main gets the content as a new commit; the branch tip is not an ancestor of main
-  git(repo, "merge", "--squash", "feat");
-  git(repo, "commit", "-q", "-m", "feature (squash)");
-  git(repo, "push", "-q", "origin", "main");
+  g(repo, "merge", "--squash", "feat");
+  g(repo, "commit", "-q", "-m", "feature (squash)");
+  g(repo, "push", "-q", "origin", "main");
   fs.mkdirSync(path.join(wt, ".workflow", "scratch"), { recursive: true });
   fs.writeFileSync(path.join(wt, ".workflow", "LEDGER-x.md"), "# ledger\n- [x] 1. done\n");
   fs.writeFileSync(path.join(wt, ".workflow", "scratch", "plan.md"), "plan\n");
+  return tip;
+});
+
+/** A world: the template's copy at its own root, with a state dir and a handoff dir next to it. */
+function world() {
+  const c = tpl.copy();
+  const root = c.root;
+  const state = path.join(root, "agent", "pi-foreman", "state");
+  fs.mkdirSync(state, { recursive: true });
+  const repo = path.join(root, "repo");
+  const wt = path.join(root, "repo.worktrees", "feat");
   const handoff = path.join(root, "handoffs", "20261102-120000-demo");
   fs.mkdirSync(handoff, { recursive: true });
   const base = ["selfclean", "--ws", wt, "--branch", "feat", "--state", state, "--session", "child-1"];
-  return { root, state, repo, wt, tip, handoff, base, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, state, repo, wt, tip: c.built, handoff, base, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 test("selfclean: a squash-merged branch is refused without the verified-merged fact and ok with it (while the tip still matches)", async () => {

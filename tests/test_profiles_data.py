@@ -18,9 +18,9 @@ import foreman_docs as fd  # noqa: E402
 
 AREAS = {"install", "models", "review", "ceremony", "safety", "tools", "sessions", "ui", "retro", "ops"}
 TOGGLEABLE = {"codemode", "reviewer-climb", "plan-review", "orientation", "git-tools", "pr-ops", "review-required",
-              "children-may-push", "workflow-scripts", "remote-intercom", "idle-cache", "idle-downshift", "herdr",
+              "workflow-scripts", "remote-intercom", "idle-cache", "idle-downshift", "herdr",
               "footer-ui", "retro", "trace"}
-RELAXATIONS = {"children-may-push", "workflow-scripts", "remote-intercom", "git-tools"}
+RELAXATIONS = {"workflow-scripts", "remote-intercom", "git-tools"}
 SAFETY_FLOOR = ["safety.permissions", "safety.git", "safety.ops", "safety.requiredChildExtensions",
                 "safety.preconditionOps", "ceremony.foremanEdits", "ceremony.required", "ceremony.reviewBeforePr",
                 "ceremony.reviewGate", "ceremony.requireTriage", "bridge", "python", "presence.command",

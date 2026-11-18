@@ -7,7 +7,7 @@
 // The rung-up path already carries the same lines in its handoff (ladder.ts handoffBlock), so an
 // entry that gets a handoff is skipped. Foreman side, in memory.
 import { ledgerLines } from "./ladder.ts";
-import { occasionOf } from "./occasion.ts";
+import { occasionOf, type Occasion } from "./occasion.ts";
 
 const CITES = /\bitems?\s+(?:\d+|V)\b|#\d+\b/i;
 
@@ -66,7 +66,7 @@ export function reReviewLine(sha: string | null): string {
  * chain, parallel); a resume and the entries in `skip` (rung-up handoff) get none. A reviewer step gets the re-review line first when
  * `reReview` is set (an open FAIL), except a `[plan-review]`, `[pre-pr]` or `[second-opinion]` task. Returns trace records.
  */
-export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null } | null = null, pick?: (task: string) => { text: string | null; path: string | null; notice?: string }): Record<string, unknown>[] {
+export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null } | null = null, pick?: (task: string) => { text: string | null; path: string | null; notice?: string }, occasions?: ReadonlyMap<unknown, Occasion>): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   if (typeof input.action === "string") return out;
   const visit = (e: unknown): void => {
@@ -81,7 +81,7 @@ export function applyLedgerItems(input: Record<string, unknown>, ledger: string 
       if (block && pk?.notice) block = block.replace(/\n/, `\n${pk.notice}\n`);
       // the critic questions go into every reviewer task (a rung-up handoff entry included), after the ledger block
       const cb = role === "builder" ? "" : criticBlock(critic);
-      const re = role === "reviewer" && reReview && occasionOf(e.task) === "item" ? reReviewLine(reReview.sha) : "";
+      const re = role === "reviewer" && reReview && (occasions?.get(e) ?? occasionOf(e.task)) === "item" ? reReviewLine(reReview.sha) : "";
       const prot = role === "builder" && !skip.has(e) ? protectedLine(e.task) : "";
       if (block || cb || re || prot) e.task = re + block + prot + cb + e.task;
       if (block) out.push({ event: "ledger_block", role, chars: block.length });

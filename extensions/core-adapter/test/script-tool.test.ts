@@ -10,6 +10,7 @@ import { sha256 } from "../checkpoint.ts";
 import { shortHash } from "../scriptapproval.ts";
 import { applyVariants } from "../ledgercall.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Result = { details?: Record<string, unknown>; content: { text: string }[]; isError?: boolean };
@@ -85,7 +86,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
     getThinkingLevel: () => "high",
     sendMessage: (m: unknown, opts: unknown) => void sent.push({ message: m as Record<string, unknown>, opts: opts as Record<string, unknown> }),
   };
-  coreAdapter(pi as never, o.platform ? { platform: o.platform } : {});
+  coreAdapter(pi as never, { ...(o.platform ? { platform: o.platform } : {}), spawner: probeSpawner() });
   if (o.child === "runtime") process.env.PI_SUBAGENT_CHILD = "1";
   const seen = { titles: [] as string[], choices: [] as string[][], notices: [] as string[], inputs: 0, blockedAtSelect: [] as boolean[] };
   const ctx = {

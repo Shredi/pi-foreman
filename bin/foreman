@@ -63,7 +63,7 @@ case "$sub" in
     update-check) script="$here/../scripts/foreman_update_check.py"; nudge=1 ;;
     retro) script="$here/../scripts/foreman_retro.py" ;;
     sync) script="$here/../scripts/foreman_sync.py" ;;
-    session) script="$here/../scripts/foreman_session.py" ;;
+    session) script="$here/../scripts/foreman_session.py"; export PI_FOREMAN_START_CHECK_SECONDS="${PI_FOREMAN_START_CHECK_SECONDS:-3}" ;;
     radar) script="$here/../scripts/foreman_radar.py" ;;
     config) script="$here/../scripts/foreman_config.py" ;;
     bench) script="$here/../scripts/foreman_bench.py" ;;

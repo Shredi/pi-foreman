@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { dialogFields, dialogsJson } from "../dialogs.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
@@ -55,7 +56,7 @@ test("foreman_dialogs tool text equals the /foreman dialogs --json text on a 3-d
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
   const notes: string[] = [];
   const ctx = {
     sessionManager: { getSessionId: () => "r14-dlg", getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },

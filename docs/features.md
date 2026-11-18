@@ -61,11 +61,11 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
 | [bench-climb](#bench-climb) | ops |  | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
-| [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a work tree clean of project files: the harness's own `.workflow/` and scratch files do not count). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [read-budgets](#read-budgets) | ceremony |  | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [launch-wait](#launch-wait) | ceremony |  | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | sessions |  | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
-| [foreman-bg](#foreman-bg) | tools |  | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
+| [foreman-bg](#foreman-bg) | tools |  | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job). | on by default | [sessions](sessions.md#background-runs) |
 | [foreman-show](#foreman-show) | tools |  | on | The foreman-only `foreman_show` tool publishes a markdown or HTML note as a page (text, tables, code fences, mermaid diagrams) that the Herdr plan panel lists and opens in the browser; each call adds a page. | on by default | [herdr](herdr.md#notes) |
 | [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the pi-background-tasks add-on (installed by default by `foreman setup`, skip with `--skip-addon background-tasks`; setup writes `PI_BG_FEATURES=process` into the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
@@ -81,7 +81,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [pr-sources](#pr-sources) | tools |  | opt-in | Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only. | `{"tools": {"prSources": {"ci": {"command": "ci-status --repo {repo} --pr {number} --sha {head}"}}}}` | [tools](tools.md#sources) |
 | [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
-| [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#what-the-gate-floors-cover) |
+| [children-may-push](#children-may-push) | safety |  | on | The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs. | on by default | [safety](safety.md#what-the-gate-floors-cover) |
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | safety | toggle, relaxes safety | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -123,7 +123,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 |---|---|---|---|
 | `orchestration` | The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace. | shipped states | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` |
 | `standard` | Every toggleable feature in its shipped state; the package defaults. | shipped states | none |
-| `full` | Every toggleable feature on, safety relaxations included (git tools, children may push, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `children-may-push`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
+| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
 
 Toggleable features (`on` and `off` write these leaves into the user config; `*` = every provider present):
 
@@ -136,7 +136,6 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 | [orientation](#orientation) | ceremony | `ceremony.orientation.enabled` = `true` | `ceremony.orientation.enabled` = `false` | on | no |
 | [git-tools](#git-tools) | tools | `tools.git` = `true` | `tools.git` = `false` | off | yes |
 | [pr-ops](#pr-ops) | tools | `tools.pr` = `true` | `tools.pr` = `false` | on | no |
-| [children-may-push](#children-may-push) | safety | `safety.children.mayPush` = `true` | `safety.children.mayPush` = `false` | off | yes |
 | [review-required](#review-required) | review | `safety.review.required` = `true` | `safety.review.required` = `false` | off | no |
 | [workflow-scripts](#workflow-scripts) | safety | `safety.subagents.allowWorkflow` = `true` | `safety.subagents.allowWorkflow` = `false` | off | yes |
 | [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
@@ -391,7 +390,7 @@ No config key.
 
 ### ceremony-tiers
 
-**Tiers and finish gates.** The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier.
+**Tiers and finish gates.** The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a work tree clean of project files: the harness's own `.workflow/` and scratch files do not count). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -455,7 +454,7 @@ No config key.
 
 ### foreman-bg
 
-**Background shell runs.** The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool.
+**Background shell runs.** The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job).
 
 No config key.
 
@@ -605,13 +604,11 @@ Switch: `sidebar.statusCommand` is non-empty.
 
 ### children-may-push
 
-**Children may push.** Lets subagent children push; by default they may commit but never push, and they never open PRs.
-
-Switch: `safety.children.mayPush` is true.
+**Children may push.** The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs.
 
 | Key | Default | Layer |
 |---|---|---|
-| `safety.children.mayPush` | `false` | tighten-only (only false is accepted) |
+| `safety.children.mayPush` | `false` | any layer (no longer used) |
 
 ### review-required
 

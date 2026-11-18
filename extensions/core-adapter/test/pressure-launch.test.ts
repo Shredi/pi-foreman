@@ -6,6 +6,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import { pressurePath } from "../pressure.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -94,7 +95,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
   const clock = { now: NOW };
   const sessionId = `press-session-${++rigs}`; // the child-extension registry is process-wide: one id per rig
   const sampler: string[][] = [];
-  coreAdapter(pi as never, { pressureNow: () => clock.now, pressureRun: async (args) => (sampler.push(args), { ok: true, text: "" }) });
+  coreAdapter(pi as never, { pressureNow: () => clock.now, pressureRun: async (args) => (sampler.push(args), { ok: true, text: "" }), spawner: probeSpawner() });
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined },
     cwd: project,
