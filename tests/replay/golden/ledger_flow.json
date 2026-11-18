@@ -88,12 +88,6 @@
    "decision": "allowed"
   },
   {
-   "event": "guard",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "none"
-  },
-  {
    "event": "ledger_call"
   },
   {
@@ -232,12 +226,6 @@
    "toolFamily": "bash",
    "guard": "gate",
    "decision": "allowed"
-  },
-  {
-   "event": "guard",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "none"
   },
   {
    "event": "tool_error"

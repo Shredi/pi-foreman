@@ -156,9 +156,8 @@ class TestWriteGate(ReplayCase):
 
 
 class TestDestructiveGuard(ReplayCase):
-    """Destructive guard deny on `bash`, and on the same call made from inside `codemode`.
-    `shred --version` is denied by the guard on its name alone; if it ever ran it would only
-    print a version string."""
+    """A floor deny (`rm -rf /`, `floor-rm-system`) on `bash`, and on the same call made from inside `codemode`.
+    Pi no longer runs the vendored destructive guard; the gate's floors refuse the call."""
 
     def test_bash_and_codemode_denied(self):
         rig = self.rig("destructive", load_fixture("destructive"))
@@ -169,10 +168,10 @@ class TestDestructiveGuard(ReplayCase):
         # then a heredoc that only mentions `.pi` in prose: the gate walks a heredoc body as data (item 23: the old
         # overlay scanned bodies and stopped it), so the read-only `cat` runs
         self.assertEqual([(n, e) for n, e, _ in res], [("bash", True), ("bash", True), ("codemode", True), ("bash", False)])
-        self.assertTrue(res[0][2].startswith("DESTRUCTIVE GUARD:"), res[0][2])
-        self.assertTrue(res[1][2].startswith("DESTRUCTIVE GUARD:"), res[1][2])
+        self.assertTrue(res[0][2].startswith("pi-foreman: denied by the permission floor (rm-system)"), res[0][2])
+        self.assertTrue(res[1][2].startswith("pi-foreman: denied by the permission floor (rm-system)"), res[1][2])
         self.assertIn("Script failed", res[2][2])
-        self.assertIn("DESTRUCTIVE GUARD:", res[2][2])
+        self.assertIn("denied by the permission floor (rm-system)", res[2][2])
         self.assertIn("the .pi dir and $x are prose", res[3][2])
         pi.close()
         self.golden("destructive", {"session": shape(rig.traces()["trace-" + sid])})
@@ -185,24 +184,26 @@ class TestAskHandling(ReplayCase):
 
     def test_ask_rpc_approve_deny_and_no_ui(self):
         rig = self.rig("ask", load_fixture("ask"))
+        # the ask comes from a user `ask` rule: Pi no longer runs the vendored destructive guard, so `find -delete` is no ask of its own
+        self.user_permissions(rig, {"mode": "ask", "ask": ["Bash(find *)"]})
         pi = rig.start()
         sid = pi.session_id()
-        recs = pi.prompt("[[replay:d1]] approve", answers=[{"confirmed": True}], timeout=60)
-        asks = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "confirm"]
+        recs = pi.prompt("[[replay:d1]] approve", answers=[{"value": "allow once"}], timeout=60)
+        asks = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select"]
         self.assertEqual(len(asks), 1)
-        self.assertIn("find", asks[0].get("message", ""))
+        self.assertIn("find", asks[0].get("title", "") + asks[0].get("message", ""))
         [(_, err, _)] = tool_results(recs, "bash")
         self.assertFalse(err)
-        recs = pi.prompt("[[replay:d1]] deny", answers=[{"confirmed": False}], timeout=60)
+        recs = pi.prompt("[[replay:d1]] deny", answers=[{"value": "deny and stop"}], timeout=60)
         [(_, err, text)] = tool_results(recs, "bash")
         self.assertTrue(err)
-        self.assertTrue(text.startswith("Denied by the user."), text)
+        self.assertIn("denied by the user", text)
         pi.close()
 
         code, recs, _ = rig.run_print("[[replay:d1]] json", mode="json")
         [(_, err, text)] = tool_results(recs, "bash")
         self.assertTrue(err)
-        self.assertIn("needs approval, no UI (mode: json)", text)
+        self.assertIn("nobody is at this session", text)
         code, out, err = rig.run_print("[[replay:d1]] print", mode="text")
         self.assertEqual(code, 0)
         self.assertIn("Asked.", out)  # print mode: the blocked call shows only in the trace below
@@ -211,7 +212,7 @@ class TestAskHandling(ReplayCase):
         rpc = shape(t.pop("trace-" + sid))
         others = sorted((shape(v) for v in t.values()), key=json.dumps)
         no_ui = [r for v in others for r in v if r.get("event") == "ask"]
-        self.assertEqual(no_ui, [{"event": "ask", "guard": "destructive_guard", "toolFamily": "Bash", "decision": "no-ui"}] * 2)
+        self.assertEqual(len(no_ui), 0, no_ui)  # the gate decides without a legacy ask record
         self.golden("ask", {"rpc": rpc, "printAndJson": others})
 
 

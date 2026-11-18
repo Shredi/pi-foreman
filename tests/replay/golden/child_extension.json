@@ -24,11 +24,12 @@
    "decision": "allowed"
   },
   {
-   "event": "guard",
-   "role": "explorer",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "deny"
+   "event": "bash_timeout",
+   "role": "explorer"
+  },
+  {
+   "event": "tool_error",
+   "role": "explorer"
   },
   {
    "event": "llm",

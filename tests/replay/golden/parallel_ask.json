@@ -189,13 +189,6 @@
     "decision": "allowed"
    },
    {
-    "event": "guard",
-    "role": "builder",
-    "toolFamily": "Bash",
-    "guard": "destructive_guard",
-    "decision": "none"
-   },
-   {
     "event": "bash_timeout",
     "role": "builder"
    },
