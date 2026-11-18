@@ -267,3 +267,25 @@ test("a session chip (no line option) keeps the pill look: border, fill, fixed h
   assert.equal(p.w_full, undefined);
   assert.deepEqual(texts(chip.props.trigger), ["⎇ #7"]);
 });
+
+test("lines with and without a conflict or an unreviewed head share one structure up to the title; the unreviewed token follows the title", () => {
+  const spec = [["alpha", 1, "ok"], ["alpha", 2, "conflict"], ["alpha", 3, "ok"]];
+  const root = mod(docOf(spec, [3])).render({});
+  const kidsOf = (n) => cardOf(root, n).props.trigger.kids;
+  for (const n of [1, 2, 3]) {
+    const [num, marks, title] = kidsOf(n);
+    assert.equal(num.props.w, 52, `#${n} number cell`);
+    assert.equal(marks.props.w, 30, `#${n} marks cell has a fixed width`);
+    assert.equal(marks.props.flex_none, true);
+    assert.equal(marks.kids.length, 2, `#${n}: conflict slot and dot`);
+    assert.equal(marks.kids[0].props.size, 11, `#${n}: the slot has the mark's width`);
+    assert.deepEqual(texts(title), [`Change ${n}`], `#${n}: the title is the third element`);
+  }
+  assert.deepEqual(texts(kidsOf(2)[1]), ["!"]);
+  assert.equal(kidsOf(1).length, 3);
+  assert.equal(kidsOf(2).length, 3);
+  const last = kidsOf(3).at(-1);
+  assert.equal(kidsOf(3).length, 4);
+  assert.deepEqual(texts(last), ["unreviewed head"]);
+  assert.equal(last.props.flex_none, true);
+});

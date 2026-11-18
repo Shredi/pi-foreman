@@ -461,10 +461,17 @@ export default class ForemanAgents extends View {
       : h_flex().flex_none().h(18).px(6).gap(4).items_center().rounded(9).border(1).border_color(red ? t.blocked : t.border).bg(t.raised).text_size(10.5).font_medium())
       .text_color(red ? t.blocked : t.muted)
       .child(line ? div().flex_none().w(52).child(label) : div().child(label))
-      .when(st.conflict, (el) => el.child(conflictMark(t)))
-      .when(pr.unreviewed === true, (el) => el.child(div().text_color(tones(t).amber).child(UNREVIEWED)))
-      .child(prDot(t, st))
-      .when(Boolean(line?.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)));
+      // A line keeps the titles at one x: the marks cell has a fixed width (the conflict slot stays as blank space without a conflict), and
+      // the unreviewed token goes behind the title.
+      .when(Boolean(line), (el) => el.child(h_flex().flex_none().w(30).gap(2).items_center()
+        .child(st.conflict ? conflictMark(t) : div().flex_none().size(11))
+        .child(prDot(t, st))))
+      .when(!line, (el) => el
+        .when(st.conflict, (e) => e.child(conflictMark(t)))
+        .when(pr.unreviewed === true, (e) => e.child(div().text_color(tones(t).amber).child(UNREVIEWED)))
+        .child(prDot(t, st)))
+      .when(Boolean(line?.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
+      .when(Boolean(line) && pr.unreviewed === true, (el) => el.child(div().flex_none().text_color(tones(t).amber).child(UNREVIEWED)));
     const c = { ...prCard(pr), more: more.length ? `also ${more.map((p) => `#${p.number}`).join(", ")}` : "" };
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
