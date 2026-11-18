@@ -8,7 +8,8 @@
     "pi-package"
   ],
   "engines": {
-    "node": ">=22.19"
+    "node": ">=22.19",
+    "npm": "<11.9.0 || >=11.13.0"
   },
   "pi": {
     "extensions": [

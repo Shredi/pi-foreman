@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseShell } from "../permoverlay.ts";
+import { parseShell } from "../psunits.ts";
 import { GRAMMAR, grammarStatements, resolveVars } from "../shellvars.ts";
 
 const fixture = JSON.parse(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "tests", "fixtures", "shellvars-grammar.json"), "utf8"));

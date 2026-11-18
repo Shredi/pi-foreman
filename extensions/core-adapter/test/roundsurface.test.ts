@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { effectCtx } from "../effects.ts";
 import { applyLedgerItems, reviewLedgerBlock } from "../ledgerblock.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
+import { readBaseline } from "../baseline.ts";
 import { isolationDir, roundRoots, roundWorktreeAdd, roundWorktrees } from "../roundsurface.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 
@@ -93,64 +93,19 @@ test("7c lines: a child in the round worktree reads the bound ledger by path and
   assert.equal(allow(`mkdir -p ${rt}/.workflow/scratch/t && cp ${ledger} ${rt}/.workflow/scratch/t/l.md`), "own-handoff");
 });
 
-test("overlay: the round worktrees and isolation worktrees of the session are every child's own root; siblings stay closed", { skip: !posix }, () => {
-  const agent = path.join(base, "agent");
-  const r = buildOverlayRules(baseline, {}, {}, agent, pkgRoot, undefined, false);
-  const sibling = path.join(base, "repo.worktrees", "other", "f.txt");
-  fs.mkdirSync(path.dirname(sibling), { recursive: true });
-  fs.writeFileSync(sibling, "x");
-  const call = (cwd: string, tool: string, p: string, roots?: string[]): string => checkToolCall(r, tool, { path: p }, { cwd, home: base, platform: process.platform, role: "child", ...(roots ? { roundRoots: roots } : {}) })?.kind ?? "pass";
-  // a child's roots: the round worktree it sits in, or its own isolation worktree (never the isolation dir as a whole)
+test("roundRoots: the round worktree a child sits in, or its own isolation worktree, is its root", { skip: !posix }, () => {
   const top = (d: string): string | null => (d.startsWith(iso) ? iso : null);
-  const roots = roundRoots([rt], rt, process.platform, top);
-  const isoRoots = roundRoots([rt], iso, process.platform, top);
-  assert.deepEqual(roots, [rt]);
-  assert.deepEqual(isoRoots, [iso]);
-  // (a) the isolation child reads its own files; the round worktree is a root only for a child sitting in it
-  assert.equal(call(iso, "read", path.join(rt, ".workflow", "scratch", "p.md")), "deny");
-  assert.equal(call(iso, "read", path.join(rt, ".workflow", "scratch", "p.md"), isoRoots), "deny");
-  assert.equal(call(iso, "read", path.join(iso, "src", "a.ts"), isoRoots), "pass");
-  assert.equal(call(rt, "read", path.join(rt, ".workflow", "scratch", "p.md"), roots), "pass");
-  // (b) the round-worktree child cannot reach the isolation worktrees under <round>
-  assert.equal(call(rt, "read", path.join(iso, "src", "a.ts"), roots), "deny");
-  assert.equal(call(rt, "ls", path.join(iso, "src"), roots), "deny");
-  assert.equal(call(iso, "read", sibling, isoRoots), "deny");
-  assert.equal(call(iso, "write", sibling, isoRoots), "deny");
-  assert.equal(checkToolCall(r, "bash", { command: `cat ${rt}/.workflow/scratch/p.md` }, { cwd: rt, home: base, platform: process.platform, role: "child", roundRoots: roots }), null);
+  assert.deepEqual(roundRoots([rt], rt, process.platform, top), [rt]);
+  assert.deepEqual(roundRoots([rt], iso, process.platform, top), [iso]);
 });
 
-test("7c security: a child's sibling isolation worktree stays denied (path write, path read, bash redirect)", { skip: !posix }, () => {
-  const r = buildOverlayRules(baseline, {}, {}, path.join(base, "agent"), pkgRoot, undefined, false);
-  const sib = path.join(base, "repo.worktrees", "worktrees", "round", "pi-worktree-2", "src", "a.ts");
-  fs.mkdirSync(path.dirname(sib), { recursive: true });
-  fs.writeFileSync(sib, "sibling\n");
-  const top = (d: string): string | null => (d.startsWith(iso) ? iso : null);
-  const roots = roundRoots([rt], iso, process.platform, top);
-  const check = (tool: string, input: Record<string, unknown>, rs: string[] | undefined): string => checkToolCall(r, tool, input, { cwd: iso, home: base, platform: process.platform, role: "child", ...(rs ? { roundRoots: rs } : {}) })?.kind ?? "pass";
-  assert.equal(check("write", { path: sib }, roots), "deny");
-  assert.equal(check("read", { path: sib }, roots), "deny");
-  assert.equal(check("bash", { command: `echo x > ${sib}` }, roots), "deny");
-  assert.equal(check("bash", { command: `echo x > ${sib}` }, undefined), "deny");
-});
-
-test("7c security: a child's own isolation worktree is its root; the isolation dir and the round worktree are not", { skip: !posix }, () => {
+test("7c security: roundRoots of a child's own isolation worktree; the isolation dir and an outside dir give none", { skip: !posix }, () => {
   const top = (d: string): string | null => (d.startsWith(iso) ? iso : null);
   const isoDir = path.dirname(iso);
   assert.deepEqual(roundRoots([rt], iso, process.platform, top), [iso]);
   assert.deepEqual(roundRoots([rt], isoDir, process.platform, top), []);
   assert.deepEqual(roundRoots([rt], rt, process.platform, top), [rt]);
   assert.deepEqual(roundRoots([rt], path.join(base, "elsewhere"), process.platform, top), []);
-  const r = buildOverlayRules(baseline, {}, {}, path.join(base, "agent"), pkgRoot, undefined, false);
-  const check = (tool: string, input: Record<string, unknown>): string => checkToolCall(r, tool, input, { cwd: iso, home: base, platform: process.platform, role: "child", roundRoots: roundRoots([rt], iso, process.platform, top) })?.kind ?? "pass";
-  assert.equal(check("write", { path: path.join(iso, "src", "a.ts") }), "pass");
-  assert.equal(check("read", { path: path.join(iso, "src", "a.ts") }), "pass");
-});
-
-test("7c security: a child in the round worktree cannot write into an isolation worktree under its round", { skip: !posix }, () => {
-  const r = buildOverlayRules(baseline, {}, {}, path.join(base, "agent"), pkgRoot, undefined, false);
-  const top = (d: string): string | null => (d.startsWith(iso) ? iso : null);
-  const check = (): string => checkToolCall(r, "bash", { command: `echo x > ${path.join(iso, "src", "a.ts")}` }, { cwd: rt, home: base, platform: process.platform, role: "child", roundRoots: roundRoots([rt], rt, process.platform, top) })?.kind ?? "pass";
-  assert.equal(check(), "deny");
 });
 
 test("ledger block: a review task names the ledger file's absolute path", () => {

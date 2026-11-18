@@ -124,3 +124,8 @@ test("describeCall: one sentence per name, variable parts quoted, control charac
   assert.doesNotMatch(d("danger-process", 'kill "a"b'), /""/);
   assert.match(d("danger-unknown", "ls"), /Run a "unknown" call/);
 });
+
+test("describeCall: danger-readonly-run names the program", () => {
+  const s = describeCall({ name: "danger-readonly-run", tool: "bash", segments: parseShell("git grep foo") });
+  assert.match(s, /Run "git" in a read-only role/);
+});

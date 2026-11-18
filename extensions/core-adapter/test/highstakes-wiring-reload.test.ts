@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { get, loadMergedConfig } from "../config.ts";
 import { retiredHighStakesLines } from "../doctorcache.ts";
 import { defaultSpawner } from "../spawn.ts";
-import { build, commitIn, git, hsRun, launch, end, persisted, pr, settle, setup, tick, worktree } from "./_hsrig.ts";
+import { build, commitIn, git, hsRun, launch, end, persisted, pr, prNote, settle, setup, tick, worktree } from "./_hsrig.ts";
 
 const TAGGED = { size: { files: ["src/b/x.ts"] }, risk: ["design"] };
 
@@ -54,8 +54,9 @@ test("a [high-stakes] FAIL of a sibling worktree is restored after a reload with
   assert.equal(e2, e, "shutdown wrote no newer entry");
   e.highStakes = [{ cwd: w.project, fired: { reasons: ["lines", "design"], files: 1, lines: 100, modules: 1 }, runs: [], runIds: [], seenHead: seed }];
   const c = await w.adapter("reload");
-  const refusal = await pr(c);
-  assert.match(refusal, /\[pr_refused:high_stakes_required\]/);
+  assert.equal(await pr(c), "", "a due review refuses nothing");
+  const refusal = await prNote(c);
+  assert.match(refusal, /a \[high-stakes\] review is due/);
   assert.match(refusal, /risk tag design/);
   assert.doesNotMatch(refusal, /lines/);
   const s = await launch(c, "reviewer", "[high-stakes] review the whole change");

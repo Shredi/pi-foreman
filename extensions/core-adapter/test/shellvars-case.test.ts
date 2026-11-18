@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseShell } from "../permoverlay.ts";
+import { parseShell } from "../psunits.ts";
 import { resolveVars } from "../shellvars.ts";
 
 const resolvedCount = (cmd: string): number => {

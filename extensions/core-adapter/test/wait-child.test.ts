@@ -7,7 +7,7 @@ import type { Registry } from "../session.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 
 const LIMITS: WaitLimits = { batchWindowSeconds: 0, maxSeconds: 86400, maxActive: 4, ci: true };
-const bound = { cwd: "/ws", home: "/h", agentDir: "/a", platform: process.platform, overlay: null };
+const bound = { cwd: "/ws", home: "/h", agentDir: "/a", platform: process.platform, roots: null };
 
 function runtime() {
   const wakes: Outcome[][] = [];

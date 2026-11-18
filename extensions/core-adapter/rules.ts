@@ -420,6 +420,8 @@ export function describeCall(d: DescribeInput): string {
       return `Type text into another terminal with ${q(prog)}`;
     case "opaque":
       return "Run a shell line the parser cannot read exactly";
+    case "readonly-run":
+      return `Run ${q(prog)} in a read-only role, a form the gate cannot see into`;
     case "mcp-act":
       return `Call the MCP tool ${q(d.tool)} that acts on an outside system`;
     case "launch-outside":

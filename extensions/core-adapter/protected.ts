@@ -5,14 +5,15 @@
 // shellast.ts segments and rules.ts path globs; not related to the `Protected` type of floors.ts.
 import * as path from "node:path";
 import { toChain } from "./defaults.ts";
-import { segmentEffect } from "./effects.ts";
+import type { ProtectedCause } from "./classifier.ts";
+import { RUNNERS, segmentEffect } from "./effects.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { wildMatch } from "./glob.ts";
 import type { ProtectedEntry } from "./permconfig.ts";
 import { pathGlobMatch } from "./rules.ts";
 import type { RuleCall, RuleEnv } from "./rules.ts";
 import { parseShell } from "./shellast.ts";
-import type { ShellSegment } from "./shellast.ts";
+import type { OpaqueReason, ShellSegment } from "./shellast.ts";
 
 export type ProtectedTarget = ProtectedEntry;
 
@@ -56,21 +57,44 @@ export interface ProtectedVerdict {
   entry: string | null;
 }
 
+const MODE_RANK = { model: 0, "read-only": 1, ask: 2 } as const;
+
+/** The check mode of a call: the strictest of the global `gate.protected.check` and the `check` of every matched entry (model < read-only < ask). */
+export function effectiveCheckMode(global: ProtectedFacts["mode"], entries: readonly { check?: ProtectedFacts["mode"] }[]): ProtectedFacts["mode"] {
+  let m = global;
+  for (const e of entries) if (e.check && MODE_RANK[e.check] > MODE_RANK[m]) m = e.check;
+  return m;
+}
+
 /** Classes that a read-only verdict must not coexist with, locally or remotely. */
 const WRITING: ReadonlySet<EffectClass> = new Set(["write-in", "write-out", "build-test"]);
 
-/** What a model verdict may do: the plan's table (see docs/permissions.md). Never `allow` without a high-confidence verdict on a fully modelled call. */
-export function acceptProtected(v: ProtectedVerdict, f: ProtectedFacts): "allow" | "ask" | "deny" {
-  if (f.mode === "ask") return "ask";
-  if (f.classes.length === 0) return "ask";
-  const modelled = !f.opaque && !f.remoteOpaque;
-  if (v.verdict === "allow" && v.confidence === "high" && modelled) {
-    if (v.effect === "read") return [...f.classes, ...f.remoteClasses].some((c) => WRITING.has(c)) ? "ask" : "allow";
-    if ((v.effect === "write" || v.effect === "deploy" || v.effect === "network") && f.mode === "model" && !f.away) return "allow";
-    return "ask";
+/** What a model verdict may do, and why the gate asks when it does: the plan's table (see docs/permissions.md). Every `ask` carries a cause. Never `allow` without a high-confidence verdict on a fully modelled call. */
+export function judgeProtected(v: ProtectedVerdict, f: ProtectedFacts): { decision: "allow" | "ask" | "deny"; cause?: ProtectedCause } {
+  const ask = (cause: ProtectedCause): { decision: "ask"; cause: ProtectedCause } => ({ decision: "ask", cause });
+  if (f.mode === "ask") return ask("mode");
+  if (f.classes.length === 0) return ask("no_classes");
+  if (v.verdict === "allow") {
+    if (v.confidence !== "high") return ask("low_confidence");
+    if (f.opaque) return ask("local_opaque");
+    if (f.remoteOpaque) return ask("remote_opaque");
+    // a remote segment the harness sees as a write always asks, whatever the verdict says
+    if (f.remoteClasses.some((c) => WRITING.has(c))) return ask("remote_write");
+    if (v.effect === "read") return f.classes.some((c) => WRITING.has(c)) ? ask("local_write") : { decision: "allow" };
+    if (v.effect === "write" || v.effect === "deploy" || v.effect === "network") {
+      if (f.mode === "read-only") return ask("read_only");
+      if (f.away) return ask("away");
+      return { decision: "allow" };
+    }
+    return ask("unknown_effect");
   }
-  if (v.verdict === "deny" && f.denyEntryExists) return "deny";
-  return "ask";
+  if (v.verdict === "deny" && f.denyEntryExists) return { decision: "deny" };
+  return ask("judge_ask");
+}
+
+/** The decision of `judgeProtected`. */
+export function acceptProtected(v: ProtectedVerdict, f: ProtectedFacts): "allow" | "ask" | "deny" {
+  return judgeProtected(v, f).decision;
 }
 
 /** The owner counts as away unless a fresh `present` sample exists (no sample, unknown, away or older than `awayAfterMinutes` all mean away). */
@@ -102,6 +126,8 @@ interface RemoteView {
   opaque: boolean;
   /** ssh: the argv after the host (the remote command), or null when there is none; set only for `ssh <host> ...`. */
   remote: string[] | null;
+  /** ssh: `-n` was seen (stdin is /dev/null, nothing is sent). */
+  noStdin?: boolean;
 }
 
 /** The remote operands of ssh / scp / sftp / rsync and whether an option can run a local command. */
@@ -162,6 +188,7 @@ function sshView(argv: string[]): RemoteView {
     if (t.startsWith("-") && t.length > 1) {
       for (let k = 1; k < t.length; k++) {
         const letter = t[k];
+        if (letter === "n") out.noStdin = true;
         if (!SSH_ARG.has(letter)) continue;
         const value = k + 1 < t.length ? t.slice(k + 1) : (argv[++i] ?? "");
         if (letter === "F") out.opaque = true;
@@ -234,21 +261,75 @@ const PATH_LIKE = /[\\/]|^\.|^~/;
 
 const WRITE_PATH_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "foreman_move", "foreman_copy"]);
 
-/** Classify one remote command: each of its segments; a parse failure or an opaque segment makes it opaque. */
+/**
+ * What one opaque reason of a remote segment means (docs/permissions.md, the remote class table): `writing_wrapper` is a write; the reasons the parser
+ * cannot state but the judge can read in the command text are `unknown`; `stdin_fed`, `parse_error`, `depth` (the walker does not read inside a segment cut at the nesting limit) and any reason not listed here (a later parser
+ * version) make the remote command opaque, which always asks.
+ */
+export function remoteReasonClass(reason: OpaqueReason): EffectClass | "opaque" {
+  switch (reason) {
+    case "writing_wrapper":
+      return "write-out";
+    case "unresolved_var":
+    case "glob_target":
+    case "process_substitution":
+    case "nonliteral_script":
+    case "function_def":
+    case "shell_builtin":
+    case "assignment":
+    case "xargs_stdin":
+    case "wrapper_option":
+    case "unsupported":
+    case "foreign_shell":
+      return "unknown";
+    case "stdin_fed":
+    case "parse_error":
+    case "depth":
+      return "opaque";
+    default:
+      return "opaque";
+  }
+}
+
+/** An output redirect that writes somewhere other than the literal /dev/null (a string compare on every platform); an fd dup never counts. */
+const writesFile = (r: { op: string; target: string }): boolean => r.op !== "<" && r.op !== "dup" && r.target !== "/dev/null";
+
+/** `unsupported` is judge-only (unknown) just for a runner (sudo, su, ...), whose wrapped write the harness does not see (a documented limit); every other unsupported node (`[[`, `((`, `select`, `coproc`, a C-style `for`, an unmapped node) is remote opaque, because its words are not walked. */
+const judgeOnly = (program: string): boolean => RUNNERS.has(program);
+
+/** Classify one remote command: each of its segments (the remote class table); zero segments or a segment the harness cannot see into makes it opaque. */
 function remoteClasses(argv: string[], env: ProtectedEnv): { classes: EffectClass[]; opaque: boolean } {
   if (argv.length === 0 || !env.ec) return { classes: [], opaque: true };
   const segs = parseShell(argv.join(" "), { cwd: env.ec.cwd, platform: env.platform });
   const classes: EffectClass[] = [];
   let opaque = segs.length === 0;
   for (const s of segs) {
+    const redirected = s.redirects.some(writesFile);
+    if (redirected) classes.push("write-out");
     if (s.opaque !== null) {
-      opaque = true;
-      classes.push("unknown");
+      const c = s.opaque === "unsupported" && !judgeOnly(s.program) ? "opaque" : remoteReasonClass(s.opaque);
+      if (c === "opaque") opaque = true;
+      if (!redirected || c !== "write-out") classes.push(c === "opaque" ? "unknown" : c);
       continue;
     }
-    classes.push(segClass(env, s, null));
+    if (!redirected) classes.push(segClass(env, s, null));
   }
   return { classes, opaque };
+}
+
+/**
+ * The ssh segment's own stdin is not in the call text: a pipe, a heredoc or here-string, a `<` / `<>` from anything but /dev/null, or an fd dup onto
+ * stdin (`<&3`; `>&2` reads the same, fail closed) means the harness cannot see what the remote shell reads. `ssh -n` and an input only from /dev/null send nothing.
+ */
+function stdinOpaque(s: ShellSegment, noStdin: boolean): boolean {
+  if (noStdin) return false;
+  const dup = s.redirects.some((r) => r.op === "dup" && (r.fd === null || r.fd === "0"));
+  if (s.stdinFed === false && !dup) return false; // a missing fact (a cloned segment) counts as fed
+  if (!dup && !s.heredoc) {
+    const ins = s.redirects.filter((r) => (r.op === "<" || r.op === "<>") && (r.fd === null || r.fd === "0"));
+    if (ins.length > 0 && ins.every((r) => r.target === "/dev/null")) return false;
+  }
+  return true;
 }
 
 function segClass(env: ProtectedEnv, s: ShellSegment, cwd: string | null): EffectClass {
@@ -305,11 +386,13 @@ export function matchProtected(call: RuleCall, segments: ShellSegment[] | undefi
       let hosts: string[] = [];
       let hostOpaque = false;
       let sshCmd: string[] | null = null;
+      let noStdin = false;
       if (SHELL_PROGS.has(prog)) {
         const v = remoteView(prog, s.argv);
         hosts = v.hosts;
         hostOpaque = v.opaque;
         sshCmd = prog === "ssh" ? v.remote : null;
+        noStdin = v.noStdin === true;
       } else if ((prog === "curl" || prog === "wget") && cls !== "net-read") hosts = urlHosts(s.argv);
       const matched = byKind("host").filter((e) => hosts.some((h) => hostMatch(e.glob, h)));
       if (matched.length) {
@@ -317,7 +400,7 @@ export function matchProtected(call: RuleCall, segments: ShellSegment[] | undefi
         if (prog === "ssh" && !hostOpaque && sshCmd !== null && sshCmd.length > 0) {
           const r = remoteClasses(sshCmd, env);
           remote.push(...r.classes);
-          if (r.opaque) remoteOpaque = true;
+          if (r.opaque || stdinOpaque(s, noStdin)) remoteOpaque = true;
         } else {
           if (prog === "ssh") remoteOpaque = true;
           else classes.push("write-out");

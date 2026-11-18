@@ -8,7 +8,7 @@ import { bashPath } from "./_bashpath.ts";
 import { effectCtx } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
 import { bashRules, deterministicAllowInfo } from "../timeoutallow.ts";
-import { readBaseline } from "../permoverlay.ts";
+import { readBaseline } from "../baseline.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});

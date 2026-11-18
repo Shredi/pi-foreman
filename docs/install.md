@@ -38,7 +38,7 @@ npm install -g @earendil-works/pi-coding-agent@1.5
 
 On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the Pi line.
 
-Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. npm 11.9 to 11.12 cannot install pi-foreman (see [npm stops with EALLOWGIT](#npm-stops-with-eallowgit)); use npm 10, npm 11.8 or older, or npm 11.13 and later. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -91,6 +91,16 @@ ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `
 `--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]`, `--pick` and `--mods` (see
 [Profiles, features and add-ons](#profiles-features-and-add-ons), and [herdr](herdr.md#herdr-app-and-herdr-core) for `--mods`).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
+
+### npm stops with EALLOWGIT
+
+The install fails with `EALLOWGIT` ("Fetching non-root packages of type "git" have been disabled"), naming `pi-intercom` or `@juicesharp/rpiv-ask-user-question`. npm prints an `EBADENGINE` warning for pi-foreman just before it.
+
+Cause: npm 11.9 to 11.12 has a bug. The `.npmrc` line `allow-git=root` should allow git dependencies that this package names itself, and these two forks are such dependencies, but those npm versions refuse them anyway. npm 11.8 and older, and npm 11.13 and later (also npm 12), work.
+
+Node releases that ship an affected npm: 24.14 to 24.15, 25.6.1 to 25.9 and 26.0. Node 24.16+ and 26.1+ ship npm 11.13.
+
+Fix: update npm with `npm install -g npm@latest` (npm 11.13 or later), or use Node 24.16+ / 26.1+, then install again. In a checkout, `bin/foreman setup` checks the npm version before it runs `npm ci` and stops with this advice.
 
 ## Profiles, features and add-ons
 
@@ -186,6 +196,8 @@ When an add-on needs an environment variable (`env` in `addons.json`), setup wri
 (bash elsewhere), `~/.config/fish/conf.d/pi-foreman.fish` (fish) or `~/.profile`, and with `setx` on Windows. It is idempotent: an unchanged block
 is not rewritten. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
 alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
+
+When the Node test runner starts setup (`NODE_TEST_CONTEXT` is set), setup refuses to write or remove the real startup files, PowerShell profile folders, agent dir and herdr-app home, says why and exits 2; `PI_FOREMAN_ALLOW_REAL_HOME=1` allows it. With `--dry-run` it prints `real-home guard: would refuse <path>`. A person who runs setup by hand never sees this.
 
 - `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
 - `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi

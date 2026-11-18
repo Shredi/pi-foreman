@@ -413,8 +413,8 @@ test("an unresolved word in a wrapper's options or operands makes the segment op
 });
 
 test("every program effects.ts refuses as a runner is opaque or unwrapped, never a plain segment", () => {
-  const expected: Record<string, string> = {
-    "exec ls": "shell_builtin",
+  const expected: Record<string, string | null> = {
+    "exec ls": null,
     "source x": "shell_builtin",
     ". x": "shell_builtin",
     "fish -c ls": "foreign_shell",
@@ -431,7 +431,7 @@ test("every program effects.ts refuses as a runner is opaque or unwrapped, never
     "unbuffer ls": "unsupported",
     "/usr/bin/sudo ls": "unsupported",
     "env sudo ls": "unsupported",
-    "timeout 5 exec ls": "shell_builtin",
+    "timeout 5 exec ls": null,
   };
   for (const [c, r] of Object.entries(expected)) {
     assert.equal(reasonOf(c), r, c);

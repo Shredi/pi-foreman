@@ -3,7 +3,7 @@
 // falls through to the review (`undefined`). Rule names are `path-<read|write>-<class>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { longForm } from "./pathnorm.ts";
+import { longForm, nativeResolver } from "./pathnorm.ts";
 import { readFieldOf, type ReadToolMap } from "./rules.ts";
 
 /** The roots of one session, resolved by index.ts at call time. All paths absolute. */
@@ -12,6 +12,8 @@ export interface GateRoots {
   worktree: string;
   /** The session's live scratch dirs (a child: its own `$FOREMAN_SCRATCH`). */
   scratch: string[];
+  /** A child's kept output dir (`$FOREMAN_OUT`, launch binding `out`); also the second entry of `scratch`, so every scratch rule covers it. */
+  out?: string;
   /** The OS temp dirs (real spelling) and `/tmp`. */
   tmp: string[];
   /** `<tmp>/pi-foreman-scratch`: other sessions' scratch dirs live below it and are never a tmp default. */
@@ -44,6 +46,10 @@ export interface GateRoots {
   tmpAccess: boolean;
   /** The Pi agent dir (settings.json, pi-foreman/state); the self-modification rules read it. */
   agentDir?: string;
+  /** The user's home folder; the self-modification rules for the user git config, the Claude folder and `~` words need it (absent: they do not fire). */
+  home?: string;
+  /** `$XDG_CONFIG_HOME` when set; its `git/` folder is the user git config. */
+  configHome?: string;
   /** The dir of the session's own Pi session file (moving it, or an ancestor up to `<agentDir>/sessions`, is a self-modification ask). */
   sessionDir?: string;
   /** Work folders of the user file (permconfig.ts), each as written and in its real spelling. Foreman only; a child gets none. Reads in them are allowed; writes relax only in `auto` ones (`workFolderOf`). */
@@ -85,11 +91,29 @@ export function tmpRoots(tmpdir: string, platform: string, real: (p: string) => 
 }
 
 export function realDefault(p: string): string | null {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
+  return nativeResolver(p);
+}
+
+/** `longForm` of `abs`; a leaf that is a dangling link is followed by reading its target (at most 8 hops; the target read on the last hop is the answer, a loop ends at the bound). */
+function followDangling(platform: string, abs: string, real: (p: string) => string | null): string {
+  const x = px(platform);
+  // `real(cur)` is already null here: resolve only the directory and append the leaf (a not normalised spelling takes the full `longForm`)
+  const missing = (p: string): string => {
+    const dir = x.dirname(p);
+    return dir === p || x.join(dir, x.basename(p)) !== p ? longForm(platform, p, real) : x.join(longForm(platform, dir, real), x.basename(p));
+  };
+  let cur = abs;
+  for (let hop = 0; hop < 8; hop++) {
+    const r = real(cur);
+    if (r !== null) return r;
+    try {
+      if (!fs.lstatSync(cur).isSymbolicLink()) return missing(cur);
+      cur = x.resolve(longForm(platform, x.dirname(cur), real), fs.readlinkSync(cur));
+    } catch {
+      return missing(cur);
+    }
   }
+  return longForm(platform, cur, real);
 }
 
 /**
@@ -97,7 +121,7 @@ export function realDefault(p: string): string | null {
  * removes the link, not its target), so only the directory is resolved: `realpath(dirname) + basename`.
  */
 export function realSpelling(platform: string, abs: string, real: (p: string) => string | null, link = false): string {
-  if (!link) return longForm(platform, abs, real);
+  if (!link) return real === realDefault && platform === process.platform ? followDangling(platform, abs, real) : longForm(platform, abs, real);
   const x = px(platform);
   const dir = x.dirname(abs);
   return dir === abs ? abs : x.join(longForm(platform, dir, real), x.basename(abs));
@@ -220,7 +244,11 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
   // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
   const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
   const inside = (root: string): boolean => rootHolds(root, abs, platform, r.realpath, r.worktree, link);
-  const gitFree = (root: string): boolean => !px(platform).relative(root, abs).split(/[\\/]/).includes(".git");
+  const dotGit = (rel: string): boolean => rel.split(/[\\/]/).some((g) => (win ? winAlias(g, ".git") : g === ".git"));
+  // each spelling is compared with the root in its own spelling, so a real ancestor of the root named `.git` does not count; only segments below the root do
+  const gitFree = (root: string): boolean => {
+    return !dotGit(px(platform).relative(root, abs)) && !dotGit(px(platform).relative(longRoot(root), ra));
+  };
   const noWrite = dir === "write";
   if (inside(r.worktree) && (!noWrite || gitFree(r.worktree))) return "worktree";
   if (r.scratch.some((d) => inside(d) && (!noWrite || gitFree(d)))) return "scratch";

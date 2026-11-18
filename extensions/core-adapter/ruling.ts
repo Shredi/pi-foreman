@@ -3,9 +3,15 @@
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { shellWrites } from "./permoverlay.ts";
-import type { Decision } from "./permoverlay.ts";
+import { forEachChild, parse } from "unbash";
+import type { Command, Redirected, SyntaxNode, Word } from "unbash";
+import { inlineCode, segWriteWords, shellWriteTargets, unresolvedShellWriteWords, unresolvedWriteWords } from "./defaults.ts";
+import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits.ts";
+import { READ_PROGS, braceVariants } from "./floors.ts";
+import { realDefault, realSpelling } from "./pathrules.ts";
 import { isRulingName, RULING_RE } from "./rulingname.ts";
+import { MAX_DEPTH as SH_DEPTH, parseShell, SHELLS } from "./shellast.ts";
+import type { ShellSegment } from "./shellast.ts";
 
 export { isRulingName };
 
@@ -103,6 +109,13 @@ export function snapshotRulings(dirs: string[]): Map<string, number> {
   return out;
 }
 
+/** The path a write/edit tool call onto `abs` records as self-written: the name as typed when it is a ruling name, else the real path a link reaches (a dangling one too) when that is one; null when neither. */
+export function toolWriteRuling(abs: string): string | null {
+  if (isTrackedRulingName(path.basename(abs))) return realKey(abs);
+  const via = realSpelling(process.platform, abs, realDefault);
+  return isTrackedRulingName(path.basename(via)) ? via : null;
+}
+
 /**
  * Ruling files this session wrote itself (write/edit, or a shell command that changed them). They never count as a
  * parent ruling: the foreman can write its own handoff dir, and a self-written APPROVED is no parent verdict. A file
@@ -162,74 +175,316 @@ const SHELL_TOOLS = new Set(["bash", "powershell", "foreman_bg", "bg_run"]);
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 const shellOf = (toolName: string): "posix" | "powershell" => (toolName === "powershell" ? "powershell" : "posix");
 
+const fold = (s: string): string => s.replace(/\\/g, "/");
+
+/** `text` names a ruling or brief file below one of the dir spellings `forms` by its literal path. */
+const namesFileIn = (text: string, forms: string[]): boolean => {
+  const t = fold(text);
+  return forms.some((d) => {
+    const pre = `${fold(d)}/`;
+    for (let i = t.indexOf(pre); i >= 0; i = t.indexOf(pre, i + 1)) {
+      const name = /^[A-Za-z0-9._-]+/.exec(t.slice(i + pre.length))?.[0];
+      if (name && isTrackedRulingName(name)) return true;
+    }
+    return false;
+  });
+};
+
+/** The words of a PowerShell line as the old layer split them (psunits.ts): every unit of every pipeline, the `$( )` substitutions included. */
+const psWords = (src: string, depth = 0): string[] => {
+  const parsed = parsePs(psProfile(psDashes(src)).replace(/`\r\n/g, "`\n"), "powershell");
+  return [...parsed.pipelines.flat(2), ...(depth < MAX_DEPTH ? parsed.subs.flatMap((s) => psWords(s, depth + 1)) : [])];
+};
+
+/** The programs whose path operands (and `--opt=value` values) the own-ruling check reads though the gate treats them as no write: the mode and owner writers. */
+const MODE_WRITERS = new Set(["chmod", "chown", "chgrp"]);
+/** A copier or mover: with a destination directory (`-t`, or a last operand that is one) it writes `<dir>/<basename of an operand>`. */
+const COPIERS = new Set(["cp", "mv", "install", "ln"]);
+
+const RANGE_RE = /\{(?:(-?\d+)\.\.(-?\d+)|([A-Za-z])\.\.([A-Za-z]))\}/;
+const RANGE_LIMIT = 64;
+
+/** `word` with its `{a..c}` / `{1..3}` ranges expanded (numbers or single letters, either direction), at most RANGE_LIMIT variants; the word itself when it has none. */
+function rangeVariants(word: string): string[] {
+  const out: string[] = [];
+  const walk = (w: string): void => {
+    const m = RANGE_RE.exec(w);
+    if (!m) {
+      out.push(w);
+      return;
+    }
+    const num = m[1] !== undefined;
+    const a = num ? parseInt(m[1], 10) : m[3].charCodeAt(0);
+    const b = num ? parseInt(m[2], 10) : m[4].charCodeAt(0);
+    for (let k = a; out.length < RANGE_LIMIT && (a <= b ? k <= b : k >= b); k += a <= b ? 1 : -1) {
+      walk(w.slice(0, m.index) + (num ? String(k) : String.fromCharCode(k)) + w.slice(m.index + m[0].length));
+    }
+  };
+  walk(word);
+  return out;
+}
+
+/** The names a word can expand to: its ranges, then its comma lists. */
+const wordVariants = (word: string): string[] => rangeVariants(word).flatMap(braceVariants);
+
+/** At most this many expanded names are read from the brace words of one script; a word met after that is judged by its literal text, and the variable clause still judges the line. */
+const VARIANT_CAP = 256;
+
+/** At most this many string literals are read from one code text; a text with more is judged by `namesDirOrRuling` alone. */
+const LITERAL_CAP = 256;
+/** At most this many adjacent literals are joined into one candidate word. */
+const JOIN_CAP = 8;
+
+/** The candidate file words of inline code or an interpreter script: its string literals (also joined by `+` or `.`, up to JOIN_CAP, and each whole run from its start), and its bare path-like tokens. null over LITERAL_CAP literals. */
+function codeWords(code: string): string[] | null {
+  const lits: Array<{ text: string; start: number; end: number }> = [];
+  for (let i = 0; i < code.length; i++) {
+    const q = code[i];
+    if (q !== "'" && q !== '"' && q !== "`") continue;
+    let text = "";
+    let j = i + 1;
+    for (; j < code.length && code[j] !== q; j++) {
+      if (code[j] === "\\" && j + 1 < code.length) j++;
+      text += code[j];
+    }
+    lits.push({ text, start: i, end: j });
+    if (lits.length > LITERAL_CAP) return null;
+    i = j;
+  }
+  const out = lits.map((l) => l.text);
+  const joins = (b: number): boolean => /^\s*[+.]?\s*$/.test(code.slice(lits[b - 1].end + 1, lits[b].start));
+  for (let a = 0; a < lits.length; a++) {
+    let joined = lits[a].text;
+    const runStart = a === 0 || !joins(a);
+    for (let b = a + 1; b < lits.length && (runStart || b - a < JOIN_CAP) && joins(b); b++) {
+      joined += lits[b].text;
+      out.push(joined);
+    }
+  }
+  return [...out, ...(code.match(/[^\s'"`()[\]{}<>|&,;:=]+/g) ?? [])];
+}
+
+/** What a heredoc or here-string feeds: `words` the owning command's own words (a compound command's whole text), `text` those words and the heredoc or here-string, `body` the script alone. */
+interface StdinText {
+  words: string[];
+  text: string;
+  body: string;
+}
+
+/** The text each stdin-fed command or redirected compound owns: its own words and its heredoc body or here-string, nothing after the terminator. null when the parse fails or a heredoc sits on no command. */
+function stdinTexts(cmd: string): StdinText[] | null {
+  const script = parse(cmd);
+  if (script.errors?.length) return null;
+  const out: StdinText[] = [];
+  let bounded = true;
+  const walk = (n: SyntaxNode, owner: Command | Redirected | null): void => {
+    const own = n.type === "Command" || n.type === "Redirected" ? n : owner;
+    if (n.type === "HereDoc" || n.type === "HereString") {
+      if (own) {
+        const body = n.type === "HereDoc" ? n.body.text : (n.target?.value ?? n.target?.text ?? "");
+        const head = cmd.slice(own.pos, own.end);
+        out.push({ words: head.split(/[\s;&|(){}'"]+/), text: head + (n.type === "HereDoc" ? ` ${body}` : ""), body });
+      } else bounded = false;
+      return;
+    }
+    forEachChild(n, (c) => walk(c, own));
+  };
+  walk(script, null);
+  return bounded ? out : null;
+}
+
+/**
+ * Whether a shell line writes, or for PowerShell names, a ruling or brief file of the child dirs. posix: a named write target of the gate's parse
+ * (shellWriteTargets: redirects, tee, cp/mv/install/ln, sed -i, git and download output options, git config --file), the text of an inline-code segment or
+ * of a stdin-fed heredoc that names the file by its literal path, and a line with a write word the parse cannot resolve (a variable, substitution or brace
+ * list) that also names a child dir or a ruling or brief file name. PowerShell: a word that resolves to the file, or a bare ruling name beside a word that
+ * resolves to a child dir (a read too).
+ */
+function shellNamesRuling(toolName: string, cmd: string, cwd: string, dirs: Set<string>, childDirs: string[], inChild: (p: string) => boolean, platform: string): boolean {
+  const forms = childDirs.flatMap((d) => [path.resolve(d), realDir(d)]);
+  if (shellOf(toolName) === "powershell") {
+    const words = psWords(cmd).flatMap((w) => [w, w.replace(/^-{0,2}[A-Za-z][\w-]*[:=]/, ""), ...(codeWords(w) ?? w.match(/[A-Za-z0-9._-]+/g) ?? [])]);
+    if (words.some((w) => inChild(w) || inChild(fold(w)))) return true;
+    const isDir = (w: string): boolean => dirs.has(realKey(path.resolve(cwd, fold(w))));
+    return words.some((w) => isTrackedRulingName(w)) && words.some(isDir);
+  }
+  return posixNames(cmd, cwd, cwd, childDirs, forms, inChild, 0, { left: VARIANT_CAP }) || (platform === "win32" && nativeNames(cmd, cwd, [...forms, ...childDirs], inChild));
+}
+
+/**
+ * win32 only: a write word of the gate's parse (segWriteWords: redirects, tee, copiers, sed -i, download and output options, dd, wrappers and `bash -c` payloads
+ * unwrapped) written as a native drive path with backslashes that names a ruling or brief file of a child dir. Bash drops an unquoted backslash, so the parse sees
+ * another word; the quoted spelling is the native path itself, and the unquoted one is found in the source text (a `C:\` word whose backslash-less form is the parsed
+ * word), so the raw spelling counts (fail closed). A ruling-named native argument of a program that is no reader or copier counts too (it may write it), and the
+ * output operand of `uniq`. Words with an expansion are left to the parse.
+ */
+function nativeNames(cmd: string, cwd: string, forms: string[], inChild: (p: string) => boolean): boolean {
+  const raws = new Map<string, string>();
+  for (const r of cmd.match(/[A-Za-z]:\\[^\s"'`$|&;<>()]*/g) ?? []) raws.set(r.replace(/\\/g, ""), r);
+  const names = (raw: string): boolean => namesFileIn(raw, forms) || inChild(raw);
+  // the native spelling of a parsed word: the word itself when it kept its backslashes (quoted), else the source word it came from
+  const native = (w: string): string | undefined => (/[$`]/.test(w) ? undefined : w.includes("\\") ? w : raws.get(w));
+  for (const s of parseShell(cmd, { cwd })) {
+    if (s.program === "") continue;
+    const p = path.basename(s.program);
+    const operands = s.argv.filter((a) => !a.startsWith("-"));
+    // a copier's last operand is its destination; its other operands are reads (`mv` lists them as sources)
+    for (const t of segWriteWords(s)) {
+      const raw = native(t.w);
+      if (raw !== undefined && (!COPIERS.has(p) || t.w === operands[operands.length - 1]) && names(raw)) return true;
+    }
+    // a program that is no reader or copier may write a ruling-named argument; `uniq`'s second operand is its output file
+    const args = p === "uniq" ? operands.slice(1) : READ_PROGS.has(p) || COPIERS.has(p) || p === "tee" ? [] : s.argv.map((a) => (a.startsWith("-") ? a.slice(a.indexOf("=") + 1) : a));
+    for (const a of args) {
+      const raw = native(a);
+      if (raw !== undefined && isTrackedRulingName(path.win32.basename(raw)) && names(raw)) return true;
+    }
+  }
+  return false;
+}
+
+/** The own-ruling check of one POSIX script (the line, or the body of a shell it feeds): every word judged by its literal path and resolved against the cwd of its segment. */
+function posixNames(cmd: string, cwd: string, start: string, childDirs: string[], forms: string[], inChild: (p: string) => boolean, depth: number, budget: { left: number }): boolean {
+  const segs = parseShell(cmd, { cwd });
+  // a word is judged against the cwd of its segment (after a `cd`) and against the cwd the line started in (the old layer's only resolution)
+  // only a word with a `{` is expanded, within the one budget of the top-level call; a word past it stands as unresolved: it refuses when its literal text lies under a child dir, its cwd is in one, or (below) the line names a child dir or a ruling name
+  let unresolved = false;
+  let refused = false;
+  const variants = (word: string, at: string | null): string[] => {
+    if (!word.includes("{")) return [word];
+    if (budget.left <= 0) {
+      unresolved = true;
+      if ([word, path.resolve(at ?? cwd, word), path.resolve(start, word)].some((w) => forms.some((f) => fold(w).includes(fold(f))))) refused = true;
+      return [word];
+    }
+    const v = wordVariants(word);
+    budget.left -= v.length;
+    return v;
+  };
+  const hits = (words: string[], at: string | null, expand = true): boolean =>
+    (expand ? words.flatMap((w) => variants(w, at)) : words).some((v) => inChild(path.resolve(at ?? cwd, v)) || inChild(path.resolve(start, v)));
+  const namesDirOrRuling = (text: string): boolean => {
+    const line = fold(text);
+    return childDirs.some((d) => [`handoffs/${path.basename(d)}`, ...forms].some((p) => line.includes(fold(p)))) || (line.match(/[A-Za-z0-9._-]+/g) ?? []).some(isTrackedRulingName);
+  };
+  // the words of a code text against each cwd; a text over the literal cap is refused only when it names a child dir or a ruling name literally
+  const codeHits = (code: string, ats: Array<string | null>): boolean => {
+    const words = codeWords(code);
+    return words === null ? namesDirOrRuling(code) : ats.some((at) => hits(words, at, false));
+  };
+  for (const s of segs) {
+    const p = path.basename(s.program);
+    const operands = s.argv.filter((a) => !a.startsWith("-"));
+    const targets = shellWriteTargets([s], process.platform);
+    const tvars = targets.map((t) => variants(t.path, s.cwd));
+    if (tvars.some((vs) => vs.some((v) => inChild(v) || (s.cwd !== null && inChild(path.resolve(start, path.relative(s.cwd, v))))))) return true;
+    // a write target with an unquoted glob that can match a protected name, in a child dir (also a glob dir part); a target below a directory that does not exist (a failed or unresolved `cd`)
+    for (const t of targets) {
+      if (GLOB_RE.test(t.path) && canHitName(path.basename(t.path))) {
+        const dirOf = (abs: string): string => path.dirname(abs);
+        if (globDirHits(dirOf(t.path), forms) || (s.cwd !== null && globDirHits(dirOf(path.resolve(start, path.relative(s.cwd, t.path))), forms))) return true;
+      }
+      if (s.cwd !== null && s.cwd !== start && !fs.existsSync(s.cwd) && fold(t.path).startsWith(`${fold(s.cwd)}/`) && canHitName(path.basename(t.path))) return true;
+    }
+    // a write word the parse cannot place (`cd "$X"`, `$D/..`) whose name is, or by its prefix can match, a protected name
+    for (const w of unresolvedShellWriteWords([s], process.platform)) {
+      if ((/[$`{]/.test(w) || !(path.isAbsolute(w) || w.startsWith("~"))) && canHitName(path.basename(fold(w)))) return true;
+    }
+    if (MODE_WRITERS.has(p) && hits([...operands, ...s.argv.filter((a) => /^--[\w-]+=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1))], s.cwd)) return true;
+    // a copy into a directory writes <dir>/<name of the operand>; the last operand is the old layer's target even after `-t`; another operand alone is a read
+    if (COPIERS.has(p)) {
+      const ovars = [...new Set(operands.flatMap((o) => variants(o, s.cwd)).map((o) => path.basename(o)))];
+      if (hits(operands.slice(-1), s.cwd) || tvars.some((vs) => vs.some((d) => ovars.some((o) => inChild(path.join(d, o)))))) return true;
+    }
+    if (s.program !== "" && inlineCode(s)) {
+      const code = s.argv.join(" ");
+      if (namesFileIn(code, forms) || codeHits(code, [s.cwd])) return true;
+    }
+  }
+  // a function, select, coproc or arithmetic-for body is no segment of the parse: it is parsed again for its write words (a read of the ruling in it is no refusal)
+  if (depth < SH_DEPTH && segs.some((s) => s.opaque === "function_def" || (s.opaque === "unsupported" && NO_INNER.has(s.program)))) {
+    const cwds = [...new Set([cwd, start, ...segs.map((s) => s.cwd).filter((c): c is string => c !== null)])];
+    for (const b of opaqueBodies(cmd)) if (cwds.some((c) => posixNames(b, c, start, childDirs, forms, inChild, depth + 1, budget))) return true;
+  }
+  // every heredoc and here-string text is judged by the literal path, whatever it feeds; a text that feeds a shell or interpreter segment is also read as its script (one pass, each text takes the next fed segment of the programs its words name)
+  // (the gate's parse shows no heredoc segment inside an arithmetic for or a function, so the texts are always read)
+  const queues = new Map<string, ShellSegment[]>();
+  for (const s of segs) {
+    const p = path.basename(s.program);
+    if (!s.heredoc || !(s.opaque === "stdin_fed" || SHELLS.has(p))) continue;
+    if (queues.has(p)) queues.get(p)!.push(s);
+    else queues.set(p, [s]);
+  }
+  for (const t of stdinTexts(cmd) ?? []) {
+    if (namesFileIn(t.text, forms)) return true;
+    for (const p of new Set(t.words.map((w) => path.basename(w)))) {
+      const s = queues.get(p)?.shift();
+      // a shell body is parsed again; at the depth cap, and for an interpreter, its words stand for it
+      if (s && (SHELLS.has(p) && depth < SH_DEPTH ? posixNames(t.body, s.cwd ?? cwd, start, childDirs, forms, inChild, depth + 1, budget) : codeHits(t.body, [s.cwd]))) return true;
+    }
+  }
+  return refused || ((unresolved || unresolvedWriteWords(segs).length > 0) && namesDirOrRuling(cmd));
+}
+
+const GLOB_RE = /[*?[]/;
+/** The fixed stems of the names the refusal protects: `ruling*.md` (also `ruling-plan.md`) and `brief-<x>.md`. */
+const PROTECTED_STEMS = ["ruling", "brief-"];
+
+/** `base` (a file name, maybe with an unquoted glob) is, or by its literal prefix can match, a protected name. */
+function canHitName(base: string): boolean {
+  const g = base.search(GLOB_RE);
+  if (g < 0) return isTrackedRulingName(base);
+  const p = base.slice(0, g);
+  return PROTECTED_STEMS.some((s) => s.startsWith(p) || p.startsWith(s));
+}
+
+/** The glob `dir` (a directory part with `*`, `?`, `[..]`) can name one of the dir spellings `forms`; a literal `dir` is compared by its real path. */
+function globDirHits(dir: string, forms: string[]): boolean {
+  if (!GLOB_RE.test(dir)) return forms.some((f) => fold(f) === fold(realDir(dir)));
+  let re = "";
+  const d = fold(dir);
+  for (let i = 0; i < d.length; i++) {
+    const c = d[i];
+    const close = c === "[" ? d.indexOf("]", i + 2) : -1;
+    if (close > 0) {
+      re += `[${d[i + 1] === "!" ? "^" : ""}${d.slice(d[i + 1] === "!" ? i + 2 : i + 1, close).replace(/[\\\]]/g, "\\$&")}]`;
+      i = close;
+    } else re += c === "*" ? "[^/]*" : c === "?" ? "[^/]" : c.replace(/[.+^${}()|\\[\]]/g, "\\$&");
+  }
+  const rx = new RegExp(`^${re}$`);
+  return forms.some((f) => rx.test(fold(f)));
+}
+
+/** The programs the parse names for a select, coproc or arithmetic for: opaque, with no inner segments. */
+const NO_INNER = new Set(["select", "coproc", "for"]);
+const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
+
+/** The source text of the body of every function, select, coproc and arithmetic for in `cmd` (outermost only) that parses as a script. */
+function opaqueBodies(cmd: string): string[] {
+  const out: string[] = [];
+  const walk = (n: SyntaxNode): void => {
+    const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
+    // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
+    if (b && typeof b === "object" && b.type !== "Word") out.push(n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end));
+    else forEachChild(n, walk);
+  };
+  walk(parse(cmd));
+  return out;
+}
+
 /**
  * Refusal reason when `toolName` writes a `ruling*.md` or `brief-*.md` inside one of `childDirs` (the dirs where this session is the child) at a
- * literal path, else undefined: write/edit `path`, foreman_copy/foreman_move `dst`, or a write surface of a shell line
- * (permoverlay.ts shellWrites), resolved against `cwd` as written. R16 item 4a: no cd, variable or symlink tracking, no suffix
- * joins; what the literal path does not show is selfRulingAsk's. `*.ack` files are never ruling names; a copy source is a read.
+ * literal path, else undefined: write/edit `path`, foreman_copy/foreman_move `dst`, or a shell line (shellNamesRuling: the gate's parse of its write
+ * surfaces), resolved against `cwd`. `*.ack` files are never ruling names; a copy source is a read.
  */
-export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
+export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[], platform: string = process.platform): string | undefined {
   if (childDirs.length === 0) return undefined;
   const dirs = new Set(childDirs.map(realDir));
   const inChild = (p: string): boolean => isTrackedRulingName(path.basename(p)) && dirs.has(path.dirname(realKey(path.resolve(cwd, p))));
   const words = toolName === "write" || toolName === "edit" ? [str(input.path)] : toolName === "foreman_copy" || toolName === "foreman_move" ? [str(input.dst)] : [];
   const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
-  if (cmd) words.push(...shellWrites(cmd, shellOf(toolName)).words);
+  if (cmd && shellNamesRuling(toolName, cmd, cwd, dirs, childDirs, inChild, platform)) return SELF_RULING_REASON;
   return words.some((p) => p && inChild(p)) ? SELF_RULING_REASON : undefined;
-}
-
-/**
- * R16 item 4a (ruling D1): a FLAT ask trigger on the lexed line, no resolution. A shell line with a write surface anywhere
- * (shellWrites), the token `ruling` or `brief` anywhere and a handoff-dir path anywhere (one of `childDirs`, or `handoffs/<its name>` in any
- * spelling: `~`, `$HOME`, relative) is an overlay ask: the auto reviewer judges it under the rules' hard_deny, the human on defer.
- * A pure read of a ruling never asks; a dir where this session is the parent (its child's rulings) is no trigger.
- */
-export function selfRulingAsk(toolName: string, input: Record<string, unknown>, childDirs: string[], lift?: { cwd: string; orchestrator: boolean }): Decision | undefined {
-  const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
-  if (!cmd || childDirs.length === 0 || !/ruling|brief/i.test(cmd)) return undefined;
-  const fold = (s: string): string => s.replace(/\\/g, "/").toLowerCase();
-  const line = fold(cmd);
-  if (!childDirs.some((d) => [`handoffs/${path.basename(d)}`, d, realDir(d)].some((p) => line.includes(fold(p))))) return undefined;
-  // R31c R6: an orchestrator's own heredoc into a child-role file of its own handoff dir (the body may say "ruling")
-  if (lift?.orchestrator && ownHandoffHeredoc(toolName, cmd, childDirs, lift.cwd)) return undefined;
-  const w = shellWrites(cmd, shellOf(toolName));
-  if (w.words.length === 0 && !w.unnamed) return undefined;
-  return { kind: "ask", reason: "pi-foreman: this line writes, names a ruling and a handoff dir; a session never writes its own parent's ruling, so it needs approval.", rule: "self-ruling" };
-}
-
-/** The handoff files a session writes in a dir where it is the child (the child-role names; a broader pattern for another purpose, not the shell guard's allow-list `HANDOFF_CHILD_NAMES` in pathrules.ts; `ruling*`, `brief*`, `steer*`, `parent` and `child` are never among them). */
-const CHILD_ROLE_NAME = /^(?:plan|result)\.md$|^(?:update|ask)[A-Za-z0-9_-]*\.md$/;
-const HEREDOC_TARGET = "[A-Za-z0-9._/@%+,-][A-Za-z0-9._/@%+=,-]*";
-const HEREDOC_A = new RegExp(`^cat[ \\t]+(>>?)[ \\t]*(${HEREDOC_TARGET})[ \\t]+<<'([A-Za-z_][A-Za-z0-9_]*)'[ \\t]*$`);
-const HEREDOC_B = new RegExp(`^cat[ \\t]+<<'([A-Za-z_][A-Za-z0-9_]*)'[ \\t]+(>>?)[ \\t]*(${HEREDOC_TARGET})[ \\t]*$`);
-
-/**
- * R31c R6: the command is exactly one `cat > T <<'D'` / `cat >> T <<'D'` / `cat <<'D' > T` / `cat <<'D' >> T` heredoc (POSIX shell tools only) whose
- * body runs to the one terminator line `D`, which is the last line (one trailing newline allowed). The body is never lexed. `T` has no `..`,
- * lies directly in one of `childDirs` (the lexical parent is that dir, no symlinked spelling), is not a symlink, has a single link when it exists, and is
- * named like a child-role file (CHILD_ROLE_NAME).
- */
-export function ownHandoffHeredoc(toolName: string, cmd: string, childDirs: string[], cwd: string): boolean {
-  if (toolName === "powershell" || !SHELL_TOOLS.has(toolName) || /[\r\0]/.test(cmd)) return false;
-  const lines = cmd.split("\n");
-  const a = HEREDOC_A.exec(lines[0]);
-  const b = a ? null : HEREDOC_B.exec(lines[0]);
-  const target = a ? a[2] : b?.[3];
-  const delim = a ? a[3] : b?.[1];
-  if (!target || !delim) return false;
-  const end = lines.indexOf(delim, 1);
-  if (end < 0 || !(lines.length === end + 1 || (lines.length === end + 2 && lines[end + 1] === ""))) return false;
-  if (target.split("/").includes("..") || !CHILD_ROLE_NAME.test(path.basename(target))) return false;
-  const abs = path.resolve(cwd, target);
-  const parent = path.dirname(abs);
-  if (!childDirs.some((d) => [path.resolve(d), realDir(d)].includes(parent))) return false;
-  try {
-    const st = fs.lstatSync(abs);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1) return false;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false;
-  }
-  return true;
 }
 
 /** What `/foreman close` adds when the ceremony is incomplete: what the parent must still rule. */

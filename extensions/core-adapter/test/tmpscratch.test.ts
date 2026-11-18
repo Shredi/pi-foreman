@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readBaseline } from "../permoverlay.ts";
+import { readBaseline } from "../baseline.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 import { isTmpScratch } from "../tmpscratch.ts";
 

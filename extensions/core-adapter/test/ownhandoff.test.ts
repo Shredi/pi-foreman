@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { effectCtx } from "../effects.ts";
-import { readBaseline } from "../permoverlay.ts";
+import { readBaseline } from "../baseline.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");

@@ -28,7 +28,7 @@ import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
 import { netReadSegment } from "./netread.ts";
-import { foldCase, longForm, nullDevice } from "./pathnorm.ts";
+import { foldCase, longForm, memoLookup, nativeResolver, nullDevice } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
 /** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
@@ -42,6 +42,8 @@ export interface EffectCtx {
   scratch?: string[];
   /** /tmp is not a write target here (the owned-roots path: every write target must be an owned root). */
   noTmp?: boolean;
+  /** The asking session is a child (a `mkdir [-p] <root>` of its own write root counts as inside). */
+  child?: boolean;
   /** safety.permissions.readRoots as real absolute dirs (readRootsOf): extra places for reads only. */
   readRoots?: string[];
   platform?: string;
@@ -88,21 +90,16 @@ export const SAFE_CLASSES: readonly EffectClass[] = ["read", "build-test", "writ
 
 // ------------------------------------------------------------------ paths
 
-const realDefault = (p: string): string | null => {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
-  }
-};
-const existsDefault = (p: string): boolean => {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-};
+const realDefault = (p: string): string | null => nativeResolver(p);
+const existsDefault = (p: string): boolean =>
+  memoLookup(`e:${p}`, () => {
+    try {
+      fs.lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
 /** `r` is `h` or one of its ancestors (`/Users`, `~/..`, `/private`): it would cover all of `h`. Case-folded on win32 and darwin. */
 export function holdsHome(platform: string, r: string, h: string): boolean {
@@ -193,6 +190,10 @@ function bases(c: EffectCtx, write: boolean): string[] {
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
 export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[], link = false): boolean {
+  return containedIn(c, cwd, word, write, only, link, false);
+}
+
+function containedIn(c: EffectCtx, cwd: string | null, word: string, write: boolean, only: string[] | undefined, link: boolean, rootSelf: boolean): boolean {
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
@@ -202,11 +203,13 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   for (const b of only ?? bases(c, write)) {
     // win32: the word and the base may spell one dir differently (8.3 `RUNNER~1` vs `runneradmin`): compare the real spellings too
     const rb = alt ? longForm(plat(c), x.resolve(c.cwd, b), real) : b;
-    const [base, p] = within(c, b, abs, write) ? [b, abs] : alt && within(c, rb, alt, write) ? [rb, alt] : [null, null];
+    // rootSelf (`mkdir [-p] <root>`): a write that only creates the root itself is inside
+    const strict = write && !rootSelf;
+    const [base, p] = within(c, b, abs, strict) ? [b, abs] : alt && within(c, rb, alt, strict) ? [rb, alt] : [null, null];
     if (base === null || p === null) continue;
     if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
     if (write && c.extraWriteGuard && (c.extraWriteRoots ?? []).includes(b) && c.extraWriteGuard(p)) return false;
-    if (realInside(c, base, p, write, write, link)) return true;
+    if (realInside(c, base, p, strict, write, link)) return true;
   }
   return false;
 }
@@ -451,56 +454,29 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
       movedIntoDir = prog === "mv";
     }
   }
-  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o)) || (prog === "mv" && i === writes.length - 1 && (movedIntoDir || handoffTarget(c, cwd, o)))) ? "write-in" : "write-out";
+  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => containedIn(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o), prog === "mkdir" && !!c.child) || (prog === "mv" && i === writes.length - 1 && (movedIntoDir || handoffTarget(c, cwd, o)))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);
 
-const GIT_PROTECTED_OPTS = new Set([
-  "-p", "--patch", "--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--oneline", "--cached", "--staged",
-  "--no-color", "--color=never", "--no-ext-diff", "--no-textconv", "-s", "--short", "--porcelain", "-b", "--branch", "--graph",
-  "--decorate", "--no-decorate", "--all", "--reverse", "--first-parent", "--follow", "-w", "--ignore-all-space",
-]);
-const GIT_PROTECTED_NUM = /^(?:-n\d+|-\d+|-U\d+|--unified=\d+|--max-count=\d+)$/;
-const GIT_PLAIN_OPERAND = /^[A-Za-z0-9._\/:@^~-]+$/;
+/** The long options that name an output file or run a program. */
+const GIT_PROGRAM_OPTS = ["--output", "--exec", "--upload-pack", "--ext-diff", "--textconv"];
 
 /**
- * A strict allowlist for the protected-reader git branch: `git [-C dir] status|log|diff|show` whose every word is a listed option,
- * a plain operand (path, ref, `a..b`, `HEAD:file`) or `--`. Anything else (`--format`, `--output*`, brace or glob words) is no reader.
+ * A word that is a write or program option of git, by any prefix of it (`--ext-d`, `--outp=x`, `--upl=touch`): git accepts a unique prefix, and an ambiguous one is an error,
+ * so every prefix counts as the option. Not: `--text` (git's own `-a`) and `--output-indicator-new|old|context` (they only change the display).
  */
-export function gitProtectedRead(words: string[]): boolean {
-  if (words[0] !== "git") return false;
-  let k = 1;
-  if (words[k] === "-C") {
-    const dir = words[k + 1];
-    if (dir === undefined || dir.startsWith("-") || !GIT_PLAIN_OPERAND.test(dir)) return false;
-    k += 2;
-  }
-  if (!GIT_READ.has(words[k] ?? "")) return false;
-  const rest = words.slice(k + 1);
-  for (let i = 0; i < rest.length; i++) {
-    const w = rest[i];
-    if (w === "--" || GIT_PROTECTED_OPTS.has(w) || GIT_PROTECTED_NUM.test(w)) continue;
-    if (w === "-n" && /^\d+$/.test(rest[i + 1] ?? "")) {
-      i++;
-      continue;
-    }
-    if (!w.startsWith("-") && GIT_PLAIN_OPERAND.test(w)) continue;
-    return false;
-  }
-  return true;
+export function gitWriteOption(word: string): boolean {
+  const name = word.split("=")[0];
+  if (!/^--[A-Za-z]/.test(name) || name === "--text" || /^--output-indicator-(?:new|old|context)$/.test(name)) return false;
+  return name.startsWith("--output") || GIT_PROGRAM_OPTS.some((o) => o.startsWith(name));
 }
 
 /** An option of a GIT_READ subcommand that runs a program or names an output file: the call is not read-only. */
 export function gitReadWrites(rest: string[]): boolean {
   // a brace word with a leading `-` expands to options (`--{output=F,stat}`)
   if (rest.some((a) => /[{}]/.test(a) && a.startsWith("-"))) return true;
-  // git accepts any unambiguous prefix of a long option (`--ext-d`, `--outp=x`); an ambiguous one is an error, so a prefix counts as the option
-  const abbrev = (a: string): boolean => {
-    const name = a.split("=")[0];
-    return name.length > 2 && ["--output", "--ext-diff", "--textconv"].some((w) => w.startsWith(name));
-  };
-  return rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv") || abbrev(a));
+  return rest.some((a) => a === "-c" || a === "-o" || gitWriteOption(a));
 }
 const GIT_DRY = new Set(["add", "clean", "mv", "rm"]);
 
@@ -685,7 +661,7 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
 
 /** A redirect the deterministic allow accepts: an fd dup, /dev/null, output into a scratch dir or /tmp, input from a contained path. */
 export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null, scratch: string[], platform: string): boolean {
-  if (r.op === "dup") return /^\d+$/.test(r.target);
+  if (r.op === "dup") return /^(\d+|-)$/.test(r.target); // `2>&-` closes an fd; it writes nothing
   if (nullDevice(platform, r.target)) return true;
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;

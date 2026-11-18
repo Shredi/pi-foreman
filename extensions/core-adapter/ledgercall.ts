@@ -162,8 +162,8 @@ export async function retryLedgerRun<R extends { code?: number | null; stdout?: 
 }
 
 /**
- * A tool result that is a permission refusal: the gate's and the
- * adapter overlay's deny/ask-denied texts (permoverlay.ts). Blocked calls never reach tool_result,
+ * A tool result that is a permission refusal: the gate's
+ * deny texts. Blocked calls never reach tool_result,
  * so index.ts reads this from tool_execution_end.
  */
 export function isPermissionDeny(isError: boolean, text: string): boolean {

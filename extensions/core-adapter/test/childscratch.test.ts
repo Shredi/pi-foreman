@@ -4,17 +4,13 @@ import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { mkTestTmp } from "./_tmpbase.ts";
-import { bashPath } from "./_bashpath.ts";
 import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchCommandAllowed, scratchRoot, storeBrief, sweepScratch } from "../childscratch.ts";
 import type { ScratchHost } from "../childscratch.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
 import { readBinding } from "../usage.ts";
 import type { LaunchBinding } from "../usage.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const base = fs.realpathSync.native(mkTestTmp("pf-scratch-"));
 const tmp = path.join(base, "tmp");
 const repo = path.join(base, "repo");
@@ -102,7 +98,7 @@ test("removal is refused outside the root, for the repo and for a symlink leadin
   assert.ok(fs.existsSync(path.join(outside, "keep.txt")));
 });
 
-test("guards: cd, cp, mkdir and rm inside a live scratch dir only", { skip: !posix }, () => {
+test("guards: cd, cp, mkdir and rm inside a live scratch dir only (deterministicAllow, insideScratch, scratchCommandAllowed)", { skip: !posix }, () => {
   const dir = createScratch("sess-3", "L-g", deps)!;
   const other = path.join(base, "repo");
   const rules = { allow: ["ls *", "cd *"], ask: [], deny: ["sudo *"] };
@@ -122,13 +118,6 @@ test("guards: cd, cp, mkdir and rm inside a live scratch dir only", { skip: !pos
   assert.equal(insideScratch(path.join(dir, ".?", ".?", "f"), [dir]), false, "a glob that bash could expand to .. is refused");
   assert.equal(scratchCommandAllowed(`rm -r ${dir}/esc/f`, [dir], () => false), false);
   assert.equal(expandScratchVar(`echo "\${FOREMAN_SCRATCH}/x" '$FOREMAN_SCRATCH'`, "/s"), `echo "/s/x" '$FOREMAN_SCRATCH'`);
-  // overlay: a child may cd into its own scratch dir, not elsewhere outside the workspace
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(base, "agent"));
-  const cd = (command: string, scratch?: string): string => checkToolCall(r, "bash", { command }, { cwd: repo, home: base, platform: process.platform, role: "child", scratch })?.kind ?? "pass";
-  assert.equal(cd(`cd ${dir} && ls`, dir), "pass");
-  assert.equal(cd("cd $FOREMAN_SCRATCH && ls", dir), "pass");
-  assert.equal(cd(`cd ${dir} && ls`), "deny");
-  assert.equal(cd(`cd ${path.dirname(dir)} && ls`, dir), "deny");
 });
 
 test("storeBrief: the full explorer report is a file in a scratch dir every role may read without an ask", () => {
@@ -141,25 +130,4 @@ test("storeBrief: the full explorer report is a file in a scratch dir every role
   assert.equal(insideScratch(path.join(repo, "x.md"), h.scratch.live("builder")), false);
   finishScratch(h, "no-such-launch", deps);
   assert.ok(fs.existsSync(file));
-});
-
-test("row 25: the overlay leaves a child's own scratch dir open on every surface, and nobody else's", () => {
-  const mine = createScratch("sess-r25", "L-mine", deps)!;
-  const theirs = createScratch("sess-r25", "L-theirs", deps)!;
-  fs.mkdirSync(path.join(mine, "probe"));
-  fs.writeFileSync(path.join(mine, "probe", "probe.mjs"), "console.log(1)\n");
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(base, "agent"));
-  const ctx = { cwd: repo, home: base, platform: process.platform, role: "child" as const, scratch: mine };
-  const kind = (command: string): string => checkToolCall(r, "bash", { command }, ctx)?.kind ?? "pass";
-  assert.equal(kind("node $FOREMAN_SCRATCH/probe/probe.mjs"), "pass");
-  assert.equal(kind("cat $FOREMAN_SCRATCH/replay.log"), "pass");
-  assert.equal(kind(`node ${bashPath(mine)}/probe/probe.mjs > ${bashPath(mine)}/out.log 2>&1`), "pass");
-  assert.equal(kind("cd $FOREMAN_SCRATCH && ls"), "pass");
-  for (const t of ["read", "write", "edit", "ls", "grep", "find"]) assert.equal(checkToolCall(r, t, { path: path.join(mine, "probe", "probe.mjs") }, ctx), null, t);
-  // the same dir through the owned-roots parameter
-  const { scratch: _drop, ...noScratch } = ctx;
-  const owned = buildOverlayRules(readBaseline(PKG)!, {}, {}, path.join(base, "agent"), undefined, undefined, false, { readWrite: [], readOnly: [], childScratch: mine });
-  assert.equal(checkToolCall(owned, "bash", { command: "cd $FOREMAN_SCRATCH && ls" }, noScratch), null);
-  // another launch's dir is outside the workspace: cd refuses
-  assert.equal(kind(`cd ${bashPath(theirs)} && ls`), "deny");
 });
