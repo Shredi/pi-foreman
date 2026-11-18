@@ -23,6 +23,8 @@ export const rungIndex = (r: Rung): number => ORDER.indexOf(r);
 export const MAX_FILES = 20;
 /** A file over this many bytes is not read and counts as large. */
 export const MAX_BYTES = 1 << 20;
+/** A directory in `size.files` is walked until this many regular files are found or this many entries are visited. */
+export const MAX_WALK_ENTRIES = 2000;
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -254,7 +256,7 @@ export interface Measured {
   large: boolean;
   /** Files outside the workspace (not read, counted as 0 lines). */
   outside: number;
-  /** A refusal text: a named path is a directory. */
+  /** A refusal text: a named path is neither a file nor a directory. */
   invalid?: string;
 }
 
@@ -299,7 +301,50 @@ export function componentOf(rel: string): string | null {
   return dirs.slice(0, 2).join("/");
 }
 
-/** Measure the named files (see the module comment; the claim only raises: the larger of declared and measured). */
+/** Up to MAX_FILES regular files below a directory, breadth first, skipping `.git` and symlinks, stopping after MAX_WALK_ENTRIES entries. */
+function walkFiles(dir: string): string[] {
+  const found: string[] = [];
+  const queue = [dir];
+  let visited = 0;
+  while (queue.length && found.length < MAX_FILES && visited < MAX_WALK_ENTRIES) {
+    const cur = queue.shift()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(cur, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (++visited > MAX_WALK_ENTRIES || found.length >= MAX_FILES) break;
+      if (e.name === ".git" || e.isSymbolicLink()) continue;
+      if (e.isDirectory()) queue.push(path.join(cur, e.name));
+      else if (e.isFile()) found.push(path.join(cur, e.name));
+    }
+  }
+  return found;
+}
+
+const isDir = (p: string): boolean => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+/** Line count of a regular file, or null when it is over MAX_BYTES or unreadable. */
+function linesOf(abs: string): number | null {
+  try {
+    if (fs.statSync(abs).size > MAX_BYTES) return null;
+    let n = 0;
+    for (const b of fs.readFileSync(abs)) if (b === 10) n++;
+    return n;
+  } catch {
+    return null;
+  }
+}
+
+/** Measure the named files (see the module comment; the claim only raises: the larger of declared and measured). A directory is measured by the files the walk finds in it. */
 export function measure(d: Declared["size"], entryCwd: string, sessionCwd: string): Measured {
   const out: Measured = { files: 0, lines: 0, declaredLines: d?.largestFileLines ?? 0, modules: 0, declaredModules: d?.modules ?? 0, large: false, outside: 0 };
   if (!d) return out;
@@ -314,7 +359,8 @@ export function measure(d: Declared["size"], entryCwd: string, sessionCwd: strin
       out.outside++;
       return;
     }
-    const comp = componentOf(path.relative(root, real));
+    const rel = path.relative(root, real);
+    const comp = componentOf(isDir(abs) ? `${rel}/x` : rel);
     if (comp) parts.add(comp);
     if (i >= MAX_FILES) {
       out.large = true;
@@ -327,8 +373,16 @@ export function measure(d: Declared["size"], entryCwd: string, sessionCwd: strin
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") out.large = true;
       return;
     }
+    if (st.isDirectory()) {
+      for (const file of walkFiles(abs)) {
+        const n = linesOf(file);
+        if (n === null) out.large = true;
+        else measuredLines = Math.max(measuredLines, n);
+      }
+      return;
+    }
     if (!st.isFile()) {
-      out.invalid ??= invalid(`${f} is not a regular file (name files, not directories)`);
+      out.invalid ??= invalid(`${f} is neither a file nor a directory`);
       return;
     }
     if (st.size > MAX_BYTES) {
