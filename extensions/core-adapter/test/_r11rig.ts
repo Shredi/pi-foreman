@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 export type Block = { block?: boolean; reason?: string } | undefined;
@@ -86,7 +87,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     sendMessage: () => undefined,
     ...opts.piExtra,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null, ...opts.deps });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null, spawner: probeSpawner(), ...opts.deps });
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
     cwd: project,

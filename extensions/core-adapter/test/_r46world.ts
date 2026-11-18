@@ -9,6 +9,7 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { planVersionHash } from "../checkpoint.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Fn = (...a: unknown[]) => Promise<unknown>;
@@ -107,7 +108,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setThinkingLevel: () => undefined,
       sendMessage: (message: { customType: string; content: string }, options?: unknown) => void o.sent?.push({ message, options }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
       cwd: project,
