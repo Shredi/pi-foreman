@@ -51,12 +51,12 @@ test("planChanges errors: unknown, non-toggleable, conflicting ids and unknown p
 
 test("full switches relaxations on, standard afterwards turns them back off", () => {
   const full = planChanges({ version: 1 }, { profile: "full" });
-  assert.deepEqual(full.relaxations, ["git-tools", "children-may-push", "workflow-scripts", "remote-intercom"]);
+  assert.deepEqual(full.relaxations, ["git-tools", "workflow-scripts", "remote-intercom"]);
   assert.equal(full.config.tools.git, true);
   const back = planChanges(full.config, { profile: "standard" });
   assert.deepEqual(back.relaxations, []);
   assert.equal(back.config.tools.git, false);
-  assert.equal(back.config.safety.children.mayPush, false);
+  assert.equal(back.config.safety.subagents.allowWorkflow, false);
   assert.equal(back.config.profile, "standard");
 });
 

@@ -176,7 +176,7 @@ with a warning. A recorded name that no longer exists warns, skips the picker an
 | `standard` | none | every toggleable feature in its shipped state (the package defaults) |
 | `full` | none | every toggleable feature, safety relaxations included |
 
-`full` prints `WARN safety relaxations on: <ids>`. The relaxations are `git-tools`, `children-may-push`, `workflow-scripts`
+`full` prints `WARN safety relaxations on: <ids>`. The relaxations are `git-tools`, `workflow-scripts`
 and `remote-intercom`: the project layer may not switch them on. Safety rules (permissions, git, ops, ceremony gates, bridge) are never
 toggleable. `idle-cache` has no fixed default (cache policy decides per provider): its shipped state is declared `on`, and
 explicit `true` matches the policy for a built-in provider and turns the keep-alive on for any other provider with a TTL. A legacy per-request plan switches the keep-alive off with `keepalive.enabled: false`.

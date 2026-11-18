@@ -11,7 +11,7 @@ import { rmTestTmp } from "./_tmpbase.ts";
 
 type Rig = { root: string; main: string; wt: string; g: (cwd: string, ...a: string[]) => string; commit: (cwd: string, m: string) => string };
 
-/** git helpers over the fixture at `root`; the harness sets url.invalid-push:.pushInsteadOf for every URL, the fixture's own origin keeps its path. */
+/** git helpers over the fixture at `root`; an inherited url.*.pushInsteadOf rewrite of every URL does not apply to the fixture's own origin: it keeps its path. */
 function gitFns(root: string) {
   const pushKeep = `url.${path.join(root, "origin.git")}.pushInsteadOf=${path.join(root, "origin.git")}`;
   const g = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", pushKeep, ...a], { encoding: "utf8" }).trim();

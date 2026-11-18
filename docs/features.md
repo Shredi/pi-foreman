@@ -81,7 +81,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [pr-sources](#pr-sources) | tools |  | opt-in | Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only. | `{"tools": {"prSources": {"ci": {"command": "ci-status --repo {repo} --pr {number} --sha {head}"}}}}` | [tools](tools.md#sources) |
 | [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
-| [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#what-the-gate-floors-cover) |
+| [children-may-push](#children-may-push) | safety |  | on | The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs. | on by default | [safety](safety.md#what-the-gate-floors-cover) |
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | safety | toggle, relaxes safety | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -123,7 +123,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 |---|---|---|---|
 | `orchestration` | The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace. | shipped states | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` |
 | `standard` | Every toggleable feature in its shipped state; the package defaults. | shipped states | none |
-| `full` | Every toggleable feature on, safety relaxations included (git tools, children may push, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `children-may-push`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
+| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
 
 Toggleable features (`on` and `off` write these leaves into the user config; `*` = every provider present):
 
@@ -136,7 +136,6 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 | [orientation](#orientation) | ceremony | `ceremony.orientation.enabled` = `true` | `ceremony.orientation.enabled` = `false` | on | no |
 | [git-tools](#git-tools) | tools | `tools.git` = `true` | `tools.git` = `false` | off | yes |
 | [pr-ops](#pr-ops) | tools | `tools.pr` = `true` | `tools.pr` = `false` | on | no |
-| [children-may-push](#children-may-push) | safety | `safety.children.mayPush` = `true` | `safety.children.mayPush` = `false` | off | yes |
 | [review-required](#review-required) | review | `safety.review.required` = `true` | `safety.review.required` = `false` | off | no |
 | [workflow-scripts](#workflow-scripts) | safety | `safety.subagents.allowWorkflow` = `true` | `safety.subagents.allowWorkflow` = `false` | off | yes |
 | [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
@@ -605,13 +604,11 @@ Switch: `sidebar.statusCommand` is non-empty.
 
 ### children-may-push
 
-**Children may push.** Lets subagent children push; by default they may commit but never push, and they never open PRs.
-
-Switch: `safety.children.mayPush` is true.
+**Children may push.** The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs.
 
 | Key | Default | Layer |
 |---|---|---|
-| `safety.children.mayPush` | `false` | tighten-only (only false is accepted) |
+| `safety.children.mayPush` | `false` | any layer (no longer used) |
 
 ### review-required
 

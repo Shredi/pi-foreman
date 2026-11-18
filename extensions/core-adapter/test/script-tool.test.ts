@@ -68,6 +68,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
   const handlers = new Map<string, Handler>();
   const tools = new Map<string, Tool>();
   const blocked: { active: boolean; label?: string }[] = [];
+  const sent: { message: Record<string, unknown>; opts: Record<string, unknown> }[] = [];
   const pi = {
     events: { on: () => undefined, emit: (ch: string, d: unknown) => void (ch === "herdr:blocked" && blocked.push(d as { active: boolean; label?: string })) },
     on: (n: string, h: Handler) => {
@@ -83,7 +84,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
     setModel: async () => true,
     setThinkingLevel: () => undefined,
     getThinkingLevel: () => "high",
-    sendMessage: () => undefined,
+    sendMessage: (m: unknown, opts: unknown) => void sent.push({ message: m as Record<string, unknown>, opts: opts as Record<string, unknown> }),
   };
   coreAdapter(pi as never, { ...(o.platform ? { platform: o.platform } : {}), spawner: probeSpawner() });
   if (o.child === "runtime") process.env.PI_SUBAGENT_CHILD = "1";
@@ -130,6 +131,8 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
     propose: () => call({ action: "propose", path: SCRIPT, ...TEXTS }),
     seen,
     blocked,
+    sent,
+    shutdown: () => handlers.get("session_shutdown")!({}, ctx),
     trace,
     file,
     text,
@@ -716,4 +719,113 @@ test("foreman_script: status after a successful undo has no availableUntil and a
   assert.equal(st.undo.used, true);
   assert.equal("availableUntil" in st.undo, false, JSON.stringify(st.undo));
   assert.equal(st.undo.attemptsLeft, 0);
+});
+
+// D75: an abort of a running real `run` detaches the script instead of killing it.
+function sleepScript(r: Rig, seconds: number, marker = false): void {
+  const mark = path.join(r.root, "ran.txt");
+  fs.writeFileSync(r.file, `# honours --dry-run\n${marker ? `${UNDO_MARKER}\n` : ""}[ "$1" = --dry-run ] && exit 0\necho started >> '${mark}'\nsleep ${seconds}\necho done >> '${mark}'\n`);
+}
+
+const until = async (cond: () => boolean, ms = 8000): Promise<void> => {
+  const end = Date.now() + ms;
+  while (!cond() && Date.now() < end) await new Promise((res) => setTimeout(res, 25));
+  assert.ok(cond(), "condition not met in time");
+};
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Propose (the dry run passes), start a real run, abort its call once the script runs; returns the call's answer and the script's pid. */
+async function detached(r: Rig, ac = new AbortController(), params: Record<string, unknown> = {}): Promise<{ out: Result; pid: number }> {
+  await r.propose();
+  const pending = r.call({ action: "run", ...params }, ac.signal);
+  await until(() => r.runs().includes("started"));
+  ac.abort();
+  const out = await pending;
+  const pid = Number(/pid (\d+)/.exec(textOf(out))?.[1]);
+  assert.ok(pid > 0, textOf(out));
+  return { out, pid };
+}
+
+test("foreman_script: an abort of a running real run detaches it; the script finishes, its result arrives as a message and the attempt is not aborted", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  sleepScript(r, 1, true);
+  const { out, pid } = await detached(r);
+  assert.match(textOf(out), /^Script still running in the background \(pid \d+\); its result arrives as a message/);
+  assert.equal(r.sent.length, 0);
+  assert.ok(alive(pid), "the script survives the abort");
+  await until(() => r.sent.length === 1);
+  assert.equal(r.runs().at(-1), "done");
+  const m = r.sent[0];
+  assert.equal(m.message.customType, "pi-foreman-script");
+  assert.match(String(m.message.content), /exit 0/);
+  assert.equal((m.message.details as Record<string, unknown>).exit, 0);
+  assert.deepEqual(m.opts, { triggerTurn: true }, "idle: the message starts a turn");
+  assert.equal(r.trace("script_run").some((e) => e.outcome === "aborted"), false);
+  assert.equal(r.trace("script_run").filter((e) => e.kind === "run" && e.exit === 0).length, 1);
+  const st = await statusOf(r);
+  assert.equal(st.status, "consumed");
+  assert.equal(st.undo.available, true, "the undo window starts at the real end");
+  assert.equal(st.running, undefined);
+});
+
+test("foreman_script: while a detached run lives, run, dry, undo and propose are refused; status shows it", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  sleepScript(r, 30, true);
+  const { pid } = await detached(r);
+  try {
+    for (const action of ["run", "dry", "undo", "propose"]) {
+      const res = await r.call(action === "propose" ? { action, path: SCRIPT, ...TEXTS } : { action });
+      assert.equal(res.details?.code, "script_running", `${action}: ${textOf(res)}`);
+      assert.match(textOf(res), /an owner script is still running \(pid \d+, since /);
+    }
+    const st = await statusOf(r);
+    assert.equal(st.running.pid, pid);
+  } finally {
+    await r.call({ action: "stop" });
+  }
+});
+
+test("foreman_script: stop ends a detached run, records it as stopped and makes undo available", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  sleepScript(r, 30, true);
+  const { pid } = await detached(r);
+  const res = await r.call({ action: "stop" });
+  assert.match(textOf(res), /stopped by the stop action/);
+  assert.equal(res.details?.stopped, true);
+  await until(() => !alive(pid));
+  assert.equal(r.trace("script_run").some((e) => e.kind === "run" && e.outcome === "stopped"), true);
+  const st = await statusOf(r);
+  assert.equal(st.undo.available, true);
+  assert.equal(st.running, undefined);
+  assert.equal(r.sent.length, 0, "the stop answer is the result: no extra message");
+  const again = await r.call({ action: "stop" });
+  assert.equal(again.isError, true);
+  assert.match(textOf(again), /nothing to stop/);
+});
+
+test("foreman_script: the time limit still kills a detached run", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  sleepScript(r, 30);
+  const { pid } = await detached(r, new AbortController(), { timeoutSeconds: 1 });
+  await until(() => r.sent.length === 1, 10_000);
+  assert.match(String(r.sent[0].message.content), /stopped at the time limit/);
+  assert.equal(alive(pid), false);
+});
+
+test("foreman_script: session shutdown kills a detached run and records it as aborted", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  sleepScript(r, 30);
+  const { pid } = await detached(r);
+  await r.shutdown();
+  assert.equal(alive(pid), false);
+  assert.equal(r.trace("script_run").some((e) => e.kind === "run" && e.outcome === "aborted"), true);
+  assert.equal(r.sent.length, 0, "no message into a closed session");
 });
