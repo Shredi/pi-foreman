@@ -599,6 +599,8 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_pr, expected)
         # roles-slim: the planner, finalizer and senior-reviewer roles are gone; one (old, new) pair per changed rendered line
         role_pairs = [
+            # structured verdicts: V is closed by a `review_verdict` result for the item (listed first: the next pairs rewrite the same line)
+            ("Item V is closed only by a fresh `reviewer` or `senior-reviewer` launch that runs `ledger mark V --verifier` after its own check.", "Item V is closed only by a fresh `reviewer` launched with `items` naming V: it gives V a `pass` result in its `review_verdict` call after its own check."),
             ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),
             ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
             ("a `reviewer` (or `senior-reviewer`) PASS.", "a `reviewer` PASS."),
@@ -631,6 +633,8 @@ class PackageFilesTest(unittest.TestCase):
              "- Children run detached with a strict tool allowlist. A builder from a single launch pushes its own branch; other children never push, and a builder from a `tasks` or `chain` launch does not either (the foreman pushes for it, or launches a builder that must push on its own). No child opens or merges a PR."),
             # D71 addendum: a refused shell write keeps the tier; only a refused tool edit raises it
             ("A refused project edit makes the task standard: write the ledger and delegate.", "A refused `write`, `edit`, `foreman_move` or `foreman_copy` on a project file makes the task standard: write the ledger and delegate. A refused shell write keeps the tier, and the change still goes to a builder."),
+            # structured verdicts: V is closed by a `review_verdict` result for the item, a FAIL is recorded by the tool
+            ("If the reviewer reports FAIL, you may relaunch", "If the reviewer records FAIL, you may relaunch"),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)

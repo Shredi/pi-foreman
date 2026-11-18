@@ -45,7 +45,7 @@ The review record in the session keeps the occasion of the review (`item`, `pre-
 
 A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), and a due [high-stakes review](#high-stakes) only reminds (the PR tool's answer carries the reminder); an uncleared high-stakes FAIL still holds.
 
-## The review_verdict tool
+## The verdict tool
 
 A reviewer gives its verdict through the tool `review_verdict`, not through its report. The harness reads gates, marks and the repeat stop only from this call; the report is for the foreman to read and no harness code reads meaning from it (the widened rule of `AGENTS.md`).
 

@@ -248,7 +248,7 @@ The permission gate judges every `mcp__` call on its payload; the MCP scope (`ro
 
 ## Known limit: the review verdict channel
 
-A reviewer gives its verdict, item results and findings through the tool `review_verdict`, which writes a record into a folder the harness made for that launch (`<agent dir>/pi-foreman/state/review-records/<session>/<launch>/`). The floors protect the folder like `state/child-asks`: no tool call or shell line of a session writes it, and a child drops its own `pi-foreman/1` binding key from its process env after reading it, so a process the child starts (a test run, a nested pi) cannot write its record. The gates read the record only (see [review](review.md#the-review_verdict-tool)); no report text.
+A reviewer gives its verdict, item results and findings through the tool `review_verdict`, which writes a record into a folder the harness made for that launch (`<agent dir>/pi-foreman/state/review-records/<session>/<launch>/`). The floors protect the folder like `state/child-asks`: no tool call or shell line of a session writes it, and a child drops its own `pi-foreman/1` binding key from its process env after reading it, so a process the child starts (a test run, a nested pi) cannot write its record. The gates read the record only (see [review](review.md#the-verdict-tool)); no report text.
 
 What this does not stop:
 

@@ -50,7 +50,7 @@ The foreman records a tier (trivial, standard, heavy) before it changes files it
 | `ceremony.required.heavy` | `[builder, reviewer]` | steps are added, never removed, by project/session |
 
 `reviewGate: pass` means the required reviewer step needs a current PASS (a FAIL, a review that gave no verdict or an `incomplete` one, or a revision after the last
-PASS, re-opens it); `verdict` accepts any verdict. The verdict is the reviewer's `review_verdict` call, never read from its report (see [review](review.md#the-review_verdict-tool)); a run that ends without the call counts as no verdict. A revision after a PASS is a project edit outside `.workflow/` or a builder launch; ledger notes, a push, notices and reviewer launches are not. The `foreman_ledger mark V` refusal and the finish hint name the run of the last counted PASS, or say none this round. The orientation packet (tracked-file tree to depth 2,
+PASS, re-opens it); `verdict` accepts any verdict. The verdict is the reviewer's `review_verdict` call, never read from its report (see [review](review.md#the-verdict-tool)); a run that ends without the call counts as no verdict. A revision after a PASS is a project edit outside `.workflow/` or a builder launch; ledger notes, a push, notices and reviewer launches are not. The `foreman_ledger mark V` refusal and the finish hint name the run of the last counted PASS, or say none this round. The orientation packet (tracked-file tree to depth 2,
 head of AGENTS.md or README.md, detected build/test commands, explorer hint; at most `maxLines` lines) is added
 to the foreman's system prompt once per session and does not count against the read budget.
 
