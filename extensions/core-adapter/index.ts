@@ -100,6 +100,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
+import { checkVerdictCall, consumeRecord, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictRecord } from "./verdict.ts";
 import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, marksVerifierCommand, mentionsLedger, planLedgerCall, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
@@ -139,7 +140,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, takeBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -837,8 +838,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.questionCalls.forEach(releaseQuestion);
   });
   let isoSetting: unknown = "auto";
-  // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
-  const launchBinding = readBinding(process.env);
+  // A child's launch binding is in the env while its extensions load (usage.ts); read it now and take the key out of the env (processes the child starts do not inherit its identity).
+  const launchBinding = takeBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.out) process.env[OUT_ENV] = launchBinding.out;
   /** A child's write roots of this kind: its scratch dir first, then its kept output dir (`$FOREMAN_OUT`). */
@@ -1541,6 +1542,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
+  /** A reviewer child with a record folder whose active tools lack `review_verdict` (settings not regenerated, A6) writes the incomplete record itself, with the fixed setup reason: no model text enters it. */
+  function noToolVerdict(s: Session): void {
+    const b = launchBinding;
+    if (!b?.verdictDir || !REVIEW_ROLES.includes(b.role) || !fs.existsSync(b.verdictDir)) return;
+    try {
+      if (pi.getActiveTools().includes(VERDICT_TOOL)) return;
+      writeRecord(b.verdictDir, noToolRecord(b.launchId));
+      s.trace?.emit({ event: "review_verdict_call", accepted: false, reason: "no_tool" });
+    } catch {
+      // a host without the tool api, or an unwritable folder: the reviewer ends without a verdict
+    }
+  }
+
   /** session_start: the run -> ledger routes of the branch's launches; a run with no record uses the bound ledger. */
   function restoreLedgerRoutes(s: Session, ctx: ExtensionContext): void {
     if (s.isChild) return;
@@ -1902,6 +1916,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
+    if (!s.isChild) sweepRecords(s.agentDir, Date.now(), s.id);
+    else noToolVerdict(s);
     restoreRounds(s, ctx, event.reason);
     if (hsModel(s)) {
       // the review base fallback: the first HEAD of each repository the session saw (a pre-upgrade entry's per-checkout sightings first; the first one wins)
@@ -2113,6 +2129,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     sweepScratch(s);
     closeChildAsks(s, event?.reason === "reload");
+    if (!s.isChild && event?.reason !== "reload") fs.rmSync(recordSessionDir(s.agentDir, s.id), { recursive: true, force: true }); // verdict records; a reload keeps them for the runs still going
     await s.show?.idle();
     s.paneResume?.stop(event?.reason); // before live.stop(): the signal flag it reads is also what stop() writes as endedBy
     s.paneResume = null;
@@ -3699,6 +3716,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
+      let takenItems = new Map<Record<string, unknown>, unknown>();
+      const verdictItems = new Map<Record<string, unknown>, ItemId[]>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Warned only once the launch passed every check (set at the end of the guard path).
@@ -3751,6 +3770,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: flags.occasionError };
         }
         takenOccasions = flags.occasions;
+        takenItems = flags.items;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -4329,6 +4349,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const perEntry = agentEntries.map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
         agentEntries.forEach((e, i) => entryLedger.set(e, perEntry[i] ?? lf));
         if (actionOf(input) !== "resume") capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
+        // The items of each review launch (verdict.ts): the `items` field, else every open item; after a FAIL the item occasion's default is the failed items still open.
+        if (actionOf(input) === null) for (const e of agentEntries) {
+          if (!REVIEW_ROLES.includes(e.agent as string)) continue;
+          const given = takenItems.has(e) ? parseItemsField(takenItems.get(e)) : undefined;
+          if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
+          const pick = typeof e.task === "string" ? pickLedger(e.task) : null;
+          const r = launchItemsOf(pick?.text ?? lg, given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.failItems });
+          if ("unknown" in r) {
+            s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
+          }
+          verdictItems.set(e, r.items);
+        }
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
@@ -4398,7 +4431,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         persistCeremonyState(s);
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}) });
+        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined) });
         if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
@@ -5105,8 +5138,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     childAskWatchFor(s, ctx).add(askDir);
   }
 
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean }): LaunchBinding | null {
+  /** A resume keeps the first launch's record folder (same binding); it is made again if missing, and a record the earlier run consumed stays consumed. */
+  function resumeVerdictDir(s: Session, input: Record<string, unknown>): void {
+    const target = resumeTarget(input);
+    const launch = target ? parkFor(s).launchFor(target) : undefined;
+    if (!launch || !s.launches.get(launch)?.verdictDir) return;
+    try {
+      makeRecordDir(recordDir(s.agentDir, s.id, launch));
+    } catch {
+      // the child's tool refuses without a folder
+    }
+  }
+
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean; verdictItems?: ItemId[] }): LaunchBinding | null {
     if (actionOf(input) === "resume") resumeAskDir(s, ctx, input, toolCallId);
+    if (actionOf(input) === "resume" && !s.isChild) resumeVerdictDir(s, input);
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
@@ -5139,6 +5185,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (flags?.reads !== undefined) b.reads = flags.reads;
     if (flags?.install) b.install = true;
     if (flags?.highStakes) b.highStakes = true; // the child's ledger tool marks nothing, item V included
+    if (!s.isChild && REVIEW_ROLES.includes(role)) {
+      // the record folder of the verdict tool, whatever gate.childAsk or the pane say (verdict.ts)
+      const dir = recordDir(s.agentDir, s.id, b.launchId);
+      try {
+        makeRecordDir(dir);
+        b.verdictDir = dir;
+        if (!flags?.highStakes) b.items = flags?.verdictItems ?? [];
+        else b.items = [];
+      } catch {
+        s.trace?.emit({ event: "review_record_dir_failed" });
+      }
+    }
     if (input.worktree === true) b.worktree = true; // ceremony-fixes-2: the child's cwd is an isolation worktree
     bindLaunch(input, b);
     return b;
@@ -5989,6 +6047,39 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } as never);
   }
 
+  // Review verdict (verdict.ts): registered inactive in every adapter process; a reviewer child gets it through its tool list (`--tools`, scripts/foreman_config.py with_review_tools).
+  // The record goes into the launch's record folder (binding `verdictDir`), written by this code only: floors.ts protects the tree.
+  pi.registerTool({
+    name: VERDICT_TOOL,
+    label: "Review verdict",
+    defaultActive: false,
+    executionMode: "sequential",
+    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. Then write your report for the foreman.",
+    parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      const s = await ensureSession(ctx);
+      const refuse = (text: string, reason: string) => {
+        s.trace?.emit({ event: "review_verdict_call", accepted: false, reason });
+        return { content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true };
+      };
+      const b = launchBinding;
+      if (!s.isChild || !b || !REVIEW_ROLES.includes(b.role) || !b.verdictDir || !fs.existsSync(b.verdictDir)) return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman); give the verdict in your report.`, "no_channel");
+      const allowed = b.highStakes ? [] : b.items ?? [];
+      const c = checkVerdictCall(params, allowed);
+      if ("error" in c) return refuse(c.error, "invalid");
+      let replaced = false;
+      try {
+        replaced = writeRecord(b.verdictDir, recordOf(b.launchId, c.call)).replaced;
+      } catch {
+        return refuse(`${VERDICT_TOOL}: the record could not be written; give the verdict in your report.`, "write_failed");
+      }
+      s.trace?.emit({ event: "review_verdict_call", accepted: true, verdict: c.call.verdict, items: c.call.items.length, findings: c.call.findings.length });
+      const given = new Set(c.call.items.map((i) => String(i.id)));
+      const left = allowed.filter((id) => !given.has(String(id)));
+      return { content: [{ type: "text" as const, text: [`recorded: ${c.call.verdict}${c.call.items.length ? `, ${c.call.items.length} item result${c.call.items.length === 1 ? "" : "s"}` : ""}${c.call.findings.length ? `, ${c.call.findings.length} finding${c.call.findings.length === 1 ? "" : "s"}` : ""}.`, replaced ? "This call replaced your earlier record." : "", left.length > 0 ? `Items this call left out (they stay open): ${left.join(", ")}.` : ""].filter(Boolean).join(" ") }], details: { decision: "recorded", verdict: c.call.verdict } };
+    },
+  } as never);
+
   // Ledger helper (ledgercall.ts, ceremony.ledgerHelper): registered inactive; the foreman activates
   // it at session start unless the knob is off, reviewer children get it through their tool list.
   pi.registerTool({
@@ -5996,29 +6087,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item). Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
       const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
       const kind = typeof params.action === "string" ? params.action : "unknown";
-      if (s.isChild) {
-        // Item 14: a reviewer child closes V on the foreman's ledger; not traced as ledger_call (foreman-only).
-        if (mode !== "tool" || !REVIEW_ROLES.includes(s.usage.line.role)) return refuse(`${LEDGER_TOOL} is not available to this role.`);
-        // A `[high-stakes]` review (highstakes.ts) marks nothing: its launch binding carries the marker, V included.
-        if (launchBinding?.highStakes) return refuse(`${LEDGER_TOOL}: a [high-stakes] review marks no ledger item, item V included; give the verdict in your report.`);
-        const plan = planLedgerCall(params, { child: true, gate: combined(s.reviewGates) });
-        if ("error" in plan) return refuse(plan.error);
-        const file = childLedgerFile(s, params.path);
-        if ("error" in file) return refuse(file.error);
-        const r = await runLedger(s, plan.calls[0], file.path);
-        if (r.ok) writeHint(file.path, ["V"], `ledger mark by ${s.usage.line.role}`, undefined, hintOpts(s));
-        const st = await runLedger(s, ["status"], file.path);
-        return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
-      }
+      // a child closes V through its verdict (review_verdict, item V), never through this tool
+      if (s.isChild) return refuse(`${LEDGER_TOOL} is not available to this role.`);
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
-      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates) });
+      const plan = planLedgerCall(params, { gate: combined(s.reviewGates) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);
@@ -6121,26 +6200,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = await (lockFile ? ledgerGate(lockFile).exclusive(run) : run());
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `ledger: ${r.error.message}` : r.timedOut ? "ledger: timed out" : "");
     return { ok: !r.error && !r.timedOut && r.code === 0, text };
-  }
-
-  /** A reviewer child's ledger: the foreman's bound ledger, else `path` inside <workspace>/.workflow/LEDGER-*.md. */
-  function childLedgerFile(s: Session, p: unknown): { path: string } | { error: string } {
-    const bound = boundLedger(s.markerDir, s.usage.line.foremanSession);
-    if (bound) return { path: bound };
-    const how = `${LEDGER_TOOL}: the foreman's ledger is not known here; pass path: ".workflow/LEDGER-<topic>.md".`;
-    if (typeof p !== "string" || !p.trim()) return { error: how };
-    const ws = s.usage.line.workspace || s.cwd;
-    let abs: string;
-    let dir: string;
-    try {
-      abs = fs.realpathSync.native(path.resolve(ws, p));
-      dir = fs.realpathSync.native(path.join(ws, ".workflow"));
-    } catch {
-      return { error: how };
-    }
-    const same = (a: string, b: string) => (platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
-    if (!same(path.dirname(abs), dir) || !/^LEDGER-.+\.md$/i.test(path.basename(abs))) return { error: how };
-    return { path: abs };
   }
 
   // Plan checkpoint (checkpoint.ts): the owner approves the plan file; foreman only. Never approves on its own.

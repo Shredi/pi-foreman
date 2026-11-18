@@ -188,9 +188,9 @@ function itemId(v: unknown): string | null {
 /**
  * Plan one `foreman_ledger` call as ledger.py argument lists (status is appended by the caller).
  * Foreman: every action; `mark V` only while the latest review verdict is PASS with no revision
- * since, then with `--verifier` and the attested note. Child (reviewer roles): only mark V.
+ * since, then with `--verifier` and the attested note. A reviewer child closes V through `review_verdict`, not here.
  */
-export function planLedgerCall(params: Record<string, unknown>, opts: { child: boolean; gate: GateView }): LedgerPlan {
+export function planLedgerCall(params: Record<string, unknown>, opts: { child?: boolean; gate: GateView }): LedgerPlan {
   const action = params.action;
   if (typeof action !== "string" || !(LEDGER_ACTIONS as readonly string[]).includes(action)) return { error: `${LEDGER_TOOL}: action must be one of ${LEDGER_ACTIONS.join(", ")}.` };
   const raw = params.items === undefined ? [] : Array.isArray(params.items) ? params.items : [params.items];
@@ -201,11 +201,8 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     if (!items.includes(id)) items.push(id);
   }
   const text = typeof params.text === "string" && params.text.trim() ? params.text.trim() : null;
+  if (opts.child) return { error: `${LEDGER_TOOL}: a reviewer closes V through review_verdict (item V), not through this tool.` };
   if (text && /[\r\n]/.test(text)) return { error: `${LEDGER_TOOL}: text must be one line.` };
-  if (opts.child) {
-    if (action !== "mark" || items.length !== 1 || items[0] !== "V") return { error: `${LEDGER_TOOL}: a reviewer may only close V: {action: "mark", items: ["V"]}.` };
-    return { calls: [["mark", "V", ...(text ? [text] : []), "--verifier"]], items: "V", attested: false };
-  }
   const one = (): string | null => (items.length === 1 ? items[0] : null);
   switch (action as LedgerAction) {
     case "status":

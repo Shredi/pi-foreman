@@ -65,6 +65,10 @@ export interface LaunchBinding {
   askDir?: string;
   /** Why the launch has no ask dir: the parent's `gate.childAsk` is `deny`, or the parent has no pane; absent = unknown. */
   noAsk?: "deny" | "no-pane";
+  /** A review launch: the parent-owned record folder where the child's `review_verdict` tool writes `verdict.json` (verdict.ts); absent = the tool refuses. */
+  verdictDir?: string;
+  /** A review launch: the ledger item ids the verdict tool accepts (the launch's `items` field, resolved at the launch). */
+  items?: (number | "V")[];
   /** r79: the parent's resolved permissions mode, its session override (`/foreman perms mode`) and the profile name; the child re-reads the permission files per decision. `childDeny` marks the child deny set (gate.ts childDenied): a child's write outside its worktree and own scratch and its PR creation are denied before any allow rule, built-in allow or classifier verdict, whatever the mode. */
   perms?: { mode: string; override?: string; profile?: string; childDeny?: true };
 }
@@ -234,6 +238,42 @@ export function checkoutEnv(b: LaunchBinding | null): Record<string, string> {
   return b?.worktree && b.workspace ? { [CHECKOUT_ENV]: b.workspace } : {};
 }
 
+const itemId = (v: unknown): number | "V" | null => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : v === "V" ? "V" : null);
+
+const BINDING_CACHE = Symbol.for("pi-foreman.launch-binding");
+
+/**
+ * The child's launch binding, read once and its own key removed from the env right after (verdict.ts, T12): processes the child starts
+ * (test runs, a nested pi) no longer inherit its identity, so they cannot write its verdict record. Other packages' keys stay. A reload of the
+ * extension in the same process finds the env without the key and takes the parsed binding kept on the process; only a child keeps one.
+ */
+export function takeBinding(env: Env): LaunchBinding | null {
+  const g = globalThis as unknown as Record<symbol, LaunchBinding | null | undefined>;
+  const b = readBinding(env);
+  if (env.PI_SUBAGENT_CHILD !== "1") return b;
+  if (b) {
+    scrubBinding(env);
+    g[BINDING_CACHE] = b;
+    return b;
+  }
+  return g[BINDING_CACHE] ?? null;
+}
+
+/** Remove this package's key from the bindings env var, keeping every other key; the var goes when nothing is left. */
+export function scrubBinding(env: Env): void {
+  const raw = env[BINDINGS_ENV];
+  if (!raw) return;
+  try {
+    const all = JSON.parse(raw) as unknown;
+    if (!isObj(all) || !(BINDING_NS in all)) return;
+    const { [BINDING_NS]: _own, ...rest } = all;
+    if (Object.keys(rest).length > 0) env[BINDINGS_ENV] = JSON.stringify(rest);
+    else delete env[BINDINGS_ENV];
+  } catch {
+    // unparsable: left as it is
+  }
+}
+
 /** This process's launch binding (child side), or null. */
 export function readBinding(env: Env): LaunchBinding | null {
   const raw = env[BINDINGS_ENV];
@@ -255,10 +295,12 @@ export function readBinding(env: Env): LaunchBinding | null {
     const askDir = str(b.askDir);
     const handoffDir = str(b.handoffDir);
     const noAsk = b.noAsk === "deny" || b.noAsk === "no-pane" ? b.noAsk : undefined;
+    const verdictDir = str(b.verdictDir);
+    const items = Array.isArray(b.items) ? b.items.map(itemId).filter((x): x is number | "V" => x !== null) : null;
     const pm = isObj(b.perms) && str(b.perms.mode) ? b.perms : null;
     const perms = pm ? { mode: str(pm.mode) as string, ...(str(pm.override) ? { override: str(pm.override) as string } : {}), ...(str(pm.profile) ? { profile: str(pm.profile) as string } : {}), ...(pm.childDeny === true ? { childDeny: true as const } : {}) } : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(scratch && out && path.isAbsolute(scratch) && path.isAbsolute(out) ? { out } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(scratch && out && path.isAbsolute(scratch) && path.isAbsolute(out) ? { out } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(verdictDir && path.isAbsolute(verdictDir) ? { verdictDir } : {}), ...(items ? { items } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
   } catch {
     return null;
   }
