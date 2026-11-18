@@ -67,7 +67,7 @@ test("a launch that passes the mapped model itself is not pinned", async (t) => 
 
 test("reviewByOccasion models are pinned occasion; a security rung is pinned security_rung", async (t) => {
   const r = await rig(t, { "pa/big": "pb/mid" }, { provider: "pa", id: "big" }, { reviewByOccasion: { "pre-pr": { model: "pa/picked-m" } } });
-  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "branch [pre-pr]" }, { agent: "reviewer", task: "items 1" }] };
+  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "[pre-pr] branch" }, { agent: "reviewer", task: "items 1" }] };
   const res = await r.launch(input);
   assert.equal(res.res?.block, undefined, String(res.res?.reason));
   assert.deepEqual(models(input), ["pa/picked-m", "pb/mid"]);
@@ -76,7 +76,7 @@ test("reviewByOccasion models are pinned occasion; a security rung is pinned sec
 
 test("an occasion model with the mapped reviewer's base is still pinned occasion", async (t) => {
   const r = await rig(t, { "pa/big": "pb/mid" }, { provider: "pa", id: "big" }, { reviewByOccasion: { "pre-pr": { model: "pa/reviewer-m:high" } } });
-  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "branch [pre-pr]" }] };
+  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "[pre-pr] branch" }] };
   const res = await r.launch(input);
   assert.equal(res.res?.block, undefined, String(res.res?.reason));
   assert.deepEqual(models(input), ["pa/reviewer-m"]);

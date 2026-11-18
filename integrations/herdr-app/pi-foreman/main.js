@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
 import { SAMPLE } from "./sample.mjs";
 
@@ -23,6 +23,7 @@ const PRS_EVERY_MS = 30000; // `foreman prs poll` starts this long after its pre
 const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given up
 const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
 const PRESS_MS = 1500; // a clicked element shows its pending state this long (the 1 s timer then redraws it)
+const RENDER_NOTICE_MS = 600000; // the render notice comes at most this often
 const OPEN_PR_CAP = 5; // PR chips per repository row of Open PRs; the rest is one "+k more" element
 // exec `timeout` (ms) per job; the Promise.race watchdogs stay as the backstop for an app that ignores the option (Herdr app 0.1.13)
 const T_RADAR = 30000;
@@ -107,7 +108,10 @@ const isObjLike = (v) => v !== null && typeof v === "object" && !Array.isArray(v
 export default class ForemanAgents extends View {
   init(p, cx) {
     this.changed = {};
-    this.feed = []; // radar openPrs: twins of session PRs (title, description, jobs)
+    this.feed = []; // radar openPrs of all machines, merged: twins of session PRs (title, description, jobs)
+    this.renderOpen = false; // set by render, cleared at its end: still set at the tick, the last render did not finish
+    this.renderBroke = false; // a render started while the previous one was still open
+    this.prFault = false; // a PR part fell back to its guard since the last tick
     this.folded = new Set(); // tree item ids the user folded
     this.radar = new Map(); // machine key -> {ok, tree, openPrs, tried}
     this.busy = new Map(); // key -> when its task started
@@ -181,8 +185,32 @@ export default class ForemanAgents extends View {
     guard(() => notify({ title, body: why(e), level: "error" }));
   }
 
+  // `guard` for the PR parts: a fallback also sets `prFault`, which the next tick turns into the render notice.
+  prGuard(f, fallback) {
+    try { return f(); } catch { this.prFault = true; return fallback; }
+  }
+
+  // The Agents view did not finish drawing: a render cut short (`renderOpen` still set at the tick) or a PR part that fell back since
+  // the last tick. Read and cleared here, on the tick only, so no host call is made from render. One warning per RENDER_NOTICE_MS at
+  // most; it names the state, never an error text.
+  renderNotice() {
+    const broke = this.renderBroke === true || this.prFault === true || this.renderOpen === true;
+    this.renderBroke = false;
+    this.prFault = false;
+    this.renderOpen = false;
+    const now = Date.now();
+    if (!broke || (this.renderNoticeAt !== undefined && now - this.renderNoticeAt < RENDER_NOTICE_MS)) return;
+    this.renderNoticeAt = now;
+    guard(() => notify({
+      title: "The Agents view did not finish drawing",
+      body: "Parts of it, such as the pull requests, may be incomplete or out of date. Many open pull requests or a slow computer can cause this.",
+      level: "warning",
+    }));
+  }
+
   poll(cx) {
     if (this.sample) return;
+    this.renderNotice();
     const now = Date.now();
     for (const machine of this.machines()) {
       const key = machine ?? "local";
@@ -409,7 +437,7 @@ export default class ForemanAgents extends View {
   // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one dot; a click opens its
   // page when radar gave a URL (or a repository URL to derive it from). Resting on the chip opens the hover card.
   prChip(t, pr, href, key, more = []) {
-    return guard(() => this.prChipRaw(t, pr, href, key, more), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
+    return this.prGuard(() => this.prChipRaw(t, pr, href, key, more), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
   }
 
   // `more`: further PRs of the same row; the chip then reads "#n +k" and its hover card lists them.
@@ -453,7 +481,7 @@ export default class ForemanAgents extends View {
     // Only the hot chip builds its card (cardView is about 15 elements, each one host call); the others hold an empty element.
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
       .anchor(this.cardAnchor?.get(id) ?? "top_center")
-      .trigger(trigger).content(this.hotCard === id ? (guard(() => this.cardView(t, c, this.cardMaxH?.get(id)), null) ?? div()) : div());
+      .trigger(trigger).content(this.hotCard === id ? (this.prGuard(() => this.cardView(t, c, this.cardMaxH?.get(id)), null) ?? div()) : div());
   }
 
   // The hover card of a PR: title, description excerpt, conflict line, the jobs grouped failed / running / passed.
@@ -484,7 +512,7 @@ export default class ForemanAgents extends View {
 
   // Session PRs with the title, description and job names of their twin in radar's open-PRs list.
   enrich(prs) {
-    return guard(() => enrichPrs(prs, this.feed), prs);
+    return this.prGuard(() => enrichPrs(prs, this.feed), prs);
   }
 
   // The PR chips of a session row, on the right of its title row for every row: up to two chips, more as one chip "#n +k".
@@ -591,7 +619,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))
-      .children(guard(() => this.rowChips(t, item), []))
+      .children(this.prGuard(() => this.rowChips(t, item), []))
       .child(glyphRight)
       .when(x !== null, (el) => el.relative().child(this.rail(t, `${item.id}/row`, x, Math.floor(((root ? 22 : 26) + 16) / 2))));
   }
@@ -643,7 +671,7 @@ export default class ForemanAgents extends View {
       .when(root !== null && root.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${root.sessions} sessions`)))
       .when(host !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(host)))
       .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(now - since))))
-      .children(root ? guard(() => this.rowChips(t, root), []) : [])
+      .children(root ? this.prGuard(() => this.rowChips(t, root), []) : [])
       .child(statusGlyph(t, shownStatus));
   }
 
@@ -664,7 +692,7 @@ export default class ForemanAgents extends View {
     const rows = [h_flex().id("op-head").px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
       .child(div().text_color(t.dim).child("Open PRs"))
       .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
-    for (const g of groups) rows.push(guard(() => this.openPrRow(t, g), null) ?? this.openPrRowFallback(t, g));
+    for (const g of groups) rows.push(this.prGuard(() => this.openPrRow(t, g), null) ?? this.openPrRowFallback(t, g));
     return rows;
   }
 
@@ -705,8 +733,12 @@ export default class ForemanAgents extends View {
   }
 
   render(cx) {
+    if (this.renderOpen) this.renderBroke = true; // the previous render never reached its end
+    this.renderOpen = true;
     const t = theme();
-    this.feed = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
+    // The feeds of all machines as one list, one entry per PR (a merge that fails falls back to the plain concatenation)
+    const perMachine = [...this.radar.values()].map((r) => (r.ok ? r.openPrs : []));
+    this.feed = this.prGuard(() => mergeFeeds(perMachine), perMachine.flat());
     const list = guard(() => (this.sample ? SAMPLE.agents : agents()).filter((a) => typeof a?.address === "string"), []);
     const listedStatus = new Map(list.map((a) => [a.address, a.status]));
     const all = guard(() => (this.sample ? SAMPLE.terminals : terminals()).filter((x) => x && typeof x === "object"), []);
@@ -824,12 +856,11 @@ export default class ForemanAgents extends View {
     const kept = candidates.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
     for (const a of kept) if (!blocks.has(a.address)) blocks.set(a.address, withRows(a));
     const rows = spaceGroups(kept).flatMap((g) => [...header(g), ...g.members.flatMap((a) => blocks.get(a.address))]);
-    const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
     // A child node counts as shown only where it is drawn (drawnItems): an ended one with nothing live below leaves the tree, and its PRs stay in Open PRs.
-    const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values()], drawnItems))
+    const orphanGroups = this.prGuard(() => openPrGroups(this.feed, tops, shownSet([...joined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
-    rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
+    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
@@ -849,6 +880,8 @@ export default class ForemanAgents extends View {
     const body = [title];
     if (list.length === 0) body.push(empty);
     body.push(scroller, footer);
-    return v_flex().min_h(0).size_full().text_size(13).bg(t.chrome).border_t(1).border_color(t.border).children(body);
+    const view = v_flex().min_h(0).size_full().text_size(13).bg(t.chrome).border_t(1).border_color(t.border).children(body);
+    this.renderOpen = false; // the render reached its end
+    return view;
   }
 }

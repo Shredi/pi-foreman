@@ -5,7 +5,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CloseFlow, prMergedPrompt } from "../close.ts";
+import { CloseFlow } from "../close.ts";
 import type { CloseDeps, SelfFinish } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
 import { storeFromPoll } from "./_storefake.ts";
@@ -44,50 +44,44 @@ function flowRig(fin: SelfFinish | (() => Promise<SelfFinish>)) {
     report: async () => (log.push("report"), null),
     selfFinish: async () => (log.push("selfFinish"), typeof fin === "function" ? fin() : fin),
     appendResult: (f, t) => void files.set(f, (files.get(f) ?? "") + t),
+    mergedPr: () => 7, // the merge the session remembers (the watch's merged event)
   };
   const ctx = { isIdle: () => true, shutdown: () => void log.push("shutdown") };
   return { log, files, flow: new CloseFlow(deps), ctx };
 }
 
 const FILE = "/h/20261102-120000-demo/result.md";
-const merged = { source: "pr-merged" as const, file: FILE, shown: FILE, prompt: prMergedPrompt(FILE, 7), pr: { n: 7, parent: "parent-1", label: "demo" } };
+const closeReq = { source: "intercom-parent" as const, file: FILE, shown: FILE, replyTo: "parent-1" };
 
 async function drive(r: ReturnType<typeof flowRig>) {
-  r.flow.request(merged, r.ctx);
-  r.flow.onInput(prMergedPrompt(FILE, 7), "extension");
+  r.flow.request(closeReq, r.ctx);
+  r.flow.onInput(r.flow.closeText(), "extension");
   r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
 }
 
-test("pr-merged: the close prompt asks for the PR number, the merge commit and what is left open", () => {
-  const p = prMergedPrompt(FILE, 7);
-  assert.match(p, /PR #7 was merged/);
-  assert.ok(p.includes(FILE));
-  assert.match(p, /merge commit/);
-  assert.match(p, /left open/);
-});
-
-test("pr-merged: result.md, the parent report (merged, closing + Result from), then the cleanup spawn, then shutdown", async () => {
+test("merged then a parent close: result.md, the cleanup lines, the closed ack to the parent, then the cleanup spawn, then shutdown", async () => {
   const r = flowRig({ lines: ["cleanup: ok"], spawn: () => void r.log.push("spawn") });
   r.files.set(FILE, "written by the model");
   await drive(r);
   const seq = r.log.filter((l) => /^(prompt|sync|report|markClosed|selfFinish|reply|spawn|shutdown)/.test(l));
-  assert.deepEqual(seq, [`prompt:${prMergedPrompt(FILE, 7)}`, "sync", "report", "markClosed", "selfFinish", "reply:parent-1:PR #7 merged, closing", `reply:parent-1:Result from demo: ${FILE}`, "spawn", "shutdown"]);
+  assert.deepEqual(seq, [`prompt:pi-foreman close: write your result file now at ${FILE} (summary, commits, open items). Do not start new work.`, "sync", "report", "markClosed", "selfFinish", `reply:parent-1:foreman:closed ${FILE}`, "spawn", "shutdown"]);
   assert.match(r.files.get(FILE)!, /## Merge cleanup\n\ncleanup: ok/);
   assert.ok(r.log.includes("trace:cleanup"));
 });
 
-test("pr-merged: a refused precondition lands in result.md and the parent report; no spawn", async () => {
+test("merged then a parent close: a refused precondition lands in result.md and in the reply before foreman:closed; no spawn", async () => {
   const r = flowRig({ lines: ["cleanup: not started (worktree_dirty); the worktree and branch feat stay"] });
   r.files.set(FILE, "x");
   await drive(r);
-  assert.ok(r.log.some((l) => l === "reply:parent-1:PR #7 merged, closing (cleanup: not started (worktree_dirty); the worktree and branch feat stay)"));
+  const reasonAt = r.log.indexOf("reply:parent-1:PR #7 merged, closing (cleanup: not started (worktree_dirty); the worktree and branch feat stay)");
+  assert.ok(reasonAt >= 0 && reasonAt < r.log.indexOf(`reply:parent-1:foreman:closed ${FILE}`), r.log.join("|"));
   assert.match(r.files.get(FILE)!, /worktree_dirty/);
   assert.ok(r.log.includes("trace:no-cleanup") && !r.log.includes("spawn"));
   assert.equal(r.log.at(-1), "shutdown");
 });
 
-test("pr-merged: a self-finish that throws is a refusal line, not a failed close", async () => {
+test("merged then a parent close: a self-finish that throws is a refusal line, not a failed close", async () => {
   const r = flowRig(async () => { throw new Error("python missing"); });
   r.files.set(FILE, "x");
   await drive(r);

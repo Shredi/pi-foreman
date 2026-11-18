@@ -145,6 +145,12 @@ export function verdictOf(text: string): Verdict | null {
   return all.length > 0 ? "pass" : null;
 }
 
+/** True when the first non-empty line of the report is the verdict line `FAIL INCOMPLETE` (the reviewer stopped early and found no defect). No other line is read. */
+export function incompleteOf(text: string): boolean {
+  const first = text.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+  return /^\**(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*fail[ \t]+incomplete[\s.!*]*$/i.test(first.trim());
+}
+
 /**
  * True when a prompt is the owner's (the round state and the loop stop start again): interactive and rpc always; an extension prompt unless it
  * is a harness text (the foreman's own `pi-foreman ...` steer and retro prompts, the subagent wake, the legacy intercom
