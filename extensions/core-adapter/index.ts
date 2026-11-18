@@ -53,7 +53,7 @@ import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, 
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
-import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
+import { guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { dormantDoctorLine, withBuiltinKeepalive } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
@@ -3705,7 +3705,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     const mapping = mapTool(event.toolName);
-    if (mapping.pre.length === 0) return undefined;
+    // Shell tools have no core script now but still pass the checks below (pre-bash hooks, empty-command refusal, git drift).
+    if (mapping.pre.length === 0 && !isShellTool(event.toolName)) return undefined;
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
@@ -4197,12 +4198,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (hr.blocked) return { block: true, reason: hr.blocked };
         }
       }
+      if (isShellTool(event.toolName)) {
+        const bad = guardPayloadBlock(event.toolName, input);
+        if (bad) return { block: true, reason: bad };
+      }
       for (const guard of mapping.pre) {
         let agents: string[] = [];
-        if (guard === "destructive_guard") {
-          const bad = guardPayloadBlock(event.toolName, input);
-          if (bad) return { block: true, reason: bad };
-        }
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
           // Plan phase: explorers research before any ledger exists; the core gate would ask for one, so it is not called for them.
@@ -4218,9 +4219,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           payload.permission_mode = spawnPermissionMode(planModeOn(ctx.sessionManager.getBranch?.() ?? []), agents);
         }
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
-        if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
-          s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
-        }
         const target = guard === "ledger_guard_write" ? resolveToolPath(input.path, ctx.cwd, os.homedir()) : null;
         const t = await translateToolCall({
           guard,
@@ -4239,7 +4237,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const role of agents) s.trace?.emit({ event: "role_launch", role, ...(modelOf.has(role) ? { model: modelOf.get(role) } : {}), ...(REVIEW_ROLES.includes(role) ? { occasion: [...occasions].find(([e]) => e.agent === role)?.[1] ?? "item" } : {}) });
         }
       }
-      // A main-session shell line that names git or a forge tool: hooks and git config changed since the snapshot stop it (after the destructive guard, as before).
+      // A main-session shell line that names git or a forge tool: hooks and git config changed since the snapshot stop it (after the pre-bash checks, as before).
       if (isShellTool(event.toolName) && !s.isChild && mainNeedsGitGuard(input.command)) {
         const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), event.toolCallId);
         if (drift) return drift;
@@ -6812,7 +6810,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else fail(`no Python ≥ 3.13 (tried: ${s.python.rejected.join("; ") || "nothing"})`, NO_PYTHON_FIX.replace(/; run \/foreman doctor\.$/, "."));
     for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
 
-    if (fs.existsSync(path.join(CORE_DIR, "scripts", "destructive_guard.py"))) ok(`core scripts at ${CORE_DIR}`);
+    if (fs.existsSync(path.join(CORE_DIR, "scripts", "ledger_guard_write.py"))) ok(`core scripts at ${CORE_DIR}`);
     else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ is vendored with the package).");
     const unbundled = missingBundled(PKG_ROOT);
     if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm ci in a checkout), then restart.");

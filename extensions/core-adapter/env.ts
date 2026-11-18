@@ -5,10 +5,10 @@ import type { GuardName } from "./toolmap.ts";
 export type Env = Record<string, string | undefined>;
 
 // Another harness's settings must never reach the core through pi-foreman: these switch
-// guards off (DESTRUCTIVE_GUARD=0, LEDGER_WRITE_GUARD=0, FABLE_ORCH_MODE=plain), point the
+// guards off (LEDGER_WRITE_GUARD=0, FABLE_ORCH_MODE=plain), point the
 // ledger elsewhere (LEDGER) or carry a foreign session id (CLAUDE_CODE_SESSION_ID).
 const STRIP_PREFIXES = ["CLAUDE_", "FABLE_ORCH_", "LEDGER_"];
-const STRIP_EXACT = new Set(["LEDGER", "DESTRUCTIVE_GUARD", "SAFE_RM_DRYRUN", "SAFE_RM_BYPASS", "TMPDIR"]);
+const STRIP_EXACT = new Set(["LEDGER", "SAFE_RM_DRYRUN", "SAFE_RM_BYPASS", "TMPDIR"]);
 
 export function isStrippedKey(key: string): boolean {
   const k = key.toUpperCase();
@@ -29,10 +29,8 @@ export interface GuardEnvInput {
 
 export function buildGuardEnv(input: GuardEnvInput): Record<string, string> {
   const out: Record<string, string> = {};
-  let tmpdirHost: string | undefined;
   for (const [key, value] of Object.entries(input.base)) {
     if (value === undefined) continue;
-    if (key.toUpperCase() === "TMPDIR") tmpdirHost = value;
     if (isStrippedKey(key)) continue;
     out[key] = value;
   }
@@ -45,17 +43,8 @@ export function buildGuardEnv(input: GuardEnvInput): Record<string, string> {
   // Claude-only duties of the stop hook: tmux teammate reaping and the `ps` walk.
   out.FABLE_ORCH_SWARM_CLEANUP = "0";
   out.FABLE_ORCH_TEAMMATE_STOP = "1";
-  if (input.guard === "destructive_guard") {
-    // The destructive guard treats the temp dir as an allowed root: keep the host's.
-    if (tmpdirHost !== undefined) out.TMPDIR = tmpdirHost;
-    // Opt-in switches of the fork patch (no effect on a core without it): exit 2 on an internal
-    // error instead of a silent allow, and no PATH rewrite to a guard bin dir (empty = none).
-    out.FABLE_ORCH_GUARD_FAIL_CLOSED = "1";
-    out.FABLE_ORCH_GUARD_BIN = "";
-  } else {
-    // Python's tempfile checks TMPDIR first on every OS: marker, task and stop sidecars.
-    out.TMPDIR = input.markerDir;
-  }
+  // Python's tempfile checks TMPDIR first on every OS: marker, task and stop sidecars.
+  out.TMPDIR = input.markerDir;
   if (input.guard === "ledger_guard_spawn" && typeof input.threshold === "number") {
     out.LEDGER_GUARD_THRESHOLD = String(Math.max(0, Math.floor(input.threshold)));
   }
