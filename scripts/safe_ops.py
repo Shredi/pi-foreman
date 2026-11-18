@@ -677,6 +677,25 @@ def is_default_branch(ws, branch, configured):
     return branch in names
 
 
+def workflow_has_git(root):
+    """True when a `.git` entry sits at any depth below `root`, or the walk (no link followed) passes
+    IGNORED_WALK_CAP entries or fails."""
+    seen, stack = 0, [root]
+    try:
+        while stack:
+            with os.scandir(stack.pop()) as it:
+                for ent in it:
+                    seen += 1
+                    if seen > IGNORED_WALK_CAP or ent.name == ".git":
+                        return True
+                    link = ent.is_symlink() or getattr(ent, "is_junction", lambda: False)()
+                    if not link and ent.is_dir(follow_symlinks=False):
+                        stack.append(ent.path)
+    except OSError:
+        return True
+    return False
+
+
 def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     """Every worktree_remove precondition for `raw` (relative to `cwd`); raises Precondition.
 
@@ -685,7 +704,14 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     `not_merged` does not apply (a squash merge leaves the tip outside the base); every other check stays.
     `top_level`: names of ignored paths that count as disposable only at the worktree's top level (not as any component).
     """
-    workspace_root(cwd)
+    try:
+        workspace_root(cwd)
+    except Precondition as exc:
+        # a session cwd outside any git work tree: an absolute path names the repository (relative paths still refuse)
+        if exc.name != "not_a_git_repo" or not isinstance(raw, str) or not os.path.isabs(raw) or "\0" in raw:
+            raise
+        cwd = os.path.realpath(raw)
+        workspace_root(cwd)
     if not isinstance(raw, str) or not raw.strip() or "\0" in raw:
         raise Precondition("bad_request", "path must be a non-empty path")
     target = os.path.realpath(os.path.join(cwd, raw))
@@ -713,6 +739,11 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     untracked = []  # untracked paths under worktreeDisposable: deleted by remove_worktree right before `git worktree remove`
     for rec in out.split("\0"):
         if not rec:
+            continue
+        if rec == "?? .workflow/" and ".workflow" in top_level:  # the archived notes folder (complete archive only)
+            if workflow_has_git(os.path.join(target, ".workflow")):
+                raise Precondition("worktree_dirty", "an untracked folder holds a nested repository: .workflow/")
+            untracked.append(".workflow/")
             continue
         if not rec.startswith("?? ") or not disposable(rec[3:], cfg.get("worktreeDisposable") or []):
             raise Precondition("worktree_dirty", "git status is not empty (changes or untracked files)")

@@ -711,7 +711,7 @@ def op_pr_status(req):
     args, cfg, pr_host = _setup(req, ("number", "repo", "host"))
     number = arg_number(args)
     repo, hostname = arg_repo(args), arg_host(args)
-    root = workspace_root(req.get("cwd"))
+    root = _repoless_root(req) if req.get("repoless") is True and repo else workspace_root(req.get("cwd"))
     host = resolve_host(pr_host, "status", root)
     if host.kind == "template":
         out = run_template(host, "status", _values(root, number=number, repo=repo, host=hostname), root)
@@ -734,7 +734,7 @@ def op_pr_checks(req):
     required = args.get("required", False)
     if not isinstance(required, bool):
         raise _bad("required must be a boolean")
-    root = workspace_root(req.get("cwd"))
+    root = _repoless_root(req) if req.get("repoless") is True and repo else workspace_root(req.get("cwd"))
     host = resolve_host(pr_host, "checks", root)
     if host.kind == "template":
         out = run_template(host, "checks", _values(root, number=number, repo=repo, host=hostname), root)
