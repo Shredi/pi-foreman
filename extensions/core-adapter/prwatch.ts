@@ -901,8 +901,6 @@ export interface PrWatchesDeps {
   child?(): boolean;
   /** The watched PR was merged (the watch has ended and its message is sent). */
   onMerged?(info: MergedInfo): void;
-  /** A watch ended by the host's `closed` (the tick's final; not a refresh, not pr_unwatch) and no watch is left. */
-  onLastEnded?(info: { key: PrKey; final: "closed" }): void;
   /** A milestone of a PR for the owner's page list: a PR this session created (pr_create) was armed, a child's PR got its ready line, a watched PR was merged. */
   milestone?(kind: "pr_opened" | "pr_ready" | "pr_merged", n: number): void;
   /**
@@ -1567,13 +1565,6 @@ export class PrWatches {
       this.milestone("pr_merged", w.key.n);
       try {
         this.deps.onMerged?.({ key: w.key, head: d.head, base: d.base });
-      } catch {
-        // the hook must not break the watch
-      }
-    }
-    if (d.final === "closed" && this.numbers().length === 0) {
-      try {
-        this.deps.onLastEnded?.({ key: w.key, final: "closed" });
       } catch {
         // the hook must not break the watch
       }

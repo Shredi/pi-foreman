@@ -9,6 +9,7 @@ import { fromJsonText } from "./jsontext.ts";
 import { locateRepo } from "./gitdrift.ts";
 import { splitLevel } from "./launchmodel.ts";
 import { hasStrongRung, ranksAbove, launchEntries } from "./ladder.ts";
+import { isLaunchOccasion, LAUNCH_OCCASIONS, type LaunchOccasion } from "./occasion.ts";
 import { workspaceOf } from "./python.ts";
 import { nextRankAboveStrong, cappedRung } from "./reviewerclimb.ts";
 import type { Rank } from "./ranks.ts";
@@ -123,11 +124,11 @@ export function liftSizing(input: Json): { from: ("options" | "args")[]; left: b
       const box = e[key];
       if (!isObj(box)) continue;
       if (key === "args" && e.workflow !== undefined) {
-        if (box.size !== undefined || box.risk !== undefined || box.reason !== undefined) left = true;
+        if (box.size !== undefined || box.risk !== undefined || box.reason !== undefined || box.occasion !== undefined) left = true;
         continue;
       }
       let moved = false;
-      for (const f of ["size", "risk", "reason"] as const) {
+      for (const f of ["size", "risk", "reason", "occasion"] as const) {
         if (box[f] === undefined) continue;
         if (e[f] === undefined) e[f] = box[f];
         delete box[f];
@@ -188,8 +189,10 @@ const INSTALL_ROLES: readonly string[] = ["builder"];
  * them exists for single launches only (`group`): a group keeps the config defaults and `notes` says so. `error` is a refusal text for a
  * malformed value; the caller refuses only the foreman's own launches.
  */
-export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string } {
+export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string; occasions: Map<Json, LaunchOccasion>; occasionError?: string } {
   const entries = new Map<Json, LaunchFlags>();
+  const occasions = new Map<Json, LaunchOccasion>();
+  let occasionError: string | undefined;
   const notes: string[] = [];
   let error: string | undefined;
   const bad = (what: string): void => {
@@ -235,13 +238,27 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
     dropped ||= input.reads !== undefined || input.install !== undefined;
     if (dropped) notes.push("pi-foreman: reads and install are carried in the launch binding, which a group launch does not get; this group launch keeps the config read limits and its children's npm install asks. Launch the role as a single subagent({agent, task, ...}) call to set them.");
   }
+  // `occasion` (a reviewer entry's review kind): each entry's own; a group call's top level names no entry
+  const unknownKind = (what: string, fix: string): void => {
+    occasionError ??= `pi-foreman: launch refused [review_occasion_unknown]: ${what}. Fix: ${fix}`;
+  };
+  const values = LAUNCH_OCCASIONS.join(" | ");
+  if (group && input.occasion !== undefined) unknownKind("occasion is set on the call of a tasks or chain launch", `set occasion: ${values} on each reviewer entry.`);
+  for (const e of list) {
+    if (e.occasion === undefined) continue;
+    const v = fromJsonText(e.occasion, "string");
+    if (!isLaunchOccasion(v)) unknownKind(`occasion ${JSON.stringify(e.occasion)} is not a review kind`, `occasion: ${values}.`);
+    else if (typeof e.agent === "string") occasions.set(e, v);
+  }
   for (const e of list) {
     delete e.reads;
     delete e.install;
+    delete e.occasion;
   }
   delete input.reads;
   delete input.install;
-  return { entries, notes, group, ...(error ? { error } : {}) };
+  delete input.occasion;
+  return { entries, notes, group, occasions, ...(error ? { error } : {}), ...(occasionError ? { occasionError } : {}) };
 }
 
 export interface Measured {

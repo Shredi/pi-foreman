@@ -9,6 +9,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { approvalsDir, planVersionHash, readStored, restoreFromStore, saveStored } from "../checkpoint.ts";
 import { ROUND_STATE_FILE } from "../roundstate.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Result = { details?: { decision?: string; by?: string | null }; content: { text: string }[] };
@@ -98,7 +99,7 @@ function rig(t: import("node:test").TestContext) {
       setThinkingLevel: () => undefined,
       sendMessage: () => undefined,
     };
-    coreAdapter(pi as never);
+    coreAdapter(pi as never, { spawner: probeSpawner() });
     const ctx = {
       sessionManager: { getSessionId: () => "ckrl-session", getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
       cwd: project,

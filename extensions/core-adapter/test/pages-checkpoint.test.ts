@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { probeSpawner } from "./_probe-memo.ts";
 import type { PagesIndex } from "../pages.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -49,7 +50,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, answers: 
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never);
+  coreAdapter(pi as never, { spawner: probeSpawner() });
   const notes: string[] = [];
   const ctx = {
     sessionManager: { getSessionId: () => "pages-session", getSessionFile: () => undefined },

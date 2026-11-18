@@ -1,6 +1,6 @@
-// A child foreman session whose watched PR merged removes its worktree and branch whichever way the close starts:
-// by the watch's merged event (`pr-merged`), or by a parent's `foreman:close` after the merge (the watch ended silently
-// in the pre-close refresh, or the self-close was refused). Real PrWatches, real CloseFlow, real selfFinish and the real
+// A child foreman session whose watched PR merged removes its worktree and branch when a close comes after the merge:
+// a parent's `foreman:close` (the merge was seen by the watch's merged event, or the watch ended silently in the
+// pre-close refresh). A merge itself starts no close. Real PrWatches, real CloseFlow, real selfFinish and the real
 // foreman_close.py on temp git repositories; the cleanup spawn is recorded, never run.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,7 @@ import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { CloseFlow, prMergedPrompt } from "../close.ts";
+import { CloseFlow } from "../close.ts";
 import type { CloseDeps, CloseReport, CloseRequest } from "../close.ts";
 import { latestWatches, PrWatches, PRWATCH_ENTRY } from "../prwatch.ts";
 import type { Timers, WatchRecord, WatchSnapshot } from "../prwatch.ts";
@@ -158,11 +158,7 @@ function rig(w: World, o: RigOpts = {}) {
       await o.gate;
       return o.fresh ?? "merged";
     },
-    onMerged: (i) => {
-      merged.push(i);
-      const file = path.join(w.handoff, "result.md");
-      void Promise.resolve(flow.request({ source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, i.key.n), pr: { n: i.key.n, parent: "parent-1", label: "demo" } }, ctx)).catch(() => undefined);
-    },
+    onMerged: (i) => void merged.push(i), // a merge starts no close; it is only recorded
   });
   const deps: CloseDeps = {
     activeWaits: () => waits,
@@ -239,9 +235,16 @@ const assertStays = (w: World): void => {
   assert.notEqual(git(w.repo, "branch", "--list", "feat"), "", "branch stays");
 };
 
-// ---------------------------------------------------------------- path (a): the watch's merged event
+// ---------------------------------------------------------------- path (a): the watch's merged event (starts nothing)
 
-test("path a: the watch's merged event closes with source pr-merged and starts the cleanup of the worktree and branch", async () => {
+/** No close prompt, no reply to the parent, no shutdown, no cleanup: a merge starts nothing. */
+const assertNothingStarted = (r: ReturnType<typeof rig>): void => {
+  assert.equal(r.flow().active, false, "no close is active");
+  assert.ok(!r.log.some((l) => l.startsWith("prompt:") || l === "shutdown" || l.startsWith("reply:")), r.log.join("\n"));
+  assert.equal(r.spawned.length, 0);
+};
+
+test("path a: the watch's merged event starts no close and is remembered; a later parent close starts the cleanup of the worktree and branch", async () => {
   const w = world();
   try {
     const r = rig(w);
@@ -249,15 +252,17 @@ test("path a: the watch's merged event closes with source pr-merged and starts t
     await r.merge();
     assert.equal(r.merged.length, 1);
     await r.idle();
-    await r.finish();
+    assertNothingStarted(r);
+    assert.deepEqual(r.watches.mergedPrs().map((k) => k.n), [7]);
+    await r.close(parentClose(w));
     assertSpawnedFor(w, r.spawned);
-    assert.match(r.files.get(path.join(w.handoff, "result.md")) ?? "", /## Merge cleanup/);
+    assert.match(r.files.get(parentClose(w).file) ?? "", /## Merge cleanup/);
   } finally {
     w.cleanup();
   }
 });
 
-test("path a: a merge close refused for an active child run tells the parent why", async () => {
+test("path a: a merge while a child run is active starts nothing and tells the parent nothing", async () => {
   const w = world(true);
   try {
     const r = rig(w, { fake: true });
@@ -265,23 +270,25 @@ test("path a: a merge close refused for an active child run tells the parent why
     r.watches.start(K, snap());
     await r.merge();
     await r.idle();
-    assert.equal(r.flow().active, false, "the self-close was refused");
+    assertNothingStarted(r);
+    assert.deepEqual(r.watches.mergedPrs().map((k) => k.n), [7]);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("path a: after a merge, a parent close is refused while the run is active, and runs the cleanup once the run ended", async () => {
+  const w = world(true);
+  try {
+    const r = rig(w, { fake: true });
+    r.setRuns(1);
+    r.watches.start(K, snap());
+    await r.merge();
+    await r.idle();
+    assert.equal(r.spawned.length, 0);
+    await r.flow().request(parentClose(w), r.ctx);
     assert.ok(replies(r.log).some((t) => t.startsWith("pi-foreman: close refused: 1 child run(s) still active")), replies(r.log).join("\n"));
-    assert.equal(r.spawned.length, 0);
-  } finally {
-    w.cleanup();
-  }
-});
-
-test("path a: after a refused merge close, a later parent close still runs the cleanup", async () => {
-  const w = world(true);
-  try {
-    const r = rig(w, { fake: true });
-    r.setRuns(1);
-    r.watches.start(K, snap());
-    await r.merge();
-    await r.idle();
-    assert.equal(r.spawned.length, 0);
+    assert.equal(r.flow().active, false);
     r.setRuns(0);
     await r.close(parentClose(w));
     assertSpawnedFor(w, r.spawned);
@@ -370,7 +377,7 @@ test("a refused self-finish reaches the requester as its own reply before the fo
   }
 });
 
-test("a refused merge close for a pending wait that cannot be cancelled is reported to the parent, the merged PR stays remembered, and a later close runs the cleanup", async () => {
+test("a merge with a pending wait that cannot be cancelled starts nothing, the merged PR stays remembered, the parent's close is refused on the wait, and succeeds once the wait ended", async () => {
   const w = world(true);
   try {
     const r = rig(w, { fake: true });
@@ -378,8 +385,9 @@ test("a refused merge close for a pending wait that cannot be cancelled is repor
     r.watches.start(K, snap());
     await r.merge();
     await r.idle();
-    assert.equal(r.flow().active, false, "the self-close was refused");
+    assertNothingStarted(r);
     assert.deepEqual(r.watches.mergedPrs().map((k) => k.n), [7]);
+    await r.flow().request(parentClose(w), r.ctx);
     assert.ok(replies(r.log).some((t) => t.startsWith("pi-foreman: close refused: 1 foreman_wait pending (w1 pr)")), replies(r.log).join("\n"));
     assert.equal(r.spawned.length, 0);
     r.setWaits([]);
@@ -399,7 +407,7 @@ test("a merge seen while the parent's close checks the PR status: the parent hea
     r.watches.start(K, snap());
     const closing = Promise.resolve(r.flow().request(parentClose(w), r.ctx));
     await r.idle();
-    await r.merge(); // the watch's merged event starts the pr-merged close during the status check
+    await r.merge(); // the watch's merged event during the status check starts nothing
     assert.equal(r.merged.length, 1);
     release();
     await closing;
@@ -416,7 +424,7 @@ test("a merge seen while the parent's close checks the PR status: the parent hea
 
 // ---------------------------------------------------------------- uncommitted files of another repository (item 3)
 
-test("a dirty repository outside the round (CLOSE: open) does not keep the worktree, on either path", async () => {
+test("a dirty repository outside the round (CLOSE: open) does not keep the worktree, with or without a merge seen first", async () => {
   const other = world();
   try {
     fs.writeFileSync(path.join(other.repo, "unrelated.txt"), "dirty\n");
@@ -429,8 +437,8 @@ test("a dirty repository outside the round (CLOSE: open) does not keep the workt
         if (path_ === "a") {
           await r.merge();
           await r.idle();
-          await r.finish();
-        } else await r.close(parentClose(w));
+        }
+        await r.close(parentClose(w));
         assertSpawnedFor(w, r.spawned);
       } finally {
         w.cleanup();
