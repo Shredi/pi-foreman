@@ -5,7 +5,8 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { clean, planBody } from "./checkpoint.ts";
+import { clean, planBody, readPlan } from "./checkpoint.ts";
+import type { PlanOpts } from "./checkpoint.ts";
 import { scanFence } from "./pages.ts";
 import { workspaceOf } from "./python.ts";
 
@@ -129,15 +130,20 @@ export function planFormIssues(text: string, opts: { requiredHeadings?: readonly
 /** The plain-language rule for owner text, in one place: instructions, hints and the plan-review facts point at it. */
 export const OWNER_TEXT_POINTS = "short sentences, one instruction or fact each; active voice; one word for one thing; common words, a needed term explained once; steps as a list";
 
-/** Facts lines of a `[plan-review]` launch, one per plan file (relative paths resolve against `cwd`). */
-export function ownerFactsLines(planPaths: readonly string[], cwd: string): string[] {
-  return planPaths.map((p) => `${ownerFactLine(p, cwd)}; judge it as owner text: ${OWNER_TEXT_POINTS}`);
+/** Facts lines of a `[plan-review]` launch, one per plan file (relative paths resolve against `cwd`). With `opts` the plan is read through readPlan: an HTML plan is checked on its markdown copy. */
+export function ownerFactsLines(planPaths: readonly string[], cwd: string, opts?: PlanOpts): string[] {
+  return planPaths.map((p) => `${ownerFactLine(p, cwd, opts)}; judge it as owner text: ${OWNER_TEXT_POINTS}`);
 }
 
-function ownerFactLine(p: string, cwd: string): string {
+function ownerFactLine(p: string, cwd: string, opts?: PlanOpts): string {
   let text: string;
   try {
-    text = fs.readFileSync(path.resolve(cwd, p), "utf8");
+    const abs = path.resolve(cwd, p);
+    const r = opts ? readPlan(abs, opts) : null;
+    // a markdown file readPlan refuses (outside the scratch dir) and with no page beside it: the direct read, as without opts
+    const lone = abs.endsWith(".md") && !fs.existsSync(abs.replace(/\.md$/, ".html"));
+    if (r && "error" in r && !lone) return `Owner section (${p}): plan not readable`;
+    text = r && "plan" in r ? r.plan.markdown : fs.readFileSync(path.resolve(cwd, p), "utf8");
   } catch {
     return `Owner section (${p}): plan not readable`;
   }

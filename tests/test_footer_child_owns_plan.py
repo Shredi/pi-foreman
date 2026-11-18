@@ -40,6 +40,10 @@ class LocalFooterTest(unittest.TestCase):
         for gone in GONE:
             self.assertNotIn(gone, text)
 
+    def test_html_plan_clause(self):
+        text = flat(fsn.footer("demo", True))
+        self.assertIn("an HTML plan stays in your scratch dir: copy its generated `plan-<topic>.md` there", text)
+
     def test_the_plain_checkpoint_line_comes_before_the_checkpoint(self):
         text = flat(fsn.footer("demo", True))
         line = "send the parent the plain line `demo waits on the owner at its plan checkpoint`, then call `foreman_checkpoint`"
@@ -62,6 +66,10 @@ class RemoteFooterTest(unittest.TestCase):
         self.assertIn("attaching to it from the other machine", text)
         for gone in GONE:
             self.assertNotIn(gone, text)
+
+    def test_html_plan_clause(self):
+        text = flat(fsn.remote_footer("demo", True))
+        self.assertIn("an HTML plan stays in your scratch dir: copy its generated `plan-<topic>.md` there", text)
 
     def test_a_remote_child_sends_nothing_before_the_checkpoint(self):
         text = flat(fsn.remote_footer("demo", True))

@@ -2,6 +2,7 @@
 // the index the herdr plan mod lists. The markdown dialect we write for plans and notes is converted here (no library): raw HTML in the
 // markdown is escaped, links keep only http, https and relative targets, and mermaid fences become a <picture> with the two themes of the
 // already-validated sidecars as data URIs (a fence without sidecars stays a code block). A model-written `html` note is stored as is.
+import { mermaidPres, normalizedPage } from "./htmlmd.ts";
 import { fenceSha } from "./mermaid.ts";
 
 export const PAGES_DIR = "pages";
@@ -410,6 +411,8 @@ picture{display:block;margin:1em 0;overflow:auto}img{max-width:100%;height:auto}
 
 const b64 = (s: string): string => Buffer.from(s, "utf8").toString("base64");
 
+const pictureOf = (s: Svgs): string => `<picture><source media="(prefers-color-scheme: dark)" srcset="data:image/svg+xml;base64,${b64(s.dark)}"><img alt="diagram" src="data:image/svg+xml;base64,${b64(s.light)}"></picture>`;
+
 const shell = (title: string, body: string): string => `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body><main>\n${body}\n</main></body></html>\n`;
 
 /** A whole page. Over PAGE_MAX_BYTES the diagrams go back to code blocks; still over it, the page names the markdown file instead of showing it. */
@@ -418,11 +421,88 @@ export function renderPage(p: PageInput): string {
   const build = (svgs: ReadonlyMap<string, Svgs> | undefined): string =>
     shell(p.title, `${head}\n${renderMarkdown(p.markdown, { fold: p.fold, mermaid: (text) => {
       const s = svgs?.get(fenceSha(text));
-      return s ? `<picture><source media="(prefers-color-scheme: dark)" srcset="data:image/svg+xml;base64,${b64(s.dark)}"><img alt="diagram" src="data:image/svg+xml;base64,${b64(s.light)}"></picture>` : null;
+      return s ? pictureOf(s) : null;
     } })}`);
   for (const svgs of p.svgs?.size ? [p.svgs, undefined] : [undefined]) {
     const html = build(svgs);
     if (Buffer.byteLength(html, "utf8") <= PAGE_MAX_BYTES) return html;
   }
   return shell(p.title, `${head}\n<p>This page is too large to show (over ${PAGE_MAX_BYTES / 1024} KiB). Open the markdown file instead: <code>${escapeHtml(p.source)}</code></p>`);
+}
+
+// ---------------------------------------------------------------- HTML plan page
+
+export interface HtmlPlanPageInput {
+  title: string;
+  /** The harness state banner: plan version, state, hash prefix. */
+  kicker: string;
+  /** The model's page, as written. */
+  html: string;
+  /** The rulings sidecar's markdown (empty: none); rendered below the page by the harness's own escaping renderer. */
+  rulings: string;
+  /** Sidecar SVG text by fence sha; absent: every mermaid `<pre>` stays text. */
+  svgs?: ReadonlyMap<string, Svgs>;
+  /** The page file named when the page is too large. */
+  source: string;
+}
+
+/** The index after the `>` of the first `<body ...>` tag outside comments, or -1. One forward scan. */
+function bodyOpenEnd(html: string): number {
+  let i = 0;
+  for (;;) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) return -1;
+    if (html.startsWith("<!--", lt)) {
+      const end = html.indexOf("-->", lt + 4);
+      if (end < 0) return -1;
+      i = end + 3;
+      continue;
+    }
+    if (/^<body[\s>/]/i.test(html.slice(lt, lt + 6))) {
+      const gt = html.indexOf(">", lt);
+      return gt < 0 ? -1 : gt + 1;
+    }
+    i = lt + 1;
+  }
+}
+
+/** The index of the last `</body` (any case), or -1. */
+function bodyCloseAt(html: string): number {
+  let at = -1;
+  for (const m of html.matchAll(/<\/body/gi)) at = m.index;
+  return at;
+}
+
+/**
+ * The plan page of an HTML plan: the model's page as written with (a) the harness state banner right after the `<body>` open tag (at the start
+ * when there is none), (b) each `<pre class="mermaid">` replaced by the rendered diagram once its sidecars exist, and (c) the rulings below
+ * the page in a harness block. Over PAGE_MAX_BYTES the diagrams go back to text; still over it, the page names the file instead of showing it.
+ */
+export function renderHtmlPlanPage(p: HtmlPlanPageInput): string {
+  const banner = `<div id="pi-foreman-banner" style="margin:0;padding:.5rem 1rem;font:14px system-ui,sans-serif;background:#1f2328;color:#fff">${escapeHtml(p.kicker)}</div>`;
+  const rulings = p.rulings.trim()
+    ? `<section id="pi-foreman-rulings" style="max-width:56rem;margin:2rem auto;padding:1rem 1.25rem;border-top:2px solid #888;font:16px/1.6 system-ui,sans-serif"><h2>Rulings (below the approved page; they do not change its version)</h2>\n${renderMarkdown(p.rulings)}\n</section>`
+    : "";
+  const page = normalizedPage(p.html);
+  const pres = p.svgs?.size ? mermaidPres(p.html) : [];
+  const build = (svgs: ReadonlyMap<string, Svgs> | undefined): string => {
+    let out = "";
+    let at = 0;
+    for (const m of svgs ? pres : []) {
+      const s = svgs?.get(fenceSha(m.text));
+      if (!s) continue;
+      out += page.slice(at, m.start) + pictureOf(s);
+      at = m.end;
+    }
+    out += page.slice(at);
+    const open = bodyOpenEnd(out);
+    out = open < 0 ? banner + out : out.slice(0, open) + banner + out.slice(open);
+    const close = bodyCloseAt(out);
+    return close < 0 ? out + rulings : out.slice(0, close) + rulings + out.slice(close);
+  };
+  for (const svgs of p.svgs?.size ? [p.svgs, undefined] : [undefined]) {
+    const html = build(svgs);
+    if (Buffer.byteLength(html, "utf8") <= PAGE_MAX_BYTES) return html;
+  }
+  return shell(p.title, `<h1>${escapeHtml(p.title)}</h1>\n<p class="kicker">${escapeHtml(p.kicker)}</p>\n<p>This page is too large to show (over ${PAGE_MAX_BYTES / 1024} KiB). Open the page file instead: <code>${escapeHtml(p.source)}</code></p>`);
 }
