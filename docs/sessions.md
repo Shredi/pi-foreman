@@ -780,8 +780,8 @@ or the session scratch dir. A path outside those, or one that is not a string, i
 `/foreman waits` lists the session's pending waits: id, kind, note, age, time left and the last 5 lines of the log. The note is also what
 the presence file (`waits[].note`) and the Herdr sidebar line 2 show.
 
-With the optional [background-tasks add-on](herdr.md#optional-add-on-background-tasks) installed, `foreman_bg` refuses and points at that
-add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and `bg_run` passes the same guards as bash.
+With the optional [background-tasks add-on](herdr.md#optional-add-on-background-tasks) installed, `foreman_bg` is not offered (it leaves the active tools at session start; a call still refuses and points at that
+add-on's `bg_run` tool); `/foreman waits` then also lists its running tasks, and `bg_run` passes the same guards as bash.
 
 ## Further session keys
 

@@ -5,11 +5,13 @@
 // Env: FOREMAN_TEST_LOCK=0 (or a truthy CI) skips the lock; FOREMAN_TEST_CONCURRENCY=N sets --test-concurrency (default
 // half the cores); FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) is the age after which a lock counts as stale;
 // FOREMAN_TEST_LOCK_DIR overrides the lock directory (default <agentDir>/pi-foreman/state, else the temp dir).
+// The command's env has the running-session variables of extensions/core-adapter/test/session-env.json removed (the lock reads its own env first).
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutSessionEnv } from "./session_env.mjs";
 
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
 // (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process. A run that passed
@@ -217,7 +219,7 @@ async function main(argv, env = process.env) {
   }
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "pf-spawn-count-"));
   const code = await new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? { ...env, FOREMAN_SPAWN_COUNT_DIR: countDir } : env, shell: false });
+    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? { ...withoutSessionEnv(env), FOREMAN_SPAWN_COUNT_DIR: countDir } : withoutSessionEnv(env), shell: false });
     const forward = (sig) => () => child.kill(sig);
     const handlers = ["SIGINT", "SIGTERM"].map((s) => [s, forward(s)]);
     for (const [s, h] of handlers) process.on(s, h);
