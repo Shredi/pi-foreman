@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
@@ -505,9 +505,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
       const denv = { roots, platform, cwd, facts, floor: env };
-      // a read-only role: a built-in allow of a segment the fence cannot see into (an unknown run, code from a writable folder) gives way to the `danger-readonly-run` label; an owner's allow rule stands
-      const heldBack = !!result && "allow" in result && result.layer === "default" && readonlyRunLine(dcall, denv, (i) => builtin(i));
-      if (result && !heldBack) return { result, danger: null, segments: segs };
+      if (result) return { result, danger: null, segments: segs };
       const hits = DANGER_RULES.filter((r) => r.test(dcall, denv));
       const danger: DangerHit | null = hits.length ? { name: hits[0].name, reason: hits[0].reason } : null;
       return { result: undefined, danger, segments: segs, ...(hits.length ? { dangers: hits.map((r) => r.name) } : {}) };
