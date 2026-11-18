@@ -23,6 +23,7 @@ import { toolPath } from "./pathnorm.ts";
 import { boundNames, heredocSpans, parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
+import { expandOutVar } from "./childscratch.ts";
 import { matchProtected } from "./protected.ts";
 import type { ProtectedMatch } from "./protected.ts";
 import type { ProtectedEntry } from "./permconfig.ts";
@@ -459,7 +460,9 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       return ruleResult(matchRules(rules.sets, call, rules.env, builtin));
     };
 
-    const cmd = commandOf(toolName, inp);
+    // a child's `$FOREMAN_OUT` is its kept output dir (set in its process env): the guards read the line with the path in it (childscratch.ts expandOutVar)
+    const cmd0 = commandOf(toolName, inp);
+    const cmd = cmd0 !== null && roots?.child && roots.out ? expandOutVar(cmd0, roots.out, env.platform) : cmd0;
     if (cmd !== null) {
       // a child's $FOREMAN_SCRATCH is its own scratch dir (set in its process env); without the binding the variable would make every scratch write opaque
       const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0] } } : {};

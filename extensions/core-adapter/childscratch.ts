@@ -7,6 +7,9 @@
 // in or around the repo) and sweeps its session root at shutdown; `ceremony.childScratch.keep`
 // keeps them. Harness code only: no model turn and no guard sees the removal.
 //
+// Each launch also gets a kept output dir `<agentDir>/pi-foreman/child-out/<session>/<launch>` (env FOREMAN_OUT, binding `out`): a second
+// scratch-like write root that is not removed at run end; the foreman's next session start sweeps folders older than 7 days (`sweepKept`).
+//
 // What the guards allow inside a scratch dir (never outside it):
 //   - timeoutallow.ts: a command that only copies into, makes, removes inside or cds into a live
 //     scratch dir of the asking role, or whose write path lies inside one, composes as `child-scratch`.
@@ -22,6 +25,8 @@ import type { LaunchBinding } from "./usage.ts";
 
 export const SCRATCH_ENV = "FOREMAN_SCRATCH";
 export const SCRATCH_DIR_NAME = "pi-foreman-scratch";
+export const OUT_ENV = "FOREMAN_OUT";
+const KEPT_DAYS = 7;
 
 export interface ScratchFs {
   platform?: string;
@@ -168,6 +173,71 @@ export function sessionScratchDir(sessionId: string, deps: ScratchFs = {}): stri
   return root ? path.join(root, safeId(sessionId)) : null;
 }
 
+/** `<realpath(agentDir)>/pi-foreman/child-out`, the kept output folders' root, or null when the agent dir does not resolve. */
+export function keptRoot(agentDir: string): string | null {
+  const real = realNative(path.resolve(agentDir));
+  return real ? path.join(real, "pi-foreman", "child-out") : null;
+}
+
+/** Create the launch's kept output dir `<agentDir>/pi-foreman/child-out/<session>/<launch>` (0700); null when anything is off. Never removed at run end. */
+export function createKept(agentDir: string, sessionId: string, launchId: string, deps: ScratchFs = {}): string | null {
+  const root = keptRoot(agentDir);
+  if (!root) return null;
+  try {
+    fs.mkdirSync(path.dirname(root), { recursive: true });
+  } catch {
+    return null;
+  }
+  if (!mkdirOwn(root, deps)) return null;
+  const session = path.join(root, safeId(sessionId));
+  if (!mkdirOwn(session, deps)) return null;
+  const dir = path.join(session, safeId(launchId));
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch {
+    return null;
+  }
+  return ownDir(dir, deps) ? dir : null;
+}
+
+/**
+ * Session start: remove the launch folders (depth 2 below `child-out`, any session) whose mtime is older than 7 days, then the session folders left
+ * empty. lstat only, links are never followed (a link at depth 2 is not a directory and stays; a link inside an old folder goes as a link, its target
+ * untouched); nothing outside `child-out` is looked at. Returns the number of launch folders removed.
+ */
+export function sweepKept(agentDir: string, now: number = Date.now(), deps: ScratchFs = {}): number {
+  const root = keptRoot(agentDir);
+  if (!root || !ownDir(root, deps)) return 0;
+  const cutoff = now - KEPT_DAYS * 86400000;
+  let removed = 0;
+  const dirsIn = (d: string): string[] => {
+    try {
+      return fs.readdirSync(d).filter((n) => ownDir(path.join(d, n), deps));
+    } catch {
+      return [];
+    }
+  };
+  for (const s of dirsIn(root)) {
+    const session = path.join(root, s);
+    for (const l of dirsIn(session)) {
+      const launch = path.join(session, l);
+      try {
+        if (fs.lstatSync(launch).mtimeMs >= cutoff) continue;
+        fs.rmSync(launch, { recursive: true, force: true, maxRetries: 2 });
+        removed++;
+      } catch {
+        // left for the next start
+      }
+    }
+    try {
+      fs.rmdirSync(session); // only an empty one goes
+    } catch {
+      // not empty
+    }
+  }
+  return removed;
+}
+
 export function scratchPromptBlock(dir: string): string {
   return `[pi-foreman scratch] Your scratch dir: ${dir} (env $${SCRATCH_ENV}). Put copies, mutation checks and temp files there, never in the repo or .workflow/. The harness deletes it when you finish; use the literal path for rm -r.`;
 }
@@ -230,6 +300,16 @@ export class ChildScratch {
 
 // ------------------------------------------------------------- deterministic allow
 
+/** `dir0` as a shell word value (win32: the forward-slash spelling), or null when it holds a character the shell would read. */
+function shellSafeDir(dir0: string, platform: string): string | null {
+  let dir = dir0;
+  if (platform === "win32") {
+    dir = dir0.replace(/\\/g, "/");
+    if (!/^[A-Za-z]:\//.test(dir) || /(^|[^A-Za-z0-9])~/.test(dir) || /[\s'"\\$`*?[\]{}()<>|;&!#]/.test(dir)) return null;
+  } else if (/[\s'"\\$`*?[\]{}()<>|;&!#~]/.test(dir)) return null;
+  return dir;
+}
+
 /**
  * Replace `$FOREMAN_SCRATCH` / `${FOREMAN_SCRATCH}` outside single quotes by `dir`; null when the
  * dir holds a character the shell would read (then nothing is resolved and the caller refuses).
@@ -238,11 +318,28 @@ export class ChildScratch {
  * after a letter or digit) is literal. Not a drive path, or any other shell character, is null as on POSIX.
  */
 export function expandScratchVar(command: string, dir0: string, platform: string = process.platform): string | null {
-  let dir = dir0;
-  if (platform === "win32") {
-    dir = dir0.replace(/\\/g, "/");
-    if (!/^[A-Za-z]:\//.test(dir) || /(^|[^A-Za-z0-9])~/.test(dir) || /[\s'"\\$`*?[\]{}()<>|;&!#]/.test(dir)) return null;
-  } else if (/[\s'"\\$`*?[\]{}()<>|;&!#~]/.test(dir)) return null;
+  return substVar(command, SCRATCH_ENV, dir0, platform)?.text ?? null;
+}
+
+/**
+ * `command` with `$FOREMAN_OUT` / `${FOREMAN_OUT}` read as the child's kept output dir `dir`, for the guards only (the shell sees the variable).
+ * Unchanged when the line holds an apostrophe, or when any mention of the name is not a plain reference (an assignment, `export`, `env FOREMAN_OUT=`,
+ * `${FOREMAN_OUT:-x}`, `\$FOREMAN_OUT`): the variable may then not hold `dir`, and the call stays unresolved as before.
+ * Without an apostrophe the quote tracker and bash agree on every executed `$FOREMAN_OUT`.
+ */
+export function expandOutVar(command: string, dir: string, platform: string = process.platform): string {
+  // the text pass cannot track quotes as bash does (nested quoting in `$(...)`, backticks, `${u:-"..."}`, heredoc bodies, comments): any apostrophe leaves the line unresolved
+  if (command.includes("'")) return command;
+  const r = substVar(command, OUT_ENV, dir, platform);
+  const mentions = command.match(/(?<![A-Za-z0-9_])FOREMAN_OUT(?![A-Za-z0-9_])/g)?.length ?? 0;
+  return r && r.hits === mentions ? r.text : command;
+}
+
+function substVar(command: string, name: string, dir0: string, platform: string): { text: string; hits: number } | null {
+  const dir = shellSafeDir(dir0, platform);
+  if (dir === null) return null;
+  const ref = new RegExp(`^\\$(?:\\{${name}\\}|${name}(?![A-Za-z0-9_]))`);
+  let hits = 0;
   let out = "";
   let single = false;
   let double = false;
@@ -256,16 +353,17 @@ export function expandScratchVar(command: string, dir0: string, platform: string
     if (c === "'" && !double) single = !single;
     else if (c === '"' && !single) double = !double;
     if (c === "$" && !single) {
-      const m = /^\$(?:\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))/.exec(command.slice(i));
+      const m = ref.exec(command.slice(i));
       if (m) {
         out += dir;
+        hits++;
         i += m[0].length - 1;
         continue;
       }
     }
     out += c;
   }
-  return out;
+  return { text: out, hits };
 }
 
 /** `p` (absolute, normalized) lies strictly inside one of `dirs`, its deepest existing ancestor included (no symlink out). */
@@ -379,6 +477,8 @@ export interface ScratchHost {
   config: { config: unknown };
   trace?: { emit(rec: Record<string, unknown>): void } | null;
   scratch: ChildScratch;
+  /** The Pi agent dir; without it a launch gets no kept output dir. */
+  agentDir?: string;
 }
 
 const keepOf = (h: ScratchHost): boolean => get(h.config.config, "ceremony.childScratch.keep") === true;
@@ -393,7 +493,10 @@ export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b:
   }
   b.scratch = dir;
   h.scratch.add(b.launchId, dir, b.role);
-  if (typeof input.task === "string") input.task = `${input.task}\n\n${scratchPromptBlock(dir)}`;
+  const out = h.agentDir ? createKept(h.agentDir, h.id, b.launchId, deps) : null;
+  if (out) b.out = out;
+  const keep = out ? ` Logs and results that must outlive the run go to ${out} (env $${OUT_ENV}); the harness keeps it for 7 days.` : "";
+  if (typeof input.task === "string") input.task = `${input.task}\n\n${scratchPromptBlock(dir)}${keep}`;
 }
 
 /**

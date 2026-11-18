@@ -92,7 +92,7 @@ import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappe
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepScratch } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepScratch } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
@@ -792,6 +792,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
+  if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.out) process.env[OUT_ENV] = launchBinding.out;
+  /** A child's write roots of this kind: its scratch dir first, then its kept output dir (`$FOREMAN_OUT`). */
+  const childScratchDirs = launchBinding?.scratch ? [launchBinding.scratch, ...(launchBinding.out ? [launchBinding.out] : [])] : [];
   // a worktree child gets the foreman's checkout in its env
   if (process.env.PI_SUBAGENT_CHILD === "1") Object.assign(process.env, checkoutEnv(launchBinding));
   // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
@@ -1646,7 +1649,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
-    const scratch = s ? (s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null)) : [];
+    const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
     return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
   }
 
@@ -1707,6 +1710,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
+    if (!s.isChild) {
+      try {
+        sweepKept(s.agentDir);
+      } catch {
+        // a failed sweep never stops the session
+      }
+    }
     if (s.live && !s.isChild) {
       s.paneResume = PaneResume.start({
         agentDir: piAgentDir(process.env, os.homedir()),
@@ -2862,7 +2872,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return {
       worktree,
       ...(roundReadOnly ? { roundReadOnly } : {}),
-      scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
+      scratch: s.isChild ? childScratchDirs : s.scratch.live(null),
+      ...(s.isChild && launchBinding?.scratch && launchBinding.out ? { out: launchBinding.out } : {}),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
@@ -4116,6 +4127,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent") {
         const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}) });
+        if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
