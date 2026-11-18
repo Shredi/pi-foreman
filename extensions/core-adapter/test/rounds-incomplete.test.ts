@@ -33,3 +33,8 @@ test("incompleteOf: FAIL and INCOMPLETE must share a line; spaces and tabs betwe
   assert.equal(incompleteOf("VERDICT: FAIL  INCOMPLETE\n1. PASS a"), true);
   assert.equal(incompleteOf("VERDICT: FAIL\tINCOMPLETE\n1. PASS a"), true);
 });
+
+test("incompleteOf: only the first non-empty line counts", () => {
+  assert.equal(incompleteOf("Note: the form `VERDICT: FAIL INCOMPLETE` is for early stops.\nVERDICT: FAIL\n1. FAIL src/x.ts:1 broken"), false);
+  assert.equal(incompleteOf("\n  \n**VERDICT: FAIL INCOMPLETE**\n1. PASS a"), true);
+});

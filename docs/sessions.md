@@ -404,8 +404,8 @@ from a running Pi (the tool and `/foreman session open`) falls back to that Pi: 
 fall back to and keeps the PATH lookup; so does an open on another machine (`pi.cmd` or PATH there). The variable is never
 passed on to the child.
 
-**Start check.** Under herdr-core, an open waits `PI_FOREMAN_START_CHECK_SECONDS` (3 s; the tool, `/foreman session open`
-and `foreman session open` all set it, a value already set wins, 0 or unset means no check), then reads the terminal with
+**Start check.** Under herdr-core, an open waits `PI_FOREMAN_START_CHECK_SECONDS` (3 s; the tool and `/foreman session open`
+always pass 3, the `bin/foreman*` wrappers set 3 only when the variable is unset and keep a value already set; 0 or unset means no check), then reads the terminal with
 `hc get`. A child that already finished makes the open fail with `session <label> did not start: exit <code>` and the last
 20 terminal lines, not "opened". The registry entry is kept with status `failed` as a record (`prune` leaves it), and the dead
 terminal stays readable (`hc read <address>`) until you close it with `hc rm`. A Herdr pane, the printed command and an open
