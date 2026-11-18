@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
-import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
+import { checkTrivial, cleanTreeStatus, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -5576,8 +5576,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return undefined;
     }
     // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
-    if (!rejected && s.steps.builder === 0 && s.tally.files.length === 0) {
-      const porcelain = await git(ctx.cwd, ["status", "--porcelain"]);
+    if (!rejected && s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0) { // a launched builder (failed or not) is work even when the tree stays clean
+      const porcelain = await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform);
       if (noChange(s.steps, s.tally.files.length, porcelain)) {
         s.trace?.emit({ event: "ceremony_gate", reason: "no_change", tier: s.ceremony.tier });
         ctx.ui.notify("pi-foreman: finished without a change: no builder or reviewer required", "info");
@@ -5621,7 +5621,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * then let go with an owner notice. A session that changed nothing is never held.
    */
   async function hsReminderHold<E>(s: Session, ctx: ExtensionContext, entries: E[], remind: string, reasons: string[]) {
-    if (s.steps.builder === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await git(ctx.cwd, ["status", "--porcelain"]))) return undefined;
+    if (s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform))) return undefined;
     const key = reasons.join(",");
     if (s.hsReminded?.join(",") !== key) {
       s.hsReminded = reasons;
