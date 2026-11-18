@@ -11,6 +11,8 @@ BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
 
 
 ROLE_PAIRS = [
+    # D71 addendum: a refused shell write keeps the tier; only a refused tool edit raises it
+    ("A refused project edit makes the task standard: write the ledger and delegate.", "A refused `write`, `edit`, `foreman_move` or `foreman_copy` on a project file makes the task standard: write the ledger and delegate. A refused shell write keeps the tier, and the change still goes to a builder."),
     # D28: finish refusals are counted per unchanged state, not per user prompt
     ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
     ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),
