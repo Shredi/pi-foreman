@@ -245,12 +245,14 @@ base. The base triggers nothing.
 |---|---|
 | `high_stakes_unset` | No model is set. |
 | `high_stakes_single` | The launch is inside a `tasks` or `chain` launch. |
-| `high_stakes_resume` | The call resumes a run. A run that ended without a verdict is launched fresh. |
+| `high_stakes_resume` | The call resumes a run. A run that ended without a verdict, or with `FAIL INCOMPLETE`, is launched fresh. |
 | `high_stakes_done` | The passes of the session are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
 | `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass is a FAIL that no normal PASS that got its findings has cleared. |
 | `high_stakes_unrevised` | A reviewer `resume` while a high-stakes FAIL of its checkout is uncleared (a resume gets no findings). A fresh normal reviewer is never refused for it. |
 
 After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.
+
+**An incomplete run.** A reviewer that must stop before it finishes, with no defect found, writes `VERDICT: FAIL INCOMPLETE` as its first line and names the checks that remain. A high-stakes run that ends so records nothing: it is no run (the two passes stay unused), the gate is unchanged, and the trace is `high_stakes {kind: incomplete}`. A fresh `[high-stakes]` launch is then judged on the state as it was before that run; there is no limit on incomplete runs, and each uses the high-stakes model. Resuming that run stays refused (`high_stakes_resume`). The adapter takes the reviewer's word: a run that writes `FAIL INCOMPLETE` although it found a defect leaves no record, and the next fresh high-stakes review checks again. A normal review with that line is a plain FAIL.
 
 **After a FAIL.** The FAIL is recorded with its head and findings, and the review gate is set to a failed verdict. It is
 cleared by a normal PASS (item or `[pre-pr]`) of a run that got the findings: in the checkout the FAIL ran in at any head

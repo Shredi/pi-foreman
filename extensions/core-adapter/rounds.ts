@@ -145,6 +145,11 @@ export function verdictOf(text: string): Verdict | null {
   return all.length > 0 ? "pass" : null;
 }
 
+/** True when a verdict line reads `FAIL INCOMPLETE` (the reviewer stopped early and found no defect). The CRITIQUE block does not count; item lines are not read. */
+export function incompleteOf(text: string): boolean {
+  return /\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*fail\s+incomplete\b/i.test(withoutCritique(text));
+}
+
 /**
  * True when a prompt is the owner's (the round state and the loop stop start again): interactive and rpc always; an extension prompt unless it
  * is a harness text (the foreman's own `pi-foreman ...` steer and retro prompts, the subagent wake, the legacy intercom
