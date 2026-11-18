@@ -108,6 +108,42 @@ test("a template built by clone then fetch copies without a throw: its logs and 
   assert.equal(fwd(git(path.join(c.root, "src"), "config", "--get", "remote.origin.url")), fwd(path.join(c.root, "origin.git")));
 });
 
+test("a shared clone's alternates file points into the copy, and the copy reads the shared objects", () => {
+  const shared = gitTemplate(parentDir, (root) => {
+    build(root);
+    git(root, "clone", "-q", "--shared", path.join(root, "repo"), path.join(root, "sharedclone"));
+    return root;
+  });
+  const c = shared.copy();
+  const clone = path.join(c.root, "sharedclone");
+  const alternates = fwd(fs.readFileSync(path.join(clone, ".git", "objects", "info", "alternates"), "utf8"));
+  assert.ok(alternates.includes(fwd(path.join(c.root, "repo"))), alternates);
+  assert.ok(!alternates.includes(path.basename(c.built)), alternates);
+  git(clone, "cat-file", "-e", "HEAD^{commit}");
+  git(clone, "fsck", "--no-dangling");
+});
+
+// the template of this test lives under its own parent, so the file's cleanup hook cannot be what removes it
+const gone = { parent: mkTestTmp("pf-git-template-after-"), root: "" };
+const afterTpl = gitTemplate(() => gone.parent, (root) => {
+  fs.writeFileSync(path.join(root, "f"), "x\n");
+  return root;
+});
+test("the helper's after hook has a template to remove", () => {
+  gone.root = afterTpl.copy().built;
+  assert.equal(fs.existsSync(gone.root), true);
+});
+// registered after the helper's own hook, so it runs after it
+after(() => {
+  try {
+    assert.ok(gone.root !== "", "the template was never built");
+    assert.equal(fs.existsSync(gone.root), false, "the template survives the helper's after hook");
+    assert.deepEqual(fs.readdirSync(gone.parent), [], "a copy survives the helper's after hook");
+  } finally {
+    rmTestTmp(gone.parent);
+  }
+});
+
 test("the template and the copies share the caller's parent dir", () => {
   const c = t.copy();
   const dir = fs.realpathSync.native(parentDir());

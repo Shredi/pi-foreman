@@ -65,14 +65,18 @@ export function gitTemplate<T>(parentDir: () => string, build: (root: string) =>
 }
 
 // files git reads a path from: the config of a repo, a worktree or a submodule, a worktree's gitdir/commondir, and a worktree's `.git` gitfile
-const PATH_FILES = new Set(["config", "gitdir", "commondir", ".git"]);
+const PATH_FILES = new Set(["config", "gitdir", "commondir", ".git", "alternates"]);
 
-/** Every regular file under `dir`, except directories named in `skipDir` (symlinks are not followed). */
+/** Every regular file under `dir`, except directories named in `skipDir` (symlinks are not followed); of a skipped `objects` dir only `info/alternates` is visited. */
 function walkFiles(dir: string, skipDir: (name: string) => boolean, visit: (file: string) => void): void {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, e.name);
     if (e.isDirectory()) {
       if (!skipDir(e.name)) walkFiles(file, skipDir, visit);
+      else if (e.name === "objects") {
+        const alternates = path.join(file, "info", "alternates");
+        if (fs.existsSync(alternates)) visit(alternates);
+      }
     } else if (e.isFile()) {
       visit(file);
     }
