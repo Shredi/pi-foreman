@@ -1,7 +1,9 @@
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
@@ -94,6 +96,8 @@ class SizingPromptTest(unittest.TestCase):
     def test_sizing_off_bytes_unchanged(self):
         old = subprocess.run(["git", "show", BASE + ":instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
         if old.returncode != 0:
+            if os.environ.get("CI"):
+                self.fail(f"base commit {BASE} missing: CI checkout must use fetch-depth: 0")
             self.skipTest("base commit not available")
         text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
@@ -125,6 +129,16 @@ class SizingPromptTest(unittest.TestCase):
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))
+
+    def test_missing_base_fails_in_ci_instead_of_skipping(self):
+        # a shallow CI checkout lacks the base commit; there the test must fail, not skip
+        case = SizingPromptTest("test_sizing_off_bytes_unchanged")
+        result = unittest.TestResult()
+        with mock.patch.object(sys.modules[__name__], "BASE", "0" * 40), mock.patch.dict(os.environ, {"CI": "1"}):
+            case.run(result)
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("CI checkout must use fetch-depth: 0", result.failures[0][1])
 
 
 if __name__ == "__main__":
