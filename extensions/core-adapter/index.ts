@@ -70,7 +70,7 @@ import { bgWaitLocations, coordinationCall, launchLocations, inRecorded, noticeL
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
-import { DEFERRED_ENTRY, DEFERRED_SECTION, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
+import { DEFERRED_ENTRY, DEFERRED_SECTION, MODEL_ONLY_SECTION, modelOnlyHint, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
@@ -563,6 +563,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
+  // The model-only tools line (deferred.ts): built at the first request of a session, then fixed so the prefix stays byte-stable.
+  const modelOnly = { done: false, hint: "" };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
   const skillState = { rules: { visible: [], hidden: [] } as SkillRules, hidden: [] as SkillRef[], split: false, hint: "" };
   let toolUsage = new ToolUsageTracker(); // replaced at every session_start: /new and /resume reuse this load
@@ -2042,6 +2044,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     deferred.patterns = merged.list;
     deferred.loaded = new Set(recorded?.names ?? []);
     deferred.hint = "";
+    modelOnly.done = false;
+    modelOnly.hint = "";
     deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
     deferred.trace = (r) => s.trace?.emit(r);
     let declared: string[] = [];
@@ -2266,6 +2270,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       deferred.hint = deferredHint(deferred.hidden, codemode);
       event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
     } else deferred.hint = "";
+    if (!modelOnly.done) {
+      modelOnly.done = true;
+      try {
+        if (pi.getActiveTools().includes("codemode")) modelOnly.hint = modelOnlyHint(pi.getAllTools().filter((tool) => (tool as { exposure?: string }).exposure === "model-only").map((tool) => tool.name));
+      } catch {
+        // no tool api: no line
+      }
+    }
+    if (modelOnly.hint) event.systemPromptOptions.sections[MODEL_ONLY_SECTION] = modelOnly.hint;
     if (!s.isChild) {
       const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
       if (Array.isArray(listed)) {
@@ -2426,7 +2439,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild) return undefined;
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
-    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
+    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [MODEL_ONLY_SECTION, modelOnly.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
     // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
     // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
