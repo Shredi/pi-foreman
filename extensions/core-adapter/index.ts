@@ -1619,12 +1619,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild || !s.roundStateOn || !dir) return;
     const plan = s.plan && s.plan.status !== "rejected" ? s.plan : null;
     const l = plan ? s.planReviews.lineage(plan.path) : null;
+    const newest = plan ? l : s.planReviews.newest(); // before a checkpoint s.plan is unset: the newest verdict still says whether the review passed
     writeRoundState({
       handoffDir: dir,
       plan: plan ? { topic: plan.topic, hash: plan.hash } : null,
       planReview: l ? { hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds } : null,
       round: s.round,
       tier: s.ceremony.tier,
+      reviewPassed: newest?.latest.verdict === "pass" && (!plan || newest.latest.hash === plan.hash),
       planOpen: plan?.status !== "approved",
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });

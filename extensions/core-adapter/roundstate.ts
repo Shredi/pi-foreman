@@ -29,8 +29,9 @@ export interface PersistedRounds {
   /** The plan-review lineage of that plan, or null. */
   planReview: PersistedReview | null;
   round: RoundState;
-  /** The session's tier and whether its plan's checkpoint is still open (false once decided), for the parent's wait line only (planWait); a restore ignores both. */
+  /** The session's tier, whether its newest plan review passed (needs no checkpoint) and whether its plan's checkpoint is still open (false only once approved), for the parent's wait line only (planWait); a restore ignores all three. */
   tier?: string;
+  reviewPassed?: boolean;
   planOpen?: boolean;
   /** Watermark of the last caps reset by a parent brief (index.ts capsReset); absent = none. */
   capsResetAt?: number;
@@ -111,12 +112,11 @@ export function planWait(dir: unknown): { open: boolean; text: string } {
     return { open: false, text: WAIT_UNKNOWN };
   }
   const round = raw.round && typeof raw.round === "object" && !Array.isArray(raw.round) ? (raw.round as Record<string, unknown>) : {};
-  const pr = raw.planReview && typeof raw.planReview === "object" ? (raw.planReview as Record<string, unknown>) : null;
   const approved = raw.planOpen === false;
   const open = round.built !== true && !approved;
   const tier = raw.tier;
   if (typeof tier !== "string" || !tier) return { open, text: WAIT_UNKNOWN };
-  const passed = pr?.verdict === "pass";
+  const passed = raw.reviewPassed === true;
   if (tier === "heavy") {
     if (approved) return { open, text: "waits for: nothing; it goes on to build" };
     return { open, text: passed ? "waits for: the owner's approval at its pane; nothing from you" : "waits for: its own plan review and the owner's approval at its pane; nothing from you" };

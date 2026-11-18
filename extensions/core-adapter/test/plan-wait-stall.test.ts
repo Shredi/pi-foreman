@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { ChildBlocked } from "../childblocked.ts";
 import { applyVariants } from "../ledgercall.ts";
+import { IntercomCarry } from "../intercomcarry.ts";
 import { liveDir } from "../livestate.ts";
 import { ROUND_STATE_FILE, planWait } from "../roundstate.ts";
 import { registerSession, writeRegistry } from "../session.ts";
@@ -18,8 +19,7 @@ const HEAVY_ASK = "waits for: its own plan review and the owner's approval at it
 
 function state(dir: string, s: { tier?: string; review?: "pass" | "fail" | null; built?: boolean; decided?: boolean }): void {
   fs.mkdirSync(dir, { recursive: true });
-  const review = s.review ? { hash: "h", verdict: s.review, model: null, rounds: 1 } : null;
-  fs.writeFileSync(path.join(dir, ROUND_STATE_FILE), JSON.stringify({ handoffDir: dir, plan: null, planReview: review, round: { built: s.built === true, reviewOpen: false }, ...(s.tier ? { tier: s.tier } : {}), ...(s.decided ? { planOpen: false } : {}) }));
+  fs.writeFileSync(path.join(dir, ROUND_STATE_FILE), JSON.stringify({ handoffDir: dir, plan: null, planReview: null, reviewPassed: s.review === "pass", round: { built: s.built === true, reviewOpen: false }, ...(s.tier ? { tier: s.tier } : {}), ...(s.decided ? { planOpen: false } : {}) }));
 }
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "plan-wait-")));
@@ -73,7 +73,7 @@ test("a Plan from of a local child appends one quiet wait line; other reports an
   assert.deepEqual(lines, [`phase1 ${HEAVY_ASK}.`]);
 });
 
-function rig() {
+function rig(carry?: IntercomCarry) {
   const agentDir = tmp();
   let now = T0;
   const sent: { text: string; wake: boolean }[] = [];
@@ -81,7 +81,7 @@ function rig() {
   fs.mkdirSync(handoff, { recursive: true });
   fs.writeFileSync(path.join(handoff, "live.json"), JSON.stringify({ intercomId: "fm-job-1", piSessionId: "child-sess" }));
   writeRegistry(agentDir, { version: 1, sessions: [{ label: "job", child: "fm-job-1", parent: "fm-parent", handoff, status: "open" }] });
-  const cb = new ChildBlocked({ agentDir, sessionId: "parent-sess", opener: () => "fm-parent", seconds: () => 600, send: (text, wake) => sent.push({ text, wake }), now: () => now });
+  const cb = new ChildBlocked({ agentDir, sessionId: "parent-sess", opener: () => "fm-parent", seconds: () => 600, ...(carry ? { carry } : {}), send: (text, wake) => sent.push({ text, wake }), now: () => now });
   const live = (f: Record<string, unknown>) => {
     fs.mkdirSync(liveDir(agentDir), { recursive: true });
     fs.writeFileSync(path.join(liveDir(agentDir), "child-sess.json"), JSON.stringify({ heartbeatAt: new Date(now).toISOString(), state: "idle", lastEventAt: new Date(T0).toISOString(), ...f }));
@@ -133,6 +133,28 @@ test("idle at the plan: no notice for a working child, a built child, an approve
   r.live({});
   r.cb.tick();
   assert.deepEqual(r.sent, []);
+});
+
+test("idle at the plan: a child with an open Question gets the question reminder only", (t) => {
+  const carry = new IntercomCarry();
+  const r = rig(carry);
+  t.after(r.cleanup);
+  state(r.handoff, { tier: "heavy", review: null });
+  carry.note("fm-job-1", "job", T0);
+  r.live({});
+  r.cb.tick();
+  r.advance(11 * MIN);
+  r.live({});
+  r.cb.tick();
+  assert.equal(r.sent.length, 1);
+  assert.equal(r.sent[0].wake, true);
+  assert.match(r.sent[0].text, /waited 11 min for your answer to its question/);
+  carry.answered("fm-job-1");
+  r.advance(MIN);
+  r.live({});
+  r.cb.tick();
+  assert.equal(r.sent.length, 2, "answered: the idle notice may follow");
+  assert.match(r.sent[1].text, /idle at its plan/);
 });
 
 test("idle at the plan: a child blocked on its owner gets the existing notice only", (t) => {

@@ -147,7 +147,7 @@ export class ChildBlocked {
         if (!obs.blocked) {
           const pl = obs.plan;
           const pkey = `${label}\nplan\n${pl?.since}`;
-          if (!pl || this.sent.has(pkey) || now - pl.since < secs * 1000) continue;
+          if (!pl || this.sent.has(pkey) || now - pl.since < secs * 1000 || this.d.carry?.records.has(e.child)) continue; // a child with an open Question waits for the parent: the reminder covers it
           this.sent.set(pkey, { child: e.child, label, since: pl.since, plan: true });
           dirty = true;
           this.d.trace?.({ event: "child_plan_idle_notice", label, waitedMs: now - pl.since });
