@@ -13,7 +13,7 @@ import { Show } from "../show.ts";
 const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p>Goal: ship the widget.</p></section><h2>Work</h2><p>x</p></body></html>";
 
 test("restoreFromStore: a page and its generated copy are one plan", (t) => {
-  const tmp = fs.realpathSync(mkTestTmp("pf-html-gap-"));
+  const tmp = fs.realpathSync.native(mkTestTmp("pf-html-gap-"));
   t.after(() => rmTestTmp(tmp));
   const project = path.join(tmp, "project");
   const agent = path.join(tmp, "agent");
@@ -35,7 +35,7 @@ test("restoreFromStore: a page and its generated copy are one plan", (t) => {
 });
 
 test("html plan: a rulings write leaves plan.json and the snapshots as they were", async (t) => {
-  const tmp = fs.realpathSync(mkTestTmp("pf-html-snap-"));
+  const tmp = fs.realpathSync.native(mkTestTmp("pf-html-snap-"));
   t.after(() => rmTestTmp(tmp));
   const ws = path.join(tmp, "ws");
   const scratch = path.join(ws, ".workflow/scratch");

@@ -10,7 +10,7 @@ import { renderHtmlPlanPage } from "../pages.ts";
 const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p>Goal: ship.</p></section><h2>Work</h2><p>x</p></body></html>";
 
 function workspace(t: { after: (fn: () => void) => void }) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-html-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-html-")));
   t.after(() => rmTestTmp(root));
   const ws = path.join(root, "ws");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(ws, d), { recursive: true });

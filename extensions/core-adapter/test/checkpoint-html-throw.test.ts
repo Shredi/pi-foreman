@@ -15,7 +15,7 @@ test("html plan: a converter throw is a readPlan error naming the page, not an e
   });
   t.after(() => h.deregister());
   const { readPlan } = (await import(String("../checkpoint.ts?converter-throws"))) as typeof import("../checkpoint.ts");
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-html-throw-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-html-throw-")));
   t.after(() => rmTestTmp(root));
   const ws = path.join(root, "ws");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(ws, d), { recursive: true });
