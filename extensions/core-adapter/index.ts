@@ -462,6 +462,8 @@ interface Session {
   hsOwn: string | null;
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
   reviewSync: Promise<void>;
+  /** The PASS marks of the ledgers, in order; reviewSync waits for each (a slow ledger write does not wait for a snapshot's git). */
+  markSync: Promise<void>;
   /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
   reviewMarked: Set<string>;
   /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; the run records come back from the session entries after a reload. */
@@ -1070,6 +1072,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
+      markSync: Promise.resolve(),
       reviewMarked: new Set(),
       ledgerByCall: new Map(),
       ledgerByRun: new Map(),
@@ -3882,6 +3885,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
         const dupOn = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false;
         // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
+        // the FAIL's record lands in reviewSync (hsRunEnd): a slow host (Windows git) must not read the state before it
+        if (dupOn && actionOf(input) === null && hsModel(s) !== null) await s.reviewSync;
         const gotFindings = actionOf(input) === null && hsModel(s) !== null && s.hs.findingsFor() !== null;
         // the checkouts the reviewers run in (a resumed one: those of its target run; none recorded or one unresolved: null, which reads every entry)
         let dupRoots: (string | null)[] = [];
@@ -4611,8 +4616,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const cwd = k === SESSION_WIDE ? (reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd) : k;
         if (k !== SESSION_WIDE) s.builderRunsByRoot[k] ??= 0;
         const builderRuns = builderRunsOf(s, k);
+        const snapNow = Promise.all([worktreeTree(cwd), headOf(cwd)]); // taken at the run end, in step with the ledger marks queued above, not after them
         s.reviewSync = s.reviewSync.then(async () => {
-          const [tree, head] = await Promise.all([worktreeTree(cwd), headOf(cwd)]);
+          const [tree, head] = await snapNow;
           if (s.reviewGates[k]?.last !== "pass") return;
           if (tree) s.passSnaps[k] = { cwd, tree };
           else delete s.passSnaps[k];
@@ -4682,10 +4688,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (file) byFile.set(file, [...(byFile.get(file) ?? []), p.text]);
       else s.trace?.emit({ event: "ledger_mark_skipped", run: runId.slice(0, 8), reason: "ledger of the reviewed entry unknown" });
     }
-    for (const [file, texts] of byFile) s.reviewSync = s.reviewSync.then(async () => {
-      const r = await markPassItems(texts.join("\n"), file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
-      if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(","), noted: r.noted.join(",") });
-    });
+    // the ledgers are marked side by side (each file has its own gate): a slow host (Windows process starts) must not add up one mark per ledger
+    // and in their own chain, not behind the PASS snapshots (git) of the earlier runs; reviewSync still waits for them
+    if (byFile.size > 0) {
+      s.markSync = s.markSync.then(() => Promise.all([...byFile].map(async ([file, texts]) => {
+        const r = await markPassItems(texts.join("\n"), file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
+        if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(","), noted: r.noted.join(",") });
+      }))).then(() => undefined);
+      const marked = s.markSync;
+      s.reviewSync = s.reviewSync.then(() => marked);
+    }
   }
 
   /** The working tree differs from the PASS snapshot only in comments or docs (commentonly.ts); traced revision_comment_only. */
