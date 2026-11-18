@@ -152,6 +152,13 @@
         "pattern": "/blog/gpt-[a-z0-9-]+-prompting-guide",
         "label": "new OpenAI prompting guide"
       }
+    },
+    {
+      "id": "quality-layers-talk",
+      "url": "https://ai.engineer/talks/O_zcc6Xl12g-all-code-is-slop-except-mine",
+      "target": "skills/repo-audit/SKILL.md",
+      "sha256": "f110231527c72c1f3a7696568b9abdb325ce8e0c8667db653f6b2851de5fcfe8",
+      "checkedOn": "2026-11-18"
     }
   ]
 }
