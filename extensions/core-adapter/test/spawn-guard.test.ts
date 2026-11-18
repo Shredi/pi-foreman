@@ -1,4 +1,4 @@
-// The spawn guard of scripts/foreman_test_run.mjs: summing, the summary line, both failure modes (any npm, over budget), and the
+// The spawn guard of scripts/foreman_test_run.mjs: summing, the summary line, both failure modes (any npm, a titled node process), and the
 // counter preload (_spawn-count.mjs) run in a child process.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { DEFAULT_SPAWN_BUDGET, npmCountsByFile, readSpawnCounts, spawnBudget, spawnGuardFailures, spawnSummaryLine, sumSpawnCounts } from "../../../scripts/foreman_test_run.mjs";
+import { leftoverLines, npmCountsByFile, readSpawnCounts, spawnGuardFailures, spawnSummaryLine, sumSpawnCounts, titledFiles } from "../../../scripts/foreman_test_run.mjs";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 // `node --import` takes a URL or a bare specifier; a Windows drive path would read as a URL scheme, so pass file URLs.
@@ -24,23 +24,45 @@ test("spawnSummaryLine names every kind", () => {
 });
 
 test("spawnGuardFailures: a passed run with any npm fails", () => {
-  const f = spawnGuardFailures(0, { git: 0, python: 0, node: 0, npm: 1, other: 0, total: 1 }, 100);
+  const f = spawnGuardFailures(0, { git: 0, python: 0, node: 0, npm: 1, other: 0, total: 1 });
   assert.equal(f.length, 1);
   assert.match(f[0], /started npm 1 time/);
 });
 
-test("spawnGuardFailures: a passed run over the budget fails, at the budget it passes", () => {
-  const t = { git: 5, python: 0, node: 0, npm: 0, other: 0, total: 5 };
-  assert.deepEqual(spawnGuardFailures(0, t, 5), []);
-  const f = spawnGuardFailures(0, t, 4);
-  assert.equal(f.length, 1);
-  assert.match(f[0], /5 child processes, over the budget of 4/);
+test("spawnGuardFailures: a large total passes; there is no limit on the count", () => {
+  assert.deepEqual(spawnGuardFailures(0, { git: 90000, python: 0, node: 0, npm: 0, other: 0, total: 90000 }), []);
 });
 
-test("spawnGuardFailures: a run that failed already adds nothing; both modes can fire together", () => {
+test("spawnGuardFailures: a titled record fails a passed run and names its file", () => {
+  const t = { git: 0, python: 0, node: 0, npm: 0, other: 0, total: 0 };
+  const f = spawnGuardFailures(0, t, [], titledFiles([{ titled: true, file: "a.test.ts" }, { titled: true, file: "b.test.ts" }, { git: 1 }]));
+  assert.equal(f.length, 3);
+  assert.match(f[0], /2 file\(s\) with a node process that changed its process title/);
+  assert.equal(f[1], "  titled node process in a.test.ts");
+  assert.equal(f[2], "  titled node process in b.test.ts");
+});
+
+test("spawnGuardFailures: a failed run returns no reasons; npm and titled can fire together; leftovers never add one", () => {
   const t = { git: 9, python: 0, node: 0, npm: 2, other: 0, total: 11 };
-  assert.deepEqual(spawnGuardFailures(1, t, 0), []);
-  assert.equal(spawnGuardFailures(0, t, 0).length, 2);
+  assert.deepEqual(spawnGuardFailures(1, t, [], ["a.test.ts"]), []);
+  assert.equal(spawnGuardFailures(0, t, [], ["a.test.ts"]).length, 3);
+  const clean = { git: 1, python: 0, node: 0, npm: 0, other: 0, total: 1 };
+  assert.deepEqual(spawnGuardFailures(0, clean, [], titledFiles([{ file: "a.test.ts", leftovers: ["other"] }])), []);
+});
+
+test("sumSpawnCounts ignores the titled, leftovers and file fields", () => {
+  assert.deepEqual(sumSpawnCounts([{ titled: true, file: "a.test.ts" }, { file: "b.test.ts", git: 1, leftovers: ["other", "git"] }]), { git: 1, python: 0, node: 0, npm: 0, other: 0, total: 1 });
+});
+
+test("leftoverLines: none gives no lines; one file and several kinds are counted per file", () => {
+  assert.deepEqual(leftoverLines([{ file: "a.test.ts", git: 2 }, null, { file: "b.test.ts", leftovers: [] }]), []);
+  assert.deepEqual(leftoverLines([{ file: "a.test.ts", leftovers: ["other"] }]), ["warning: child processes still running when a test process ended:", "  a.test.ts: 1 (other)"]);
+  const lines = leftoverLines([
+    { file: "b.test.ts", leftovers: ["node", "other"] },
+    { file: "a.test.ts", leftovers: ["other", "other"] },
+    { file: "b.test.ts", leftovers: ["git"] },
+  ]);
+  assert.deepEqual(lines.slice(1), ["  a.test.ts: 2 (other)", "  b.test.ts: 3 (git, node, other)"]);
 });
 
 test("sumSpawnCounts ignores the file label of a count file, so a file-labelled record sums like the older shape", () => {
@@ -62,12 +84,12 @@ test("npmCountsByFile lists the npm starts per file, largest first; older record
 
 test("spawnGuardFailures names each file with its npm starts under the npm failure; without the list it stays one line", () => {
   const t = { git: 0, python: 0, node: 0, npm: 3, other: 0, total: 3 };
-  const f = spawnGuardFailures(0, t, 100, [["a.test.ts", 2], ["b.test.ts", 1]]);
+  const f = spawnGuardFailures(0, t, [["a.test.ts", 2], ["b.test.ts", 1]]);
   assert.equal(f.length, 3);
   assert.match(f[0], /started npm 3 time/);
   assert.equal(f[1], "  npm 2 in a.test.ts");
   assert.equal(f[2], "  npm 1 in b.test.ts");
-  assert.equal(spawnGuardFailures(0, t, 100).length, 1);
+  assert.equal(spawnGuardFailures(0, t).length, 1);
 });
 
 test("the counter preload labels each count file with its script: relative to the cwd, the basename outside it, '-' for -e", () => {
@@ -92,14 +114,6 @@ test("the counter preload labels each count file with its script: relative to th
     rmTestTmp(dir);
     rmTestTmp(outside);
   }
-});
-
-test("spawnBudget: FOREMAN_TEST_SPAWN_BUDGET when a non-negative integer, else the default", () => {
-  assert.equal(spawnBudget({}), DEFAULT_SPAWN_BUDGET);
-  assert.equal(spawnBudget({ FOREMAN_TEST_SPAWN_BUDGET: "123" }), 123);
-  assert.equal(spawnBudget({ FOREMAN_TEST_SPAWN_BUDGET: "0" }), 0);
-  assert.equal(spawnBudget({ FOREMAN_TEST_SPAWN_BUDGET: "-1" }), DEFAULT_SPAWN_BUDGET);
-  assert.equal(spawnBudget({ FOREMAN_TEST_SPAWN_BUDGET: "x" }), DEFAULT_SPAWN_BUDGET);
 });
 
 function npmCountOf(code: string): number {
