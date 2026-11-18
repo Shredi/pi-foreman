@@ -47,7 +47,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [presets](#presets) | models |  | opt-in | Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md). | `/foreman config apply-preset claude-bridge --dry-run` | [presets](presets.md) |
 | [roles](#roles) | models |  | on | Per-role prompt file, appended prompt text, tool allowlist, launch mode and run-time default of the neutral roles; a launch timeoutMs wins, capped by ceremony.launchTimeoutCapMinutes. roles.<x>.mcp is the ceiling of MCP servers a child may load on demand through tool_search (a child gets only the servers or tools its launch mcp field names; without that field it gets no MCP). mcp.directProviders lists the providers that fix a turn's tool list (default claude-bridge): a child on one gets its allowed deferred MCP tools declared before the first prompt, none when they are more than mcp.directMaxTools (default 40). | on by default | [roles](roles.md#further-role-and-provider-keys) |
 | [display-names](#display-names) | ui |  | on | Shows roles under a display-name preset (`classic` personal names, `plain` ids) or your own map; no code compares a display name. | on by default | [roles](roles.md#roles) |
-| [codemode](#codemode) | tools | toggle | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
+| [codemode](#codemode) | tools | toggle | on | Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman, explorer and reviewer by default). | `{"roles": {"builder": {"codemode": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [ladder](#ladder) | models |  | opt-in | A child climbs to its role's strong model through the foreman after a context, turns, stuck or review-FAIL handoff; with no strong rung mapped nothing climbs. | `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}` | [ladder](ladder.md#rungs-and-the-live-rung) |
 | [idle-downshift](#idle-downshift) | models | toggle | opt-in | A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. The rung may name a model of another provider, whose own `providers.<q>.cache` entry then supplies TTL and warms. With no idle rung mapped nothing changes. | `{"providers": {"<provider>": {"roles": {"foreman": {"idle": {"model": "<provider>/<cheaper-model>"}}}}}}` | [ladder](ladder.md) |
 | [rank-policy](#rank-policy) | models |  | opt-in | Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing. | `{"providers": {"<provider>": {"ranks": [{"match": "*big*", "tier": 0}, {"match": "*mid*", "tier": 1}]}}, "ladder": {"childPolicy": "below"}}` | [roles](roles.md#role-ladder-rank-policy-and-presets) |
@@ -225,13 +225,13 @@ Switch: `providers` is non-empty.
 
 ### codemode
 
-**Codemode per role.** Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman and explorer by default).
+**Codemode per role.** Gives a role the `codemode` tool, whose script calls each pass the guards and permissions on their own (on for the foreman, explorer and reviewer by default).
 
 Switch: `roles.foreman.codemode` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `roles.<x>.codemode` | `foreman`: `true`, `session-foreman`: `false`, `explorer`: `true`, `builder`: `false`, `reviewer`: `false` | tighten-only (only false is accepted) |
+| `roles.<x>.codemode` | `foreman`: `true`, `session-foreman`: `false`, `explorer`: `true`, `builder`: `false`, `reviewer`: `true` | tighten-only (only false is accepted) |
 | `providers.<x>.roles.<x>.codemode` | unset | tighten-only (only false is accepted) |
 
 ### ladder
