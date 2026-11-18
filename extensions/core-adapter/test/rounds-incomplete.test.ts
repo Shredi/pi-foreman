@@ -27,3 +27,9 @@ test("incompleteOf: only the first verdict line decides; a phrase quoted later i
   assert.equal(incompleteOf("VERDICT: PASS\n1. PASS: agents/reviewer.md:23 adds the `VERDICT: FAIL INCOMPLETE` rule"), false);
   assert.equal(incompleteOf("**VERDICT:** FAIL INCOMPLETE\n1. PASS a"), true);
 });
+
+test("incompleteOf: FAIL and INCOMPLETE must share a line; spaces and tabs between them are fine", () => {
+  assert.equal(incompleteOf("VERDICT: FAIL\nIncomplete: checks 3 and 4 were not run (turn cap)\n1. FAIL: src/x.ts:3 broken"), false);
+  assert.equal(incompleteOf("VERDICT: FAIL  INCOMPLETE\n1. PASS a"), true);
+  assert.equal(incompleteOf("VERDICT: FAIL\tINCOMPLETE\n1. PASS a"), true);
+});

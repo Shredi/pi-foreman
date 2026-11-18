@@ -147,8 +147,8 @@ export function verdictOf(text: string): Verdict | null {
 
 /** True when the FIRST verdict line of the report reads `FAIL INCOMPLETE` (the reviewer stopped early and found no defect). The CRITIQUE block does not count; later lines that quote the phrase are not read. */
 export function incompleteOf(text: string): boolean {
-  const first = /\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail\s+incomplete|fail|approve|block)\b/i.exec(withoutCritique(text));
-  return first !== null && /^fail\s+incomplete$/i.test(first[1]);
+  const first = /\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail[ \t]+incomplete|fail|approve|block)\b/i.exec(withoutCritique(text));
+  return first !== null && /^fail[ \t]+incomplete$/i.test(first[1]);
 }
 
 /**
