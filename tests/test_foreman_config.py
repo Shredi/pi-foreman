@@ -317,9 +317,9 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("foreman", sub["agentOverrides"])
         for role, entry in sub["agentOverrides"].items():
             self.assertIsInstance(entry["tools"], list)
-            self.assertEqual("codemode" in entry["tools"], role == "explorer", role)
+            self.assertEqual("codemode" in entry["tools"], role in ("explorer", "reviewer"), role)
         self.assertEqual(sub["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search"])
+                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -341,7 +341,7 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
         cfg["ceremony"]["ledgerHelper"] = "off"
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search"])
+                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})
@@ -626,6 +626,8 @@ class PackageFilesTest(unittest.TestCase):
             ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
             # review per checkout: the finish rule names the checkout
             ("A FAIL, or a builder launch or project edit after the review, leaves the reviewer step open until a re-review passes.", "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."),
+            # D71 addendum: a refused shell write keeps the tier; only a refused tool edit raises it
+            ("A refused project edit makes the task standard: write the ledger and delegate.", "A refused `write`, `edit`, `foreman_move` or `foreman_copy` on a project file makes the task standard: write the ledger and delegate. A refused shell write keeps the tier, and the change still goes to a builder."),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)

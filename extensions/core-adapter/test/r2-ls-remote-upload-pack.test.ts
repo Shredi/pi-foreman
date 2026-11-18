@@ -47,7 +47,7 @@ test("a -u, -o or -c of another git subcommand keeps its verdict", () => {
   assert.deepEqual(outcomes("git add -u"), ["allow default-git-add []", "allow default-git-add []", "block child-readonly-write []", "block child-readonly-write []"]);
   assert.deepEqual(outcomes("git status -u"), [READ, READ, READ, READ]);
   assert.deepEqual(outcomes("git push -u origin x"), ['undecided  ["danger-git"]', "block floor-git-push-child []", "block floor-git-push-child []", "block floor-git-push-child []"]);
-  const unread = ["undecided  []", "undecided  []", 'undecided  ["danger-readonly-run"]', 'undecided  ["danger-readonly-run"]'];
+  const unread = ["undecided  []", "undecided  []", "undecided  []", "undecided  []"];
   assert.deepEqual(outcomes("git ls-files -o"), unread);
   assert.deepEqual(outcomes("git log -c"), unread);
 });

@@ -64,15 +64,14 @@ function scratchConfigToken(tok: string, segments: readonly ShellSegment[], env:
  * The entry condition of the read question: tool `bash` under a bash shell; `danger-opaque` the only dangerous-class entry; no secret-path word
  * among the raw whitespace- or quote-separated tokens and no split-literal hit on the raw line; no segment with a redirect that can write or the
  * unreadable reason `writing_wrapper`; a length bound. It is no safety boundary: whether the line only reads is the judge's to say.
- * `writeOk` (the role question only): a segment it accepts may keep its writing redirects.
  */
-export function readClearEntry(c: ReadEntryCall, env: FloorEnv, writeOk?: (seg: ShellSegment) => boolean): boolean {
+export function readClearEntry(c: ReadEntryCall, env: FloorEnv): boolean {
   if (c.tool !== "bash") return false;
   if (c.dangers.length !== 1 || c.dangers[0] !== "danger-opaque") return false;
   if (c.text.length > READ_CLEAR_MAX_LINE) return false;
   for (const s of c.segments) {
     if (s.opaque === "writing_wrapper") return false;
-    if (s.redirects.some((r) => !harmlessRedirect(r)) && !writeOk?.(s)) return false;
+    if (s.redirects.some((r) => !harmlessRedirect(r))) return false;
   }
   for (const tok of c.text.split(/[\s"'`]+/)) if (tok && secretPath(tok, env) && !scratchConfigToken(tok, c.segments, env)) return false;
   if (probeFileHit(c.text)) return false;
