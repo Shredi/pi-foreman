@@ -590,7 +590,7 @@ export default class ForemanAgents extends View {
     return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0, carded).flex_1().min_w(0));
   }
 
-  // Under a session row: one line per PR past two (`splitPrs(item.prs).below`, via prLines; the first two stay as chips in the row, see nodeRow), then the show lines, then the status line.
+  // Under a session row: with more than two PRs, one line per PR (`splitPrs(item.prs).below` via prLines; the row then has no chips, see rowChips), then the show lines, then the status line.
   // `x` is the left of the connector line when children follow (see rail): every extras row then carries it, so the line runs
   // unbroken from the row's chevron through these rows to the first child.
   extras(t, item, ind, x = null) {
