@@ -28,7 +28,7 @@ function deps(over: Partial<SessionDeps> = {}): SessionDeps & { spawned: string[
   };
 }
 
-test("session confirm: Yes opens and the dialog shows label, model, cwd and the first 3 brief lines", async () => {
+test("session confirm: Yes opens and the dialog shows the question, the facts and the brief heading, not the brief body", async () => {
   const asked: { title: string; message: string }[] = [];
   const d = deps({ model: "p/low", confirm: async (title, message) => (asked.push({ title, message }), true) });
   const r = await runSessionCommand(d, "open demo b.md --model p/other --plan-first");
@@ -36,15 +36,14 @@ test("session confirm: Yes opens and the dialog shows label, model, cwd and the 
   assert.equal(d.spawned.length, 1);
   assert.equal(asked.length, 1);
   const m = asked[0].message;
-  assert.match(asked[0].title, /demo/);
-  assert.match(m, /label: demo/);
-  assert.match(m, /model: p\/other/);
-  assert.match(m, new RegExp(`cwd: ${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-  assert.match(m, /worktree: no/);
-  assert.match(m, /plan-first: yes/);
-  assert.match(m, /machine: local/);
-  assert.match(m, /# Title\nsecond line\nthird line$/);
-  assert.doesNotMatch(m, /fourth line/);
+  assert.equal(asked[0].title, "Open a new session demo?");
+  assert.match(m, /Model: +p\/other/);
+  assert.match(m, new RegExp(`Folder: +${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(m, /Worktree: +no, it uses this folder as it is/);
+  assert.match(m, /Plan step: +yes, you approve its plan in its pane/);
+  assert.match(m, /Machine: +this one/);
+  assert.match(m, /Brief heading: Title/);
+  assert.doesNotMatch(m, /second line|third line|fourth line/);
 });
 
 test("session confirm: No refuses with owner_declined and spawns nothing", async () => {
@@ -96,8 +95,8 @@ test("session confirm: --machine asks too and shows the machine", async () => {
   const d = deps({ confirm: async (_t, m) => ((message = m), false) });
   const r = await runSessionCommand(d, "open demo b.md --machine box --cwd /srv/x");
   assert.match(r.text, /\[owner_declined\]/);
-  assert.match(message, /machine: box/);
-  assert.match(message, /cwd: \/srv\/x/);
+  assert.match(message, /Machine: +box/);
+  assert.match(message, /Folder: +\/srv\/x/);
   assert.equal(d.spawned.length, 0);
 });
 

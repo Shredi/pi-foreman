@@ -1,0 +1,262 @@
+// The shared owner-dialog shape (ownerdialog.ts): rendering with and without colour and link support, cleaning, the link rule,
+// and the select/confirm wrappers (custom in the TUI, the plain Pi calls elsewhere).
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { cleanDialogText, dialogStyle, fileUrl, ownerDialog, shapedConfirm, shapedSelect } from "../ownerdialog.ts";
+import type { DialogSpec, DialogStyle } from "../ownerdialog.ts";
+import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { initTheme } from "@earendil-works/pi-coding-agent";
+
+initTheme("dark");
+
+const theme = { fg: (tok: string, s: string) => `<${tok}:${s}>`, underline: (s: string) => `_${s}_` };
+const OSC8 = /\x1b\]8;;([^\x1b]*)\x1b\\/;
+const ESC = /\x1b/;
+
+function spec(over: Partial<DialogSpec> = {}): DialogSpec {
+  return {
+    ask: "Approve the plan for demo?",
+    summary: "Builders start only after you approve.",
+    facts: [["Plan", "Demo"], ["Version", "1a2b3c4d"]],
+    links: [{ label: "Plan page", path: "/tmp/pages/demo/plan.html", text: "open the plan page", kind: "page" }],
+    detail: ["a dim line"],
+    answers: "revise: you say what to change   approve: builders start",
+    ...over,
+  };
+}
+
+test("ownerDialog: the question is the ask, the body has one token per part, the answers line is last", () => {
+  const { ask, body } = ownerDialog(spec(), { theme, links: true });
+  assert.equal(ask, "Approve the plan for demo?");
+  const lines = body.split("\n");
+  assert.equal(lines[0], "<text:Builders start only after you approve.>");
+  assert.ok(lines.some((l) => l === "  <muted:Plan:   >  <text:Demo>"));
+  assert.ok(lines.some((l) => l.startsWith("  <muted:Plan page:>  <mdLink:_")));
+  assert.ok(lines.includes("  <dim:a dim line>"));
+  assert.equal(lines.at(-1), "<warning:revise: you say what to change   approve: builders start>");
+});
+
+test("ownerDialog: links on put OSC 8 around the label text and show the url dim on its own line", () => {
+  const { body } = ownerDialog(spec(), { theme, links: true }, false);
+  const m = OSC8.exec(body);
+  assert.ok(m, "an OSC 8 link");
+  assert.equal(m[1], "file:///tmp/pages/demo/plan.html");
+  assert.match(body, /\x1b\]8;;[^\x1b]*\x1b\\open the plan page\x1b\]8;;\x1b\\/);
+  assert.ok(body.split("\n").includes("  <dim:file:///tmp/pages/demo/plan.html>"));
+});
+
+test("ownerDialog: links off draw no OSC 8 and still show the url line", () => {
+  const { body } = ownerDialog(spec(), { theme, links: false }, false);
+  assert.doesNotMatch(body, ESC);
+  assert.doesNotMatch(body, /open the plan page/);
+  assert.ok(body.includes("file:///tmp/pages/demo/plan.html"));
+});
+
+test("ownerDialog: no style draws plain text without any escape byte", () => {
+  const { ask, body } = ownerDialog(spec(), null, false);
+  assert.doesNotMatch(ask + body, ESC);
+  assert.doesNotMatch(body, /<(text|muted|dim|warning|mdLink):/);
+  assert.match(body, /Plan: +Demo/);
+  assert.equal(body.split("\n").at(-1), "revise: you say what to change   approve: builders start");
+});
+
+test("cleanDialogText: escape sequences, controls, bidi and format characters are removed; ordinary spacing stays", () => {
+  const dirty = "a\x1b[31mred\x1b[0m\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\\x07b\u0085c\u202ed\u2066e\u200ef\u200f\nrow\tend";
+  const out = cleanDialogText(dirty);
+  assert.doesNotMatch(out, ESC);
+  assert.doesNotMatch(out, /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
+  assert.equal(out.replace(/ +/g, " "), "aredlink b c d e f row end");
+  assert.equal(cleanDialogText("one   two"), "one   two");
+});
+
+test("ownerDialog: every provided string is cleaned before styling", () => {
+  const s = spec({ ask: "Q\x1b[1m?", summary: "S\x1b]8;;u\x07x", facts: [["L\x07", "V\x1b[2m"]], detail: ["D\u202e"], answers: "A\x1b[0m" });
+  const { ask, body } = ownerDialog(s, { theme, links: true }, false);
+  assert.doesNotMatch(ask, ESC);
+  assert.equal(ask, "Q?");
+  assert.ok(!body.replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, "").match(ESC));
+});
+
+test("fileUrl: spaces and non-ASCII are percent-encoded; a Windows path is a file URL on any runner", () => {
+  assert.equal(fileUrl("/tmp/a b/é.md", false), "file:///tmp/a%20b/%C3%A9.md");
+  assert.equal(fileUrl("C:\\x\\b.md", true), "file:///C:/x/b.md");
+});
+
+function briefDir(t: import("node:test").TestContext): string {
+  const d = fs.realpathSync(mkTestTmp("pf-ownerdialog-"));
+  t.after(() => rmTestTmp(d));
+  return d;
+}
+
+const brief = (file: string, kind: "text" | "page" = "text"): DialogSpec => ({ ask: "Q?", links: [{ label: "Brief", path: file, text: "open the brief", kind }] });
+const styled: DialogStyle = { theme, links: true };
+
+test("link rule: a plan page links; a brief links only when its real path is .md or .txt", (t) => {
+  const d = briefDir(t);
+  for (const n of ["b.md", "b.txt"]) {
+    fs.writeFileSync(path.join(d, n), "x");
+    assert.match(ownerDialog(brief(path.join(d, n)), styled).body, OSC8, n);
+  }
+  for (const n of ["b.sh", "b.command", "b", "b.terminal"]) {
+    fs.writeFileSync(path.join(d, n), "x");
+    const body = ownerDialog(brief(path.join(d, n)), styled).body;
+    assert.doesNotMatch(body, /\x1b\]8/, n);
+    assert.ok(body.includes(path.join(d, n)), "the plain path is shown");
+  }
+  assert.match(ownerDialog(brief(path.join(d, "plan.html"), "page"), styled).body, OSC8);
+});
+
+test("link rule: a brief.md that is a symlink to a .command file is not linked", { skip: process.platform === "win32" }, (t) => {
+  const d = briefDir(t);
+  fs.writeFileSync(path.join(d, "run.command"), "#!/bin/sh\n");
+  fs.symlinkSync(path.join(d, "run.command"), path.join(d, "brief.md"));
+  const body = ownerDialog(brief(path.join(d, "brief.md")), styled).body;
+  assert.doesNotMatch(body, /\x1b\]8/);
+  assert.ok(body.includes(path.join(d, "brief.md")));
+});
+
+test("cleanDialogText: zero-width, Arabic letter mark, BOM and line/paragraph separators are removed", () => {
+  const cps = [0x061c, 0x200b, 0x200c, 0x200d, 0xfeff, 0x2028, 0x2029];
+  const out = cleanDialogText(cps.map((c, i) => `${String.fromCharCode(97 + i)}${String.fromCharCode(c)}`).join("") + "z");
+  assert.equal(out.replace(/ +/g, " "), "a b c d e f g z");
+  assert.ok(![...out].some((ch) => cps.includes(ch.charCodeAt(0))));
+});
+
+test("link rule: a text link through a symlink names the resolved real file in the url", { skip: process.platform === "win32" }, (t) => {
+  const d = briefDir(t);
+  fs.writeFileSync(path.join(d, "real.md"), "# x\n");
+  fs.symlinkSync(path.join(d, "real.md"), path.join(d, "brief.md"));
+  const body = ownerDialog(brief(path.join(d, "brief.md")), styled).body;
+  const m = OSC8.exec(body);
+  assert.ok(m);
+  assert.ok(m[1].endsWith("/real.md"));
+  assert.ok(!m[1].includes("brief.md"));
+});
+
+test("link rule: a missing brief file is not linked", (t) => {
+  const d = briefDir(t);
+  assert.doesNotMatch(ownerDialog(brief(path.join(d, "none.md")), styled).body, /\x1b\]8/);
+});
+
+type Call = { fn: string; args: unknown[] };
+function fakeUi(over: Record<string, unknown> = {}) {
+  const calls: Call[] = [];
+  const ui: Record<string, unknown> = {
+    theme,
+    select: async (...args: unknown[]) => (calls.push({ fn: "select", args }), "revise"),
+    confirm: async (...args: unknown[]) => (calls.push({ fn: "confirm", args }), true),
+    custom: async (factory: (...a: unknown[]) => unknown, options: unknown) => {
+      calls.push({ fn: "custom", args: [factory, options] });
+      return undefined;
+    },
+    ...over,
+  };
+  return { ui: ui as never, calls };
+}
+
+test("dialogStyle: only the TUI with a theme and a custom function is styled; links follow the capability probe", () => {
+  assert.equal(dialogStyle(fakeUi().ui, "rpc"), null);
+  assert.equal(dialogStyle(fakeUi({ theme: undefined }).ui, "tui"), null);
+  assert.equal(dialogStyle(fakeUi({ custom: undefined }).ui, "tui"), null);
+  assert.deepEqual(dialogStyle(fakeUi().ui, "tui", () => false), { theme, links: false });
+  assert.deepEqual(dialogStyle(fakeUi().ui, "tui", () => true), { theme, links: true });
+  assert.equal(dialogStyle(fakeUi().ui, "tui", () => { throw new Error("probe"); })?.links, false);
+});
+
+test("shapedSelect: rpc and a tui without theme or custom call the plain select with question and plain body", async () => {
+  for (const [mode, over] of [["rpc", {}], ["tui", { theme: undefined }], ["tui", { custom: undefined }]] as const) {
+    const { ui, calls } = fakeUi(over);
+    const answer = await shapedSelect(ui, mode, spec(), ["revise", "approve"]);
+    assert.equal(answer, "revise");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].fn, "select");
+    const title = String(calls[0].args[0]);
+    assert.match(title, /^Approve the plan for demo\?\n\nBuilders start/);
+    assert.doesNotMatch(title, ESC);
+    assert.deepEqual(calls[0].args[1], ["revise", "approve"]);
+    assert.equal(calls[0].args.length, 2, "no options object without a signal");
+  }
+  const sig = new AbortController().signal;
+  const { ui, calls } = fakeUi();
+  await shapedSelect(ui, "rpc", spec(), ["a"], { signal: sig });
+  assert.deepEqual(calls[0].args[2], { signal: sig });
+});
+
+test("shapedSelect: the TUI goes through custom with the plain question as the blocked message", async () => {
+  const { ui, calls } = fakeUi();
+  const opts = ["revise", "reject", "approve"];
+  const answer = await shapedSelect(ui, "tui", spec(), opts, { style: { theme, links: false } });
+  assert.equal(answer, undefined);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].fn, "custom");
+  assert.deepEqual((calls[0].args[1] as { blocked: unknown }).blocked, { kind: "question", message: "Approve the plan for demo?" });
+});
+
+test("shapedSelect and shapedConfirm: the real selector component gets the options in order, the body as description, and answers pass through", async () => {
+  let comp: { handleInput(k: string): void; render(w: number): string[] } | undefined;
+  const asked: unknown[] = [];
+  const ui = fakeUi({
+    custom: (factory: (...a: unknown[]) => never, options: unknown) =>
+      new Promise((resolve) => {
+        asked.push(options);
+        comp = factory({ requestRender: () => undefined }, theme, {}, resolve) as never;
+      }),
+  }).ui;
+  const style: DialogStyle = { theme, links: false };
+  // down, down, enter on [revise, reject, approve] = approve
+  const p = shapedSelect(ui, "tui", spec(), ["revise", "reject", "approve"], { style });
+  const plain = comp!.render(100).join("\n");
+  assert.match(plain, /Approve the plan for demo\?/);
+  assert.match(plain, /Builders start only after you approve/);
+  assert.ok(plain.indexOf("revise") < plain.indexOf("reject") && plain.indexOf("reject") < plain.lastIndexOf("approve"));
+  comp!.handleInput("\x1b[B");
+  comp!.handleInput("\x1b[B");
+  comp!.handleInput("\r");
+  assert.equal(await p, "approve");
+  // confirm: enter on the preselected Yes is true; down, enter is No = false
+  const yes = shapedConfirm(ui, "tui", spec(), { style });
+  comp!.handleInput("\r");
+  assert.equal(await yes, true);
+  assert.deepEqual(asked.at(-1), { blocked: { kind: "permission", message: "Approve the plan for demo?" } });
+  const no = shapedConfirm(ui, "tui", spec(), { style });
+  comp!.handleInput("\x1b[B");
+  comp!.handleInput("\r");
+  assert.equal(await no, false);
+  // cancel (escape) is not Yes
+  const cancelled = shapedConfirm(ui, "tui", spec(), { style });
+  comp!.handleInput("\x1b");
+  assert.equal(await cancelled, false);
+});
+
+test("shapedSelect and shapedConfirm: an abort answers undefined / false, also when it came before the dialog", async () => {
+  const ac = new AbortController();
+  let done: ((v: unknown) => void) | undefined;
+  const ui = fakeUi({
+    custom: (factory: (...a: unknown[]) => never, _o: unknown) =>
+      new Promise((resolve) => {
+        done = resolve;
+        factory({ requestRender: () => undefined }, theme, {}, resolve);
+      }),
+  }).ui;
+  const style: DialogStyle = { theme, links: false };
+  const p = shapedSelect(ui, "tui", spec(), ["a", "b"], { style, signal: ac.signal });
+  ac.abort();
+  assert.equal(await p, undefined);
+  assert.ok(done);
+  assert.equal(await shapedSelect(ui, "tui", spec(), ["a"], { style, signal: ac.signal }), undefined);
+  assert.equal(await shapedConfirm(ui, "tui", spec(), { style, signal: ac.signal }), false);
+});
+
+test("shapedConfirm: plain mode calls confirm with the question and the plain body; only true counts", async () => {
+  const { ui, calls } = fakeUi();
+  assert.equal(await shapedConfirm(ui, "rpc", spec()), true);
+  assert.equal(calls[0].fn, "confirm");
+  assert.equal(calls[0].args[0], "Approve the plan for demo?");
+  assert.doesNotMatch(String(calls[0].args[1]), ESC);
+  assert.equal(calls[0].args.length, 2);
+  const odd = fakeUi({ confirm: async () => 1 }).ui;
+  assert.equal(await shapedConfirm(odd, "rpc", spec()), false);
+});

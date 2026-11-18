@@ -272,14 +272,23 @@ export function showOffReason(hasLive: boolean, sessionId: string): string {
 
 /** The checkpoint dialog's plan page line: waits up to `waitMs` for the page write, then names the file URL or the real reason. No promise: `off` says why (default: the scratch dir is off). */
 export async function planPageLine(page: Promise<PageOutcome> | undefined, waitMs = 3000, off = "scratch dir off"): Promise<string> {
-  if (!page) return `Plan page: not available (${off})`;
+  return planPageLineOf(await planPageOutcome(page, waitMs, off));
+}
+
+/** The line of an outcome `planPageOutcome` returned. */
+export function planPageLineOf(r: PageOutcome): string {
+  return "path" in r ? `Plan page: ${pathToFileURL(r.path).href} (a path on this session's machine)` : `Plan page: not available (${r.reason})`;
+}
+
+/** The page write's outcome, waiting up to `waitMs` for it; no promise: `off` says why there is none. */
+export async function planPageOutcome(page: Promise<PageOutcome> | undefined, waitMs = 3000, off = "scratch dir off"): Promise<PageOutcome> {
+  if (!page) return { reason: off };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<PageOutcome>((resolve) => {
     timer = setTimeout(() => resolve({ reason: "page not written yet" }), waitMs);
   });
   try {
-    const r = await Promise.race([page, late]);
-    return "path" in r ? `Plan page: ${pathToFileURL(r.path).href} (a path on this session's machine)` : `Plan page: not available (${r.reason})`;
+    return await Promise.race([page, late]);
   } finally {
     clearTimeout(timer);
   }
