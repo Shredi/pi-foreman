@@ -21,8 +21,8 @@ The tool gate's floors (see [permissions](permissions.md#floors)) hold in every 
 | Command | Floor |
 |---|---|
 | Any plain `git push` from a child that is not a builder from a single launch (also through `-C`, `-c`, an env prefix, `bash -c '...'` or `$( )`): a reviewer, an explorer, an unbound child, and a builder from a `tasks` or `chain` launch | `floor-git-push-child`; the foreman pushes |
-| Force, force-with-lease, mirror and delete pushes, a leading `+`, an empty source (`:dst`) and several `:` in a refspec, `refs/for/*`, from the foreman too | `floor-git-push-force` |
-| A push to `main`, `master` (a `src:dst` refspec is checked on `dst`), the remote's default branch or a `safety.git.protectedBranches` pattern, and `git push --all` | `floor-git-push-protected` |
+| Force, force-with-lease, mirror and delete pushes, a leading `+`, an empty source (`:dst`), an empty destination (`src:`) and several `:` in a refspec, `refs/for/*`, from the foreman too | `floor-git-push-force` |
+| A push to `main`, `master` (a `src:dst` refspec is checked on `dst`; a leading `refs/heads/` or `heads/` is stripped first), the remote's default branch or a `safety.git.protectedBranches` pattern, and `git push --all` | `floor-git-push-protected` |
 | `git remote add`, `set-url`, `rename`, `remove` and the like | the remote floor |
 | `git config` writes (`-c` before the subcommand, the values of `git clone -c` and `--config` in every spelling git accepts, shortened and clustered ones included, `--config-env`, `GIT_CONFIG_*`, editing `.git/config`; for the main session and subagents, in every mode) to the keys that redirect hooks, transport, credentials or run a program (hooks path, ssh command, credential helper, fsmonitor, external diff, ...) | `floor-git-config` |
 | A child's git write into the foreman's checkout or another checkout (`git -C`, `--git-dir`, `--work-tree`, `cd <dir> && git ...`), a redirect or a heredoc there | `child-write-foreman-checkout`, `child-write-outside` |

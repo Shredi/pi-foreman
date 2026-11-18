@@ -25,3 +25,12 @@ test("push refspecs: +src, :dst, force flags and a protected or default destinat
   assert.equal(floor("git push origin HEAD:refs/heads/main"), "floor-git-push-protected");
   assert.equal(floor("git push origin a:release/1.0"), "floor-git-push-protected");
 });
+
+test("push refspecs: a `heads/` or `refs/heads/` destination is checked as the branch; an empty destination is refused", () => {
+  assert.equal(floor("git push origin HEAD:heads/main"), "floor-git-push-protected");
+  assert.equal(floor("git push origin heads/main"), "floor-git-push-protected");
+  assert.equal(floor("git push origin refs/heads/main"), "floor-git-push-protected");
+  assert.equal(floor("git push origin HEAD:"), "floor-git-push-force");
+  assert.equal(floor("git push origin HEAD:heads/feature-x"), null);
+  assert.equal(floor("git push origin HEAD:round/x"), null);
+});

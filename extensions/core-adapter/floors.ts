@@ -186,7 +186,7 @@ function protectedSet(env: FloorEnv): Set<string> {
   return new Set([...KEYS.protectedBranches, ...(env.protectedBranches ?? [])].map((b) => b.trim()).filter(Boolean));
 }
 
-const stripHeads = (r: string): string => r.replace(/^refs\/heads\//, "");
+const stripHeads = (r: string): string => r.replace(/^(?:refs\/)?heads\//, "");
 
 /** The two push floors (plan Addendum 2): (a) force, delete, mirror, a leading `+` or an empty source (`:dst`) or several `:` in a refspec (a `src:dst` refspec goes through (b) on dst); (b) any push whose target is a default or protected branch. */
 function pushFloor(call: GitCall, env: FloorEnv): FloorHit | null {
@@ -211,7 +211,7 @@ function pushFloor(call: GitCall, env: FloorEnv): FloorHit | null {
   const alt = "Push only your own branch explicitly: `git push -u origin <your-branch>`. Ask the user for force pushes, deletions, mirror pushes and pushes to a default branch.";
   if (force) return hit("git-push-force", `\`git push ${force}\` rewrites or deletes remote refs. ${alt}`);
   const refspecs = positional.slice(1).filter((r) => r !== "tag");
-  const odd = refspecs.find((r) => r.startsWith("+") || r.startsWith(":") || r.split(":").length > 2);
+  const odd = refspecs.find((r) => r.startsWith("+") || r.startsWith(":") || r.endsWith(":") || r.split(":").length > 2);
   if (odd !== undefined) return hit("git-push-force", `The refspec '${odd}' can overwrite or delete any remote ref. ${alt}`);
   const prot = [...protectedSet(env)];
   const cwd = call.cwd ?? env.cwd;
