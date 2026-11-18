@@ -263,7 +263,7 @@ export function overrideSpec(a: { agent: string; task: string; reason: string; h
   return {
     ask: "Start this launch despite high load?",
     summary: "The host is overloaded, so launches wait. Yes starts this one launch now; No keeps it waiting.",
-    facts: [["Agent", a.agent], ["Task", cutLine(a.task, 300, true)], ["Reason", cutLine(a.reason, 300)], ["Load", load]],
+    facts: [["Agent", cutLine(a.agent, 80)], ["Task", cutLine(a.task, 300, true)], ["Reason", cutLine(a.reason, 300)], ["Load", load]],
     answers: "Yes: this one launch starts now   No: it waits until the load drops",
   };
 }

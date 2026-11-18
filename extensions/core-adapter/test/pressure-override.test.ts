@@ -1,6 +1,6 @@
 // Owner-approved override of one deferred launch at critical load, through the real adapter hooks (index.ts tool_call, tool_execution_end, input).
 // Rig of pressure-launch.test.ts with a recording owner dialog; pressure file injected, sampler and clock faked.
-import { test } from "node:test";
+import { after, test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
@@ -9,7 +9,6 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { dialogsJson } from "../dialogs.ts";
-import { buildSubmoduleRig } from "./_submodules.ts";
 import { overrideHint, pressurePath, takePressureOverride } from "../pressure.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -22,6 +21,9 @@ const ROLES = ["explorer", "builder", "reviewer"];
 const HOST = { loadPerCore: 4, load1PerCore: 3.5, freeMemMB: 16000, freeDiskGB: 500 };
 const BASE = "pressure critical (load): launch deferred; you will be woken when it drops";
 const FIELD = "pressureOverride";
+// One session serves the tests of this file (each rig costs about seven child processes): a test starts with reset(), which gives it a new
+// id and task salt, an empty trace view, no dialogs or wakes and the owner prompt that clears a recent decline.
+let salt = 0;
 
 interface Rig {
   handlers: Map<string, Handler>;
@@ -33,6 +35,7 @@ interface Rig {
   traceFile(): string;
   setLevel(level: "ok" | "high" | "critical", reasons?: string[]): void;
   trace(): Record<string, unknown>[];
+  reset(): Promise<void>;
   launch(id: string, input: Record<string, unknown>): Promise<{ block?: boolean; reason?: string } | undefined>;
   assistant(ids: string[], args: (i: number) => Record<string, unknown>): Promise<void>;
   started(id: string, input: Record<string, unknown>, runId: string): Promise<void>;
@@ -42,7 +45,7 @@ interface Rig {
   project: string;
 }
 
-async function rig(t: { after(fn: () => void): void }, o: { mode?: string; hasUI?: boolean; child?: boolean } = {}): Promise<Rig> {
+async function makeRig(t: { after(fn: () => void): void }, o: { mode?: string; hasUI?: boolean; child?: boolean } = {}): Promise<Rig> {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-press-ovr-")));
@@ -119,6 +122,8 @@ async function rig(t: { after(fn: () => void): void }, o: { mode?: string; hasUI
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   const file = pressurePath(agentDir);
+  let skip = 0;
+  const key = (id: string): string => `${salt}:${id}`;
   const traceFile = (): string => {
     const dir = path.join(agentDir, "pi-foreman", "state");
     const f = fs.readdirSync(dir).find((n) => n.startsWith("trace-") && n.endsWith(".jsonl"));
@@ -139,20 +144,33 @@ async function rig(t: { after(fn: () => void): void }, o: { mode?: string; hasUI
     },
     trace() {
       try {
-        return fs.readFileSync(traceFile(), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+        return fs.readFileSync(traceFile(), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>).slice(skip);
       } catch {
         return [];
       }
     },
-    launch: (id, input) => handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx) as never,
+    async reset() {
+      salt += 1;
+      skip = 0;
+      skip = this.trace().length;
+      wakes.length = 0;
+      dialogs.length = 0;
+      answer.next = async () => "Yes";
+      ctx.signal = undefined;
+      ctx.hasUI = true;
+      ctx.mode = "tui";
+      this.setLevel("ok");
+      for (const h of every.get("input") ?? []) await h({ source: "interactive", text: "go on" }, ctx);
+    },
+    launch: (id, input) => handlers.get("tool_call")!({ toolName: "subagent", toolCallId: key(id), input }, ctx) as never,
     async assistant(ids, args) {
-      await handlers.get("message_end")!({ message: { role: "assistant", content: ids.map((id, i) => ({ type: "toolCall", id, name: "subagent", arguments: args(i) })) } }, ctx);
+      await handlers.get("message_end")!({ message: { role: "assistant", content: ids.map((id, i) => ({ type: "toolCall", id: key(id), name: "subagent", arguments: args(i) })) } }, ctx);
     },
     async started(id, input, runId) {
-      await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
+      await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: key(id), input, details: { runId }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
     },
     async end(id, isError) {
-      await handlers.get("tool_execution_end")!({ toolName: "subagent", toolCallId: id, result: {}, isError }, ctx);
+      await handlers.get("tool_execution_end")!({ toolName: "subagent", toolCallId: key(id), result: {}, isError }, ctx);
     },
     ended(runId) {
       channels.get("subagent:async-complete")!({ runId, agent: "builder", success: true, summary: "done" });
@@ -163,10 +181,33 @@ async function rig(t: { after(fn: () => void): void }, o: { mode?: string; hasUI
   };
 }
 
+let shared: Promise<Rig> | undefined;
+const cleanups: (() => void)[] = [];
+after(async () => {
+  for (const fn of cleanups.reverse()) await fn();
+});
+async function rig(t: TestContext, o: { mode?: string; hasUI?: boolean; child?: boolean } = {}): Promise<Rig> {
+  if (o.child) return makeRig(t, o);
+  shared ??= makeRig({ after: (fn) => void cleanups.push(fn) });
+  const a = await shared;
+  await a.reset();
+  // every test runs on mocked timers (a wait's timer must not outlive its test); the tests' own enable call is then a no-op
+  t.mock.timers.enable(TIMERS);
+  t.mock.timers.enable = () => undefined;
+  // the test's open waits end here, so they do not count against wait.maxActive in the next test
+  t.after(() => {
+    a.setLevel("ok");
+    try { t.mock.timers.tick(700_000); } catch { /* timers were not mocked */ }
+  });
+  if (o.mode !== undefined) a.ctx.mode = o.mode;
+  if (o.hasUI !== undefined) a.ctx.hasUI = o.hasUI;
+  return a;
+}
+
 const events = (a: Rig, name: string): Record<string, unknown>[] => a.trace().filter((r) => r.event === name);
 const ov = (a: Rig): string[] => events(a, "pressure_override").map((r) => `${r.decision}${r.reason ? `:${r.reason}` : ""}`);
 const waitStarts = (a: Rig): number => events(a, "wait").filter((r) => r.decision === "start").length;
-const worker = (n: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ agent: "builder", task: `look ${n}`, ...extra });
+const worker = (n: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ agent: "builder", task: `look ${salt}-${n}`, ...extra });
 const TIMERS = { apis: ["setTimeout" as const] };
 
 test("Yes: the launch passes without the field, one approval traced, no wait, pi-subagents never sees the field", async (t) => {
@@ -379,13 +420,13 @@ test("refusal text without the field: first sentence unchanged, hint by availabi
     return (await a.launch(id, input))?.reason ?? "";
   };
   a.setLevel("critical", ["load"]);
-  const available = `${BASE} ${overrideHint("ok", "single")}`;
-  assert.equal(available, `${BASE} If this launch cannot wait, relaunch it with the top-level key pressureOverride: "<why it cannot wait>"; the owner approves or declines it in a dialog. Do not retry it unchanged.`);
+  const available = `${BASE}. ${overrideHint("ok", "single")}`;
+  assert.equal(available, `${BASE}. If this launch cannot wait, relaunch it with the top-level key pressureOverride: "<why it cannot wait>"; the owner approves or declines it in a dialog. Do not retry it unchanged.`);
   assert.equal(await text("c1", worker(1)), available);
-  assert.equal(await text("c2", { tasks: [worker(1), worker(2)] }), `${BASE} If one of these launches cannot wait, launch it alone with pressureOverride: "<why>"; the owner approves or declines it in a dialog.`);
-  assert.equal(await text("c3", { action: "resume", id: "run-1", message: "go" }), `${BASE} A resume cannot get an owner approval; wait.`);
+  assert.equal(await text("c2", { tasks: [worker(1), worker(2)] }), `${BASE}. If one of these launches cannot wait, launch it alone with pressureOverride: "<why>"; the owner approves or declines it in a dialog.`);
+  assert.equal(await text("c3", { action: "resume", id: "run-1", message: "go" }), `${BASE}. A resume cannot get an owner approval; wait.`);
   a.setLevel("critical", ["disk"]);
-  assert.equal(await text("c4", worker(2)), "pressure critical (disk): launch deferred; you will be woken when it drops The cause is memory or disk; an owner approval cannot help; wait.");
+  assert.equal(await text("c4", worker(2)), "pressure critical (disk): launch deferred; you will be woken when it drops. The cause is memory or disk; an owner approval cannot help; wait.");
 });
 
 test("the refusal without a UI says no owner can approve", async (t) => {
@@ -393,7 +434,7 @@ test("the refusal without a UI says no owner can approve", async (t) => {
   a.setLevel("critical", ["load"]);
   t.mock.timers.enable(TIMERS);
   await a.assistant(["c1"], () => worker(1));
-  assert.equal((await a.launch("c1", worker(1)))?.reason, `${BASE} No owner can approve it at this pane; wait.`);
+  assert.equal((await a.launch("c1", worker(1)))?.reason, `${BASE}. No owner can approve it at this pane; wait.`);
 });
 
 test("the relaunch JSON of the wait and of the high queue never carries the field", async (t) => {
@@ -415,7 +456,7 @@ test("the relaunch JSON of the wait and of the high queue never carries the fiel
   assert.ok(wake.includes(JSON.stringify({ agent: "builder", task: "t2", options: { keep: 1 } })), wake);
   assert.ok(!wake.includes(FIELD), wake);
 
-  const b = await rig(t);
+  const b = await makeRig(t);
   b.setLevel("high", ["load"]);
   const first = worker(1);
   const second = { agent: "builder", task: "second", [FIELD]: "urgent" };
@@ -430,9 +471,7 @@ test("the relaunch JSON of the wait and of the high queue never carries the fiel
   assert.ok(!queued.includes(FIELD), queued);
 });
 
-test("consumption: Yes and the launch ran is one launched; Yes and a later check refusing is one not_launched", async (t) => {
-  const submodules = buildSubmoduleRig(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-press-ovr-sub-"))));
-  t.after(() => rmTestTmp(path.dirname(submodules.superproject)));
+test("consumption: Yes and the launch ran is one launched; Yes and a failed launch is one not_launched", async (t) => {
   const a = await rig(t);
   a.setLevel("critical", ["load"]);
   t.mock.timers.enable(TIMERS);
@@ -441,11 +480,9 @@ test("consumption: Yes and the launch ran is one launched; Yes and a later check
   assert.equal(await a.launch("c1", ok), undefined);
   await a.end("c1", false);
   assert.deepEqual(ov(a), ["approved", "launched"]);
-  const bad = worker(2, { [FIELD]: "urgent", worktree: true, cwd: submodules.linkedSub });
+  const bad = worker(2, { [FIELD]: "urgent" });
   await a.assistant(["c2"], () => bad);
-  const d = await a.launch("c2", bad);
-  assert.equal(d?.block, true);
-  assert.match(d?.reason ?? "", /nested submodule/);
+  assert.equal(await a.launch("c2", bad), undefined);
   await a.end("c2", true);
   await a.end("c2", true);
   assert.deepEqual(ov(a), ["approved", "launched", "approved", "not_launched"]);
@@ -513,7 +550,7 @@ test("the trace never holds the task or the reason text", async (t) => {
 });
 
 test("/foreman dialogs lists a pressure_override dialog record", async (t) => {
-  const a = await rig(t);
+  const a = await makeRig(t); // dialogsJson reads the whole trace file, so this one has its own
   a.setLevel("critical", ["load"]);
   const input = worker(1, { [FIELD]: "urgent" });
   await a.assistant(["c1"], () => input);

@@ -3867,7 +3867,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             let deferWait = true;
             const availability = overrideAvailability({ reasons: p.reasons, call: rawLaunch, nested: override.nested, ui: !!ctx.hasUI && (ctx.mode === "tui" || ctx.mode === "rpc"), declinedRecently: s.overrideDeclined });
             if (override.text === undefined) {
-              refusal = `${refusal} ${overrideHint(availability === "declined_recently" ? "ok" : availability, overrideShape(rawLaunch))}`;
+              refusal = `${refusal}. ${overrideHint(availability === "declined_recently" ? "ok" : availability, overrideShape(rawLaunch))}`;
             } else if (availability !== "ok") {
               s.trace?.emit({ event: "pressure_override", decision: "unavailable", ...ovTrace, reason: availability });
               refusal = overrideUnavailableReason(p.reasons, availability);
@@ -4663,11 +4663,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "chain_clear", kind: event.source });
     }
     // The refusal count belongs to the unchanged state, not to the prompt (D28); the prompt only opens a new pause window (D27).
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.overrideDeclined = false;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.workAtPrompt = { ...s.work }), savePause(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) ownAskFor(s).typed();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) persistRounds(s);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.overrideDeclined = false; // a declined override may be asked again after an owner prompt
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       const was = s.budget.phase;
@@ -5229,7 +5229,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && spent) {
       s.overridden.delete(event.toolCallId);
       s.trace?.emit({ event: "pressure_override", decision: event.isError ? "not_launched" : "launched", agent: typeof spent.agent === "string" ? spent.agent : "", hash: taskHash(spent.task) });
-      if (!event.isError) await waits.dropPressure(ctx, spent);
+      if (!event.isError) {
+        try {
+          await waits.dropPressure(ctx, spent);
+        } catch { /* best effort: the rest of this handler still runs */ }
+      }
     }
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {

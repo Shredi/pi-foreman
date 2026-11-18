@@ -34,7 +34,7 @@ HOSTS = {
 PRESSURE_EVENTS = ("launch_narrowed", "launch_deferred", "climb_suppressed", "launch_refused", "wait")
 KEYS = ("event", "width", "reasons", "level", "decision", "toolFamily", "wakeKinds")
 DEFERRED = (
-    "pressure critical (load): launch deferred; you will be woken when it drops "
+    "pressure critical (load): launch deferred; you will be woken when it drops. "
     'If this launch cannot wait, relaunch it with the top-level key pressureOverride: "<why it cannot wait>"; '
     "the owner approves or declines it in a dialog. Do not retry it unchanged."
 )
