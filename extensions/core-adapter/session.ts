@@ -704,9 +704,22 @@ function describeEntry(e: SessionEntry, lead: string, tail = ". Adopt it: forema
   ].join("; ") + tail;
 }
 
+/** Seconds the open script waits before it checks that the child started (herdr-core only). */
+const START_CHECK_SECONDS = "3";
+
+/** The open script's environment: this process's, plus the running Pi's launch words (the fallback when the child's PATH has no `pi`) and the start check. */
+function openEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+  const cli = process.argv[1];
+  if (cli && path.isAbsolute(cli) && fs.existsSync(cli) && fs.statSync(cli).isFile()) env.PI_FOREMAN_PI_ARGV = JSON.stringify([process.execPath, cli]);
+  env.PI_FOREMAN_START_CHECK_SECONDS = START_CHECK_SECONDS;
+  return env;
+}
+
 /** The spawn of `foreman_session.py open` (never killed by an abort: it ends with the registry entry or a message) and its result. */
 async function spawnOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined): Promise<OpenOutcome> {
-  const r = await d.spawner(d.python!, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
+  const r = await d.spawner(d.python!, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd, env: openEnv() });
   const out = r.stdout.trim();
   const ok = !r.error && !r.timedOut && r.code === 0;
   if (c.worktree && !c.dryRun && ok) await noteWorktree(d, c.label, out);

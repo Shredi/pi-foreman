@@ -396,6 +396,20 @@ command. A forced backend that cannot run is refused `[backend_unavailable]`. An
 survives core loss and reboot, and shows in herdr-app as a sub-agent of the opener's tab. See
 [herdr-app and herdr-core](herdr.md#herdr-app-and-herdr-core) (experimental).
 
+**Finding `pi`.** The child's command resolves `pi` on the PATH the child gets (the opener's). When there is none, an open
+from a running Pi (the tool and `/foreman session open`) falls back to that Pi: the open script receives
+`PI_FOREMAN_PI_ARGV` (a JSON list: the Node binary and Pi's CLI file, both absolute) and runs those words instead of a bare
+`pi` (in the printed PowerShell line as `& '<node>' '<cli>'`). `foreman session open` from a terminal has no running Pi to
+fall back to and keeps the PATH lookup; so does an open on another machine (`pi.cmd` or PATH there). The variable is never
+passed on to the child.
+
+**Start check.** Under herdr-core, an open waits `PI_FOREMAN_START_CHECK_SECONDS` (3 s; the tool, `/foreman session open`
+and `foreman session open` all set it, a value already set wins, 0 or unset means no check), then reads the terminal with
+`hc get`. A child that already finished makes the open fail with `session <label> did not start: exit <code>` and the last
+20 terminal lines, not "opened". The registry entry is kept with status `failed` as a record (`prune` leaves it), and the dead
+terminal stays readable (`hc read <address>`) until you close it with `hc rm`. A Herdr pane, the printed command and an open
+on another machine (`--machine`) have no state to read and get no check.
+
 ### Providers in opened sessions
 
 The opened command is a plain `pi [--model ID] '<prompt>'`: it loads the same packages as any start, so
