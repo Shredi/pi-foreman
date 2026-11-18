@@ -8,7 +8,7 @@ import { loopRefusalParented, type LoopStop } from "../reviewloop.ts";
 import { tick, world } from "./_r46world.ts";
 
 // The by-file text (PR 3 changed it from the origin/main text: the answer is a brief, not a ruling file); the part that names the rule and the findings is unchanged.
-const TAIL = " Stop and report the open findings to the parent by file (ask.md in the handoff dir), say so at your pane and end your turn: the parent's brief answers it and lifts this stop; a ruling-<n>.md does not. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A new owner prompt or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.";
+const TAIL = " Stop and report the open findings to the parent by file (ask.md in the handoff dir), say so at your pane and end your turn: the parent's brief answers it and lifts this stop; a ruling-<n>.md does not. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A new owner prompt or a /ceremony tier change also lifts this; a review with occasion second-opinion is still allowed.";
 const BY_FILE = "pi-foreman: launch refused [review_loop]: the last two plan review rounds failed with the same findings (item:1)." + TAIL;
 const BY_FILE_STALLED = "pi-foreman: launch refused [review_loop]: the last code review failed again with no new finding and no change to the work since the round before (item:2)." + TAIL;
 const STOP: LoopStop = { rule: "repeat", kind: "plan", sig: ["item:1"] };

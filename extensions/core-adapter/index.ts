@@ -218,7 +218,7 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDocto
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeCloseRequest, mergeCloseStarter, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
@@ -233,7 +233,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, countsForItems, entryOccasions, keptIndices, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -894,14 +894,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
     const owned = computeOwned(null, false);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
-    // A child foreman session (handoff dir set) whose last watched PR was merged closes itself (close.ts `pr-merged`, selffinish.ts); one close per tick.
-    const startMergeClose = mergeCloseStarter((c, r) => close.start(c, r), () => close.closing(s.id));
-    const mergeClose = (n: number | null): void => {
-      const ctx = s.prCtx;
-      const req = mergeCloseRequest({ handoff: process.env[HANDOFF_DIR_ENV], watched: s.prWatches.numbers(), n, parent: parentIntercomId(process.env) });
-      if (!req || !ctx) return;
-      startMergeClose(ctx, req);
-    };
+    // A child foreman session (handoff dir set) says once per merged PR that it stays open (close.ts mergeNotifier); a merge never starts a close.
+    const mergeNotice = mergeNotifier({
+      handoff: process.env[HANDOFF_DIR_ENV],
+      get parent() { return parentIntercomId(process.env); },
+      remote: process.env[REMOTE_PARENT_ENV] === "1",
+      notify: (text) => s.prCtx?.ui.notify(text, "info"),
+      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      trace: (r) => s.trace?.emit(r),
+    });
     const s: Session = {
       id,
       cwd,
@@ -961,10 +962,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const st = o.kind === "ran" ? o.result.state : null;
           return st === "open" || st === "merged" || st === "closed" ? st : "unknown";
         },
-        // A child foreman session (handoff dir set) whose PR was merged closes itself (close.ts `pr-merged`, selffinish.ts).
-        onMerged: (info) => mergeClose(info.key.n),
-        // The last watch ended unmerged (the host closed it) after a merge: the close the merge did not start.
-        onLastEnded: () => mergeClose(s.prWatches.mergedPrs().at(-1)?.n ?? null),
+        // A merged PR is announced once (child pane and intercom parent); the session closes only on a close request.
+        onMerged: (info) => mergeNotice(info.key.n),
         returnToBase: ({ key, cwd }) => {
           const dir = cwd || (s.prCtx?.cwd ?? s.cwd);
           return mergedReturn({
@@ -2720,11 +2719,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
-        try {
-          void Promise.resolve(close.onRunsDone(s.id)).catch(() => undefined);
-        } catch {
-          // a refused merge close is not retried
-        }
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
         if (typeof runId === "string") s.hs.ended(runId); // a run that ended, with or without a verdict, no longer counts as running
@@ -3691,6 +3685,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let notices: string[] = [];
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
+      let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Warned only once the launch passed every check (set at the end of the guard path).
@@ -3738,6 +3733,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: flags.error };
         }
+        if (flags.occasionError && !s.isChild && actionOf(input) === null) {
+          s.trace?.emit({ event: "review_occasion_unknown" });
+          return { block: true, reason: flags.occasionError };
+        }
+        takenOccasions = flags.occasions;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -3833,12 +3833,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
           return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
-        // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
-        if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
-        // A task that names both [pre-pr] and [high-stakes] in prose would silently become a high-stakes review: refused, the foreman keeps one.
-        if (namesBothTags(occasions)) {
-          s.trace?.emit({ event: "review_occasion_ambiguous" });
-          return { block: true, reason: "pi-foreman: launch refused [review_occasion_ambiguous]: the task names both [pre-pr] and [high-stakes]; keep one, or quote the other in backticks." };
+        // Review occasions (occasion.ts launchOccasion): the launch field or the head marker of each reviewer task, before any rewrite or facts block.
+        if (!s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            if (typeof e.agent !== "string") continue;
+            const r = launchOccasion(e, takenOccasions.get(e), input.reason);
+            if ("refused" in r) {
+              s.trace?.emit({ event: r.refused });
+              return { block: true, reason: r.text };
+            }
+            occasions.set(e, r.occasion);
+            // a field-only launch: the marker heads the caller's own text, so the reviewer and the later steps see the kind
+            if (r.prepend && r.occasion !== "item" && typeof e.task === "string") e.task = withOccasionMarker(e.task, r.occasion);
+          }
+        } else if (s.isChild && actionOf(input) === null) {
+          for (const e of launchEntries(input)) {
+            const kind = takenOccasions.get(e);
+            if (kind && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = withOccasionMarker(e.task, kind);
+          }
         }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
@@ -3882,7 +3894,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const base = typeof m === "string" ? splitLevel(m.trim()).base : "";
           return base === "strong" || (base !== "" && typeof rung === "string" && base === splitLevel(rung).base);
         }));
-        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
+        shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null }, occasions);
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
           return { block: true, reason: shadow.message };
@@ -3905,7 +3917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -4222,8 +4234,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (rl) capSet(s.reviewRuns.byCall, event.toolCallId, rl);
         }
         const planLedger = boundLedger(s.markerDir, s.id);
-        const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
-          if (occasionOf(task) !== "plan-review") return null;
+        const factCount = await reviewFacts.augment(input, ctx.cwd, (task, step) => {
+          if ((occasions.get(step) ?? occasionOf(task)) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
           const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
           const rereview: string[] = [];
@@ -4307,7 +4319,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger)) s.trace?.emit(r);
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
