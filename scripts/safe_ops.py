@@ -677,23 +677,33 @@ def is_default_branch(ws, branch, configured):
     return branch in names
 
 
+WORKFLOW_NESTED, WORKFLOW_TOO_LARGE, WORKFLOW_UNREADABLE = "nested", "too_large", "unreadable"
+WORKFLOW_REFUSAL = {
+    WORKFLOW_NESTED: "an untracked folder holds a nested repository: .workflow/",
+    WORKFLOW_TOO_LARGE: "untracked .workflow/ too large to check",
+    WORKFLOW_UNREADABLE: "untracked .workflow/ could not be read",
+}
+
+
 def workflow_has_git(root):
-    """True when a `.git` entry sits at any depth below `root`, or the walk (no link followed) passes
-    IGNORED_WALK_CAP entries or fails."""
+    """None when no `.git` entry sits at any depth below `root` and the walk (no link followed) stays within
+    IGNORED_WALK_CAP entries; else WORKFLOW_NESTED, WORKFLOW_TOO_LARGE (the cap) or WORKFLOW_UNREADABLE (a read error)."""
     seen, stack = 0, [root]
     try:
         while stack:
             with os.scandir(stack.pop()) as it:
                 for ent in it:
                     seen += 1
-                    if seen > IGNORED_WALK_CAP or ent.name == ".git":
-                        return True
+                    if ent.name == ".git":
+                        return WORKFLOW_NESTED
+                    if seen > IGNORED_WALK_CAP:
+                        return WORKFLOW_TOO_LARGE
                     link = ent.is_symlink() or getattr(ent, "is_junction", lambda: False)()
                     if not link and ent.is_dir(follow_symlinks=False):
                         stack.append(ent.path)
     except OSError:
-        return True
-    return False
+        return WORKFLOW_UNREADABLE
+    return None
 
 
 def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
@@ -741,8 +751,9 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
         if not rec:
             continue
         if rec == "?? .workflow/" and ".workflow" in top_level:  # the archived notes folder (complete archive only)
-            if workflow_has_git(os.path.join(target, ".workflow")):
-                raise Precondition("worktree_dirty", "an untracked folder holds a nested repository: .workflow/")
+            reason = workflow_has_git(os.path.join(target, ".workflow"))
+            if reason:
+                raise Precondition("worktree_dirty", WORKFLOW_REFUSAL[reason])
             untracked.append(".workflow/")
             continue
         if not rec.startswith("?? ") or not disposable(rec[3:], cfg.get("worktreeDisposable") or []):
