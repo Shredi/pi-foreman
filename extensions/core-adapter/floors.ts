@@ -51,6 +51,10 @@ export interface FloorEnv {
   remoteHead?: (cwd: string) => string | null;
   /** A subagent child session: it never pushes (the foreman pushes). */
   child?: boolean;
+  /** A read-only child in a round (reviewer, explorer): read only by `scratchGitConfigRead`, which lets it read the `.git/config` of a copy in its own scratch dir. */
+  readOnlyChild?: boolean;
+  /** The effective directory of the segment being judged (null: unknown); read only by `scratchGitConfigRead`, set on a copy at the segment call site. `cwd` stays the session cwd. */
+  segCwd?: string | null;
   /** realpath of an existing path for the long-name forms (tests stub it; default: the native realpath). */
   resolver?: Resolver;
 }
@@ -559,7 +563,7 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
   const reads = readOperands(seg, prog);
   for (const [i, w] of words.entries()) {
     if (dataWord(w) || payload.includes(w) || patterns.has(i)) continue;
-    const s = secretPath(w, env, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
+    const s = secretPath(w, { ...env, segCwd: seg.cwd ?? null }, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
     if (s) return s;
   }
   return null;
@@ -909,6 +913,34 @@ export function sshPublicKey(word: string, env: FloorEnv): boolean {
   }
 }
 
+/**
+ * A read-only child in a round (`env.readOnlyChild`) may read the `.git/config` of a copy inside its own scratch dir (a clone it made there): the word is a
+ * literal path (absolute, or relative to the known `env.segCwd`; no `..`, variable, glob or `~`), matches no other secret pattern, and its real path lies under the real
+ * path of one of `env.scratch`. Only a read may use it (the callers: `secretPath` with `read`, and the read question's token check, which resolves a relative token by its segments' cwd).
+ */
+export function scratchGitConfigRead(word: string, env: FloorEnv): boolean {
+  try {
+    if (!env.readOnlyChild || !env.scratch?.length) return false;
+    const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+    const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
+    const x = m ? m[1] : w;
+    if (!GIT_CONFIG_FILE.test(x) || /[$`*?[{~]/.test(x) || x.split("/").includes("..")) return false;
+    if (SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))) return false;
+    const plat = env.platform ?? process.platform;
+    if (shortNameSpellings(plat, x, SECRET_NAMES).some((s) => SECRET_DIRS.test(s) || SECRET_EXTRA.test(s))) return false;
+    const px = px_(plat === "win32");
+    const abs = px.isAbsolute(x) ? px.normalize(x) : env.segCwd ? px.resolve(env.segCwd, x) : null;
+    if (abs === null) return false;
+    const mine = formsOf(abs, env);
+    if (authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)))) return false;
+    const real = realDeep(abs);
+    if (real === null) return false;
+    return env.scratch.some((r) => insideRoot(real, realDeep(r) ?? r, plat));
+  } catch {
+    return false;
+  }
+}
+
 /** `read`: the word is only read (a read tool's path, a read-only program's operand, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
 export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
@@ -917,6 +949,7 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   const pathLike = x.includes("/") || x.startsWith("~");
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
   if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
+  if (pathLike && read && scratchGitConfigRead(x, env)) return null;
   let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   // win32: a short-name segment (`.ssh` as `SSH~1`) that fits a secret name is judged as that name
   const shorts = pathLike ? shortNameSpellings(env.platform ?? process.platform, x, SECRET_NAMES) : [];
@@ -958,7 +991,7 @@ const RAW: { name: string; re: RegExp; reason: string; cmd?: true }[] = [
   { name: "shutdown", re: new RegExp(`${CMD}(?:shutdown|reboot|halt|poweroff)(?:\\s|$)`), reason: "Shutting down or rebooting the machine is not allowed. Ask the user.", cmd: true },
   { name: "disk", re: new RegExp(`${CMD}(?:mkfs\\S*|fdisk|sfdisk|parted|wipefs|diskpart)(?:\\s|$)`), reason: "Formatting or repartitioning a disk is not allowed. Ask the user.", cmd: true },
   { name: "disk", re: /\bdd\b[^\n;&|]*\bof=(?:\/dev\/|\\\\\.\\)/i, reason: "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead." },
-  { name: "git-config", re: /(?:^|[\s;&|(=])GIT_CONFIG_(?:COUNT|KEY_[0-9]+|VALUE_[0-9]+|GLOBAL|SYSTEM|PARAMETERS)\s*=/, reason: "Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials. Run git without them." },
+  { name: "git-config", re: /(?:^|[\s;&|(=])(?:GIT_CONFIG_(?:COUNT|KEY_[0-9]+|VALUE_[0-9]+|SYSTEM|PARAMETERS)\s*=|GIT_CONFIG_GLOBAL\s*=(?!(?:\/dev\/null|'\/dev\/null'|"\/dev\/null")(?:[\s;&|]|$)))/, reason: "Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials. Run git without them." },
   { name: "git-config", re: /--config-env\b/, reason: "`--config-env` injects git config. Run git without it." },
   // r79 Addendum S4: the profile is the owner's choice (CLI in the owner's own terminal), never an agent's
   { name: "perms-profile", re: /PI_FOREMAN_PERMS_PROFILE\s*=|\b(?:export|declare|typeset|readonly|setenv|unset)\s+(?:-\S+\s+)*PI_FOREMAN_PERMS_PROFILE\b|\$env:PI_FOREMAN_PERMS_PROFILE\b|SetEnvironmentVariable\(\s*['"]PI_FOREMAN_PERMS_PROFILE|\benv:PI_FOREMAN_PERMS_PROFILE\b/i, reason: "The permissions profile is chosen by the owner when the session is opened; an agent never sets PI_FOREMAN_PERMS_PROFILE. Ask the user to open the session with the profile." },
