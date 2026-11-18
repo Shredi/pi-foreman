@@ -33,7 +33,9 @@ test("the open spawn passes PI_FOREMAN_PI_ARGV and the start check, and keeps PA
     await tools.get(SESSION_OPEN_TOOL)!.execute("c1", { label: "demo", brief: "b.md" }, undefined, undefined, ctx);
     assert.equal(seen.length, 1);
     const env = seen[0].env!;
-    assert.equal(env.PATH, "/opt/opener/bin");
+    // Windows keeps the real key name (`Path`) in a copied env, so look PATH up case-insensitively.
+    const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH");
+    assert.equal(pathKey && env[pathKey], "/opt/opener/bin");
     assert.equal(env.PI_CODING_AGENT_DIR, agentDir);
     assert.equal(env.PI_FOREMAN_START_CHECK_SECONDS, "3");
     const cli = process.argv[1];
