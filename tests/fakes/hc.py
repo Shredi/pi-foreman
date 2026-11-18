@@ -18,6 +18,9 @@ Environment:
   REMOTE_PROTOCOL) and FAKE_REMOTE_HC_DOWN (the remote's `server status` fails) configure the remote side of `exec`
   FAKE_HC_EVENTS_FOLLOW       seconds `events` keeps following events.jsonl (default: print what is there and exit)
   FAKE_HC_FAIL                any non-empty value: every call exits 3 with `boom` on stderr
+  FAKE_HC_RUN_EXIT            an integer: `run` makes a terminal that already finished (state finished, reason exited,
+                              exit_code this value), the shape the real `hc get` shows for a child that died at once
+  FAKE_HC_RUN_TEXT            the screen text such a terminal keeps (what `read` prints; default empty)
 
 Subcommands:
   machine ls --json            prints {"machines": [{host, id, name, session, state, target, temporary, version, via}]}
@@ -30,6 +33,8 @@ Subcommands:
   run [--on M] [--name N] [--label K=V]... [flags] -- ARGV...   prints {address, agent, cwd, name, parent, state, turn};
       the address is `tN` (`M/tN` with --on)
   get T [--json]                prints the terminal record
+  read T [--json] [--lines N]   prints {complete, how, text}: the terminal's text (FAKE_HC_RUN_TEXT for a terminal made in the
+                                run-exit mode, else empty; the real hc returns the screen plus N lines of history)
   label T K=V...                sets labels, appends one `labels` event per label (the real JSON-RPC shape, full label map)
   events [--json] [--label K=V] prints the snapshot line {channel, seq, terminals[]}, then the recorded events (JSON-RPC
       `event` lines) and exits; with FAKE_HC_EVENTS_FOLLOW=<seconds> it keeps printing new events and a `heartbeat`
@@ -225,6 +230,9 @@ def cmd_run(args):
             labels[k] = v
     terminals[address] = {"address": address, "name": name, "machine": machine, "argv": argv,
                           "labels": labels, "state": "live", "status": {"app": "pi", "state": "working"}}
+    if os.environ.get("FAKE_HC_RUN_EXIT"):
+        terminals[address].update(state="finished", reason="exited", exit_code=int(os.environ["FAKE_HC_RUN_EXIT"]),
+                                  text=os.environ.get("FAKE_HC_RUN_TEXT", ""))
     save_terminals(sd, terminals)
     emit({"address": address, "agent": None, "cwd": opt(head, "--cwd"), "name": name, "parent": None,
           "state": "working", "turn": 0})
@@ -239,6 +247,11 @@ def find(terminals, address):
 def cmd_get(args):
     terminals = load_terminals(state_dir())
     emit(find(terminals, args[0]))
+
+
+def cmd_read(args):
+    rec = find(load_terminals(state_dir()), args[0])
+    emit({"complete": True, "how": "history", "text": rec.get("text", "")})
 
 
 def cmd_label(args):
@@ -329,7 +342,7 @@ def cmd_rm(args):
 
 
 COMMANDS = {"machine": cmd_machine, "server": cmd_server, "exec": cmd_exec, "run": cmd_run, "get": cmd_get,
-            "label": cmd_label, "events": cmd_events, "wait": cmd_wait, "file": cmd_file, "kill": cmd_kill, "rm": cmd_rm}
+            "read": cmd_read, "label": cmd_label, "events": cmd_events, "wait": cmd_wait, "file": cmd_file, "kill": cmd_kill, "rm": cmd_rm}
 
 
 def main(argv):

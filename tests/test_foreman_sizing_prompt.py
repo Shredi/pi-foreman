@@ -1,7 +1,9 @@
+import os
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
@@ -60,6 +62,12 @@ ROLE_PAIRS = [
     # html plans: an HTML plan keeps rulings in a sidecar and any page change is a new version
     ("a body edit is a new version. After a FAIL",
      "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),
+    # D74: foreman_ledger add takes texts, upsert takes entries (the ledgerHelper=tool line)
+    ("Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`. It does not count against `ceremony.recheckBudget`.",
+     "Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`, or `texts` for several items in one call); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op; `entries: [{item?, text}]` for several in one call); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`."),
+    # D72: a plan-only session closes V on a plan-review PASS (the ledgerHelper=tool V line)
+    ("once a reviewer PASS stands with no builder launch or project edit since; before that the tool refuses.",
+     "once a reviewer PASS stands with no builder launch or project edit since (in a session with no builder launch and no project edit, a `[plan-review]` PASS on the current version of every plan also does); before that the tool refuses."),
     # review occasion: the launch field `occasion` names the kind of review; a tag first in the task still works
     ("launch one `reviewer` with `[plan-review]` in its task on the plan file and the ledger,",
      "launch one `reviewer` with `occasion: \"plan-review\"` on the plan file and the ledger (the field names the kind of review; a `[plan-review]` first in the task works too),"),
@@ -94,6 +102,8 @@ class SizingPromptTest(unittest.TestCase):
     def test_sizing_off_bytes_unchanged(self):
         old = subprocess.run(["git", "show", BASE + ":instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
         if old.returncode != 0:
+            if os.environ.get("CI"):
+                self.fail(f"base commit {BASE} missing: CI checkout must use fetch-depth: 0")
             self.skipTest("base commit not available")
         text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
@@ -125,6 +135,16 @@ class SizingPromptTest(unittest.TestCase):
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))
+
+    def test_missing_base_fails_in_ci_instead_of_skipping(self):
+        # a shallow CI checkout lacks the base commit; there the test must fail, not skip
+        case = SizingPromptTest("test_sizing_off_bytes_unchanged")
+        result = unittest.TestResult()
+        with mock.patch.object(sys.modules[__name__], "BASE", "0" * 40), mock.patch.dict(os.environ, {"CI": "1"}):
+            case.run(result)
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn("CI checkout must use fetch-depth: 0", result.failures[0][1])
 
 
 if __name__ == "__main__":

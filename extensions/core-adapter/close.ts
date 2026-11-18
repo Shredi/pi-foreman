@@ -4,7 +4,7 @@
 // pane keyboard, which `herdr agent prompt` drives), and an inbound pi-intercom message whose text
 // is exactly `foreman:close` or `foreman:close <path>` (when "intercom-parent" is in close.from and
 // the sender's session id equals the parent: the contents of `$PI_FOREMAN_HANDOFF_DIR/parent` when
-// that file exists (read at every check, so re-pointing the parent is a one-file change), else
+// that file exists (read at every check, see the re-point section of docs/sessions.md), else
 // PI_FOREMAN_PARENT_INTERCOM, the parent recorded at spawn). A refused request is traced and
 // otherwise stays plain data. An accepted intercom close replies `foreman:closed <result path>`
 // to the sender before the shutdown.
