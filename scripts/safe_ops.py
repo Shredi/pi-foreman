@@ -614,12 +614,21 @@ def ignored_info(exc):
     return {"files": shown, "filesMore": max(max(exc.total, len(exc.files)) - len(shown), 0)}
 
 
+def disposable_link(root, rec, patterns):
+    """True when `rec` (git-relative, no trailing `/`) is a symlink or junction under `root` (lstat, never followed)
+    whose name matches a dir-only disposable pattern as if it were a folder (`node_modules` against `node_modules/`)."""
+    if rec.endswith("/") or not is_link(os.path.join(root, *[x for x in rec.split("/") if x])):
+        return False
+    return disposable(rec + "/", patterns)
+
+
 def offending_ignored(root, rec, patterns, top_level):
     """The ignored paths below the git status record `rec` (`/`-separated, a trailing `/` = collapsed folder) that
     are not disposable. A folder is walked without following symlinks (a symlink is a leaf file); over
     IGNORED_WALK_CAP entries or on OSError the folder itself is reported."""
     def judged(p):
-        return disposable(p, patterns) or (("/" in p) and p.split("/", 1)[0] in top_level)
+        return (disposable(p, patterns) or (("/" in p) and p.split("/", 1)[0] in top_level)
+                or disposable_link(root, p, patterns))
     if judged(rec):
         return []
     if not rec.endswith("/"):
@@ -756,7 +765,8 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
                 raise Precondition("worktree_dirty", WORKFLOW_REFUSAL[reason])
             untracked.append(".workflow/")
             continue
-        if not rec.startswith("?? ") or not disposable(rec[3:], cfg.get("worktreeDisposable") or []):
+        pats = cfg.get("worktreeDisposable") or []
+        if not rec.startswith("?? ") or not (disposable(rec[3:], pats) or disposable_link(target, rec[3:], pats)):
             raise Precondition("worktree_dirty", "git status is not empty (changes or untracked files)")
         rel = rec[3:]
         if rel.endswith("/") and os.path.lexists(os.path.join(target, *rel.split("/"), ".git")):
@@ -768,6 +778,9 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     bad = []
     for rec in out.split("\0"):
         if rec.startswith("!! "):
+            if disposable_link(target, rec[3:], cfg["worktreeDisposable"]):
+                untracked.append(rec[3:])  # unlinked (never followed) before `git worktree remove`
+                continue
             bad += offending_ignored(target, rec[3:], cfg["worktreeDisposable"], top_level)
     if bad:
         files = [clean_path(p) for p in bad[:IGNORED_FILES_KEPT]]
