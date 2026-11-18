@@ -27,12 +27,12 @@ test("draft + unsettled: the same violet pulse", () => {
   assert.equal(prStateText(p), "work in progress, CI running");
 });
 
-test("draft + failed: red and still like any failed PR", () => {
+test("draft + failed with a job running: red and pulsing like any failed PR", () => {
   const p = pr({ state: "draft", checks: failed });
-  assert.deepEqual(prDotState(p), { pulse: false, fill: "red", conflict: false });
+  assert.deepEqual(prDotState(p), { pulse: true, fill: "red", conflict: false });
   assert.equal(prState(p), "fail");
-  assert.equal(prStateText(p), "CI failing");
-  assert.equal(prCard(dotOnly(failed, { state: "draft", head: H1 })).status, "checks failed");
+  assert.equal(prStateText(p), "CI failing, still running");
+  assert.equal(prCard(dotOnly(failed, { state: "draft", head: H1 })).status, "checks failed, still running");
 });
 
 test("draft settled: violet and still", () => {
@@ -57,12 +57,12 @@ test("unsettled: amber pulse even with every passed check shown", () => {
   assert.equal(prStateText(p), "CI running");
 });
 
-test("failed: red and still, whatever else runs", () => {
+test("failed: red, pulsing while a job runs, still once settled", () => {
   const p = pr({ checks: failed });
-  assert.deepEqual(prDotState(p), { pulse: false, fill: "red", conflict: false });
+  assert.deepEqual(prDotState(p), { pulse: true, fill: "red", conflict: false });
   assert.equal(prState(p), "fail");
-  assert.equal(prStateText(p), "CI failing");
-  assert.equal(prCard(dotOnly(failed)).status, "checks failed");
+  assert.equal(prStateText(p), "CI failing, still running");
+  assert.equal(prCard(dotOnly(failed)).status, "checks failed, still running");
 });
 
 test("passed: green and still, ready to merge", () => {
@@ -90,10 +90,10 @@ test("partly passed, partly running: amber pulse, never green (clean, blocked, u
   }
 });
 
-test("draft partly passed, partly running: violet pulse; with a failure: red and still", () => {
+test("draft partly passed, partly running: violet pulse; with a failure: red, pulsing while the job runs", () => {
   assert.deepEqual(prDotState(pr({ state: "draft", checks: partly })), { pulse: true, fill: "violet", conflict: false });
   const failing = pr({ checks: [...partly, { n: "lint2", state: "fail" }] });
-  assert.deepEqual(prDotState(failing), { pulse: false, fill: "red", conflict: false });
+  assert.deepEqual(prDotState(failing), { pulse: true, fill: "red", conflict: false });
 });
 
 test("a running draft counts, sorts and summarises as a draft", () => {
