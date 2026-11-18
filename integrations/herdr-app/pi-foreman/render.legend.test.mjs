@@ -99,6 +99,7 @@ test("the sample draws the marker of every PR key; the pulsing discs loop, the c
   assert.deepEqual(look("pr-draft-running"), ["#ansi5", true]);
   assert.deepEqual(look("pr-running"), ["#ansi3", true]);
   assert.deepEqual(look("pr-failed"), ["#blocked", false]);
+  assert.deepEqual(look("pr-failed-running"), ["#blocked", true]);
   assert.deepEqual(look("pr-not-reviewed"), ["#ansi4", false]);
   assert.deepEqual(look("pr-ci-passing"), ["#ansi2", false]);
   assert.equal(pr["pr-ready"].disc, undefined, "ready draws no disc");
@@ -111,8 +112,8 @@ test("the sample draws the marker of every PR key; the pulsing discs loop, the c
   assert.ok(pr["pr-not-reviewed"].parts.some((e) => hasText(e, "unreviewed head")));
   assert.ok(pr["pr-conflict"].parts.some((e) => hasText(e, "!")));
   assert.equal(pr["pr-failed"].parts[0].props.border_color, "#blocked");
-  // the two pulsing PR discs; no green disc pulses
-  assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 2);
+  // the three pulsing PR discs; no green disc pulses
+  assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 3);
   assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.bg === "#ansi2").length, 0, "no green pulse");
   for (const k of Object.keys(pr)) assert.equal(pr[k].parts.filter((e) => e.kind === "svg").length, 0, `${k}: no spinner in a chip`);
 });
