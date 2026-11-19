@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { world } from "./_r46world.ts";
 import { ownerFactsLines, ownerSection, ownerSectionIssues, ownerSummary, planFormIssues } from "../ownertext.ts";
@@ -34,11 +35,11 @@ test("For the owner first with a later Summary passes; the later one is ordinary
 });
 
 test("the facts line says Summary section in each variant", () => {
-  const dir = fs.mkdtempSync("/tmp/sumhead-");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sumhead-"));
   try {
-    fs.writeFileSync(`${dir}/a.md`, `# P\n\n## Summary\nPlain.\n`);
-    fs.writeFileSync(`${dir}/b.md`, `# P\n\n${REST}`);
-    fs.writeFileSync(`${dir}/c.md`, `# P\n\n## Summary\n\n${REST}`);
+    fs.writeFileSync(path.join(dir, "a.md"), `# P\n\n## Summary\nPlain.\n`);
+    fs.writeFileSync(path.join(dir, "b.md"), `# P\n\n${REST}`);
+    fs.writeFileSync(path.join(dir, "c.md"), `# P\n\n## Summary\n\n${REST}`);
     const l = ownerFactsLines(["a.md", "b.md", "c.md", "none.md"], dir);
     assert.match(l[0], /^Summary section \(a\.md\): present \(checked by the harness\)/);
     assert.match(l[1], /^Summary section \(b\.md\): missing/);
@@ -166,9 +167,9 @@ test("both headings: ownerSummary shows the first section's body only, labelled 
 });
 
 test("both headings: the facts line says present", () => {
-  const dir = fs.mkdtempSync("/tmp/sumhead-");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sumhead-"));
   try {
-    fs.writeFileSync(`${dir}/both.md`, "# P\n\n## Summary\nPlain.\n\n## For the owner\nMore.\n\n## Goal\nx\n");
+    fs.writeFileSync(path.join(dir, "both.md"), "# P\n\n## Summary\nPlain.\n\n## For the owner\nMore.\n\n## Goal\nx\n");
     assert.match(ownerFactsLines(["both.md"], dir)[0], /^Summary section \(both\.md\): present \(checked by the harness\)/);
   } finally {
     fs.rmSync(dir, { recursive: true });
