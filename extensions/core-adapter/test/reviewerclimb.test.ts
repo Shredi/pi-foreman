@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyLaunchModels } from "../launchmodel.ts";
 import { rankRefusal } from "../ranks.ts";
-import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, defaultSecurityRung, failItemsOf, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd } from "../reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, defaultSecurityRung, markPolicyOverrides, planReviewerClimbs, ReviewerFails } from "../reviewerclimb.ts";
+import { failedItemIds } from "../verdict.ts";
 import { entryOccasions } from "../occasion.ts";
 import { sanitizeTrace } from "../trace.ts";
 
@@ -18,28 +19,29 @@ const PLAIN_DIFF = "diff --git a/src/view.ts b/src/view.ts\n+++ b/src/view.ts\n@
 const run = (config: Record<string, unknown>, input: Record<string, unknown>, fails = new ReviewerFails(), diff: string | null = PLAIN_DIFF, live = new Map<string, string>()) =>
   planReviewerClimbs(input, ROLES, { config, live, fails, diffOf: async () => diff });
 
-test("failItemsOf: decorated N. FAIL lines, outside fences, without repeats", () => {
-  const text = ["1. FAIL a.go:3", "- `2. FAIL` b", "**3) FAIL**", "* 4) `4. FAIL` doubled", "5. PASS", "the 6. FAIL in prose", "```", "7. FAIL fenced", "```", "1. FAIL again"].join("\n");
-  assert.deepEqual(failItemsOf(text), ["1", "2", "3", "4"]);
+test("failedItemIds: the numbered items the record marks fail, in order, without repeats; V and pass/open items are not", () => {
+  const items = [{ id: 1, result: "fail" }, { id: 2, result: "fail" }, { id: 5, result: "pass" }, { id: 6, result: "open" }, { id: "V", result: "fail" }, { id: 1, result: "fail" }] as const;
+  assert.deepEqual(failedItemIds(items), ["1", "2"]);
 });
 
 test("ReviewerFails: an item counts once per reviewer run; the second run's FAIL repeats it", () => {
   const f = new ReviewerFails();
-  f.onRun("r1", ["1. FAIL x\n2. FAIL y\n1. FAIL again"], "L");
-  f.onRun("r1", ["2. FAIL y"], "L"); // same run: not counted twice
+  f.onRun("r1", [["1", "2", "1"]], "L");
+  f.onRun("r1", [["2"]], "L"); // same run: not counted twice
   assert.equal(f.repeated(), null);
-  f.onRun("r2", ["2. FAIL y"], "L");
+  f.onRun("r2", [["2"]], "L");
   assert.equal(f.repeated(), "2");
-  f.onRun("r3", ["2. FAIL y"], "other ledger");
+  f.onRun("r3", [["2"]], "other ledger");
   assert.equal(f.repeated(), null);
-  const end = { results: [{ agent: "reviewer", status: "completed", success: true, output: "1. FAIL" }, { agent: "builder", status: "completed", success: true, output: "1. FAIL" }] };
-  assert.deepEqual(reviewerTextsOfRunEnd(end), ["1. FAIL"]);
+  f.onRun("r4", [], "other ledger"); // a run end without a counted reviewer counts nothing
+  f.onRun("r5", [[]], "other ledger"); // a pass: no failed item
+  assert.equal(f.repeated(), null);
 });
 
 test("disabled by default: no climb, no diff taken", async () => {
   const fails = new ReviewerFails();
-  fails.onRun("a", ["1. FAIL"], null);
-  fails.onRun("b", ["1. FAIL"], null);
+  fails.onRun("a", [["1"]], null);
+  fails.onRun("b", [["1"]], null);
   let diffs = 0;
   const input = { agent: "reviewer", task: "t" };
   const r = await planReviewerClimbs(input, ROLES, { config: {}, live: new Map(), fails, diffOf: async () => (diffs++, AUTH_DIFF) });
@@ -48,10 +50,10 @@ test("disabled by default: no climb, no diff taken", async () => {
 
 test("second FAIL of the same item: the next reviewer launch goes one rung up to its strong model", async () => {
   const fails = new ReviewerFails();
-  fails.onRun("a", ["3. FAIL"], null);
+  fails.onRun("a", [["3"]], null);
   const cfg = { ladder: { reviewerClimb: { enabled: true } } };
   assert.deepEqual((await run(cfg, { agent: "reviewer", task: "t" }, fails)).climbs, []);
-  fails.onRun("b", ["3. FAIL"], null);
+  fails.onRun("b", [["3"]], null);
   const input: Record<string, unknown> = { agent: "reviewer", task: "t" };
   const r = await run(cfg, input, fails);
   assert.deepEqual(r.climbs.map((c) => c.trace), [{ event: "rung_up", role: "reviewer", from: "p/m-haiku", to: "p/m-sonnet", reason: "review_fail_repeat", item: "3" }]);
@@ -145,8 +147,8 @@ test("reviewByOccasion: the thinking override is capped by maxThinking and child
 
 test("reviewByOccasion: a repeat-fail or security climb beats the model override; the thinking override still applies", async () => {
   const fails = new ReviewerFails();
-  fails.onRun("a", ["1. FAIL"], null);
-  fails.onRun("b", ["1. FAIL"], null);
+  fails.onRun("a", [["1"]], null);
+  fails.onRun("b", [["1"]], null);
   const table = { item: { model: "q/other", thinking: "high" } };
   const rep: Record<string, unknown> = { agent: "reviewer", task: "items 1" };
   const r = await occLaunch(byOcc(table), rep, { fails });

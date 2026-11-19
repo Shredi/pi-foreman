@@ -1,11 +1,12 @@
 // Run-end findings (docs/review.md): every completed review child of a run is handed to
-// `scripts/foreman_findings.py record` (report text on stdin, the reviewed files in a temp list),
-// which appends the review and its located findings to the session's findings store and prints
-// them. Fail-soft: a failed, slow or unparsable call counts as zero findings and traces nothing.
-// The located findings feed the `finding` trace (file basename only) and the panel's attributed
-// block (panel.ts PendingPanels).
+// `scripts/foreman_findings.py record` (the verdict record's item numbers and located findings as JSON on stdin, the reviewed files in a
+// temp list), which appends the review to the session's findings store. Fail-soft: a failed or slow call records nothing.
+// The located findings are the `defect` findings of the reviewer's verdict record that name a file (verdict.ts); they
+// feed the `finding` trace (file basename only) and the panel's attributed block (panel.ts PendingPanels).
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { defectsOf } from "./verdict.ts";
 import { splitLevel } from "./launchmodel.ts";
 import type { PanelFinding } from "./panel.ts";
 import type { ReviewLaunch, ReviewResult } from "./occasion.ts";
@@ -16,24 +17,12 @@ export interface Finding extends PanelFinding {
 
 export const RECORD_TIMEOUT_MS = 10_000;
 
-/** The `findings` of the record call's stdout JSON; [] for anything else. */
-export function parseRecordOutput(text: string): Finding[] {
-  let j: unknown;
-  try {
-    j = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  const list = j && typeof j === "object" ? (j as { findings?: unknown }).findings : undefined;
-  if (!Array.isArray(list)) return [];
-  const out: Finding[] = [];
-  for (const f of list) {
-    if (!f || typeof f !== "object") continue;
-    const r = f as Record<string, unknown>;
-    if (typeof r.file !== "string" || !r.file) continue;
-    out.push({ id: typeof r.id === "string" ? r.id : "", file: r.file, line: typeof r.line === "number" && Number.isFinite(r.line) ? r.line : null, class: typeof r.class === "string" ? r.class : "", note: typeof r.note === "string" ? r.note : "" });
-  }
-  return out;
+/** The id of a finding: the triple of scripts/foreman_findings.py `finding_id` (file, line // 5, class), first 12 hex of its sha1. */
+export const findingId = (file: string, line: number | null, cls: string): string => crypto.createHash("sha1").update(`${file}\0${line !== null ? Math.floor(line / 5) : ""}\0${cls}`).digest("hex").slice(0, 12);
+
+/** The located findings of a review result: its `defect` findings that name a file (a finding without a file cannot be located). */
+export function findingsOfResult(r: Pick<ReviewResult, "findings">): Finding[] {
+  return defectsOf(r.findings).flatMap((f) => (f.file ? [{ id: findingId(f.file, f.line ?? null, f.class ?? ""), file: f.file, line: f.line ?? null, class: f.class ?? "", note: f.text }] : []));
 }
 
 /** Unified-diff file names (`diff --git a/x b/y`, `+++ b/y`), repo-relative, in order, without repeats. */
@@ -82,18 +71,25 @@ export function recordArgs(r: ReviewResult, launch: ReviewLaunch | null | undefi
   return args;
 }
 
+/** The JSON on stdin of a `record` call: the numbered items the reviewer gave a result (not `open`) and its located findings. */
+export function recordInput(r: Pick<ReviewResult, "items" | "findings">): string {
+  const items = r.items.flatMap((i) => (typeof i.id === "number" && i.result !== "open" ? [i.id] : []));
+  const findings = findingsOfResult(r).map((f) => ({ file: f.file, line: f.line, class: f.class || undefined, note: f.note }));
+  return JSON.stringify({ items, findings });
+}
+
 /** Runs one `foreman_findings.py` call: args, stdin text; never throws in practice (runScript). */
 export type RecordRunner = (args: string[], input: string) => Promise<{ text: string; ok: boolean }>;
 
-/** Record one review result; its located findings ([] on any failure). The temp file list lives in `tmpDir` and is removed after. */
+/** Record one review result in the findings store (fail-soft); its located findings come from the verdict record. The temp file list lives in `tmpDir` and is removed after. */
 export async function recordReview(r: ReviewResult, launch: ReviewLaunch | null | undefined, c: RecordContext, tmpDir: string, run: RecordRunner): Promise<Finding[]> {
   const list = path.join(tmpDir, `findings-files-${process.pid}-${Date.now()}-${r.index}-${Math.random().toString(36).slice(2, 8)}.txt`);
   try {
     fs.writeFileSync(list, (launch?.files ?? []).join("\n") + "\n", "utf8");
-    const res = await run([...recordArgs(r, launch, c), "--files-from", list], r.text);
-    return res.ok ? parseRecordOutput(res.text) : [];
+    await run([...recordArgs(r, launch, c), "--files-from", list], recordInput(r));
+    return findingsOfResult(r);
   } catch {
-    return [];
+    return findingsOfResult(r);
   } finally {
     try {
       fs.unlinkSync(list);

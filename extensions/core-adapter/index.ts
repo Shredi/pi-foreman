@@ -79,6 +79,8 @@ import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, un
 import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcpEntries } from "./mcpscope.ts";
 import { childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
+import { compareRunEnd, launchRunCwds, noticeText, readonlyRoles, spawnGit, takeStartEntry, traceLines } from "./readonlystate.ts";
+import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
@@ -90,7 +92,7 @@ import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
-import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -101,6 +103,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
+import { checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
@@ -115,7 +118,7 @@ import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
-import { addTracked, lastPollAgeMs, readStoreEntry, trackerDoctorLine } from "./prstore.ts";
+import { addTracked, lastPollAgeMs, readStoreEntry, trackedHostOf, trackerDoctorLine } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
 import { parseWakeRules } from "./prwake.ts";
@@ -129,16 +132,16 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsWithOutput } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
-import { hasOpenLedgerLine, markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassesOfRunEnd } from "./reviewmarks.ts";
+import { hasOpenLedgerLine, markPassItems, MARK_NOTE, openItemsOf } from "./reviewmarks.ts";
 import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
-import { budgetCap, budgetCheck, failedItemsOf, prependReReview } from "./costguard.ts";
+import { budgetCap, budgetCheck, prependReReview } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, takeBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
@@ -210,7 +213,7 @@ const BLOCK_CHECKPOINT: BlockClass = { on: "owner", kind: "checkpoint" };
 const BLOCK_SCRIPT: BlockClass = { on: "owner", kind: "script" };
 const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
 const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
-import { completedAgents, CritiqueCounter, incompleteOf, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
+import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, walkLaunch, type Verdict } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
@@ -237,9 +240,9 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, contextCap, topClimbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countsForItems, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, OCCASIONS, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
-import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
+import { diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
@@ -296,13 +299,14 @@ function releaseLedgerHold(toolCallId: string): void {
   h.gate.release(h.key);
 }
 
-/** Session entry type: one small record per launch that named a ledger (run id, paths, cited), so the route survives a reload (D31). */
+/** Session entry type: one small record per review launch or launch that named a ledger (run id, paths, cited, and for a review its launch, items and occasion), so the route survives a reload (D31). */
 const LEDGER_ROUTE_ENTRY = "pi-foreman-ledger-route";
 
-/** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). */
+/** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). A review launch also carries its launch id, the ids its verdict tool accepts and its occasion (the record dir is derived from the launch id, never stored). */
 interface LedgerRoute {
   paths: (string | null)[];
   cited: string[][];
+  review?: { launch: string; items: ItemId[]; occasion: Occasion; shadow: boolean; failed?: boolean };
 }
 
 interface Session {
@@ -476,8 +480,10 @@ interface Session {
   reviewSync: Promise<void>;
   /** The PASS marks of the ledgers, in order; reviewSync waits for each (a slow ledger write does not wait for a snapshot's git). */
   markSync: Promise<void>;
-  /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
+  /** Foreman only: review runs whose record items were marked (reviewmarks.ts), so each run marks once. */
   reviewMarked: Set<string>;
+  /** Foreman only: the verdict record of a review run, read once (verdictRecordOf); null = the run left none (or an invalid one). The file is renamed after the read. */
+  reviewRecords: Map<string, VerdictRecord | null>;
   /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; the run records come back from the session entries after a reload. */
   ledgerByCall: Map<string, LedgerRoute>;
   ledgerByRun: Map<string, LedgerRoute>;
@@ -502,6 +508,11 @@ interface Session {
   /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
   launchTreesByCall: Map<string, Map<string, string | null>>;
   launchTrees: Map<string, Map<string, string | null>>;
+  /** Foreman only: the run-end state hint's start entry (readonlystate.ts) by tool call id until the launch result names the run, then by run id until the run ends. */
+  readonlyStartByCall: Map<string, StartEntry>;
+  readonlyStart: Map<string, StartEntry>;
+  /** Foreman only: the tree roots a picture was taken for, by run id (a resume of that run reuses them). */
+  readonlyRoots: Map<string, string[]>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a reload brings back only the owner's own dialog approval: from the session's ceremony-state entry, planstate.ts, and without a handoff dir also from the approval store). */
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
@@ -575,12 +586,17 @@ export interface AdapterDeps {
   worktreeSnapshot?: (cwd: string) => Promise<string | null>;
   /** Tests: replaces Pi's shell resolution, used by the read question's entry condition (is the bash tool's shell a bash) and the win32 background-shell setup (default: Pi's getShellConfig). */
   getShellConfig?: ShellConfigFn;
+  /** Tests: replaces the git runs of the run-end state pictures (default: readonlystate.ts spawnGit). */
+  readonlyGit?: GitRunner;
+  /** Tests: the deadline of one picture set in ms (default 20 s). */
+  readonlyDeadlineMs?: number;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
   const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
+  const readonlyGit = deps.readonlyGit ?? spawnGit;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
   // The model-only tools line (deferred.ts): built at the first request of a session, then fixed so the prefix stays byte-stable.
@@ -1107,6 +1123,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewSync: Promise.resolve(),
       markSync: Promise.resolve(),
       reviewMarked: new Set(),
+      reviewRecords: new Map(),
       ledgerByCall: new Map(),
       ledgerByRun: new Map(),
       passSnaps: {},
@@ -1120,6 +1137,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeads: new Map(),
       launchTreesByCall: new Map(),
       launchTrees: new Map(),
+      readonlyStartByCall: new Map(),
+      readonlyStart: new Map(),
+      readonlyRoots: new Map(),
       plan: null,
       script: newScriptState(),
       scriptRun: null,
@@ -1522,22 +1542,55 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { root, gateKey: top ?? SESSION_WIDE, base };
   }
 
-  /** The review results of a run end; a run of a high-stakes launch (its id is kept in the state) reads as `high-stakes` and counts nowhere, with or without bookkeeping. */
+  /**
+   * The verdict record of review run `runId` (verdict.ts), read once: the live `verdict.json` of the run's launch folder is parsed against the launch's items,
+   * renamed to `verdict.<runId>.json` and cached; later reads (the other consumers of the run end, the completion notice after it) take the cache, and after a reload
+   * the renamed file. The launch and its items come from the route of the run (it survives a reload), else the launch bookkeeping. null = no record, or an invalid
+   * one (traced `review_record_invalid`). Not cached while the run's launch is unknown.
+   */
+  function verdictRecordOf(s: Session, runId: string): VerdictRecord | null {
+    if (s.reviewRecords.has(runId)) return s.reviewRecords.get(runId) ?? null;
+    const route = s.ledgerByRun.get(runId);
+    const launch = route?.review?.launch ?? parkFor(s).launchFor(runId);
+    if (!launch) return null;
+    const items = route?.review?.items ?? s.launches.get(launch)?.items ?? [];
+    const dir = recordDir(s.agentDir, s.id, launch);
+    let read = readRecordFile(dir, launch, items);
+    if (read) consumeRecord(dir, runId);
+    else read = readConsumed(dir, runId, launch, items);
+    if (read && "invalid" in read) s.trace?.emit({ event: "review_record_invalid", runId, reason: read.invalid });
+    const record = read && "record" in read ? read.record : null;
+    capSet(s.reviewRecords, runId, record);
+    return record;
+  }
+
+  /** A review run that did not complete gives no record, for the notice path too: null is cached and the route (persisted, so a reload knows) says `failed`. */
+  function failedReviewRun(s: Session, runId: string): void {
+    capSet(s.reviewRecords, runId, null);
+    const route = s.ledgerByRun.get(runId);
+    if (!route?.review || route.review.failed) return;
+    const next = { ...route, review: { ...route.review, failed: true } };
+    capSet(s.ledgerByRun, runId, next);
+    persistRoute(runId, next);
+  }
+
+  /** The review results of a run end, the verdict from the run's record; a run of a high-stakes launch (its id is kept in the state) reads as `high-stakes` and counts nowhere, with or without bookkeeping. */
   function reviewResultsOfRun(s: Session, runId: string, data: unknown): ReturnType<typeof reviewResultsOfRunEnd> {
     const hs = s.hs.ownerOf(runId) !== null;
-    return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
+    const record = (s.launchedRoles.get(runId) ?? []).some((r) => REVIEW_ROLES.includes(r)) ? verdictRecordOf(s, runId) : null;
+    return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId), record).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
   }
 
   /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
   function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1]): void {
-    const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null);
-    const verdict = r?.verdict;
-    if (!r || !verdict) return;
-    if (incompleteOf(r.text)) {
-      // the reviewer stopped early and found no defect: nothing is recorded (no run, no gate change), as for a run with no verdict
+    const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null || x.incomplete);
+    if (r?.incomplete) {
+      // the reviewer recorded `incomplete` (it could not run its checks): nothing is recorded (no run, no gate change), as for a run with no verdict
       s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
       return;
     }
+    const verdict = r?.verdict;
+    if (!r || !verdict) return;
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
     if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
@@ -1600,16 +1653,55 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
+  /** A reviewer child whose record folder holds no record yet owes a verdict (the setup record of `noToolVerdict` counts as one). */
+  function verdictOwed(): boolean {
+    const b = launchBinding;
+    if (!b?.verdictDir || !REVIEW_ROLES.includes(b.role)) return false;
+    return fs.existsSync(b.verdictDir) && !fs.existsSync(path.join(b.verdictDir, VERDICT_FILE));
+  }
+
+  /** A reviewer child with a record folder whose active tools lack `review_verdict` (settings not regenerated, A6) writes the incomplete record itself, with the fixed setup reason: no model text enters it. */
+  function noToolVerdict(s: Session): void {
+    const b = launchBinding;
+    if (!b?.verdictDir || !REVIEW_ROLES.includes(b.role) || !fs.existsSync(b.verdictDir)) return;
+    try {
+      if (pi.getActiveTools().includes(VERDICT_TOOL)) return;
+      writeRecord(b.verdictDir, noToolRecord(b.launchId));
+      s.trace?.emit({ event: "review_verdict_call", accepted: false, reason: "no_tool" });
+    } catch {
+      // a host without the tool api, or an unwritable folder: the reviewer ends without a verdict
+    }
+  }
+
+  /** The `review` part of a route entry read back from a session file; undefined when it is not well formed. */
+  function reviewRouteOf(raw: unknown): LedgerRoute["review"] {
+    if (!raw || typeof raw !== "object") return undefined;
+    const r = raw as { launch?: unknown; items?: unknown; occasion?: unknown; shadow?: unknown; failed?: unknown };
+    if (typeof r.launch !== "string" || !r.launch || !Array.isArray(r.items) || !(OCCASIONS as readonly unknown[]).includes(r.occasion) && r.occasion !== "high-stakes") return undefined;
+    const items = r.items.map(itemIdOf);
+    if (items.some((i) => i === null)) return undefined;
+    return { launch: r.launch, items: items as ItemId[], occasion: r.occasion as Occasion, shadow: r.shadow === true, ...(r.failed === true ? { failed: true } : {}) };
+  }
+
+  /** The route of a run into the session file (so it survives a reload); a session file that is not writable keeps it in memory only. */
+  function persistRoute(runId: string, route: LedgerRoute): void {
+    try {
+      pi.appendEntry(LEDGER_ROUTE_ENTRY, { v: 1, run: runId, paths: route.paths, cited: route.cited, ...(route.review ? { review: route.review } : {}) });
+    } catch {
+      // the session file is not writable now: the route stays in memory
+    }
+  }
+
   /** session_start: the run -> ledger routes of the branch's launches; a run with no record uses the bound ledger. */
   function restoreLedgerRoutes(s: Session, ctx: ExtensionContext): void {
     if (s.isChild) return;
     for (const raw of (ctx.sessionManager.getBranch?.() ?? []) as unknown[]) {
-      const e = raw as { type?: unknown; customType?: unknown; data?: { v?: unknown; run?: unknown; paths?: unknown; cited?: unknown } } | null;
+      const e = raw as { type?: unknown; customType?: unknown; data?: { v?: unknown; run?: unknown; paths?: unknown; cited?: unknown; review?: unknown } } | null;
       if (!e || e.type !== "custom" || e.customType !== LEDGER_ROUTE_ENTRY || !e.data || e.data.v !== 1) continue;
-      const { run, paths, cited } = e.data;
+      const { run, paths, cited, review } = e.data;
       if (typeof run !== "string" || !Array.isArray(paths) || !Array.isArray(cited) || cited.length !== paths.length) continue;
       if (!paths.every((p) => p === null || typeof p === "string") || !cited.every((c) => Array.isArray(c) && c.every((x) => typeof x === "string"))) continue;
-      capSet(s.ledgerByRun, run, { paths: paths as (string | null)[], cited: cited as string[][] });
+      capSet(s.ledgerByRun, run, { paths: paths as (string | null)[], cited: cited as string[][], ...(reviewRouteOf(review) ? { review: reviewRouteOf(review) } : {}) });
     }
   }
 
@@ -1672,11 +1764,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild || !s.roundStateOn || !dir) return;
     const plan = s.plan && s.plan.status !== "rejected" ? s.plan : null;
     const l = plan ? s.planReviews.lineage(plan.path) : null;
+    const newest = plan ? l : s.planReviews.newest(); // before a checkpoint s.plan is unset: the newest verdict still says whether the review passed
     writeRoundState({
       handoffDir: dir,
       plan: plan ? { topic: plan.topic, hash: plan.hash } : null,
       planReview: l ? { hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds } : null,
       round: s.round,
+      tier: s.ceremony.tier,
+      reviewPassed: newest?.latest.verdict === "pass" && (!plan || newest.latest.hash === plan.hash),
+      planOpen: plan?.status !== "approved",
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
@@ -1865,10 +1961,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
-  function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
+  function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string, readOnlyChild = false): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -1962,6 +2058,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
+    if (!s.isChild) {
+      try {
+        sweepRecords(s.agentDir, Date.now(), s.id);
+      } catch {
+        // a failed sweep never stops the session
+      }
+    } else noToolVerdict(s);
     restoreRounds(s, ctx, event.reason);
     if (hsModel(s)) {
       // the review base fallback: the first HEAD of each repository the session saw (a pre-upgrade entry's per-checkout sightings first; the first one wins)
@@ -2175,6 +2278,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     sweepScratch(s);
     closeChildAsks(s, event?.reason === "reload");
+    if (!s.isChild && event?.reason !== "reload") {
+      try {
+        fs.rmSync(recordSessionDir(s.agentDir, s.id), { recursive: true, force: true }); // verdict records; a reload keeps them for the runs still going
+      } catch {
+        // the next start's sweep takes it; a failed removal never stops the shutdown
+      }
+    }
     await s.show?.idle();
     s.paneResume?.stop(event?.reason); // before live.stop(): the signal flag it reads is also what stop() writes as endedBy
     s.paneResume = null;
@@ -2406,7 +2516,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) {
       const mcpNote = mcpChild?.note();
       if (mcpNote) event.systemPromptOptions.sections["pi-foreman-mcp"] = mcpNote;
-      // ceremony.ledgerHelper "tool": reviewer roles learn to close V with foreman_ledger (instructions/reviewer.md).
+      // every ceremony.ledgerHelper mode: reviewer roles learn to close V through review_verdict (instructions/reviewer.md).
       if (!REVIEW_ROLES.includes(s.usage.line.role)) return;
       if (reviewerInstructionsCache === undefined) {
         try {
@@ -2812,6 +2922,60 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
   pi.on("session_shutdown", async () => launchWaits.abortAll());
 
+  /**
+   * Run-end state hint (readonlystate.ts, plan readonly-target B.1-B.2): at a reviewer or explorer launch, one picture per tree root the run works in, taken before the child starts.
+   * A launch that includes any other role, a workflow launch and a resume of an unknown or non-read-only run get the `not pictured` entry (no notice at run end).
+   */
+  async function noteReadonlyStart(s: Session, callId: string, input: Record<string, unknown>, cwd: string): Promise<void> {
+    try {
+      const action = actionOf(input);
+      if (action !== null && action !== "resume") return;
+      const target = action === "resume" ? resumeTarget(input) : null;
+      const roles = action === "resume" ? (target ? (s.launchedRoles.get(target) ?? []) : []) : subagentAgents(input);
+      if (!readonlyRoles(roles)) {
+        capSet(s.readonlyStartByCall, callId, { kind: "not pictured" });
+        return;
+      }
+      const ceiling = (c: string): string => treeCeilingOf({ cwd: c, agentDir: s.agentDir, foremanSession: s.id });
+      const known = target ? s.readonlyRoots.get(target) : undefined;
+      const roots = known ?? [...new Set((action === "resume" ? [cwd] : launchRunCwds(input, cwd)).map((c) => treeRootOf(c, ceiling(c))).filter((r): r is string => !!r))];
+      capSet(s.readonlyStartByCall, callId, await takeStartEntry(roots, os.homedir(), readonlyGit, deps.readonlyDeadlineMs));
+    } catch {
+      // no entry: the run end traces `not_compared`
+    }
+  }
+  /**
+   * Run end of a run this session launched: the end picture runs in the background; a difference is one notice, never a stop.
+   * A reviewer or explorer run end without a start entry gets only a trace; it may also fire for a run this session did not launch (a reloaded session cannot tell them apart).
+   */
+  function readonlyRunEnd(s: Session, runId: string, data: unknown): void {
+    const entry = s.readonlyStart.get(runId);
+    s.readonlyStart.delete(runId);
+    const ended = runEndOf(data);
+    const d = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+    if (!entry) {
+      const workflow = d.awaitedByWorkflow === true || !!d.parentWorkflowRunId;
+      if (!workflow && (ended?.role === "reviewer" || ended?.role === "explorer")) s.trace?.emit({ event: "readonly_state_diff", runId, role: ended.role, outcome: "not_compared", reason: "no start entry" });
+      return;
+    }
+    if (entry.kind !== "picture") return;
+    const role = [...new Set(s.launchedRoles.get(runId) ?? [])].join("+") || ended?.role || "child";
+    void compareRunEnd(entry, os.homedir(), readonlyGit, deps.readonlyDeadlineMs)
+      .then((r) => {
+        const lines = traceLines(r);
+        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
+        if (r.outcome === "unchanged") return;
+        let idle = true;
+        try {
+          idle = s.idleCtx ? s.idleCtx.isIdle() : true;
+        } catch {
+          // a stale context: treat as idle
+        }
+        pi.sendMessage({ customType: "pi-foreman-readonly-state", content: noticeText(role, runId, r), display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+      })
+      .catch(() => undefined);
+  }
+
   for (const channel of RUN_END_EVENTS) {
     pi.events?.on(channel, (data) => {
       launchWaits.onRunEnd(data);
@@ -2833,6 +2997,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // D27: a builder run that ends (any outcome) is work of the prompt it ends in, also when it was launched before that prompt
           if ((s.launchedRoles.get(runId) ?? []).includes("builder")) s.work.builders++;
         }
+        // a review run launched before a reload (restored route, no launched roles) that ends not completed: its record is ignored too (T7)
+        if (typeof runId === "string" && !s.isChild && !s.launchedRoles.has(runId) && s.ledgerByRun.get(runId)?.review) {
+          const status = runEndOf(data)?.status;
+          if (status !== undefined && status !== "completed") failedReviewRun(s, runId);
+        }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           const ended = runEndOf(data);
           s.ladder.onRunEnd(ended);
@@ -2844,18 +3013,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const reviewLaunch = s.isChild ? undefined : s.reviewRuns.byRun.get(runId);
           const hsOwner = s.isChild ? null : s.hs.ownerOf(runId);
           const reviewResults = s.isChild ? [] : reviewResultsOfRun(s, runId, data);
-          const counted = s.isChild ? data : countingView(data, reviewResults);
-          if (!s.isChild) s.reviewerFails.onRun(runId, reviewerTextsOfRunEnd(counted), boundLedger(s.markerDir, s.id));
+          // a record of a run that did not complete is ignored (T7)
+          if (!s.isChild && reviewResults.length === 0 && (s.launchedRoles.get(runId) ?? []).some((r) => REVIEW_ROLES.includes(r))) {
+            if (s.reviewRecords.get(runId)) s.trace?.emit({ event: "review_record_ignored", runId, reason: "not_completed" });
+            failedReviewRun(s, runId);
+          }
+          if (!s.isChild) s.reviewerFails.onRun(runId, reviewResults.filter((r) => r.counts && r.role === "reviewer").map((r) => failedItemIds(r.items)), boundLedger(s.markerDir, s.id));
           if (reviewResults.length > 0) recordRunFindings(s, runId, reviewResults);
           if (!s.isChild) {
             const roles = s.launchedRoles.get(runId) ?? [];
             // Lane 3f: review_done for every review run (re-reviews and panel shadows too, kind shadow); a review that ended without a result is a no-verdict.
-            const done = reviewResults.length > 0 ? reviewResults.map((r) => ({ role: r.role, decision: r.verdict ?? "no-verdict", shadow: r.shadow !== null })) : roles.filter((r) => REVIEW_ROLES.includes(r)).map((role) => ({ role, decision: "no-verdict", shadow: shadowRun(reviewLaunch) }));
+            const done = reviewResults.length > 0 ? reviewResults.map((r) => ({ role: r.role, decision: r.verdict ?? (r.incomplete ? "incomplete" : "no-verdict"), shadow: r.shadow !== null })) : roles.filter((r) => REVIEW_ROLES.includes(r)).map((role) => ({ role, decision: "no-verdict", shadow: shadowRun(reviewLaunch) }));
             for (const d of done) s.trace?.emit({ event: "review_done", role: d.role, decision: d.decision, runId, ...(d.shadow ? { kind: "shadow" } : {}), ...(hsOwner !== null ? { occasion: "high-stakes" } : {}) });
             // Item-only re-review: the failed items of the latest FAIL verdict, cleared by a pass.
             for (const r of reviewResults) if (r.counts) {
-              s.trace?.emit(s.critique.onReview(r.text, r.role, runId, reviewLaunch?.lines));
-              const items = failedItemsOf(r.text);
+              s.trace?.emit(s.critique.onReview(r.findings, r.role, runId, reviewLaunch?.lines));
+              const items = failedItemIds(r.items);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
               if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
@@ -2869,17 +3042,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (reviewLaunch?.bind) s.panels.ended(reviewLaunch.bind, reviewLaunch.panel?.shadows[0] ?? "", reviewResults.length > 0 ? (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => !x.result.primary)?.findings ?? null) : Promise.resolve(null));
           if (!s.isChild) recordPlanReviews(s, runId, reviewResults);
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
-          if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
+          if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data, reviewResults)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
-          const got = reviewVerdictsOfRunEnd(counted);
-          // fewer counting results than counting entries: a PASS cannot be assigned to a checkout, so it is no verdict
-          const owed = reviewLaunch?.entries.filter((e) => REVIEW_ROLES.includes(e.role) && e.shadow === null && countsForItems(e.occasion)).length ?? 0;
-          const finished = reviewResults.filter((r) => r.counts).length;
-          const verdicts = finished < owed && !got.includes("fail") ? [] : got;
+          const verdicts = reviewVerdictsOfRunEnd(reviewResults);
           const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
           s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
           persistCeremonyState(s);
-          if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0, roots, { data, kept: keptIndices(data, reviewResults) });
+          if (!s.isChild) onRunEndReview(s, runId, reviewResults, verdicts.length > 0, roots, data);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
           if (!s.isChild && verdicts.length) for (const [f, items] of hintTargets(s, runId, cited)) writeHint(f, items, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
@@ -2894,7 +3063,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees);
           const counting = reviewResultsOfRun(s, runId, data).filter((x) => x.counts && x.verdict !== null);
           let nth = 0;
-          for (const r of reviewsWithOutput(countingView(data, reviewResultsOfRun(s, runId, data)))) {
+          for (const r of reviewsWithOutput(data, counting)) {
             const full = counting[nth]?.role === r.role ? counting[nth] : undefined;
             const first = nth++ === 0;
             s.reviewFailOpen = r.verdict === "fail";
@@ -2917,6 +3086,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             });
           }
         }
+        if (!s.isChild && typeof runId === "string") readonlyRunEnd(s, runId, data);
       }
     });
   }
@@ -2965,9 +3135,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** Loop guard (reviewloop.ts): the kind, state and finding set of a counting review round, for its ReviewRecord. */
   async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig" | "work">> {
-    const fail = r?.verdict === "fail";
-    const found = r && fail ? await (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []) : [];
-    return { kind, state: (await state) ?? "", sig: r && fail ? sigOf(r.text, found) : [], work: s.work.builders + s.work.edits };
+    return { kind, state: (await state) ?? "", sig: r?.verdict === "fail" ? sigOf(r.items, r.findings) : [], work: s.work.builders + s.work.edits };
   }
 
   /** Loop guard: the round just recorded (last of its kind in `s.reviews`) against `prev`, the last round of that kind before the run; a trip sets the stop. One round per run. */
@@ -3006,7 +3174,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const reviewed = new Set<string>();
     for (const r of planReviewResults(results)) {
       s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
-      const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
+      const findings = Promise.resolve(findingsOfResult(r));
       for (const rp of readPlansOnce(plans, opts)) {
         s.planReviews.record(rp.plan.path, { hash: rp.plan.hash, verdict: r.verdict, model: r.model, findings });
         s.planReviews.keepReviewed(rp.plan.path, rp.plan.hash);
@@ -3016,7 +3184,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const state = rp.plan.hash;
         s.reviewSync = s.reviewSync.then(async () => {
           const prev = s.reviews.findLast((x) => x.kind === "plan");
-          const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.text, await findings) : [] };
+          const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.items, r.findings) : [] };
           appendReview(s.reviews, rec);
           loopCheck(s, runId, prev, rec);
         });
@@ -3243,7 +3411,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       ...(readTools ? { readTools } : {}),
-      env: (cwd) => floorEnvOf(gs, cwd, roots?.sessionDir),
+      env: (cwd) => floorEnvOf(gs, cwd, roots?.sessionDir, roots?.roundReadOnly === true),
       ...(roots ? { roots: () => roots, facts: gateFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
@@ -3384,7 +3552,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           try {
             const entryOk = readClearEntry(
               { tool: event.toolName, text: cmdText, segments: out.segments, dangers: out.dangers, shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
-              floorEnvOf(gs, ctx.cwd, roots?.sessionDir),
+              floorEnvOf(gs, ctx.cwd, roots?.sessionDir, roots?.roundReadOnly === true),
             );
             if (entryOk && roots) {
               const rc = await rt.classifier.readClear({ tool: event.toolName, payload, kind, role, cwd: ctx.cwd, inside: insideDirs(roots), notes: readNotes(out.segments), ...(firstRow ? { follows: firstRow } : {}) }, classifierCtx);
@@ -3773,6 +3941,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
+      let takenItems = new Map<Record<string, unknown>, unknown>();
+      const verdictItems = new Map<Record<string, unknown>, ItemId[]>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
       // Warned only once the launch passed every check (set at the end of the guard path).
@@ -3829,6 +3999,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: flags.occasionError };
         }
         takenOccasions = flags.occasions;
+        takenItems = flags.items;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -3836,6 +4007,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const a = launchReadAllowance(s.config.config, flagRole, { reads: launchFlags.reads, files: sized.entries.get(input)?.size?.files.length });
           if (a.clamped) mcpNotes.push(`pi-foreman: reads ${launchFlags.reads} is above the maximum; the read allowance is ${a.allowance}.`);
           launchFlags = { ...launchFlags, reads: a.allowance };
+          const rl = childReadLimits(s.config.config, flagRole, a.allowance);
+          if (rl) mcpNotes.push(`pi-foreman: reads: ${rl.deny} (warn at ${rl.warn})`);
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
@@ -3853,6 +4026,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (mcpPlan.refusal) {
           s.trace?.emit({ event: "launch_refused", reason: mcpPlan.refusal.reason, tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: mcpPlan.refusal.text };
+        }
+        // T5: pi-subagents forwards a binding only on its single path, so a review child of a group launch could never record its verdict
+        if (!PER_ENTRY_BINDINGS && actionOf(input) === null && !singleLaunchRole(input) && launchEntries(input).some((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent))) {
+          s.trace?.emit({ event: "launch_refused", reason: "review_single_launch", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: "pi-foreman: launch refused [review_single_launch]: a reviewer records its verdict through a launch binding, which pi-subagents forwards only for a single launch. Launch each reviewer as its own subagent({agent, task}) call." };
+        }
+        // T13: a reviewer whose record folder cannot be made could never give a verdict
+        const reviewRole = singleLaunchRole(input);
+        if (!s.isChild && actionOf(input) === null && reviewRole && REVIEW_ROLES.includes(reviewRole)) {
+          try {
+            makeRecordDir(recordSessionDir(s.agentDir, s.id));
+          } catch (err) {
+            s.trace?.emit({ event: "launch_refused", reason: "review_record_dir", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: launch refused [review_record_dir]: the reviewer's record folder cannot be made (${(err as Error).message}). Fix the folder or its permissions under the agent dir (pi-foreman/state/review-records), then launch again.` };
+          }
         }
         launchMcp = mcpPlan.mcp;
         if (!mcpPlan.group && mcpPlan.entries[0]) {
@@ -4403,6 +4591,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the checkouts the verdict applies to (reviewgates.ts): each reviewer entry's own dir; a resume keeps its target's; one unresolved: unknown
           if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, (e) => { const o = occasions.get(e); return o !== undefined && countsForItems(o); })));
         }
+        await noteReadonlyStart(s, event.toolCallId, input, ctx.cwd);
       }
       // Kept for the tool result only once the launch passed every check.
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
@@ -4445,6 +4634,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const perEntry = agentEntries.map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
         agentEntries.forEach((e, i) => entryLedger.set(e, perEntry[i] ?? lf));
         if (actionOf(input) !== "resume") capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
+        // The items of each review launch (verdict.ts): the `items` field, else every open item; after a FAIL the item occasion's default is the failed items still open.
+        if (actionOf(input) === null) for (const e of agentEntries) {
+          if (!REVIEW_ROLES.includes(e.agent as string)) continue;
+          const given = takenItems.has(e) ? parseItemsField(takenItems.get(e)) : undefined;
+          if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
+          const pick = typeof e.task === "string" ? pickLedger(e.task) : null;
+          const r = launchItemsOf(pick?.text ?? lg, given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.failItems });
+          if ("unknown" in r) {
+            s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
+          }
+          verdictItems.set(e, r.items);
+        }
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
@@ -4515,7 +4717,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         persistCeremonyState(s);
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}) });
+        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined) });
         if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
@@ -4758,27 +4960,36 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     // panel shadows only (panel.ts): no marks, rounds or review_done
-    const ids = noticeRuns(text)?.ids ?? [];
+    // only review runs this session launched (launch bookkeeping, or the route entry after a reload) are read; the notice comes after the run end (pi-subagents order), which has already cached no record or set the route's `failed` flag for a run that did not complete (T7), so such a run is never read here
+    const ids = (noticeRuns(text)?.ids ?? []).filter((id) => (s.launchedRoles.get(id) ?? []).some((r) => REVIEW_ROLES.includes(r)) || s.ledgerByRun.get(id)?.review);
     if (ids.length > 0 && ids.every((id) => shadowRun(s.reviewRuns.byRun.get(id)))) return;
     // a high-stakes run (its id is kept in the state, or its launch said so) marks no item and opens no round
     if (ids.length > 0 && ids.every((id) => s.hs.ownerOf(id) !== null || s.reviewRuns.byRun.get(id)?.entries.some((e) => e.occasion === "high-stakes"))) return;
-    const verdict = verdictOf(text);
-    const passed = reviewerPassOfNotice(text);
-    // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
-    const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
-    if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, [{ text: passed.text }], 0);
+    // the record of each run (read once, or the renamed file after a reload) and its occasion from the route entry, else the launch bookkeeping
+    const verdicts: (Verdict | null)[] = [];
+    for (const id of ids) {
+      const record = s.ledgerByRun.get(id)?.review?.failed ? null : verdictRecordOf(s, id);
+      if (!record) continue;
+      verdicts.push(record && record.verdict !== "incomplete" ? record.verdict : null);
+      const launch = s.reviewRuns.byRun.get(id);
+      const route = s.ledgerByRun.get(id)?.review;
+      const occasion = route?.occasion ?? launch?.entries.find((e) => REVIEW_ROLES.includes(e.role))?.occasion ?? "item";
+      const shadow = route ? route.shadow : shadowRun(launch);
+      // a second opinion, plan review or panel never marks items (occasion.ts); only a PASS of a counting occasion marks, once per run
+      if (record?.verdict === "pass" && !shadow && !launch?.panel && countsForItems(occasion)) markByReview(s, id, [{ items: record.items }], 0);
+    }
+    if (verdicts.length === 0) return; // no review run of this notice has a record: the state of the run end stands
+    const verdict: Verdict | null = verdicts.includes("fail") ? "fail" : verdicts.every((v) => v === "pass") ? "pass" : null;
     s.round = onReviewDone(s.round, verdict);
     persistRounds(s);
   }
 
   /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
-  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean, roots: readonly string[] | null, whole: { data: unknown; kept: number[] }): void {
-    // the counting view re-indexes its results: map each back to its position in the event and the launch entries
-    const kids = whole.data && typeof whole.data === "object" ? runEndChildren(whole.data as Record<string, unknown>) : [];
-    const pass = reviewerPassesOfRunEnd(data).map((p) => {
-      const index = whole.kept[p.index] ?? -1;
-      const task = (kids[index] as { task?: unknown } | undefined)?.task;
-      return { index, text: p.text, ...(typeof task === "string" ? { task } : {}) };
+  function onRunEndReview(s: Session, runId: string, results: readonly ReviewResult[], verdict: boolean, roots: readonly string[] | null, data: unknown): void {
+    const kids = data && typeof data === "object" ? runEndChildren(data as Record<string, unknown>) : [];
+    const pass = results.filter((r) => r.counts && r.role === "reviewer" && r.verdict === "pass").map((r) => {
+      const task = (kids[r.index] as { task?: unknown } | undefined)?.task;
+      return { index: r.index, items: r.items, ...(typeof task === "string" ? { task } : {}) };
     });
     if (pass.length > 0) markByReview(s, runId, pass, kids.length);
     if (verdict) {
@@ -4792,7 +5003,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const at = Date.now();
       const ledger = ledgerSignal(s);
       for (const k of passedKeys) {
-        const cwd = k === SESSION_WIDE ? (reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd) : k;
+        const cwd = k === SESSION_WIDE ? (results.find((r) => r.counts)?.cwd ?? s.cwd) : k;
         if (k !== SESSION_WIDE) s.builderRunsByRoot[k] ??= 0;
         const builderRuns = builderRunsOf(s, k);
         const snapNow = Promise.all([worktreeTree(cwd), headOf(cwd)]); // taken at the run end, in step with the ledger marks queued above, not after them
@@ -4839,7 +5050,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * when the result cannot be tied to its entry (misaligned counts, or a task that names a ledger that cannot be re-derived), nothing is marked.
    * A run with no record at all (an older session) uses the result's own task, else the bound ledger.
    */
-  function markByReview(s: Session, runId: string, parts: { index?: number; text: string; task?: string }[], total: number): void {
+  function markByReview(s: Session, runId: string, parts: { index?: number; items: readonly VerdictItem[]; task?: string }[], total: number): void {
     if (s.reviewMarked.has(runId) || s.hs.ownerOf(runId) !== null) return; // a high-stakes run marks nothing
     s.reviewMarked.add(runId);
     const route = s.ledgerByRun.get(runId);
@@ -4861,17 +5072,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const t = taskLedger(p.task, s.cwd, bound, [s.cwd]);
       return t.notice ? null : t.path;
     };
-    const byFile = new Map<string, string[]>();
+    const byFile = new Map<string, VerdictItem[]>();
     for (const p of parts) {
       const file = fileOf(p);
-      if (file) byFile.set(file, [...(byFile.get(file) ?? []), p.text]);
+      if (file) byFile.set(file, [...(byFile.get(file) ?? []), ...p.items]);
       else s.trace?.emit({ event: "ledger_mark_skipped", run: runId.slice(0, 8), reason: "ledger of the reviewed entry unknown" });
     }
     // the ledgers are marked side by side (each file has its own gate): a slow host (Windows process starts) must not add up one mark per ledger
     // and in their own chain, not behind the PASS snapshots (git) of the earlier runs; reviewSync still waits for them
     if (byFile.size > 0) {
-      s.markSync = s.markSync.then(() => Promise.all([...byFile].map(async ([file, texts]) => {
-        const r = await markPassItems(texts.join("\n"), file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
+      s.markSync = s.markSync.then(() => Promise.all([...byFile].map(async ([file, items]) => {
+        const r = await markPassItems(items, file, async (n) => (await runLedger(s, n === "V" ? ["mark", n, MARK_NOTE, "--verifier"] : ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
         if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(","), noted: r.noted.join(",") });
       }))).then(() => undefined);
       const marked = s.markSync;
@@ -5205,14 +5416,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
+  /** The launch a run of this session belongs to: the live mapping, else the route entry of a review launch (it survives a reload or a session restart). */
+  const launchOfRun = (s: Session, runId: string): string | undefined => parkFor(s).launchFor(runId) ?? s.ledgerByRun.get(runId)?.review?.launch;
+
   /**
-   * D3: a resume of a run this session launched keeps the first launch's binding (same ask dir) but gets a new run id. Before the child starts the dir is
-   * made again if the run's end removed it, and watched (`add` skips an ask that has a ruling); the tool result maps the new run to the launch.
+   * D3: a resume of a run this session launched keeps the first launch's binding (same ask dir) but gets a new run id. The tool result maps the new run to
+   * the launch for every parent (headless and `childAsk: deny` too: the verdict record is found through it). With a pane and `gate.childAsk: parent` the
+   * ask dir is made again before the child starts, if the run's end removed it, and watched (`add` skips an ask that has a ruling).
    */
   function resumeAskDir(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, callId: string): void {
     const target = s.isChild ? null : resumeTarget(input);
-    const launch = target ? parkFor(s).launchFor(target) : undefined;
-    if (!launch || get(s.config.config, "gate.childAsk") !== "parent" || !ctx.hasUI) return;
+    const launch = target ? launchOfRun(s, target) : undefined;
+    if (!launch) return;
+    parkFor(s).resumeCall(callId, launch);
+    parkFor(s).noteCall(callId, launch);
+    if (get(s.config.config, "gate.childAsk") !== "parent" || !ctx.hasUI) return;
     const askDir = childAskDir(s.agentDir, s.id, launch);
     try {
       fs.mkdirSync(askDir, { recursive: true, mode: 0o700 });
@@ -5220,13 +5438,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return;
     }
     parkFor(s).clearEnded(askDir);
-    parkFor(s).resumeCall(callId, launch);
-    parkFor(s).noteCall(callId, launch);
     childAskWatchFor(s, ctx).add(askDir);
   }
 
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean }): LaunchBinding | null {
+  /** A resume keeps the first launch's record folder (same binding); it is made again if missing (also after a session restart: the launch comes from the route), and a record the earlier run consumed stays consumed. */
+  function resumeVerdictDir(s: Session, input: Record<string, unknown>): void {
+    const target = resumeTarget(input);
+    const launch = target ? launchOfRun(s, target) : undefined;
+    if (!launch || !(s.launches.get(launch)?.verdictDir || s.ledgerByRun.get(target ?? "")?.review)) return;
+    try {
+      makeRecordDir(recordDir(s.agentDir, s.id, launch));
+    } catch {
+      // the child's tool refuses without a folder
+    }
+  }
+
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean; verdictItems?: ItemId[] }): LaunchBinding | null {
     if (actionOf(input) === "resume") resumeAskDir(s, ctx, input, toolCallId);
+    if (actionOf(input) === "resume" && !s.isChild) resumeVerdictDir(s, input);
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
@@ -5259,6 +5488,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (flags?.reads !== undefined) b.reads = flags.reads;
     if (flags?.install) b.install = true;
     if (flags?.highStakes) b.highStakes = true; // the child's ledger tool marks nothing, item V included
+    if (!s.isChild && REVIEW_ROLES.includes(role)) {
+      // the record folder of the verdict tool, whatever gate.childAsk or the pane say (verdict.ts)
+      const dir = recordDir(s.agentDir, s.id, b.launchId);
+      try {
+        makeRecordDir(dir);
+        b.verdictDir = dir;
+        if (!flags?.highStakes) b.items = flags?.verdictItems ?? [];
+        else b.items = [];
+      } catch {
+        s.trace?.emit({ event: "review_record_dir_failed" });
+      }
+    }
     if (input.worktree === true) b.worktree = true; // ceremony-fixes-2: the child's cwd is an isolation worktree
     bindLaunch(input, b);
     return b;
@@ -5466,33 +5707,39 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
         if (trees && runId) capSet(s.launchTrees, runId, trees);
+        const roStart = s.readonlyStartByCall.get(event.toolCallId);
+        s.readonlyStartByCall.delete(event.toolCallId);
+        if (roStart && runId) {
+          capSet(s.readonlyStart, runId, roStart);
+          if (roStart.kind === "picture") capSet(s.readonlyRoots, runId, roStart.roots);
+        }
         const rl = s.reviewRuns.byCall.get(event.toolCallId);
         s.reviewRuns.byCall.delete(event.toolCallId);
         const namedLedger = s.ledgerByCall.get(event.toolCallId);
         s.ledgerByCall.delete(event.toolCallId);
         // a resume names no ledger: the resumed run's route carries over (same or new run id), persisted like the others
-        const resumed = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
+        const resumedRoute = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
+        // the resumed run is a new run: the earlier run's `failed` does not carry over
+        const resumed = resumedRoute?.review?.failed ? { ...resumedRoute, review: { ...resumedRoute.review, failed: undefined } } : resumedRoute;
         if (resumed && runId) {
           capSet(s.ledgerByRun, runId, resumed);
-          if (resumed.paths.some((p) => p !== null) && resumeTarget(event.input as Record<string, unknown>) !== runId) {
-            try {
-              pi.appendEntry(LEDGER_ROUTE_ENTRY, { v: 1, run: runId, paths: resumed.paths, cited: resumed.cited });
-            } catch {
-              // the session file is not writable now: the route stays in memory
-            }
-          }
+          if (resumedRoute?.review?.failed) s.reviewRecords.delete(runId);
+          if ((resumed.review || resumed.paths.some((p) => p !== null)) && resumeTarget(event.input as Record<string, unknown>) !== runId) persistRoute(runId, resumed);
         }
+        // a review launch's route carries its launch id, the ids its verdict tool accepts and its occasion (the notice after a reload reads them)
+        const reviewEntry = rl?.entries.find((e) => REVIEW_ROLES.includes(e.role));
+        const routeReview: LedgerRoute["review"] = reviewEntry && boundId && !event.isError ? { launch: boundId, items: s.launches.get(boundId)?.items ?? [], occasion: reviewEntry.occasion, shadow: reviewEntry.shadow !== null } : undefined;
         if (namedLedger && runId) {
-          capSet(s.ledgerByRun, runId, namedLedger);
-          if (namedLedger.paths.some((p) => p !== null)) {
-            try {
-              pi.appendEntry(LEDGER_ROUTE_ENTRY, { v: 1, run: runId, paths: namedLedger.paths, cited: namedLedger.cited });
-            } catch {
-              // the session file is not writable now: the route stays in memory
-            }
-          }
+          const route = routeReview ? { ...namedLedger, review: routeReview } : namedLedger;
+          capSet(s.ledgerByRun, runId, route);
+          if (route.review || namedLedger.paths.some((p) => p !== null)) persistRoute(runId, route);
         }
         if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);
+        // a resumed review run is a new run id: it takes the occasion and shadow of the run it resumes (every run-end consumer reads `byRun`); a gate primary does not reopen its panel
+        else if (runId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume") {
+          const earlier = s.reviewRuns.byRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "");
+          if (earlier && !s.reviewRuns.byRun.has(runId)) capSet(s.reviewRuns.byRun, runId, earlier.bind ? earlier : { ...earlier, panel: null });
+        }
         trackActive(s.activeRuns, event.input, event.details, event.isError);
         if (!s.isChild) {
           // Budgets restart only for a launch that started (a run id came back), not a refused one.
@@ -5687,11 +5934,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
-    if (!r.hold) return await ceremonyFinishGate(s, ctx, event.entries);
+    // §2.4: a reviewer child with a record folder and no record yet is held once, in the same continue as a ledger hold.
+    const owes = !s.stopContinued && verdictOwed();
+    if (!r.hold && !owes) return await ceremonyFinishGate(s, ctx, event.entries);
     s.stopContinued = true;
-    s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
+    if (r.hold) s.trace?.emit({ event: "stop_hold", guard: "ledger_guard_stop", decision: "continue" });
+    if (owes) s.trace?.emit({ event: "stop_hold", guard: "review_verdict", decision: "continue" });
+    const reason = [r.hold ? (r.reason ?? "") : "", owes ? VERDICT_REMINDER : ""].filter(Boolean).join("\n\n");
     return {
-      entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: r.reason ?? "", display: true }],
+      entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: reason, display: true }],
       continue: true,
     };
   });
@@ -5921,6 +6172,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       trace: (r) => s.trace?.emit(r),
       tracker: s.prHost,
       track: s.isChild ? undefined : async (repo, n, host) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n, undefined, host) : "off"),
+      trackedHost: (repo, n, hosts) => trackedHostOf(s.agentDir, repo, n, hosts),
       githubHosts: () => resolveGithubHosts(s.config.config),
       draftFlow: () => draftFlowOn(s),
     };
@@ -6012,6 +6264,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     spawner,
     pkgRoot: PKG_ROOT,
     onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath, true),
+    onPlanWait: (text) => pi.sendMessage({ customType: CHILD_BLOCKED_TYPE, content: text, display: true }, { triggerTurn: false }), // append-only, quiet: no turn of its own
     session: sessionHost,
   });
 
@@ -6125,6 +6378,39 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } as never);
   }
 
+  // Review verdict (verdict.ts): registered inactive in every adapter process; a reviewer child gets it through its tool list (`--tools`, scripts/foreman_config.py with_review_tools).
+  // The record goes into the launch's record folder (binding `verdictDir`), written by this code only: floors.ts protects the tree.
+  pi.registerTool({
+    name: VERDICT_TOOL,
+    label: "Review verdict",
+    defaultActive: false,
+    executionMode: "sequential",
+    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. Then write your report for the foreman.",
+    parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      const s = await ensureSession(ctx);
+      const refuse = (text: string, reason: string) => {
+        s.trace?.emit({ event: "review_verdict_call", accepted: false, reason });
+        return { content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true };
+      };
+      const b = launchBinding;
+      if (!s.isChild || !b || !REVIEW_ROLES.includes(b.role) || !b.verdictDir || !fs.existsSync(b.verdictDir)) return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman); give the verdict in your report.`, "no_channel");
+      const allowed = b.highStakes ? [] : b.items ?? [];
+      const c = checkVerdictCall(params, allowed);
+      if ("error" in c) return refuse(c.error, "invalid");
+      let replaced = false;
+      try {
+        replaced = writeRecord(b.verdictDir, recordOf(b.launchId, c.call)).replaced;
+      } catch {
+        return refuse(`${VERDICT_TOOL}: the record could not be written; give the verdict in your report.`, "write_failed");
+      }
+      s.trace?.emit({ event: "review_verdict_call", accepted: true, verdict: c.call.verdict, items: c.call.items.length, findings: c.call.findings.length });
+      const given = new Set(c.call.items.map((i) => String(i.id)));
+      const left = allowed.filter((id) => !given.has(String(id)));
+      return { content: [{ type: "text" as const, text: [`recorded: ${c.call.verdict}${c.call.items.length ? `, ${c.call.items.length} item result${c.call.items.length === 1 ? "" : "s"}` : ""}${c.call.findings.length ? `, ${c.call.findings.length} finding${c.call.findings.length === 1 ? "" : "s"}` : ""}.`, replaced ? "This call replaced your earlier record." : "", left.length > 0 ? `Items this call left out (they stay open): ${left.join(", ")}.` : ""].filter(Boolean).join(" ") }], details: { decision: "recorded", verdict: c.call.verdict } };
+    },
+  } as never);
+
   // Ledger helper (ledgercall.ts, ceremony.ledgerHelper): registered inactive; the foreman activates
   // it at session start unless the knob is off, reviewer children get it through their tool list.
   pi.registerTool({
@@ -6132,34 +6418,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
       const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
       const kind = typeof params.action === "string" ? params.action : "unknown";
-      if (s.isChild) {
-        // Item 14: a reviewer child closes V on the foreman's ledger; not traced as ledger_call (foreman-only).
-        if (mode !== "tool" || !REVIEW_ROLES.includes(s.usage.line.role)) return refuse(`${LEDGER_TOOL} is not available to this role.`);
-        // A `[high-stakes]` review (highstakes.ts) marks nothing: its launch binding carries the marker, V included.
-        if (launchBinding?.highStakes) return refuse(`${LEDGER_TOOL}: a [high-stakes] review marks no ledger item, item V included; give the verdict in your report.`);
-        const plan = planLedgerCall(params, { child: true, gate: combined(s.reviewGates) });
-        if ("error" in plan) return refuse(plan.error);
-        const file = childLedgerFile(s, params.path);
-        if ("error" in file) return refuse(file.error);
-        const r = await runLedger(s, plan.calls[0], file.path);
-        if (r.ok) writeHint(file.path, ["V"], `ledger mark by ${s.usage.line.role}`, undefined, hintOpts(s));
-        const st = await runLedger(s, ["status"], file.path);
-        return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
-      }
+      // a child closes V through its verdict (review_verdict, item V), never through this tool
+      if (s.isChild) return refuse(`${LEDGER_TOOL} is not available to this role.`);
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
       if (kind === "init") {
         const r = await initLedger(s, ctx, params);
         s.trace?.emit({ event: "ledger_call", kind, allowed: r.ok });
         return r.ok ? { content: [{ type: "text" as const, text: r.text }], details: { decision: "done" } } : refuse(r.text);
       }
-      const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
+      const plan = planLedgerCall(params, { gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);
@@ -6355,26 +6629,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = await (lockFile ? ledgerGate(lockFile).exclusive(run) : run());
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `ledger: ${r.error.message}` : r.timedOut ? "ledger: timed out" : "");
     return { ok: !r.error && !r.timedOut && r.code === 0, text };
-  }
-
-  /** A reviewer child's ledger: the foreman's bound ledger, else `path` inside <workspace>/.workflow/LEDGER-*.md. */
-  function childLedgerFile(s: Session, p: unknown): { path: string } | { error: string } {
-    const bound = boundLedger(s.markerDir, s.usage.line.foremanSession);
-    if (bound) return { path: bound };
-    const how = `${LEDGER_TOOL}: the foreman's ledger is not known here; pass path: ".workflow/LEDGER-<topic>.md".`;
-    if (typeof p !== "string" || !p.trim()) return { error: how };
-    const ws = s.usage.line.workspace || s.cwd;
-    let abs: string;
-    let dir: string;
-    try {
-      abs = fs.realpathSync.native(path.resolve(ws, p));
-      dir = fs.realpathSync.native(path.join(ws, ".workflow"));
-    } catch {
-      return { error: how };
-    }
-    const same = (a: string, b: string) => (platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
-    if (!same(path.dirname(abs), dir) || !/^LEDGER-.+\.md$/i.test(path.basename(abs))) return { error: how };
-    return { path: abs };
   }
 
   // Plan checkpoint (checkpoint.ts): the owner approves the plan file; foreman only. Never approves on its own.

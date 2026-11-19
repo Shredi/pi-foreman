@@ -260,7 +260,9 @@ PR_URL_REPO = re.compile(r"https://[^/\s]+/([A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+)/p
 
 
 def _tracked_entries(adir):
-    """Open PRs of `foreman prs poll` (state/tracked-prs-state.json) as (radar entry, okAt ms or None); [] while the file's `off` is true.
+    """Open PRs of `foreman prs poll` (state/tracked-prs-state.json) as (radar entry, okAt ms or None, time ms or None); [] while the file's `off` is true.
+    The time is okAt when present, else the entry's `at` when it carries no `error` (an errored entry without okAt has no time).
+    A `waiting` list (the required checks without a run of a waiting pass) is passed through, at most 10 names.
     Ended (merged/closed) entries are not open and are skipped. Reads files only."""
     d = read_json(Path(adir) / "pi-foreman" / "state" / "tracked-prs-state.json")
     if not isinstance(d, dict) or d.get("v") != 1 or d.get("off") is True or not isinstance(d.get("prs"), dict):
@@ -287,6 +289,9 @@ def _tracked_entries(adir):
                "state": "draft" if meta.get("draft") is True else "open", "author": "", "checks": checks}
         if e.get("unsettled") is True:  # the poll holds a pass until the PR watch's settle rule is met: the display shows pending
             ent["unsettled"] = True
+        waiting = e.get("waiting")
+        if isinstance(waiting, list) and waiting and all(isinstance(n, str) for n in waiting):
+            ent["waiting"] = [n[:120] for n in waiting[:10]]
         if isinstance(snap.get("updatedAt"), str) and snap["updatedAt"]:
             ent["updated"] = snap["updatedAt"][:40]
         mergeable = snap.get("mergeable")
@@ -306,8 +311,10 @@ def _tracked_entries(adir):
         kparts = skey.split("#")[0].split("/") if isinstance(skey, str) else []
         if len(kparts) == 3 and RADAR_HOST_RE.match(kparts[0].lower()) and kparts[0].lower() != "github.com":
             ent["host"] = kparts[0].lower()
-        ok = e.get("okAt")
-        out.append((ent, ok if isinstance(ok, (int, float)) and not isinstance(ok, bool) else None))
+        def _num(v):
+            return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+        ok = _num(e.get("okAt"))
+        out.append((ent, ok, ok if ok is not None else (None if "error" in e else _num(e.get("at")))))
     return out
 
 
@@ -321,8 +328,8 @@ def _join_key(p):
 
 def read_pr_feed(adir, now):
     """(entries, search fetched-at stamp or None), or None when neither source has anything.
-    All search entries are listed; a tracked entry replaces its search twin only while display-fresh (okAt within 15 min), keeping the twin's
-    author and bodyText. A tracked entry without a twin is listed whatever its age, with `tracked: true`. Sorted by repo (case-insensitive), number."""
+    All search entries are listed; a tracked entry replaces its search twin while display-fresh (okAt within 15 min) or when its time (okAt, else the
+    state `at` of an entry without `error`) is not older than the search file's fetchedAt, keeping the twin's author and bodyText. A tracked entry without a twin is listed whatever its age, with `tracked: true`. Sorted by repo (case-insensitive), number."""
     search = read_open_prs(adir)
     tracked = _tracked_entries(adir)
     if search is None and not tracked:
@@ -330,14 +337,15 @@ def read_pr_feed(adir, now):
     entries = list(search[0]) if search else []
     at = search[1] if search else None
     index = {_join_key(p): i for i, p in enumerate(entries)}
-    for ent, ok in tracked:
+    fetched = parse_ts(at) if at else None
+    for ent, ok, when in tracked:
         k = _join_key(ent)
         i = index.get(k)
         if i is None:
             ent["tracked"] = True
             index[k] = len(entries)
             entries.append(ent)
-        elif ok is not None and now - ok / 1000.0 <= TRACKED_DISPLAY_FRESH_S:
+        elif (ok is not None and now - ok / 1000.0 <= TRACKED_DISPLAY_FRESH_S) or (when is not None and fetched is not None and when / 1000.0 >= fetched):
             twin = entries[i]
             ent["author"] = twin.get("author", "")
             if twin.get("bodyText"):

@@ -13,6 +13,7 @@ import { planVersionHash } from "../checkpoint.ts";
 import { restoreRoundState, ROUND_STATE_FILE } from "../roundstate.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { KEYS } from "./_r46world.ts";
+import { PASS_SPEC, writeSpec } from "./_verdict-rig.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Fn = (...a: unknown[]) => Promise<unknown>;
@@ -128,6 +129,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
         const blocked = (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block;
         if (blocked) return `plan review refused: ${blocked.reason}`;
         await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
+        assert.ok(writeSpec(input, PASS_SPEC), "the plan reviewer's launch has a record folder"); // the reviewer's review_verdict call
         channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output: "Overall verdict: PASS" }] });
         await tick();
         return this.recheck();

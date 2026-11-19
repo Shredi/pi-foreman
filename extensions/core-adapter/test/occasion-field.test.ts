@@ -2,6 +2,7 @@
 // a tag only later in the text is refused, never guessed. In-process, no child process: the pure parts directly, the wiring through the adapter's
 // tool_call handler on the r11 rig with stand-ins for git, the python probe and the config CLI.
 import cp from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
@@ -255,18 +256,16 @@ test("wiring: the field alone marks the task; the field with the same head marke
   assert.match(top.res?.reason ?? "", /\[review_occasion_unknown\]/);
 });
 
-test("wiring: tasks and chain launches take one field per entry; options lift; a builder entry with a tag beside a plain reviewer stays item", async (t) => {
+test("wiring: a reviewer in a tasks or chain launch is refused (review_single_launch); options lift; a builder entry with a tag stays plain", async (t) => {
   const rig = await launchRig(t);
   const tasks: Json = { tasks: [{ agent: "reviewer", task: "branch", occasion: "pre-pr" }, { agent: "reviewer", task: "look", occasion: "second-opinion" }] };
   const r1 = await rig.launch(tasks);
-  assert.equal(r1.res, undefined, r1.res?.reason);
-  const [x, y] = tasks.tasks as Json[];
-  assert.ok(String(x.task).includes("[pre-pr] branch") && String(y.task).includes("[second-opinion] look"), JSON.stringify(tasks));
+  assert.match(r1.res?.reason ?? "", /\[review_single_launch\]/);
+  assert.equal(rig.events("launch_refused").filter((e) => e.reason === "review_single_launch").length, 1);
 
   const chain: Json = { chain: [{ agent: "builder", task: "build" }, { agent: "reviewer", task: "check", occasion: "pre-pr" }] };
   const r2 = await rig.launch(chain);
-  assert.ok(!/review_occasion/.test(r2.res?.reason ?? ""), r2.res?.reason);
-  assert.ok(String((chain.chain as Json[])[1].task).includes("[pre-pr] check"));
+  assert.match(r2.res?.reason ?? "", /\[review_single_launch\]/);
 
   const boxed: Json = { agent: "reviewer", task: "branch", options: { occasion: "pre-pr" } };
   const r3 = await rig.launch(boxed);
@@ -275,7 +274,7 @@ test("wiring: tasks and chain launches take one field per entry; options lift; a
 
   const mixed: Json = { tasks: [{ agent: "builder", task: "build it [pre-pr]" }, { agent: "reviewer", task: "check items 1" }] };
   const r4 = await rig.launch(mixed);
-  assert.ok(!/review_occasion/.test(r4.res?.reason ?? ""), r4.res?.reason);
+  assert.match(r4.res?.reason ?? "", /\[review_single_launch\]/);
   assert.equal(String((mixed.tasks as Json[])[0].task).includes("[pre-pr] build"), false, "a builder task gets no marker");
 });
 
@@ -293,4 +292,19 @@ test("wiring: a subagent child session still takes the field and marks a field-o
   await rig.launch(input);
   assert.ok(!("occasion" in input));
   assert.ok(String(input.task).includes("[plan-review] review the plan"), String(input.task));
+});
+
+test("wiring: a reviewer launch is refused when its record folder cannot be made (review_record_dir); a good launch gets the folder", async (t) => {
+  const rig = await launchRig(t);
+  const root = path.join(rig.agentDir, "pi-foreman", "state", "review-records");
+  fs.mkdirSync(path.dirname(root), { recursive: true });
+  fs.writeFileSync(root, "not a folder");
+  const refused = await rig.launch({ agent: "reviewer", task: "review items 1" });
+  assert.match(refused.res?.reason ?? "", /\[review_record_dir\]/);
+  assert.match(refused.res?.reason ?? "", /pi-foreman\/state\/review-records/);
+  assert.equal(rig.events("launch_refused").filter((e) => e.reason === "review_record_dir").length, 1);
+  fs.rmSync(root);
+  const ok = await rig.launch({ agent: "reviewer", task: "review items 1" });
+  assert.equal(ok.res, undefined, ok.res?.reason);
+  assert.ok(fs.existsSync(root));
 });

@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import * as path from "node:path";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
 import type { ShellConfigFn } from "./bg.ts";
-import { secretPath } from "./floors.ts";
+import { scratchGitConfigRead, secretPath } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import type { GateKind } from "./gatelog.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -48,6 +48,19 @@ export interface ReadEntryCall {
 const harmlessRedirect = (r: ShellSegment["redirects"][number]): boolean => r.op === "<" || r.op === "dup" || r.target === "/dev/null";
 
 /**
+ * A secret-path token that is the `.git/config` of a copy in the read-only child's own scratch dir (`scratchGitConfigRead`). A relative token resolves by the cwd of the
+ * segments whose argv or redirect targets hold it; no such segment, segments that disagree, or an unknown cwd leave it a hit.
+ */
+function scratchConfigToken(tok: string, segments: readonly ShellSegment[], env: FloorEnv): boolean {
+  const holders = segments.filter((s) => s.argv.includes(tok) || s.redirects.some((r) => r.target === tok));
+  if (holders.length === 0) return false;
+  if (path.posix.isAbsolute(tok) || path.win32.isAbsolute(tok)) return scratchGitConfigRead(tok, { ...env, segCwd: null });
+  const cwds = new Set(holders.map((s) => s.cwd));
+  const [only] = [...cwds];
+  return cwds.size === 1 && typeof only === "string" && scratchGitConfigRead(tok, { ...env, segCwd: only });
+}
+
+/**
  * The entry condition of the read question: tool `bash` under a bash shell; `danger-opaque` the only dangerous-class entry; no secret-path word
  * among the raw whitespace- or quote-separated tokens and no split-literal hit on the raw line; no segment with a redirect that can write or the
  * unreadable reason `writing_wrapper`; a length bound. It is no safety boundary: whether the line only reads is the judge's to say.
@@ -60,7 +73,7 @@ export function readClearEntry(c: ReadEntryCall, env: FloorEnv): boolean {
     if (s.opaque === "writing_wrapper") return false;
     if (s.redirects.some((r) => !harmlessRedirect(r))) return false;
   }
-  for (const tok of c.text.split(/[\s"'`]+/)) if (tok && secretPath(tok, env)) return false;
+  for (const tok of c.text.split(/[\s"'`]+/)) if (tok && secretPath(tok, env) && !scratchConfigToken(tok, c.segments, env)) return false;
   if (probeFileHit(c.text)) return false;
   return c.shellBash();
 }

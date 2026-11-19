@@ -14,8 +14,8 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
-// A generic marker, as a provider refusal names it.
-const BLOCKED = "STATUS: stuck\nThe provider declined this request under its usage policy.";
+// A generic marker, as a provider refusal names it (the run-end error field; the child's own summary is never read for it).
+const BLOCKED = "The provider declined this request under its usage policy.";
 let rigs = 0;
 
 async function rig(t: { after(fn: () => void | Promise<void>): void }) {
@@ -97,7 +97,7 @@ test("policy_block_run_no_relaunch_stop_record", async (t) => {
   await a.assistant("b1", first);
   assert.equal(await a.launch("b1", first), undefined);
   await a.started("b1", first, "run-p");
-  a.end({ runId: "run-p", agent: "builder", success: false, summary: BLOCKED });
+  a.end({ runId: "run-p", agent: "builder", success: false, summary: "STATUS: stuck", error: BLOCKED });
   // the stop record, and the run's exit 1
   assert.deepEqual(a.events("child_policy_block").map((r) => [r.role, r.runId, r.kind, r.outcome, r.exit, r.decision]), [["builder", "run-p", "policy_block", "failed", 1, "stopped"]]);
   assert.deepEqual(a.events("role_result").map((r) => [r.role, r.exit]), [["builder", 1]]);
@@ -113,7 +113,7 @@ test("policy_block_run_no_relaunch_stop_record", async (t) => {
 });
 
 test("policy_block: classification, no climb, report text without a relaunch hint", () => {
-  const end = runEndOf({ runId: "r1", agent: "builder", success: false, summary: BLOCKED, asyncDir: "/runs/r1" });
+  const end = runEndOf({ runId: "r1", agent: "builder", success: false, summary: "STATUS: stuck", error: BLOCKED, asyncDir: "/runs/r1" });
   assert.equal(end?.policyBlock, true);
   assert.equal(runEndOf({ runId: "r2", agent: "builder", success: false, summary: "failed", results: [{ agent: "builder", error: "Usage Policy refusal" }] })?.policyBlock, true, "marker in a result error");
   const l = new LadderState();
@@ -128,9 +128,10 @@ test("policy_block: classification, no climb, report text without a relaunch hin
   assert.doesNotMatch(text, /Relaunch it with model "strong"/);
 });
 
-test("policy_block: not a completed run, not a run with a verdict, not a failure without the marker", () => {
-  assert.equal(runEndOf({ runId: "a", agent: "builder", success: true, summary: BLOCKED })?.policyBlock, undefined, "completed (exit 0)");
-  assert.equal(runEndOf({ runId: "b", agent: "reviewer", success: false, summary: `VERDICT: FAIL\n${BLOCKED}` })?.policyBlock, undefined, "has a verdict");
+test("policy_block: not a completed run, not the child's own summary, not a failure without the marker; a reviewer's failed run counts", () => {
+  assert.equal(runEndOf({ runId: "a", agent: "builder", success: true, summary: "done", error: BLOCKED })?.policyBlock, undefined, "completed (exit 0)");
+  assert.equal(runEndOf({ runId: "b", agent: "reviewer", success: false, summary: BLOCKED })?.policyBlock, undefined, "the summary is not read (T15)");
+  assert.equal(runEndOf({ runId: "b2", agent: "reviewer", success: false, summary: "VERDICT: FAIL", error: BLOCKED })?.policyBlock, true, "a verdict word does not matter any more (T15)");
   assert.equal(runEndOf({ runId: "c", agent: "builder", success: false, summary: "STATUS: stuck" })?.policyBlock, undefined, "no marker");
   // a plain failure with STATUS: stuck stays climb-eligible
   const l = new LadderState();

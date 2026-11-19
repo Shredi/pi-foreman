@@ -29,6 +29,10 @@ export interface PersistedRounds {
   /** The plan-review lineage of that plan, or null. */
   planReview: PersistedReview | null;
   round: RoundState;
+  /** The session's tier, whether its newest plan review passed (needs no checkpoint) and whether its plan's checkpoint is still open (false only once approved), for the parent's wait line only (planWait); a restore ignores all three. */
+  tier?: string;
+  reviewPassed?: boolean;
+  planOpen?: boolean;
   /** Watermark of the last caps reset by a parent brief (index.ts capsReset); absent = none. */
   capsResetAt?: number;
 }
@@ -89,4 +93,33 @@ export function restoreRoundState(dir: string, currentPlan: (topic: string) => {
   const c = (rs && typeof rs === "object" ? rs : {}) as Record<string, unknown>;
   const round: RoundState = { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, ...(c.revisionAnswered === true ? { revisionAnswered: true } : {}) };
   return { round, capsResetAt: count(raw.capsResetAt) ?? 0 };
+}
+
+const WAIT_UNKNOWN = "waits for: unknown (no state); nothing from you is required";
+
+/**
+ * What a child waits for at its plan, from its own `<dir>/round-state.json` (fixed words only; nothing the child wrote). `open`: the plan phase is open
+ * (nothing built, plan not approved); false when the state is unreadable. The text carries no label and no closing period.
+ */
+export function planWait(dir: unknown): { open: boolean; text: string } {
+  let raw: Record<string, unknown>;
+  if (typeof dir !== "string" || !path.isAbsolute(dir)) return { open: false, text: WAIT_UNKNOWN };
+  try {
+    const v = JSON.parse(fs.readFileSync(path.join(dir, ROUND_STATE_FILE), "utf8")) as unknown;
+    if (!v || typeof v !== "object" || Array.isArray(v)) return { open: false, text: WAIT_UNKNOWN };
+    raw = v as Record<string, unknown>;
+  } catch {
+    return { open: false, text: WAIT_UNKNOWN };
+  }
+  const round = raw.round && typeof raw.round === "object" && !Array.isArray(raw.round) ? (raw.round as Record<string, unknown>) : {};
+  const approved = raw.planOpen === false;
+  const open = round.built !== true && !approved;
+  const tier = raw.tier;
+  if (typeof tier !== "string" || !tier) return { open, text: WAIT_UNKNOWN };
+  const passed = raw.reviewPassed === true;
+  if (tier === "heavy") {
+    if (approved) return { open, text: "waits for: nothing; it goes on to build" };
+    return { open, text: passed ? "waits for: the owner's approval at its pane; nothing from you" : "waits for: its own plan review and the owner's approval at its pane; nothing from you" };
+  }
+  return { open, text: passed ? "waits for: nothing; it goes on to build" : "waits for: its own plan review, then it goes on to build; nothing from you" };
 }

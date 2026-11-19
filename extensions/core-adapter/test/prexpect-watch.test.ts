@@ -90,7 +90,6 @@ test("a watch armed during the gap later reports the real pass, and the ready la
 const variants: [string, Partial<WatchSnapshot>, Run[]][] = [
   ["zero runs", { runs: [], expect: { missing: ["ci"] } }, [run("quick", "passed"), run("ci", "passed")]],
   ["one passed quick check", { runs: [run("quick", "passed")], expect: { missing: ["ci"] } }, [run("quick", "passed"), run("ci", "passed")]],
-  ["a readable required list", { runs: [run("lint", "passed")], required: ["ci-ok"], expect: { missing: ["ci-ok"] } }, [run("lint", "passed"), run("ci-ok", "passed")]],
 ];
 for (const [title, part, done] of variants) {
   test(`a managed draft whose expected checks never start in draft leaves draft at the bound, then gets the real result: ${title}`, async () => {
@@ -112,6 +111,27 @@ for (const [title, part, done] of variants) {
     assert.match(finished(x.sent)[0], /checks finished: pass/);
   });
 }
+
+// the variant `a readable required list` of the loop above, as the base that is not learnable (D101 case 3: no `learn` in the snap): the fallback line replaces the overdue line
+test("a managed draft whose required check never starts in draft (base not learnable) leaves draft at the bound, no green report, the fallback line on the non-draft PR", async () => {
+  const part = { runs: [run("lint", "passed")], required: ["ci-ok"] };
+  const draft = (overdue: boolean) => snap({ ...part, draft: true, mergeState: "draft", expect: { missing: ["ci-ok"], ...(overdue ? { overdue: true as const } : {}) } });
+  const x = harness({ child: true, owned: true, start: draft(false) });
+  await x.tick(draft(false), 0);
+  await x.tick(draft(false), BOUND - 1000);
+  assert.deepEqual(x.drafts, [], "still inside the bound: the leave step waits");
+  await x.tick(draft(true), BOUND);
+  assert.deepEqual(x.drafts, [false], "at the bound it leaves draft through the real leave path");
+  assert.equal(x.sent.some((m) => m.includes(OVERDUE) || m.includes("ready to merge") || m.includes("report to the parent")), false);
+  await x.tick(snap({ ...part, draft: false, expect: { missing: ["ci-ok"], overdue: true } }), BOUND * 2);
+  assert.equal(x.sent.filter((m) => m.includes("report to the parent: PR #7 checks passed, waiting on required checks")).length, 1);
+  assert.deepEqual(finished(x.sent), []);
+  assert.equal(x.sent.some((m) => m.includes(OVERDUE)), false);
+  await x.tick(snap({ ...part, runs: [run("lint", "passed"), run("ci-ok", "passed")], draft: false }), BOUND * 3);
+  await x.tick(snap({ ...part, runs: [run("lint", "passed"), run("ci-ok", "passed")], draft: false }), BOUND * 3 + SETTLE);
+  assert.equal(finished(x.sent).length, 1, "the real result on the non-draft PR");
+  assert.match(finished(x.sent)[0], /checks finished: pass/);
+});
 
 test("a readable required list with zero runs: no no-checks line, the label rule says running, the leave-draft step waits, the pill's no-checks input stays false", async () => {
   const facts = { missing: ["ci-ok"] };

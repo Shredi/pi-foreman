@@ -83,11 +83,11 @@ test("ledgercall: foreman tool batches marks and closes V only after an unrevise
   assert.ok("error" in planLedgerCall({ action: "rm" }, { child: false, gate: PASS }));
 });
 
-test("ledgercall: a reviewer child may only mark V, always with --verifier", () => {
+test("ledgercall: a reviewer child gets no ledger call: it closes V through review_verdict", () => {
   const gate = { last: null, revised: false };
-  assert.deepEqual(planLedgerCall({ action: "mark", items: ["V"] }, { child: true, gate }), { calls: [["mark", "V", "--verifier"]], items: "V", attested: false });
-  for (const p of [{ action: "mark", items: [1] }, { action: "mark", items: ["V", 1] }, { action: "status" }, { action: "add", text: "x" }]) {
-    assert.ok("error" in planLedgerCall(p, { child: true, gate }), JSON.stringify(p));
+  for (const p of [{ action: "mark", items: ["V"] }, { action: "mark", items: [1] }, { action: "mark", items: ["V", 1] }, { action: "status" }, { action: "add", text: "x" }]) {
+    const r = planLedgerCall(p, { child: true, gate });
+    assert.ok("error" in r && /review_verdict/.test(r.error), JSON.stringify(p));
   }
 });
 

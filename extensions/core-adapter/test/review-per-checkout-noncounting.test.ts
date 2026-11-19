@@ -21,11 +21,14 @@ async function builtInB(a: Rig, b: string) {
   assert.equal(r.blocked, null, String(r.blocked));
   await end(a, r, "builder", "done", b);
 }
-/** One launch with a `[pre-pr]` reviewer in A and `second` in B, ended with `outputs` (fewer results than entries allowed). */
+/** Two single launches (a reviewer launch is never a group): a `[pre-pr]` reviewer in A and `second` in B, both started, then ended with `outputs` in that order. */
 async function mixed(a: Rig, b: string, second: string, outputs: string[]) {
-  const r = await launch(a, "reviewer", "x", { tasks: [{ agent: "reviewer", task: "[pre-pr] review the branch" }, { agent: "reviewer", task: `${second} look at B`, cwd: b }] });
-  assert.equal(r.blocked, null, String(r.blocked));
-  a.endRunMany(r.id, outputs);
+  const ra = await launch(a, "reviewer", "[pre-pr] review the branch");
+  assert.equal(ra.blocked, null, String(ra.blocked));
+  const rb = await launch(a, "reviewer", `${second} look at B`, { cwd: b });
+  assert.equal(rb.blocked, null, String(rb.blocked));
+  await end(a, ra, "reviewer", outputs[0]);
+  await end(a, rb, "reviewer", outputs[1], b);
   await tick(300);
 }
 
@@ -51,19 +54,13 @@ test("only a [second-opinion] in B leaves B open", async (t) => {
 test("[pre-pr] in A PASS and [pre-pr] in B FAIL: B fails", async (t) => {
   const { a, b } = await two(t);
   await builtInB(a, b);
-  const r = await launch(a, "reviewer", "x", { tasks: [{ agent: "reviewer", task: "[pre-pr] review A" }, { agent: "reviewer", task: "[pre-pr] review B", cwd: b }] });
-  assert.equal(r.blocked, null, String(r.blocked));
-  a.endRunMany(r.id, [PASS, FAIL]);
-  await tick(300);
+  await mixed(a, b, "[pre-pr]", [PASS, FAIL]);
   assert.match(await settle(a), /wtb: .*last verdict FAIL|last verdict FAIL.*wtb/s);
 });
 
-test("fewer counting results than counting entries: a PASS reaches no root", async (t) => {
+test("a counting review in B that ends with no verdict: A's PASS reaches no root of B", async (t) => {
   const { a, b } = await two(t);
   await builtInB(a, b);
-  const r = await launch(a, "reviewer", "x", { tasks: [{ agent: "reviewer", task: "[pre-pr] review A" }, { agent: "reviewer", task: "[pre-pr] review B", cwd: b }] });
-  assert.equal(r.blocked, null, String(r.blocked));
-  a.endRunMany(r.id, [PASS]);
-  await tick(300);
-  assert.match(await settle(a), OPEN, "B got no verdict and stays open");
+  await mixed(a, b, "[pre-pr]", [PASS, "I ran out of turns before a verdict."]);
+  assert.match(await settle(a), /wtb: no review yet/, "B got no verdict and stays open");
 });

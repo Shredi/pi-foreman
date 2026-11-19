@@ -5,18 +5,28 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { mainNeedsGitGuard } from "../gitdrift.ts";
-import { appendReview, headOf, headsAt, isPrToolName, launchCwds, MAX_REVIEWS, passHeads, prGateRefusal, prToolRefusal, checksLine, reviewedHead, reviewsOfRunEnd } from "../reviews.ts";
+import { appendReview, headOf, headsAt, isPrToolName, launchCwds, MAX_REVIEWS, passHeads, prGateRefusal, prToolRefusal, checksLine, reviewedHead, reviewsWithOutput } from "../reviews.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
+import { resultsOf, type RecSpec } from "./_verdict-rig.ts";
 
-test("reviewsOfRunEnd: completed reviewer results with a verdict and their cwd", () => {
-  const ok = reviewsOfRunEnd({ agent: "reviewer", status: "completed", cwd: "/w", output: "Overall verdict: PASS" });
+const PASS: RecSpec = { verdict: "pass" };
+const FAIL: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "broken" }] };
+/** The reviews of a run end whose reviewer left `spec` (null: no record). */
+const reviewsOf = (data: unknown, spec: RecSpec | null) => reviewsWithOutput(data, resultsOf(data, spec));
+
+test("reviewsWithOutput: completed reviewer results with a verdict record and their cwd", () => {
+  const ok = reviewsOf({ agent: "reviewer", status: "completed", cwd: "/w", output: "report" }, PASS);
   assert.deepEqual(ok, [{ role: "reviewer", verdict: "pass", cwd: "/w" }]);
-  const grouped = reviewsOfRunEnd({ results: [{ agent: "reviewer", status: "completed", cwd: "/a", output: "Verdict: BLOCK" }, { agent: "builder", status: "completed", output: "Verdict: PASS" }] });
-  assert.deepEqual(grouped, [{ role: "reviewer", verdict: "fail", cwd: "/a" }]);
-  assert.deepEqual(reviewsOfRunEnd({ agent: "reviewer", status: "failed", output: "Overall verdict: PASS" }), []);
-  assert.deepEqual(reviewsOfRunEnd({ agent: "reviewer", status: "completed", output: "no verdict" }), []);
-  assert.deepEqual(reviewsOfRunEnd(null), []);
+  assert.deepEqual(reviewsOf({ agent: "reviewer", status: "completed", cwd: "/a", output: "report" }, FAIL), [{ role: "reviewer", verdict: "fail", cwd: "/a" }]);
+  // a record belongs to a single-result run end (a group launch of reviewers is refused): next to a builder result it reads as no verdict
+  assert.deepEqual(reviewsOf({ results: [{ agent: "reviewer", status: "completed", cwd: "/a", output: "x" }, { agent: "builder", status: "completed", output: "y" }] }, PASS), []);
+  assert.deepEqual(reviewsOf({ agent: "reviewer", status: "failed", output: "report" }, PASS), []);
+  assert.deepEqual(reviewsOf({ agent: "reviewer", status: "completed", output: "no verdict" }, null), []);
+  assert.deepEqual(reviewsOf({ agent: "reviewer", status: "completed", output: "report" }, { verdict: "incomplete", reason: "could not run" }), []);
+  assert.deepEqual(reviewsOf(null, PASS), []);
+  const withFile = reviewsWithOutput({ agent: "reviewer", status: "completed", output: "x", artifactPaths: { outputPath: "/o/out.md" } }, resultsOf({ agent: "reviewer", status: "completed", output: "x" }, PASS));
+  assert.deepEqual(withFile, [{ role: "reviewer", verdict: "pass", cwd: null, outputPath: "/o/out.md" }]);
 });
 
 test("appendReview caps at 50; passHeads keeps only heads whose latest verdict is PASS", () => {

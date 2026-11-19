@@ -85,11 +85,11 @@ async function withRig(t: TestContext, fn: (r: Rig) => Promise<void>): Promise<v
 
 test("two hosts, the same acme/lib#7 on each: two store entries, one pr_batch per host with its own --hostname, each entry its own meta", async (t) => {
   await withRig(t, async (r) => {
-    await addTracked(r.agentDir, "acme/lib", 7);
+    await addTracked(r.agentDir, "acme/lib", 7, undefined, "github.com");
     await addTracked(r.agentDir, "acme/lib", 7, undefined, GHE);
     await addTracked(r.agentDir, "acme/lib", 7, undefined, GHE.toUpperCase()); // present: the host is case-insensitive
     const lines = JSON.parse(fs.readFileSync(trackedFile(r.agentDir), "utf8")).prs;
-    assert.deepEqual(lines.map((l: Record<string, unknown>) => l.host), [undefined, GHE]); // github.com is written without the field
+    assert.deepEqual(lines.map((l: Record<string, unknown>) => l.host), ["github.com", GHE]); // every new line carries its host
     const seen: unknown[] = [];
     const res = await pollPrs(r.deps({ tools: { prGithubHosts: ["github.com", GHE.toUpperCase()] } }, seen));
     assert.equal(res.error, undefined);

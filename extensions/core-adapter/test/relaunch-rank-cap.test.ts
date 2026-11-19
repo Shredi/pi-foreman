@@ -99,16 +99,14 @@ test("FAIL revision, explicit lower model + reason, map A + below: launched on t
 
 
 // no live rung (the first builder launch of a session, or after a reload): the bare FAIL case is the launchPlanned unit below; a chain has no live rung either
-test("chain builder -> reviewer -> builder as the first launch of the session, map A + below: both builders on the bottom rung, not refused", async (t) => {
+// a reviewer in a chain is refused (review_single_launch): it gets no verdict binding, so the chain never reaches the rank loop
+test("chain builder -> reviewer -> builder as the first launch of the session: refused as a group review launch, no rank refusal", async (t) => {
   const a = await rig(t, "A", "below", undefined, true);
   const chain = { chain: [builder(), { agent: "reviewer", task: "review items 1" }, builder({ task: "fix it" })] };
-  const { id, res } = await a.launch(chain);
-  assert.equal(res, undefined, res?.reason);
-  const ch = chain.chain as Record<string, unknown>[];
-  assert.deepEqual([ch[0].model, ch[2].model], ["fake/builder", "fake/builder"]);
+  const { res } = await a.launch(chain);
+  assert.equal(res?.block, true);
+  assert.match(res?.reason ?? "", /\[review_single_launch\]/);
   assert.deepEqual(refusals(a), []);
-  assert.ok(a.events("rung_top").some((r) => r.reason === RANK_CAPPED_REASON));
-  assert.match(texts(await a.started(id, chain, "run-c")), SKIP);
 });
 
 // map A + at-or-below: the strong rung is allowed, the climb happens
