@@ -54,7 +54,7 @@ test("session-level child, write tool: .., bare work and work/ are no allow", ()
   for (const n of SPELLINGS) assert.equal(pathDecide("write", { path: `${H}/${n}` }, wt, ownRoots()), undefined, n);
 });
 
-test("session-level child, shell: .., bare work and work/ are write-outside, never an allow", { skip: posixOnly }, () => {
+test("session-level child, shell: .., bare work and work/ are never an allow and never judge-first (the shell-write refusal rules)", { skip: posixOnly }, () => {
   const r = ownRoots();
   for (const n of SPELLINGS) {
     // cp and mv onto the existing dir `work` put the file below it, a name of its own: only the redirect form is judged for the bare entry
@@ -63,7 +63,8 @@ test("session-level child, shell: .., bare work and work/ are write-outside, nev
       const o = gateEvaluate("bash", { command: l }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: false }), roots: () => r });
       const res = o.result as { allow?: boolean } | undefined;
       assert.notEqual(res?.allow, true, l);
-      assert.equal(o.danger?.name, "danger-write-outside", l);
+      // C: danger-write-outside is a child-session label (judge-first); this session is not a subagent, so the foreman's shell-write refusal (index.ts shellWriteBlock) rules, not the judge
+      assert.ok(!o.danger, l);
     }
   }
 });

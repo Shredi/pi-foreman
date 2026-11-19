@@ -69,9 +69,11 @@ const answer = (role: string, line: string): string => {
   return `undecided ${(o.dangers ?? []).join("+")}`;
 };
 
-test("S3: a git revision naming a secret file is labelled danger-git-secret and left to the mode step, for main and builder, also inside bash -c", () => {
+// C: `danger-git-secret` left the judge-first list: a revision naming a secret file is a plain git read (a loosening, named in the plan's owner section); the text-match floors keep their answers
+test("S3: a git revision naming a secret file carries no label in C: the default git read runs it (inside bash -c it is undecided), for main and builder", () => {
   for (const role of ROLES2) {
-    for (const l of ["git show HEAD:.env", "git show :.env", "git show HEAD:.claude/.credentials.json", "bash -c 'git show HEAD:.env'"]) assert.equal(answer(role, l), "undecided danger-git-secret", `${role} ${l}`);
+    for (const l of ["git show HEAD:.env", "git show :.env", "git show HEAD:.claude/.credentials.json"]) assert.equal(answer(role, l), "allow default-git-read", `${role} ${l}`);
+    assert.equal(answer(role, "bash -c 'git show HEAD:.env'"), "undecided ", `${role} bash -c`);
     // names the floors' own text match already refuse keep that answer
     for (const l of ["git show HEAD:~/.ssh/id_rsa", "git cat-file -p HEAD:config/.env.production"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
   }
@@ -84,9 +86,10 @@ test("S3 controls: no label and the same decision as before for a source file, a
   }
 });
 
-test("S5: a segment that is no known read and names a policy or state folder is labelled danger-harness-folder, for main and builder", () => {
+// C: `danger-harness-folder` left the judge-first list: such a segment carries no label
+test("S5: a segment that is no known read and names a policy or state folder carries no label in C, for main and builder", () => {
   for (const role of ROLES2) {
-    for (const l of [`git add ${POLICY}`, `git add ${STATE}`]) assert.equal(answer(role, l), "undecided danger-harness-folder", `${role} ${l}`);
+    for (const l of [`git add ${POLICY}`, `git add ${STATE}`]) assert.equal(answer(role, l), role === "foreman" ? "allow default-git-add" : "undecided ", `${role} ${l}`);
   }
 });
 
@@ -99,16 +102,16 @@ test("S5 controls: cat, grep and ls of the file are no label (a child's reads st
   assert.equal(answer("foreman", "mytool a.txt"), "undecided ");
 });
 
-test("S5 without the floor env in DangerEnv: the label does not fire", () => {
+test("S5 with or without the floor env in DangerEnv: no harness-folder label (C)", () => {
   const seg = parseShell(`git add ${POLICY}`, { cwd: work });
   const env = { roots: roots("foreman"), platform: process.platform, cwd: work, facts };
   assert.equal(dangerSegment(seg[0], env), null);
-  assert.equal(dangerSegment(seg[0], { ...env, floor: envOf(false) }), "danger-harness-folder");
+  assert.equal(dangerSegment(seg[0], { ...env, floor: envOf(false) }), null);
 });
 
-test("S5: an input redirect of a policy file by an unknown program is labelled danger-harness-folder (the redirects branch); a known reader's is not", () => {
+test("S5: an input redirect of a policy file carries no label in C, by an unknown program or a known reader", () => {
   const env = { roots: roots("foreman"), platform: process.platform, cwd: work, facts, floor: envOf(false) };
-  assert.equal(dangerSegment(parseShell(`mytool < ${POLICY}`, { cwd: work })[0], env), "danger-harness-folder");
+  assert.equal(dangerSegment(parseShell(`mytool < ${POLICY}`, { cwd: work })[0], env), null);
   assert.equal(dangerSegment(parseShell(`cat < ${POLICY}`, { cwd: work })[0], env), null);
   assert.equal(dangerSegment(parseShell("mytool < a.txt", { cwd: work })[0], env), null);
 });

@@ -1,4 +1,4 @@
-// Round 2, step 2 part A: the guarantees that lived only in the permission overlay now hold in the gate (floor-fs-scan, the /tmp scratch hint in the child
+// Round 2, step 2 part A: the guarantees that lived only in the permission overlay now hold in the gate (danger-fs-scan judge-first in C, the /tmp scratch hint in the child
 // write refusal, `.git` internals). Every test goes through gateDecide or the floor functions, never the overlay.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -33,56 +33,59 @@ const rule = (r: GateResult): string | null => (r && "block" in r && r.block ? (
 const ROLES = ["foreman", "builder", "reviewer", "explorer"];
 const roleRoots = (role: string) => (role === "reviewer" || role === "explorer" ? { roundReadOnly: true } : {});
 const run = (role: string, command: string): GateResult => decide(role, "bash", { command }, {}, roleRoots(role));
+/** C: the fs scan is judge-first, not a floor: the gate decides nothing and the call carries `danger-fs-scan`. The block rule or the label of a call, else null. */
+const verdictOf = (role: string, tool: string, input: Record<string, unknown>): string | null => {
+  const o = gateEvaluate(tool, input, work, { env: () => envOf(role !== "foreman"), roots: () => mkRoots(role, roleRoots(role)) });
+  const r = o.result as { block?: boolean; rule?: string } | undefined;
+  return r && r.block ? (r.rule ?? null) : (o.danger?.name ?? null);
+};
+const scanOf = (role: string, command: string): string | null => verdictOf(role, "bash", { command });
 
 // ------------------------------------------------------------------ row 3: floor-fs-scan
 
 const parent = path.dirname(work);
 const SCANS = (root: string): string[] => [`find ${root} -name x`, `grep -rn x ${root}`, `grep -R x ${root}`, `rg x ${root}`, `fd x ${root}`, `du -sh ${root}`, `ls -R ${root}`, `tree ${root}`];
 
-test("every scan program is refused on /, ~, the home dir and an ancestor of the workspace, for every role", { skip: posixOnly }, () => {
+test("every scan program is judge-first on /, ~, the home dir and an ancestor of the workspace, for every role", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     for (const root of ["/", "~", home, parent]) {
-      for (const l of SCANS(root)) assert.equal(rule(run(role, l)), "floor-fs-scan", `${role}: ${l}`);
+      for (const l of SCANS(root)) assert.equal(scanOf(role, l), "danger-fs-scan", `${role}: ${l}`);
     }
   }
 });
 
-test("the refusal names the roots to read instead and carries a deny prefix", () => {
+test("a scan of / is no refusal in C: the call is left to the judge, with no deny text", () => {
   const r = decide("builder", "bash", { command: "find / -name x" });
-  assert.ok(r && "block" in r && r.block);
-  assert.ok(GATE_DENY_PREFIXES.some((p) => r.reason.startsWith(p)), r.reason);
-  assert.match(r.reason, /the worktree .*work/);
-  assert.match(r.reason, /your scratch dir .*scr/);
-  assert.match(r.reason, /\/tmp/);
-  assert.match(r.reason, /bundled package roots/);
+  assert.equal(r, undefined);
+  assert.equal(scanOf("builder", "find / -name x"), "danger-fs-scan");
 });
 
-test("the bash -c and nested forms are refused too", () => {
+test("the bash -c and nested forms are judge-first too", () => {
   for (const l of ["bash -c 'find / -name x'", "sh -c \"grep -r x ~\"", "bash -c 'cd . && rg x /'", "env find / -name x", "echo hi | xargs find / -name x"]) {
-    assert.equal(rule(run("builder", l)), "floor-fs-scan", l);
-    assert.equal(rule(run("foreman", l)), "floor-fs-scan", l);
+    assert.equal(scanOf("builder", l), "danger-fs-scan", l);
+    assert.equal(scanOf("foreman", l), "danger-fs-scan", l);
   }
 });
 
 test("a scan with no search root in the home dir is a scan of the home dir", () => {
   const e = envOf(false, { cwd: home });
   const f = (l: string) => lineFloors(l, parseShell(l, { cwd: home }), e)?.rule ?? null;
-  assert.equal(f("find . -name x"), "floor-fs-scan");
-  assert.equal(f("grep -r x"), "floor-fs-scan");
+  assert.equal(f("find . -name x"), "danger-fs-scan");
+  assert.equal(f("grep -r x"), "danger-fs-scan");
 });
 
 test("a scan of the workspace itself or a subfolder is not refused", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     for (const l of ["find . -name x", `find ${work} -name x`, `grep -rn x ${sub}`, "rg x src", "fd x", `du -sh ${work}`, "ls -R", "tree src", `find ${scr} -name x`, `bash -c 'find ${sub} -name x'`]) {
-      assert.notEqual(rule(run(role, l)), "floor-fs-scan", `${role}: ${l}`);
+      assert.notEqual(scanOf(role, l), "danger-fs-scan", `${role}: ${l}`);
     }
   }
 });
 
 test("grep without -r on a file under home is not refused by this floor", { skip: posixOnly }, () => {
   for (const role of ROLES) {
-    assert.notEqual(rule(run(role, `grep x ${path.join(home, "notes.txt")}`)), "floor-fs-scan", role);
-    assert.notEqual(rule(run(role, `grep -n x ~/notes.txt`)), "floor-fs-scan", role);
+    assert.notEqual(scanOf(role, `grep x ${path.join(home, "notes.txt")}`), "danger-fs-scan", role);
+    assert.notEqual(scanOf(role, `grep -n x ~/notes.txt`), "danger-fs-scan", role);
   }
 });
 
@@ -140,11 +143,11 @@ test("main: a write into .git/hooks is left to the judge, into .git/config it me
 
 const toolRun = (role: string, tool: string, input: Record<string, unknown>): GateResult => decide(role, tool, input, {}, roleRoots(role));
 
-test("the find and grep tools: / ~ the home dir and an ancestor of the workspace are refused for every role", () => {
+test("the find and grep tools: / ~ the home dir and an ancestor of the workspace are judge-first for every role", () => {
   for (const role of ROLES) {
     for (const root of ["/", "~", home, parent]) {
-      assert.equal(rule(toolRun(role, "find", { path: root, pattern: "*.ts" })), "floor-fs-scan", `${role} find ${root}`);
-      assert.equal(rule(toolRun(role, "grep", { path: root, pattern: "x" })), "floor-fs-scan", `${role} grep ${root}`);
+      assert.equal(verdictOf(role, "find", { path: root, pattern: "*.ts" }), "danger-fs-scan", `${role} find ${root}`);
+      assert.equal(verdictOf(role, "grep", { path: root, pattern: "x" }), "danger-fs-scan", `${role} grep ${root}`);
     }
   }
 });
@@ -153,17 +156,17 @@ test("the find and grep tools: the workspace, a subfolder, scratch and the defau
   for (const role of ROLES) {
     for (const tool of ["find", "grep"]) {
       for (const input of [{ path: work }, { path: sub }, { path: scr }, {}, { path: "." }, { path: "src" }]) {
-        assert.notEqual(rule(toolRun(role, tool, { pattern: "x", ...input })), "floor-fs-scan", `${role} ${tool} ${JSON.stringify(input)}`);
+        assert.notEqual(verdictOf(role, tool, { pattern: "x", ...input }), "danger-fs-scan", `${role} ${tool} ${JSON.stringify(input)}`);
       }
     }
   }
 });
 
 test("the find and grep tools: a default path in the home dir is a scan of the home dir; a single file under home is not refused by this floor", () => {
-  const homeDecide = gateDecide("grep", { pattern: "x" }, home, { env: () => envOf(false, { cwd: home }), roots: () => mkRoots("foreman") });
-  assert.equal(rule(homeDecide), "floor-fs-scan");
+  const homeDecide = gateEvaluate("grep", { pattern: "x" }, home, { env: () => envOf(false, { cwd: home }), roots: () => mkRoots("foreman") });
+  assert.equal(homeDecide.danger?.name, "danger-fs-scan");
   for (const role of ROLES) {
-    assert.notEqual(rule(toolRun(role, "grep", { path: path.join(home, "notes.txt"), pattern: "x" })), "floor-fs-scan", role);
+    assert.notEqual(verdictOf(role, "grep", { path: path.join(home, "notes.txt"), pattern: "x" }), "danger-fs-scan", role);
   }
 });
 
@@ -175,11 +178,11 @@ test("a glob root is expanded against the file system and every match is judged;
   for (const role of ROLES) {
     // /* expands to a folder that holds the home dir; `${base}/ho*` and `h?me` expand to the home dir itself
     for (const l of ["du -sh /*", "find /* -name x", `find ${base}/ho* -name x`, `grep -r x ${base}/h?me`, `find ${base}/[h]ome`]) {
-      assert.equal(rule(run(role, l)), "floor-fs-scan", `${role}: ${l}`);
+      assert.equal(scanOf(role, l), "danger-fs-scan", `${role}: ${l}`);
     }
     // matches that are the workspace, scratch or nothing
     for (const l of [`du -sh ${base}/wor*`, `find ${base}/sc* -name x`, `ls -R ${base}/no-such-*`, "du -sh /pf-no-such-dir*", `find ${work}/s*`]) {
-      assert.notEqual(rule(run(role, l)), "floor-fs-scan", `${role}: ${l}`);
+      assert.notEqual(scanOf(role, l), "danger-fs-scan", `${role}: ${l}`);
     }
   }
   // `~/D*` expands to an ancestor of the workspace; `/U*`-style roots through a folder below the root
@@ -187,25 +190,25 @@ test("a glob root is expanded against the file system and every match is judged;
   const tmpdir = process.env.TMPDIR;
   process.env.TMPDIR = scr;
   try {
-    assert.equal(f("find ~/D* -name x", inDeep), "floor-fs-scan");
-    assert.equal(f(`find ${home}/Doc*/g* -name x`, inDeep), "floor-fs-scan");
+    assert.equal(f("find ~/D* -name x", inDeep), "danger-fs-scan");
+    assert.equal(f(`find ${home}/Doc*/g* -name x`, inDeep), "danger-fs-scan");
     assert.equal(f(`find ${home}/Documents/git/pro* -name x`, inDeep), null);
   } finally {
     if (tmpdir === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = tmpdir;
   }
-  assert.equal(f(`find ${path.dirname(home)}/* -name x`, envOf(false)), "floor-fs-scan");
+  assert.equal(f(`find ${path.dirname(home)}/* -name x`, envOf(false)), "danger-fs-scan");
 });
 
 test("case: on darwin a differently cased home dir or ancestor is a scan of it; on linux it names another folder", { skip: posixOnly }, () => {
   const up = (s: string): string => s.toUpperCase();
   const f = (l: string, platform: string) => lineFloors(l, parseShell(l, { cwd: work, platform }), envOf(false, { platform }))?.rule ?? null;
   for (const l of [`find ${up(home)} -name x`, `grep -r x ${up(path.dirname(home))}`, `find ${home.slice(0, -4)}${up(home.slice(-4))} -name x`]) {
-    assert.equal(f(l, "darwin"), "floor-fs-scan", l);
+    assert.equal(f(l, "darwin"), "danger-fs-scan", l);
     assert.equal(f(l, "linux"), null, l);
   }
   for (const p of [up(home), up(path.dirname(home))]) {
-    assert.equal(scanToolFloor("find", { path: p }, work, envOf(false, { platform: "darwin" }))?.rule, "floor-fs-scan", p);
+    assert.equal(scanToolFloor("find", { path: p }, work, envOf(false, { platform: "darwin" }))?.rule, "danger-fs-scan", p);
     assert.equal(scanToolFloor("find", { path: p }, work, envOf(false, { platform: "linux" })), null, p);
   }
 });
@@ -217,10 +220,10 @@ test("win32 drive roots: C:/, D:\\ and C:\\Users above the home are refused, the
   const f = (l: string) => lineFloors(l, parseShell(l, { cwd: winWork, platform: "win32" }), e)?.rule ?? null;
   for (const root of ["C:/", "D:\\", "C:\\Users", "C:\\Users\\me"]) {
     // single quotes keep the backslashes: unquoted, the shell parser eats them
-    assert.equal(f(`find '${root}' -name x`), "floor-fs-scan", root);
-    assert.equal(f(`du -sh '${root}'`), "floor-fs-scan", root);
+    assert.equal(f(`find '${root}' -name x`), "danger-fs-scan", root);
+    assert.equal(f(`du -sh '${root}'`), "danger-fs-scan", root);
   }
-  for (const root of [winWork, `${winWork}\\src`, "C:\\scr"]) assert.notEqual(f(`find '${root}' -name x`), "floor-fs-scan", root);
+  for (const root of [winWork, `${winWork}\\src`, "C:\\scr"]) assert.notEqual(f(`find '${root}' -name x`), "danger-fs-scan", root);
 });
 
 // ------------------------------------------------------------------ row 21: the macOS /private/tmp spelling
