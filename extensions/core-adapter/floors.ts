@@ -1369,7 +1369,7 @@ const underXargs = (seg: ShellSegment): boolean => seg.wrappers.some((w) => base
 function heredocScripts(seg: ShellSegment, prog: string): string[] {
   if (!seg.heredocs?.length) return [];
   // the walker keeps `xargs bash -c …` as the wrappers xargs, bash and the script's words as the program
-  if (underXargs(seg)) return seg.wrappers.some((w) => SHELLS.has(base(w))) || (SHELLS.has(prog) && seg.argv.some((w) => /^-[a-z]*c$/i.test(w))) ? seg.heredocs : [];
+  if (underXargs(seg)) return seg.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash") || ((SHELLS.has(prog) || prog === "ash") && seg.argv.some((w) => /^-[a-z]*c[a-z]*$/i.test(w))) ? seg.heredocs : [];
   if (!(SHELLS.has(prog) || prog === "ash")) return [];
   if (scriptsOf(seg, prog).length > 0 || !shellReadsStdin(seg.argv)) return [];
   return seg.heredocs;
