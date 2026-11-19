@@ -116,3 +116,14 @@ test(`${FLOOR}: foreman_bg gets the same refusal as bash (guard parity of rm -rf
     assert.match(String(res?.reason), /permission floor \(delete-unknown-target\)/, mode);
   }
 });
+
+test(`${FLOOR}: a recursive flag of a later command or a later find is no flag of the remover in a runner string`, async (t) => {
+  for (const l of ['sh -c "trash $L; grep -rn x ."', 'eval "trash $OBJ && gcc -Werror x.c"', 'bash -c "trash $F; find . -name y -print"']) await runs(t, l);
+  for (const l of ['sh -c "trash $L; rm -rf $M"', 'eval "ls && rm -rf $D"', "find . -exec sh -c 'rm -rf \"$1\"; echo x' _ {} \\;"]) await refused(t, "bash", l, true);
+});
+
+test(`${FLOOR}: a PowerShell switch with a variable value is no variable operand (-Force:$f keeps the label), -Path:$p and -LiteralPath:$p are`, async (t) => {
+  await runs(t, "pwsh -c 'Remove-Item -Recurse -Force:$f build'");
+  await runs(t, "pwsh -c 'Remove-Item -Recurse -Confirm:$c build'");
+  for (const l of ["Remove-Item -Recurse -Force:$f -Path:$p", "Remove-Item -Recurse -LiteralPath:$p"]) await refused(t, "powershell", l);
+});

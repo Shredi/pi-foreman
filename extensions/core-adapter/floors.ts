@@ -1049,6 +1049,14 @@ const RM_RECURSIVE = /^-[A-Za-z]*[rR]|^--recursive$/;
 const VAR_CMD_RECURSIVE = /^-(?=[A-Za-z]{1,4}$)[A-Za-z]*[rR]|^--recursive$/;
 const EXEC_WORDS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 
+/** A remover word of a string a runner reads as code with a recursive flag among the words up to the next `;`, `&` or `|` (a later command's flag is none). */
+function removerInString(text: string): boolean {
+  return text.split(/[;&|\n]+/).some((part) => {
+    const words = part.split(/[\s()$"'`{}]+/);
+    return words.some((w, i) => REMOVERS.has(base(w)) && words.slice(i + 1).some((x) => RM_RECURSIVE.test(x)));
+  });
+}
+
 /**
  * The judge-first label "delete with unknown target" (plan T2, from destructive_guard.py), read from the parsed line only: a recursive remover whose operand is
  * unresolved (a variable, a substitution, an empty word), whose glob has no readable prefix or whose cwd is unresolved (a `cd` into a variable) or that runs
@@ -1088,17 +1096,11 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
       const end = tail.findIndex((w) => w === ";" || w === "+");
       const cmd = end >= 0 ? tail.slice(0, end) : tail;
       const removes = cmd.some((w) => base(w) === "rm") && cmd.some((w) => RM_RECURSIVE.test(w));
-      const inner = cmd.join(" ").split(/[\s;&|()$"'`{}]+/);
-      const at = inner.findIndex((w) => REMOVERS.has(base(w)));
-      const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && at >= 0 && inner.slice(at + 1).some((w) => RM_RECURSIVE.test(w));
+      const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && removerInString(cmd.join(" "));
       if (removes || viaRunner) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
     }
-    if (s.opaque === "nonliteral_script") {
-      // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so the words of it are scanned as find -exec scans a runner's string
-      const words = [s.program, ...argv].join(" ").split(/[\s;&|()$"'`{}]+/);
-      const at = words.findIndex((w) => REMOVERS.has(base(w)));
-      if (at >= 0 && words.slice(at + 1).some((w) => RM_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("a remover inside a script string built at run time"));
-    }
+    // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so its words are scanned as a runner's string under find -exec is
+    if (s.opaque === "nonliteral_script" && removerInString([s.program, ...argv].join(" "))) hits.push(UNKNOWN_DELETE("a remover inside a script string built at run time"));
     if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
     if (prog === "git" && argv.some((w) => /[$`]/.test(w))) {
       const call = gitCall(s, env);
@@ -1110,7 +1112,7 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
     const recursiveElsewhere = units.some((w) => w.slice(1).some((x) => PS_RECURSE.test(x)));
     for (const words of units) {
       // a floor only where a word of the delete is a variable (`-Recurse:$true` and `/s/q` are switches); a literal PowerShell delete keeps the label
-      if (psRecursiveDelete(words)) hits.push(UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", words.slice(1).some((x) => (!/^-/.test(x) && !CMD_SWITCHES.test(x) && /[$%]/.test(x)) || (/^-\w+:/.test(x) && !PS_RECURSE.test(x) && /[$%]/.test(x.slice(x.indexOf(":") + 1)) && !/^\$(?:true|false)$/i.test(x.slice(x.indexOf(":") + 1))))));
+      if (psRecursiveDelete(words)) hits.push(UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", words.slice(1).some((x) => (!/^-/.test(x) && !CMD_SWITCHES.test(x) && /[$%]/.test(x)) || /^-(?:path|literalpath|lp|pspath):\S*[$%]/i.test(x))));
       if (PS_REMOVERS.has(base(words[0]))) {
         const rest = words.slice(1);
         if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) hits.push(UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false));

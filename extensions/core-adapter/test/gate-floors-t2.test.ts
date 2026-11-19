@@ -164,8 +164,11 @@ test("gate: an unknown-target delete is the danger label; a child's own-scratch 
   for (const l of ['rm -rf "$X"/*', "cd $D && rm -rf *", "ls | xargs rm -rf", "find build -exec rm -rf {} +"]) assert.equal(ruleOf(gate("bash", l)), "floor-delete-unknown-target", l);
   assert.ok(gate("bash", "git clean -fd $X").danger, "git clean with a variable keeps the label");
   assert.equal(ruleOf(gate("powershell", "Remove-Item -Recurse $p")), "floor-delete-unknown-target");
-  assert.notEqual(gate("bash", "S=$FOREMAN_SCRATCH; rm -rf $S/p", true).danger?.name, LABEL);
-  assert.notEqual(gate("bash", "rm -rf $FOREMAN_SCRATCH/p", true).danger?.name, LABEL);
+  for (const l of ["S=$FOREMAN_SCRATCH; rm -rf $S/p", "rm -rf $FOREMAN_SCRATCH/p"]) {
+    const o = gate("bash", l, true);
+    assert.equal(o.danger?.name ?? null, null, l);
+    assert.ok(!(o.result as { block?: boolean; ask?: boolean } | undefined)?.block && !(o.result as { ask?: boolean } | undefined)?.ask, `${l}: not blocked or asked: ${JSON.stringify(o.result)}`);
+  }
   const refused = gate("bash", "rm -rf ~");
   assert.equal((refused.result as { rule?: string } | undefined)?.rule, "floor-rm-system");
 });
