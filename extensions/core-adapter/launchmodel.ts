@@ -49,6 +49,9 @@ export type Tier = "trivial" | "standard" | "heavy";
 /** Strength keywords the foreman may pass as `model`, optionally with a `:<level>` suffix. */
 export const STRENGTHS = ["default", "strong"] as const;
 
+/** The steward's keyword: the highest-ranked entry of the whole role map (index.ts allows it for one explorer launch, in the steward session, with a reason). */
+export const TOP_KEYWORD = "top";
+
 export interface LaunchOptions {
   /** The foreman session's ceremony tier: a heavy tier launches the builder on its strong model. */
   tier?: Tier;
@@ -65,6 +68,8 @@ export interface LaunchOptions {
   explicit?: (role: string, model: string) => boolean;
   /** Entries whose automatic climb the rank policy capped (ladder.ts Climb.skipped): they never get the strong rung, so they keep the rung and level they would have without a climb. */
   capped?: ReadonlySet<object>;
+  /** The role-map entry (`{model, thinking}`) with the highest rank tier, for the keyword `top`; null or unset: `top` resolves like `strong`. */
+  top?: Json | null;
 }
 
 export interface LaunchResult {
@@ -89,11 +94,13 @@ export function launchModel(role: string, roles: Record<string, Json>, passed: u
   const r = roles[role];
   if (!isObj(r) || typeof r.model !== "string" || r.model === "") return undefined;
   const foreman = typeof passed === "string" ? splitLevel(passed.trim()) : { base: "", level: null };
-  const keyword = (STRENGTHS as readonly string[]).includes(foreman.base) ? foreman.base : null;
-  const asked = keyword === "strong" || (keyword === null && role === "builder" && opts.preferStrong === true);
+  const isTop = foreman.base === TOP_KEYWORD;
+  const keyword = isTop ? TOP_KEYWORD : (STRENGTHS as readonly string[]).includes(foreman.base) ? foreman.base : null;
+  const asked = keyword === "strong" || isTop || (keyword === null && role === "builder" && opts.preferStrong === true);
   const wantStrong = asked || (keyword === null && role === "builder" && opts.tier === "heavy");
   const strong = isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model !== "" ? r.strong : null;
-  const pick = wantStrong && strong ? strong : r;
+  const top = isTop && isObj(opts.top) && typeof opts.top.model === "string" && opts.top.model !== "" ? opts.top : null;
+  const pick = top ?? (wantStrong && strong ? strong : r);
   const mapped = splitLevel(pick.model as string);
   // The rung's own level wins (a bottom rung never escalates thinking; the ladder climbs by model).
   const own = isLevel(pick.thinking) ? pick.thinking : mapped.level;
@@ -104,7 +111,7 @@ export function launchModel(role: string, roles: Record<string, Json>, passed: u
   const model = level ? `${base}:${level}` : base;
   const out: LaunchResult = { model };
   if (keyword === null && foreman.base !== "" && foreman.base !== mapped.base && !honoured) out.override = { role, model: mapped.base, requested: foreman.base };
-  if (asked && !strong) out.notice = `pi-foreman: no strong model mapped for ${role} on ${opts.provider ?? "the active provider"}; launched on ${model}`;
+  if (asked && !strong && !isTop) out.notice = `pi-foreman: no strong model mapped for ${role} on ${opts.provider ?? "the active provider"}; launched on ${model}`;
   return out;
 }
 
