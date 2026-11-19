@@ -59,7 +59,7 @@ export function wakeDecision(entries: readonly Entry[], settings: StewardSetting
 
 /** The wake text: counts only, no report text. */
 export function wakeText(d: WakeDecision): string {
-  return `pi-foreman steward: ${d.fresh} new open report${d.fresh === 1 ? "" : "s"} since the last pass (${d.open} open in all). Run the pass from your steward instructions (instructions/steward.md in the pi-foreman package; read it again if they are no longer in your context).`;
+  return `pi-foreman steward: ${d.fresh} new open report${d.fresh === 1 ? "" : "s"} since the last pass (${d.open} open in all). Run the pass from your steward instructions.`;
 }
 
 export interface StewardEntry {
@@ -132,10 +132,16 @@ export class StewardWatch {
   private arm(): void {
     this.disarm();
     const loop = (): void => {
+      let ms = 30 * 60_000;
+      try {
+        ms = this.d.settings().checkMinutes * 60_000;
+      } catch {
+        // a throwing settings read keeps the default interval: the timer never ends
+      }
       this.timer = this.timers.set(() => {
         this.tick();
         if (this.isOn) loop();
-      }, this.d.settings().checkMinutes * 60_000);
+      }, ms);
     };
     loop();
   }
@@ -164,7 +170,7 @@ export class StewardWatch {
     this.lastPass = this.startedAt;
     this.textSent = false;
     try {
-      this.d.sendText(this.d.instruction().replaceAll("{maxProposals}", String(st.maxProposals)));
+      this.d.sendText(this.filled(st));
       this.textSent = true;
     } catch {
       this.textSent = false; // the text could not be read: the watch still runs, the owner sees the notice
@@ -174,6 +180,20 @@ export class StewardWatch {
     this.arm();
     this.d.trace({ event: "steward", action: "on" });
     return { ok: true, text: `pi-foreman: this session is the steward; the report list is checked every ${st.checkMinutes} minutes.` };
+  }
+
+  private filled(st: StewardSettings): string {
+    return this.d.instruction().replaceAll("{maxProposals}", String(st.maxProposals));
+  }
+
+  /** After a compaction: the instruction text again, as a message, so the pass steps and the configured limit survive it. Nothing when this session is not the steward. */
+  resend(): void {
+    if (!this.isOn) return;
+    try {
+      this.d.sendText(this.filled(this.d.settings()));
+    } catch {
+      this.d.notice("pi-foreman: the steward instructions could not be loaded again after the compaction.");
+    }
   }
 
   /** `/foreman steward off`. */

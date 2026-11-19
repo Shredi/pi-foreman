@@ -2399,6 +2399,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     compactionGate.reset(s.id);
     s.noticeVerdicts.clear(); // the prefix is rewritten anyway: the next request decides afresh
     s.selfWarm.onCompact();
+    s.steward.resend(); // the steward's instruction text and its proposal limit are lost with the compaction; a message, never system text
     if (!s.isChild) void onForemanCompact(s, ctx, event.compactionEntry.summary, event.reason);
   });
   pi.on("session_compact_failed", async (_event, ctx) => {
@@ -6539,6 +6540,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (params.action === "retro") {
         // The steward pass reads the retro counters of this session; the inputs are the ones `/retro` uses (retroInputs), so the model never has to name them.
         if (s.isChild) return { content: [{ type: "text" as const, text: `${REPORTS_TOOL} is for the foreman session only.` }], details: { decision: "refused" }, isError: true };
+        if (!s.steward.active) return { content: [{ type: "text" as const, text: `${REPORTS_TOOL}: retro is for the steward session only (/foreman steward on).` }], details: { decision: "refused" }, isError: true };
         const out = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session"), "--json"]);
         return { content: [{ type: "text" as const, text: out.ok ? retroCounters(out.text) : `${REPORTS_TOOL}: retro failed: ${out.text.slice(0, 300)}` }], details: { decision: "retro" }, ...(out.ok ? {} : { isError: true }) };
       }

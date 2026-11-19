@@ -89,9 +89,9 @@ test("the trace keeps ranked, fresh and open as written", () => {
   assert.deepEqual(sanitizeTrace({ event: "steward", action: "wake", fresh: 3, open: 7 }), { event: "steward", action: "wake", fresh: 3, open: 7 });
 });
 
-test("the wake text names the instruction file and holds counts only", () => {
+test("the wake text holds counts only and points at no path", () => {
   const text = wakeText({ wake: true, fresh: 2, open: 4 });
-  assert.match(text, /instructions\/steward\.md/);
+  assert.ok(!/steward\.md|read it again/.test(text), text);
   assert.match(text, /2 new open reports/);
 });
 
@@ -160,6 +160,7 @@ test("a steward session launches the top explorer with a long brief once the sta
 
 test("foreman_reports retro runs the retro inputs of the session and returns counters without proposals", { skip }, async (t) => {
   const r = await adapterRig(t);
+  await r.command("steward on");
   const out = await r.call("foreman_reports", { action: "retro" });
   assert.equal(out.isError, false, out.text);
   const j = JSON.parse(out.text) as Record<string, unknown>;
