@@ -62,5 +62,5 @@ test("a counting review in B that ends with no verdict: A's PASS reaches no root
   const { a, b } = await two(t);
   await builtInB(a, b);
   await mixed(a, b, "[pre-pr]", [PASS, "I ran out of turns before a verdict."]);
-  assert.match(await settle(a), /wtb: (built, )?no review yet|wtb: revised after the last PASS|wtb: last verdict FAIL/, "B got no verdict and stays open");
+  assert.match(await settle(a), /wtb: no review yet/, "B got no verdict and stays open");
 });

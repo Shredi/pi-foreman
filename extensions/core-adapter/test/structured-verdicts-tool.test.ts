@@ -9,6 +9,9 @@ import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { checkVerdictCall, MAX_FINDINGS, MAX_ITEMS, NO_TOOL_REASON, VERDICT_FILE, VERDICT_REMINDER, type VerdictRecord } from "../verdict.ts";
 import { r11Rig } from "./_r11rig.ts";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup (no seam); PI_OFFLINE keeps the child rig from starting npm.
+process.env.PI_OFFLINE = "1";
+
 type T = { after(fn: () => void | Promise<void>): void };
 type Res = { content: { text: string }[]; isError?: boolean; details?: { decision?: string } };
 type Tool = { execute: (...a: unknown[]) => Promise<Res> };

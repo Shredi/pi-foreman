@@ -269,7 +269,11 @@ export function sweepRecords(agentDir: string, now: number, keepSession?: string
   for (const name of names) {
     if (keepSession !== undefined && name === safe(keepSession)) continue;
     const dir = path.join(recordsRoot(agentDir), name);
-    if (now - lastWrite(dir) > SWEEP_MS) fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      if (now - lastWrite(dir) > SWEEP_MS) fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // left for the next start
+    }
   }
 }
 

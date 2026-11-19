@@ -1998,8 +1998,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
-    if (!s.isChild) sweepRecords(s.agentDir, Date.now(), s.id);
-    else noToolVerdict(s);
+    if (!s.isChild) {
+      try {
+        sweepRecords(s.agentDir, Date.now(), s.id);
+      } catch {
+        // a failed sweep never stops the session
+      }
+    } else noToolVerdict(s);
     restoreRounds(s, ctx, event.reason);
     if (hsModel(s)) {
       // the review base fallback: the first HEAD of each repository the session saw (a pre-upgrade entry's per-checkout sightings first; the first one wins)
@@ -2213,7 +2218,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     sweepScratch(s);
     closeChildAsks(s, event?.reason === "reload");
-    if (!s.isChild && event?.reason !== "reload") fs.rmSync(recordSessionDir(s.agentDir, s.id), { recursive: true, force: true }); // verdict records; a reload keeps them for the runs still going
+    if (!s.isChild && event?.reason !== "reload") {
+      try {
+        fs.rmSync(recordSessionDir(s.agentDir, s.id), { recursive: true, force: true }); // verdict records; a reload keeps them for the runs still going
+      } catch {
+        // the next start's sweep takes it; a failed removal never stops the shutdown
+      }
+    }
     await s.show?.idle();
     s.paneResume?.stop(event?.reason); // before live.stop(): the signal flag it reads is also what stop() writes as endedBy
     s.paneResume = null;
