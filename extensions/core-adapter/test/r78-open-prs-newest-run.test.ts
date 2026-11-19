@@ -5,8 +5,8 @@ import { readFileSync } from "node:fs";
 
 const T1 = "2026-01-01T00:00:00Z", T2 = "2026-01-01T01:00:00Z", T3 = "2026-01-01T02:00:00Z";
 const run = (name: string, conclusion: string | null, startedAt: string | null, extra: Record<string, unknown> = {}) =>
-  ({ __typename: "CheckRun", name, status: conclusion ? "COMPLETED" : "QUEUED", conclusion, startedAt, completedAt: null, ...extra });
-const wf = (name: string) => ({ checkSuite: { app: { slug: "github-actions" }, workflowRun: { workflow: { name } } } });
+  ({ __typename: "CheckRun", name, status: conclusion ? "COMPLETED" : "QUEUED", conclusion, startedAt, completedAt: null, ...("checkSuite" in extra || extra.bare ? {} : wf("W")), ...extra });
+function wf(name: string) { return { checkSuite: { app: { slug: "github-actions" }, workflowRun: { event: "push", workflow: { name } } } }; }
 const sc = (context: string, state: string, createdAt: string) => ({ __typename: "StatusContext", context, state, createdAt });
 const states = (nodes: unknown[]) => {
   const n = { number: 1, title: "t", url: "https://example.test/acme/widgets/pull/1", isDraft: false, repository: { nameWithOwner: "acme/widgets" }, author: { login: "o" },
@@ -47,5 +47,21 @@ test("duplicates do not use up the check cap", () => {
 
 test("the query asks for the fields identity and order need", () => {
   const src = readFileSync(new URL("../openprs.ts", import.meta.url), "utf8");
-  for (const f of ["startedAt", "completedAt", "workflowRun{workflow{name}}", "createdAt"]) assert.ok(src.includes(f), f);
+  for (const f of ["startedAt", "completedAt", "workflowRun{event workflow{name}}", "createdAt"]) assert.ok(src.includes(f), f);
+});
+
+test("push failure + later pull_request success of one job stay two checks", () => {
+  const ev = (event: string) => ({ checkSuite: { app: { slug: "github-actions" }, workflowRun: { event, workflow: { name: "W" } } } });
+  assert.deepEqual(states([run("j", "FAILURE", T1, ev("push")), run("j", "SUCCESS", T2, ev("pull_request"))]), ["j:fail", "j:ok"]);
+});
+
+test("runs with unknown identity are not merged", () => {
+  const noRun = { checkSuite: { app: { slug: "github-actions" }, workflowRun: null } };
+  assert.deepEqual(states([run("j", "FAILURE", T1, noRun), run("j", "SUCCESS", T2, noRun)]), ["j:fail", "j:ok"]);
+  assert.deepEqual(states([run("j", "FAILURE", T1, { bare: 1 }), run("j", "SUCCESS", T2, { bare: 1 })]), ["j:fail", "j:ok"]);
+  assert.deepEqual(states([run("j", "FAILURE", T1, wf("W")), run("j", "SUCCESS", T2, wf("W"))]), ["j:ok"]);
+});
+
+test("a non-string name does not raise", () => {
+  assert.doesNotThrow(() => states([run(5 as unknown as string, "SUCCESS", T1, wf("W")), { __typename: "StatusContext", context: 7, state: "SUCCESS" }]));
 });

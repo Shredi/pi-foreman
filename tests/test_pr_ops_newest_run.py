@@ -10,6 +10,8 @@ T1, T2, T3 = "2026-01-01T00:00:00Z", "2026-01-01T01:00:00Z", "2026-01-01T02:00:0
 def ck(name, concl="SUCCESS", started=T1, done=None, wf=None, status="COMPLETED", app=None):
     nd = {"__typename": "CheckRun", "name": name, "status": status, "conclusion": concl, "startedAt": started,
           "completedAt": done, "databaseId": 1}
+    if wf is None and app is None:
+        wf = "W"
     if wf or app:
         nd["checkSuite"] = {"app": {"slug": app} if app else None, "workflowRun": {"event": "push", "workflow": {"name": wf}} if wf else None}
     return nd
@@ -63,8 +65,6 @@ class NewestRunTest(unittest.TestCase):
         r = roll(ck("x", "FAILURE", T1, app="a1"), ck("x", "SUCCESS", T2, app="a2"), ck("x", "SUCCESS", T3, app="a2"))
         self.assertEqual(counts(r)["failed"], 1)
         self.assertEqual(counts(r)["passed"], 1)
-        r = roll(ck("x", "FAILURE", T1), ck("x", "SUCCESS", T2))
-        self.assertEqual(counts(r), {"pending": 0, "failed": 0, "passed": 1, "missing": 0})
 
     def test_status_context_by_created_at(self):
         r = roll(sc("ci", "FAILURE", T1), sc("ci", "SUCCESS", T2))
@@ -92,6 +92,31 @@ class NewestRunTest(unittest.TestCase):
         self.assertIn("workflow { name }", q)
         self.assertIn("completedAt", pr_ops._pr_query(1, watch=True, runs=False))
         self.assertIn("workflow { name }", pr_ops._pr_query(1, watch=True, runs=True, merged=[0]).split("merged:")[1])
+
+    def test_push_failure_and_later_pull_request_success_stay_two(self):
+        def run(event, concl, started):
+            nd = ck("j", concl, started, wf="W")
+            nd["checkSuite"]["workflowRun"]["event"] = event
+            return nd
+        r = roll(run("pull_request", "FAILURE", T1), run("push", "SUCCESS", T2))
+        self.assertEqual(counts(r), {"pending": 0, "failed": 1, "passed": 1, "missing": 0})
+
+    def test_actions_runs_without_workflow_run_are_not_merged(self):
+        a, b = ck("j", "FAILURE", T1, app="github-actions"), ck("j", "SUCCESS", T2, app="github-actions")
+        self.assertEqual(counts(roll(a, b)), {"pending": 0, "failed": 1, "passed": 1, "missing": 0})
+
+    def test_rollup_without_check_suite_is_not_merged(self):
+        a, b = ck("j", "FAILURE", T1), ck("j", "SUCCESS", T2)
+        del a["checkSuite"], b["checkSuite"]
+        self.assertEqual(counts(roll(a, b)), {"pending": 0, "failed": 1, "passed": 1, "missing": 0})
+        r = roll(ck("j", "FAILURE", T1, wf="W"), ck("j", "SUCCESS", T2, wf="W"))
+        self.assertEqual(counts(r), {"pending": 0, "failed": 0, "passed": 1, "missing": 0})
+
+    def test_non_string_name_does_not_raise(self):
+        a, b = ck("j", "FAILURE", T1, wf="W"), ck("j", "SUCCESS", T2, wf="W")
+        a["name"] = b["name"] = ["x"]
+        pr_ops.map_rollup(roll(a, b))
+        pr_ops.map_rollup(roll(sc(5, "FAILURE", T1), sc(5, "SUCCESS", T2)))
 
 
 if __name__ == "__main__":

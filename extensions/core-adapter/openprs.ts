@@ -88,7 +88,7 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$/;
 
 export const openPrsFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "open-prs.json");
 
-const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName baseRefName bodyText mergeable repository{nameWithOwner} headRepository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug} workflowRun{workflow{name}}}} ... on StatusContext{context state createdAt}}}}}}}}}}}";
+const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName baseRefName bodyText mergeable repository{nameWithOwner} headRepository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug} workflowRun{event workflow{name}}}} ... on StatusContext{context state createdAt}}}}}}}}}}}";
 
 const clean = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, max) : "");
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -199,14 +199,18 @@ function statusState(v: unknown): OpenPrState {
   return "none";
 }
 
-/** The identity a check counts by: a status context by its context, a check run by workflow name + name (app slug without a workflow name). */
-function checkKey(x: Record<string, unknown>, name: string): string {
+/** The identity a check counts by, null when unknown (such a run is never merged with another): a status context by its context, an
+ * Actions check run by workflow name + event + name, a check run of another app by app slug + name. */
+function checkKey(x: Record<string, unknown>, name: string): string | null {
   if ("context" in x) return JSON.stringify(["ctx", name]);
   const suite = isObj(x.checkSuite) ? x.checkSuite : null;
-  const wf = suite && isObj(suite.workflowRun) && isObj(suite.workflowRun.workflow) ? suite.workflowRun.workflow : null;
+  if (!suite) return null;
+  const run = isObj(suite.workflowRun) ? suite.workflowRun : null;
+  const wf = run && isObj(run.workflow) ? run.workflow : null;
   const wname = wf ? clean(wf.name, 120) : "";
-  const slug = suite && isObj(suite.app) ? clean(suite.app.slug, 60) : "";
-  return JSON.stringify(wname ? ["run", wname, name] : ["run", null, slug, name]);
+  if (wname) return JSON.stringify(["run", wname, typeof run?.event === "string" ? run.event : null, name]);
+  const slug = isObj(suite.app) ? clean(suite.app.slug, 60) : "";
+  return slug && slug !== "github-actions" ? JSON.stringify(["app", slug, name]) : null;
 }
 
 /** Order of the runs of one check: start time (none yet, queued: newest), then completion time (none: newest). */
@@ -223,11 +227,12 @@ function checksOf(roll: unknown): OpenPrCheck[] {
   if (!isObj(roll)) return [];
   const nodes = isObj(roll.contexts) && Array.isArray(roll.contexts.nodes) ? roll.contexts.nodes : [];
   const latest = new Map<string, { x: Record<string, unknown>; name: string }>();
+  let seq = 0;
   for (const x of nodes) {
     if (!isObj(x)) continue;
     const name = clean(x.name ?? x.context, 120);
     if (!name) continue;
-    const key = checkKey(x, name);
+    const key = checkKey(x, name) ?? `single:${seq++}`;
     const old = latest.get(key);
     if (old) {
       const [a, b] = [newestRank(x), newestRank(old.x)];

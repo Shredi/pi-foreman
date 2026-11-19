@@ -1110,19 +1110,26 @@ def _rollup_nodes(roll):
 
 
 def _check_key(nd):
-    """The identity a check counts by: a StatusContext by its context, a CheckRun by workflow name + check name (app slug when the
-    workflow name is unknown, the name alone when neither is)."""
+    """The identity a check counts by, None when it is unknown (such a run is never merged with another): a StatusContext by its
+    context, an Actions check run by workflow name + event + check name, a check run of another app by app slug + check name."""
     if nd.get("__typename") == "StatusContext":
-        return ("ctx", nd.get("context"))
+        ctx = nd.get("context")
+        return ("ctx", ctx) if isinstance(ctx, str) and ctx else None
+    name = nd.get("name")
     suite = nd.get("checkSuite")
-    wf = suite.get("workflowRun") if isinstance(suite, dict) else None
+    if not isinstance(suite, dict) or not isinstance(name, str) or not name:
+        return None
+    wf = suite.get("workflowRun")
     flow = wf.get("workflow") if isinstance(wf, dict) else None
     wname = flow.get("name") if isinstance(flow, dict) else None
-    app = suite.get("app") if isinstance(suite, dict) else None
-    slug = app.get("slug") if isinstance(app, dict) else None
     if isinstance(wname, str) and wname:
-        return ("run", wname, nd.get("name"))
-    return ("run", None, slug if isinstance(slug, str) and slug else None, nd.get("name"))
+        event = wf.get("event")
+        return ("run", wname, event if isinstance(event, str) else None, name)
+    app = suite.get("app")
+    slug = app.get("slug") if isinstance(app, dict) else None
+    if isinstance(slug, str) and slug and slug != OWN_RUNNER:
+        return ("app", slug, name)
+    return None
 
 
 def _newest_rank(nd):
@@ -1141,6 +1148,8 @@ def _latest_nodes(roll):
     best = {}
     for i, nd in enumerate(_rollup_nodes(roll)):
         key = _check_key(nd)
+        if key is None:
+            key = ("single", i)
         if key not in best or _newest_rank(nd) >= _newest_rank(best[key][1]):
             best[key] = (i, nd)
     return [nd for _, nd in sorted(best.values(), key=lambda e: e[0])]
