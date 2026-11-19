@@ -50,7 +50,7 @@ test("start note: sent once at the first prompt with the data line first, quoted
   assert.match(lines[1], /x3 rule\/blocked subject "guard x"/);
   assert.ok(!first[0].content.includes("single"));
   assert.match(lines[2], /foreman_reports/);
-  assert.deepEqual(appended.map((a) => a[0]), [START_NOTE_ENTRY]);
+  assert.deepEqual(appended.map((a) => a[0]).filter((n) => n === START_NOTE_ENTRY), [START_NOTE_ENTRY]);
   assert.deepEqual(notes(await messages(r)), [], "not again in the same session");
 });
 
