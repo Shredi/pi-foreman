@@ -5576,6 +5576,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (route.review || namedLedger.paths.some((p) => p !== null)) persistRoute(runId, route);
         }
         if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);
+        // a resumed review run is a new run id: it takes the occasion and shadow of the run it resumes (every run-end consumer reads `byRun`); a gate primary does not reopen its panel
+        else if (runId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume") {
+          const earlier = s.reviewRuns.byRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "");
+          if (earlier && !s.reviewRuns.byRun.has(runId)) capSet(s.reviewRuns.byRun, runId, earlier.bind ? earlier : { ...earlier, panel: null });
+        }
         trackActive(s.activeRuns, event.input, event.details, event.isError);
         if (!s.isChild) {
           // Budgets restart only for a launch that started (a run id came back), not a refused one.
