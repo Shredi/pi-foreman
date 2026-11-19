@@ -125,6 +125,7 @@ export const importEvent = (c: ImportCounts, from: string): Record<string, unkno
 
 /** Appends a stored row to `reports.jsonl` in `dir` (the handoff dir of a parent-opened session) under its own lock. Throws on failure; the caller treats that as best effort. */
 export function appendHandoff(dir: string, row: Json): void {
+  if (!fs.statSync(dir).isDirectory()) throw new Error("not a directory"); // the dir belongs to the session opener; never created here
   const file = path.join(dir, HANDOFF_REPORTS);
   withFileLock(`${file}.lock`, () => fs.appendFileSync(file, `${JSON.stringify(row)}\n`));
 }
