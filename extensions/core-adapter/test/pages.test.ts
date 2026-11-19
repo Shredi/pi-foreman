@@ -10,7 +10,7 @@ import { planVersionHash } from "../checkpoint.ts";
 import { PROSE_FIELDS } from "../gate.ts";
 import { fenceSha } from "../mermaid.ts";
 import type { Engine } from "../mermaid.ts";
-import { fileOfId, NOTES_KEPT, PAGE_MAX_BYTES, foldPlanSection, parsePagesJson, renderMarkdown, renderPage } from "../pages.ts";
+import { fileOfId, NOTES_KEPT, PAGE_MAX_BYTES, STYLE, foldPlanSection, parsePagesJson, renderMarkdown, renderPage } from "../pages.ts";
 import type { PagesIndex } from "../pages.ts";
 import { ownerSectionIssues, ownerSummary, planFormIssues } from "../ownertext.ts";
 import { PrWatches } from "../prwatch.ts";
@@ -104,7 +104,7 @@ test("page: over 900 KiB the diagrams become code blocks; still over it, the pag
   assert.match(dropped, /language-mermaid/);
   assert.doesNotMatch(dropped, /base64/);
   const huge = renderPage({ title: "T", kicker: "k", markdown: `# t\n\n${"word ".repeat(PAGE_MAX_BYTES / 4)}`, source: "plan-x.md" });
-  assert.ok(Buffer.byteLength(huge) < 6000); // the page style grew from 1.4 KB to about 4 KB; the page is still small
+  assert.ok(Buffer.byteLength(huge) < Buffer.byteLength(STYLE) + 2582); // the page style grew from 1.4 KB to about 4 KB; the page is still small
   assert.match(huge, /too large/);
   assert.match(huge, /<code>plan-x\.md<\/code>/);
   assert.doesNotMatch(huge, /word word/);

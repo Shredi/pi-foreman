@@ -255,13 +255,13 @@ const sectionKey = (heading: string): string => heading.trim().toLowerCase();
 /** A fragment id from a heading: lowercase ascii words joined by `-`; `section` when nothing is left. */
 const slugOf = (heading: string): string => heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
 
-export interface RenderedPart {
+interface RenderedPart {
   html: string;
   /** The part is the wrapped `For the owner` section. */
   owner?: boolean;
 }
 
-export interface FoldedSection {
+interface FoldedSection {
   id: string;
   heading: string;
 }
@@ -278,7 +278,7 @@ function ownerSection(heading: string, body: string[], opts: MarkdownOpts): stri
 }
 
 /** Markdown to its top-level parts (and the folded sections among them), see renderMarkdown. */
-export function renderParts(markdown: string, opts: MarkdownOpts = {}): { parts: RenderedPart[]; folds: FoldedSection[] } {
+function renderParts(markdown: string, opts: MarkdownOpts = {}): { parts: RenderedPart[]; folds: FoldedSection[] } {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
   const { fold, ownerLayout } = opts;
   if (!fold && !ownerLayout) return { parts: [{ html: blocks(lines, opts, false, 0) }].filter((p) => p.html !== ""), folds: [] };
