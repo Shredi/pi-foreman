@@ -1159,5 +1159,21 @@
 {"path":"container","tool":"bash","line":"podman exec c sh -c 'shred -u /tmp/k'","was":{"foreman":"allow","child":"allow"}},
 {"path":"container","tool":"bash","line":"podman exec c sh -c 'mkfs /dev/sda'","was":{"foreman":"allow","child":"allow"}},
 {"path":"container","tool":"bash","line":"podman exec c sh -c 'find / -delete'","was":{"foreman":"allow","child":"allow"}},
-{"path":"container","tool":"bash","line":"podman exec c sh -c \"cd /app && npm test\"","was":{"foreman":"allow","child":"allow"}}
+{"path":"container","tool":"bash","line":"podman exec c sh -c \"cd /app && npm test\"","was":{"foreman":"allow","child":"allow"}},
+{"path":"body-arith-for","tool":"bash","line":"for ((i=0;i<1;i++)); do rm -rf ~; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-arith-for","tool":"bash","line":"for ((i=0;i<1;i++)); do rm -rf $X; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-arith-for","tool":"bash","line":"for ((i=0;i<1;i++)); do find $X -delete; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-arith-for","tool":"bash","line":"for ((i=0;i<1;i++)); do echo hi > $F; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-arith-for","tool":"bash","line":"for ((i=0;i<1;i++)); do ls; done","was":{"foreman":"allow","child":"allow"}},
+{"path":"body-select","tool":"bash","line":"select x in a; do rm -rf ~; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-select","tool":"bash","line":"select x in a; do rm -rf $X; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-select","tool":"bash","line":"select x in a; do find $X -delete; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-select","tool":"bash","line":"select x in a; do echo hi > $F; done","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-select","tool":"bash","line":"select x in a; do ls; done","was":{"foreman":"allow","child":"allow"}},
+{"path":"body-coproc","tool":"bash","line":"coproc { rm -rf ~; }","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-coproc","tool":"bash","line":"coproc { rm -rf $X; }","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-coproc","tool":"bash","line":"coproc { find $X -delete; }","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-coproc","tool":"bash","line":"coproc { echo hi > $F; }","was":{"foreman":"deny","child":"refused"}},
+{"path":"body-coproc","tool":"bash","line":"coproc { ls; }","was":{"foreman":"allow","child":"allow"}},
+{"path":"redirect","tool":"bash","line":"busybox sh -c 'echo > $F arg'","was":{"foreman":"allow","child":"allow"}}
 ]}

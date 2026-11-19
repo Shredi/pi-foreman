@@ -1383,7 +1383,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (rest) {
       const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
-      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque }));
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd }));
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, rmAsks && !PRIVILEGE.has(prog) && seg.wrappers.length === 0);
       if (h) return withFragment(h, seg);
       continue;
@@ -1427,11 +1427,13 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     const unknown = unknownFloor(text, segs, env);
     if (unknown) return unknown;
   }
-  if (segs.some((s) => s.opaque === "function_def")) {
+  // every segment kind whose body `opaqueBodies` extracts (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
+  const opaque = segs.find((s) => s.opaque !== null);
+  if (opaque) {
     for (const body of opaqueBodies(text, true)) {
-      const inner = parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
+      const inner = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
       // a function inside a `-c` or eval string (or behind any wrapper) was a recursive rm run as code: a deny, never the dialog of a literal command
-      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && segs.find((x) => x.opaque === "function_def")?.wrappers.length === 0);
+      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && opaque.wrappers.length === 0);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
