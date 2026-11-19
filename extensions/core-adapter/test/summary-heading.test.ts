@@ -230,3 +230,29 @@ test("both headings, HTML plan: an empty Summary first, a filled For the owner l
   assert.ok(refused(r), String(r.blocked));
   assert.match(r.blocked ?? "", /empty/);
 });
+
+test("alert markers: a box inside a plain quote loses its marker as on the page", () => {
+  const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
+  const cases: [string, number][] = [
+    ["> text\n> > [!NOTE]\n> > body", 1],
+    ["> [!NOTE]\n> a\n\nplain\n\n> text\n> > [!TIP]\n> > b\n\n> [!WARNING]\n> c", 3],
+  ];
+  for (const [body, boxes] of cases) {
+    const md = `## Summary\n\n${body}\n`;
+    assert.equal(count(renderMarkdown(md), /<blockquote class="callout/g), boxes, body);
+    const dialog = ownerSummary(md);
+    assert.equal(count(dialog, /\[!/g), 0, `${body}\n${dialog}`);
+  }
+  assert.match(ownerSummary("## Summary\n\n> text\n> > plain\n"), /\n {2}> text\n {2}> plain$/);
+});
+
+test("the write result names the form hints of a Summary and gives none for a complete one", async (t) => {
+  const w = world(t);
+  const a = await w.adapter("startup");
+  fs.writeFileSync(w.planFile, "# W\n\n## Summary\n\nWe ship the widget.\n\n" + REST);
+  const r = await a.call("write", { path: w.planFile, content: "x" });
+  assert.match(r.note, /pi-foreman: advice: the Summary section misses parts of its form \(.*\): a \*\*Goal:\*\* paragraph, numbered steps, boxes at the end\. This never blocks a review\./);
+  assert.match(r.note, /goal|numbered/i);
+  fs.writeFileSync(w.planFile, "# W\n\n## Summary\n\n**Goal:** ship the widget.\n\n1. Ship it.\n\n" + REST);
+  assert.equal((await a.call("write", { path: w.planFile, content: "x" })).note, "");
+});

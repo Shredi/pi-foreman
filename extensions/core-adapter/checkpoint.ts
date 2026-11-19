@@ -90,7 +90,7 @@ export function sha256(bytes: Buffer): string {
  * Whether a line starts the appendix of a plan file (rulings, not the reviewed plan): a level 2 or 3 heading, case-insensitive,
  * whose text starts with Addendum, Addenda, Ruling, Rulings, Parent ruling or Decision log as a whole word (followed by the end of the
  * line, `:`, ` -`, ` –`, ` —`, ` (` or ` <digit>`), or the line `<!-- plan-appendix -->`. Trailing whitespace is ignored. The en and em dash also match as the
- * three latin1 chars of their UTF-8 bytes (U+0080 never occurs in decoded text), because planBody scans the bytes as latin1.
+ * three latin1 chars of their UTF-8 bytes (E2 80 93/94; a real U+0080 control character is the bytes C2 80 and does not match), because planBody scans the bytes as latin1.
  */
 export function isAppendixLine(line: string): boolean {
   const l = line.replace(/\s+$/, "");

@@ -149,7 +149,7 @@ const codeOf = (e: unknown): string => String((e as { code?: unknown } | null)?.
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
 
-/** First `# ` heading of the plan body (else the plan's `topic`), else its first non-blank line (a comment line such as the generated marker skipped), at most 120 chars without control characters. */
+/** First `# ` heading of the plan body, else its first non-blank line (a comment line such as the generated marker skipped), at most 120 chars without control characters. */
 export function titleOf(bytes: Buffer): string {
   return cleanTitle(planBody(bytes).toString("utf8"), null);
 }

@@ -138,10 +138,11 @@ function ownerFactLine(p: string, cwd: string, opts?: PlanOpts): string {
   return `Summary section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}${hints.length ? `; form hints: ${hints.join("; ")}` : ""}`;
 }
 
-/** A quote block as the page renders it: an alert's marker line is dropped and its body shown with the prefix stripped, recursively (depth 8 as the page); a plain quote keeps its lines. */
+/** A quote block as the page renders it: an alert's marker line is dropped and its body shown with the prefix stripped, recursively (depth 8 as the page); a plain quote keeps its lines and quote prefix, but an alert inside it drops its marker the same way. */
 function quoteLines(lines: readonly string[], at: number, q: { body: string[]; next: number }, depth: number): string[] {
-  if (depth >= 8 || !alertOf(q.body)) return lines.slice(at, q.next);
-  const body = q.body.slice(1);
+  if (depth >= 8) return lines.slice(at, q.next);
+  const alert = alertOf(q.body) !== null;
+  const body = alert ? q.body.slice(1) : q.body;
   const fenced = fencedMask(body);
   const out: string[] = [];
   for (let i = 0; i < body.length; i++) {
@@ -151,7 +152,8 @@ function quoteLines(lines: readonly string[], at: number, q: { body: string[]; n
       i = inner.next - 1;
     } else out.push(body[i]);
   }
-  return out;
+  if (alert) return out;
+  return out.length === body.length && out.every((l, i) => l === body[i]) ? lines.slice(at, q.next) : out.map((l) => `> ${l}`);
 }
 
 /** The whole Summary section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
