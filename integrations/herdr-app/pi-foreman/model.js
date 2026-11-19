@@ -1247,10 +1247,13 @@ function pillOf(pr, d) {
   if (!settled) return { state: null };
   if (rev && (!mine || mine.state === "unreviewed")) return { state: "unreviewed" };
   if (pr?.mergeable === "MERGEABLE" && !["blocked", "behind", "dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
-  if (listOf(pr?.waiting).length && pr?.unsettled !== true && d.fill === "green" && ms !== "behind") return { state: "required" };
+  if (waitingOf(pr).length && d.fill === "green" && ms !== "behind") return { state: "required" };
   if (ms === "blocked" || ms === "behind") return { state: "waiting", merge: ms };
   return { state: null };
 }
+
+// The waiting check names as the card lists them: non-empty strings only.
+const waitingOf = (pr) => listOf(pr?.waiting).filter((s) => typeof s === "string" && s);
 
 function baseDot(pr) {
   const checks = listOf(pr?.checks).map(jobOf).filter(Boolean).map((j) => j.state);
@@ -1300,7 +1303,7 @@ export function prCard(pr) {
     const names = named.filter((j) => j.state === state).map((j) => j.name);
     return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
   };
-  const waitNames = pillOf(pr, baseDot(pr)).state === "required" ? listOf(pr?.waiting).filter((s) => typeof s === "string" && s) : [];
+  const waitNames = pillOf(pr, baseDot(pr)).state === "required" ? waitingOf(pr) : [];
   const waitGroup = { key: "waiting", label: "waiting", count: waitNames.length, names: waitNames.slice(0, CARD_CAP), more: Math.max(0, waitNames.length - CARD_CAP) };
   const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), waitGroup, group("passed", "passed", "ok")];
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");

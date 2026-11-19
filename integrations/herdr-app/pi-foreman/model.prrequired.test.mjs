@@ -117,3 +117,10 @@ test("enrichPrs copies waiting from the feed twin with its check block, and keep
   const own = { ...dotOnly, waiting: ["own-check"] };
   assert.deepEqual(enrichPrs([own], [twin])[0].waiting, ["own-check"]);
 });
+
+test("a raw PR (not through the feed parse) whose waiting holds no non-empty name: no ring, no waiting group", () => {
+  const pr = { number: 7, repo: "acme/app", url: url(7), state: "open", head: H1, mergeState: "clean", mergeable: "UNKNOWN", checks: [{ n: "ci", state: "ok" }], waiting: ["", 5] };
+  assert.deepEqual(prDotState(pr), { pulse: false, fill: "green", conflict: false });
+  assert.equal(prStateText(pr), "CI passing");
+  assert.equal(names(prCard(pr), "waiting"), null, "no waiting group on the card");
+});

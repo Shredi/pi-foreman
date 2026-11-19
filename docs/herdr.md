@@ -717,11 +717,11 @@ Every marker the herdr-app sidebar draws, with the one thing it means. The first
 | `pr-failed` | disc (6 px), chip text and border (on an Open PRs line: the number text) | still | red | a check failed and every job has finished (a draft or work-in-progress PR too; the tooltip says "CI failing") |
 | `pr-failed-running` | disc (6 px), chip text and border (on an Open PRs line: the number text) | pulses | red | a check failed and a job still runs: red while the job runs, still once all finished (the tooltip says "CI failing, still running") |
 | `pr-draft-failed` | disc (6 px), chip text and border (on an Open PRs line: the number text) | still | red | a draft or work-in-progress PR with a failed check and every job finished: red like any failed PR |
-| `pr-merge-blocked` | disc (6 px) | still | amber | checks settled and passed, but the merge is blocked or the branch is behind; the tooltip says so. A blocked PR whose tracker names required checks still to come shows `pr-required-wait` instead |
-| `pr-required-wait` | ring (6 px, amber border, no fill) | still | amber | checks settled and passed, the merge is blocked, and the tracker names the required checks still to come (`waiting`); the tooltip says "checks passed, waiting on required checks" and the card lists the names |
+| `pr-merge-blocked` | disc (6 px) | still | amber | checks settled and passed, but the merge is blocked or the branch is behind; the tooltip says so. When the tracker lists required checks still to come (`waiting`) and the merge is not behind, the ring `pr-required-wait` replaces this disc |
+| `pr-required-wait` | ring (6 px, amber border, no fill) | still | amber | checks settled and passed, the tracker names the required checks still to come (`waiting`), and the merge is not behind (blocked, or not known to be mergeable); the tooltip says "checks passed, waiting on required checks" and the card lists the names |
 | `pr-not-reviewed` | disc (6 px) and the token "unreviewed head" | still | blue | checks green, the head is not reviewed |
 | `pr-ready` | check mark (bold ✓, 12 px, in the chip's 14 px box) | still | green | ready to merge: checks settled green, mergeable, merge state fine, and reviewed when a session reviews (the tooltip says "ready to merge") |
-| `pr-ci-passing` | disc (6 px) | still | green | checks settled green and nothing more known: an older feed, or the merge is not known to be mergeable (the tooltip says "CI passing") |
+| `pr-ci-passing` | disc (6 px) | still | green | checks settled green and nothing more known: an older feed, or the merge is not known to be mergeable (the tooltip says "CI passing"); with waiting required checks the ring `pr-required-wait` replaces it |
 | `pr-conflict` | small disc with "!" beside the dot | still | red | the PR conflicts with its base; the dot keeps its colour |
 | `pr-no-checks` | disc (6 px) | still | grey | no check data |
 
