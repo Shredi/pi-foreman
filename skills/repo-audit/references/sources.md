@@ -152,7 +152,7 @@ Any repository where agents write changes may keep these stores. They are generi
 - Findings stores: review or triage logs with ids, status and a rule or cause. Each finding id is the evidence for its group.
 - Run logs: a record of agent runs with a pass or fail result. It is the basis for a run count, when one exists.
 
-A store can be large. Sample it as step 3 says, and say how many items the store holds in total. A store may also hold rows from other repositories; filter to the target repository and report how many rows you kept.
+A store can be large. Sample it as step 3 says, and say how many items the store holds in total. A store may also hold rows from other repositories; keep the target repository's rows (`foreman findings list --repo OWNER/NAME` or `--workspace here`, see the adapters) and report how many rows you kept.
 
 ## Runtime verification sources
 
@@ -172,7 +172,7 @@ Use this adapter when the repository has pi-foreman's stores for this repository
 
 The `foreman` command is the shell wrapper `bin/foreman` in the pi-foreman checkout. Run it as a command (`bin/foreman findings list`).
 
-- Findings store: `foreman findings list` prints the findings. The subcommands are `extract`, `record`, `list`, `dismiss` and `export`; `foreman findings` alone prints a usage error. Add `--json` to parse the output. The store belongs to the user account, not to the repository, so it holds rows from other repositories too. Filter the rows to the target repository by the paths or repository name in each row, then report how many rows belong to it and how many you kept. Group the kept rows by cause and use the finding ids as evidence.
+- Findings store: `foreman findings list` prints the findings. The subcommands are `record`, `list`, `dismiss` and `export`; `foreman findings` alone prints a usage error. Add `--json` to parse the output. The store belongs to the user account, not to the repository, so it holds rows from other repositories too. Rows written by a current harness carry `workspace`, `repo` and `branch`: `--workspace here` (run from the target checkout) or `--repo OWNER/NAME` keeps only that repository. Older rows have no key and match neither filter, so also filter them by the paths in each row. Report how many rows belong to the repository and how many you kept. Group the kept rows by cause and use the finding ids as evidence. `foreman rounds --workspace here --json` gives the review rounds per change (fail and pass counts, high-stakes rounds, plan reviews, PR number).
 - Retro backlog: `foreman backlog list` prints the open items; `foreman backlog list --min-count 2 --json` keeps the entries seen at least twice (`backlog brief --min-count 2` builds the same list but always writes a file, so it is not for the audit, which is read-only). Use `--json` to parse the output, `--workspace <path>` or `--all` to choose the workspace, and `--status all` to include closed items. `foreman backlog -h` shows the `--cwd` option. Each open item is a candidate group; check whether a later round closed it.
 - Closed rounds: `.workflow/closed/*/result.md`, the result file of each round. Its open-issues or left-open list is a source of repeated findings:
 

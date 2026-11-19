@@ -6,6 +6,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { withFileLock } from "./statefile.ts";
 import { defectsOf } from "./verdict.ts";
 import { splitLevel } from "./launchmodel.ts";
 import type { PanelFinding } from "./panel.ts";
@@ -59,6 +60,10 @@ export interface RecordContext {
   /** The live reviewer rung, for a result that names no model. */
   live: string | null;
   now: number;
+  /** Workspace key of the main checkout, `owner/name` of its remote and the branch checked out where the review ran (each omitted when unknown). */
+  workspace?: string | null;
+  repo?: string | null;
+  branch?: string | null;
 }
 
 /** The `record` arguments of one review result (without --files-from). */
@@ -66,6 +71,9 @@ export function recordArgs(r: ReviewResult, launch: ReviewLaunch | null | undefi
   const model = r.model ?? c.live ?? "unknown";
   const args = ["record", "--session", c.session, "--gate", r.occasion, "--model", model, "--rung", String(r.rung), "--primary", r.primary ? "1" : "0", "--role", r.role, "--run-id", c.runId, "--source", r.primary ? "live" : "panel", "--cwd", c.cwd, "--agent-dir", c.agentDir];
   if (c.head) args.push("--head", c.head);
+  if (c.workspace) args.push("--workspace", c.workspace);
+  if (c.repo) args.push("--repo", c.repo);
+  if (c.branch) args.push("--branch", c.branch);
   if (r.verdict) args.push("--verdict", r.verdict.toUpperCase());
   if (launch) args.push("--secs", ((c.now - launch.started) / 1000).toFixed(1), "--started-ts", new Date(launch.started).toISOString());
   return args;
@@ -124,4 +132,48 @@ export async function onReviewRunEnd(o: RunEndInput, run: RecordRunner): Promise
     for (const f of findings) out.traces.push({ event: "finding", role: r.role, findingId: f.id, model: splitLevel(model).base, gate: r.occasion, class: f.class, file: traceFile(f.file), line: f.line, primary: r.primary });
   }
   return out;
+}
+
+/** `<agent dir>/pi-foreman/state/findings`, the findings store directory (scripts/foreman_findings.py `findings_dir`). */
+export const findingsDirOf = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "findings");
+
+/** A session's findings file, named as `_session_id` of scripts/foreman_findings.py names it: characters outside [A-Za-z0-9._-] dropped, 64 at most, `session` when empty. */
+export const sessionFileOf = (agentDir: string, session: string): string => path.join(findingsDirOf(agentDir), `${String(session ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64) || "session"}.jsonl`);
+
+export interface PrRow {
+  session: string;
+  workspace: string | null;
+  repo: string;
+  branch: string | null;
+  number: number;
+  head: string | null;
+  ts: string;
+}
+
+/**
+ * Appends a `pr` row to the session's findings file, once per PR number (and repository): under the lock file of the Python writer
+ * (`<file>.lock`). Returns false when the row was already there. Throws on a lock timeout or a write error (the caller treats it as best effort).
+ */
+export function appendPrRow(agentDir: string, row: PrRow): boolean {
+  const file = sessionFileOf(agentDir, row.session);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  return withFileLock(`${file}.lock`, () => {
+    let text = "";
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      // no file yet
+    }
+    for (const line of text.split("\n")) {
+      if (!line.includes('"pr"')) continue;
+      try {
+        const r = JSON.parse(line) as Record<string, unknown>;
+        if (r.type === "pr" && r.number === row.number && r.repo === row.repo) return false;
+      } catch {
+        // a torn line
+      }
+    }
+    fs.appendFileSync(file, `${JSON.stringify({ type: "pr", ...row })}\n`, "utf8");
+    return true;
+  });
 }

@@ -124,5 +124,13 @@ class FeatureMap(unittest.TestCase):
                          "docs/features.md is stale; run python scripts/foreman_docs.py features")
 
 
+class RoundsCommand(unittest.TestCase):
+    def test_rounds_belongs_to_the_findings_feature_and_has_a_wrapper_entry(self):
+        feature = next(f for f in fd.load_features()["features"] if f["id"] == "findings")
+        self.assertIn("foreman rounds", feature["commands"])
+        self.assertIn("rounds", fd.bin_subcommands())
+        self.assertIn("foreman rounds", (ROOT / "docs" / "features.md").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

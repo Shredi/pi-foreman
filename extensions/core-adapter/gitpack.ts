@@ -15,6 +15,7 @@ import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, remoteReposOf, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { commitOf, headOf, prGateRefusal } from "./reviews.ts";
+import { currentBranch } from "./workspacekey.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
@@ -293,6 +294,8 @@ export interface PrPackSession {
   githubHosts?(): GithubHosts;
   /** Draft handling is on (tools.prDraft not false, the review gate and the PR feed on). Absent: off, pr_create as it always was. */
   draftFlow?(): boolean;
+  /** Appends the `pr` row of a watched PR to the session's findings file (findings.ts appendPrRow); may throw. Absent: nothing is written. */
+  recordPr?(row: { repo: string; number: number; branch: string | null; head: string | null; cwd: string }): Promise<void>;
 }
 
 export type TrackOutcome = AddOutcome | "off";
@@ -444,6 +447,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         else draftNote = `\n${asked === "no_tracker" ? "the PR is not a draft: no PR tracker is running, so nothing would take it out of draft" : refusedDraft ? "the PR is not a draft (the repository has no draft pull requests)" : "the PR is not a draft (draft handling is off or does not cover this host)"}`;
         const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote }] };
         out = { ...out, content: r.content };
+        await notePr(s, armed, { cwd: dir ?? ctx.cwd, branch: headBranch(params.head) ?? currentBranch(dir ?? ctx.cwd), head: openedOn ?? null });
         if ("duplicate" in armed) return out;
         if ("error" in armed) return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };
         return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${armNote(armed)}` }] };
@@ -662,6 +666,23 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
   }
 }
 
+/** The branch a `head` argument names: the part after the first colon of the fork form `owner:branch` (git forbids colons in branch names), else the argument; null when absent or empty. */
+function headBranch(head: unknown): string | null {
+  if (typeof head !== "string") return null;
+  const i = head.indexOf(":");
+  return (i >= 0 ? head.slice(i + 1) : head) || null;
+}
+
+/** The `pr` row of a watch that is armed (findings.ts): best effort, after the arm; a failed write is traced and never releases the watch or fails the tool. */
+async function notePr(s: PrPackSession, armed: Armed, at: { cwd: string; branch: string | null; head: string | null }): Promise<void> {
+  if (!s.recordPr || !("key" in armed)) return;
+  try {
+    await s.recordPr({ repo: armed.key.repo, number: armed.key.n, ...at });
+  } catch {
+    s.trace({ event: "pr_watch", outcome: "pr_row_failed" });
+  }
+}
+
 async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<string, unknown>, run: PrRun, report: (o: SafeOpOutcome) => unknown, tool: string) {
   if (params.until !== undefined || params.timeoutSeconds !== undefined) return failure(`${tool}: until and timeoutSeconds are gone: a watch lasts until the PR is merged or closed (pr_unwatch ends it); nothing was done.`, { decision: "bad_request" });
   if (params.number !== undefined && !validNumber(params.number)) return failure(`${tool}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
@@ -693,6 +714,8 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
     if (n === undefined) return failure(`${tool}: the host gave no PR number; nothing was done.`, { decision: "error" });
   }
   const armed = await armWatch(s, ctx, n, url, false, undefined, undefined, false, explicit);
+  // a bare pr_watch follows the checkout's own PR, so its branch is the checkout's; a named number says nothing about the PR's branch
+  await notePr(s, armed, { cwd: ctx.cwd, branch: params.number === undefined ? currentBranch(ctx.cwd) : null, head: "key" in armed ? armed.snap?.head ?? null : null });
   const tracked = armed.tracked ? { tracked: armed.tracked } : {};
   if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate", ...tracked });
   if ("error" in armed) {
