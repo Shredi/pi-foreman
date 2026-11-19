@@ -258,7 +258,7 @@ export interface ReportInput {
   suggest?: unknown;
 }
 
-export type RecordResult = { status: "recorded" | "seen"; id: string; key: string; kind: string; subject: string; effect: string } | { status: "limit" } | { status: "invalid"; error: string };
+export type RecordResult = { status: "recorded" | "seen"; id: string; key: string; kind: string; subject: string; effect: string; /** The stored row of a `recorded` result (the handoff copy appends it). */ row?: Json } | { status: "limit" } | { status: "invalid"; error: string };
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === "string" && (list as readonly string[]).includes(v);
 
@@ -289,7 +289,7 @@ export function recordReport(w: Writer, input: ReportInput, store: Store = store
     const id = crypto.randomBytes(5).toString("hex");
     const row = { row: "report", id, key, kind, subject, what, effect, suggest, repo: w.repo, workspace: w.workspace, branch: w.branch, role: w.role, session: w.session, runId: w.runId, version: harnessVersion(), ts: new Date(now).toISOString(), source: w.source };
     fs.appendFileSync(store.file, `${JSON.stringify(row)}\n`);
-    return { status: "recorded", id, key, kind, subject, effect };
+    return { status: "recorded", id, key, kind, subject, effect, row };
   });
 }
 

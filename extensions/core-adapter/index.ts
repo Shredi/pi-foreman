@@ -149,8 +149,9 @@ import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
+import { importEvent, importText } from "./reportsimport.ts";
 import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, emitPendingLessons, retroCounters, runReport, runReports, type ReportSession } from "./reportstool.ts";
-import { recordReport, reportContext } from "./reports.ts";
+import { recordReport, reportContext, storeFor } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
@@ -2138,6 +2139,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
         notify: (msg, level) => ctx.ui.notify(msg, level),
         trace: (rec) => s.trace?.emit(rec),
+        importReports: async (data) => {
+          if (get(s.config.config, "retro.report") === false) return;
+          try {
+            const counts = importText(storeFor(s.cwd), (await reportContext(s.cwd)).repo, data.toString("utf8"));
+            s.trace?.emit(importEvent(counts, "remote"));
+          } catch {
+            s.trace?.emit({ event: "reports_import", from: "remote", failed: true });
+          }
+        },
       });
       remoteWatch.start();
     }
@@ -6504,7 +6514,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       expireDays: typeof expire === "number" && expire >= 1 ? expire : undefined,
       workspaceOverride: get(s.config.config, "retro.workspaceKey"),
       emit: (event, payload) => pi.events?.emit(event, payload),
+      ...(handoffDirOf(s) ? { handoffDir: handoffDirOf(s) as string } : {}),
     };
+  };
+  /** The handoff dir of a parent-opened session: a child gets it from its launch binding (its env lost the variable), a main session from `PI_FOREMAN_HANDOFF_DIR`. */
+  const handoffDirOf = (s: Session): string | null => {
+    const d = (s.isChild ? launchBinding?.handoffDir : process.env.PI_FOREMAN_HANDOFF_DIR)?.trim();
+    return d && (path.isAbsolute(d) || path.win32.isAbsolute(d)) ? d : null;
   };
   /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
   const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<"recorded" | "seen" | null> => {
@@ -6527,6 +6543,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = await ensureSession(ctx);
       const r = await runReport(reportSession(s), params);
       if (r.event) s.trace?.emit({ event: "report", role: s.usage.line.role, ...r.event });
+      if (r.handoff && r.event) s.trace?.emit({ event: "report_handoff_failed", id: r.event.id });
       return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
     },
   } as never);
