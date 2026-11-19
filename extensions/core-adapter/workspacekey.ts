@@ -9,7 +9,7 @@ import { validRepo } from "./prhost.ts";
 
 /** Python `sanitize_key`: `/`-separated segments of [A-Za-z0-9._-], other characters become `-`; throws on an empty key or a `.`/`..` segment. */
 export function sanitizeKey(key: string): string {
-  const segs = String(key ?? "").replace(/\\/g, "/").split("/").filter(Boolean).map((s) => s.replace(/[^A-Za-z0-9._-]/g, "-"));
+  const segs = String(key ?? "").replace(/\\/g, "/").split("/").filter(Boolean).map((s) => s.replace(/[^A-Za-z0-9._-]/gu, "-"));
   if (segs.length === 0) throw new Error("empty workspace key");
   if (segs.some((s) => s === "." || s === "..")) throw new Error(`workspace key may not contain '.' or '..' segments: ${key}`);
   return segs.join("/");
@@ -26,9 +26,12 @@ export function deriveKey(real: string, platform: NodeJS.Platform = process.plat
   return sanitizeKey(`${base}-${crypto.createHash("sha1").update(normal, "utf8").digest("hex").slice(0, 8)}`);
 }
 
+// Python `str.strip()` whitespace: JS `\s` minus U+FEFF, plus the separators U+001C-U+001F and U+0085
+const PY_BLANK = /^[\s\x1c-\x1f\x85]*$/u.source === "" ? /^$/ : /^(?:(?!\uFEFF)[\s\x1c-\x1f\x85])*$/;
+
 /** Python `workspace_key`: the `retro.workspaceKey` override (sanitised) when it is a non-blank string, else the key derived from `root`'s real path. */
 export function workspaceKey(root: string, override?: unknown): string {
-  if (typeof override === "string" && override.trim()) return sanitizeKey(override.trim());
+  if (typeof override === "string" && !PY_BLANK.test(override)) return sanitizeKey(override);
   let real: string;
   try {
     real = fs.realpathSync(path.resolve(root));

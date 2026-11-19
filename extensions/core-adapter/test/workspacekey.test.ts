@@ -129,3 +129,22 @@ test("repoOf: origin, else the first remote by name, else null", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+const OVERRIDES = [" my key ", "my key", "  ", "", "\t", "a.b", "..", ".", "a/../b", "a//b/", "/lead", "back\\slash", "ünï/cødé", "emoji😀x", "x".repeat(300), "\x1ckey\x1f", " key ", "﻿key", " key ", " . ", "k\n"];
+
+test("workspaceKey override: same result as Python workspace_key for each value", { skip: spawnSync(PY, ["-I", "-c", "pass"]).status !== 0 }, () => {
+  const root = tmp();
+  for (const o of OVERRIDES) {
+    const py = spawnSync(PY, ["-I", "-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_backlog as bl\ntry:\n  print(json.dumps(bl.workspace_key(sys.argv[1], {}, sys.argv[2])))\nexcept ValueError:\n  print(json.dumps(None))`, root, o], { encoding: "utf8" });
+    assert.equal(py.status, 0, py.stderr);
+    const want = JSON.parse(py.stdout.trim()) as string | null;
+    let got: string | null;
+    try {
+      got = workspaceKey(root, o);
+    } catch {
+      got = null;
+    }
+    assert.equal(got, want, JSON.stringify(o));
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+});

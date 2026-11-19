@@ -447,7 +447,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         else draftNote = `\n${asked === "no_tracker" ? "the PR is not a draft: no PR tracker is running, so nothing would take it out of draft" : refusedDraft ? "the PR is not a draft (the repository has no draft pull requests)" : "the PR is not a draft (draft handling is off or does not cover this host)"}`;
         const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote }] };
         out = { ...out, content: r.content };
-        await notePr(s, armed, { cwd: dir ?? ctx.cwd, branch: typeof params.head === "string" && params.head ? params.head : currentBranch(dir ?? ctx.cwd), head: openedOn ?? null });
+        await notePr(s, armed, { cwd: dir ?? ctx.cwd, branch: headBranch(params.head) ?? currentBranch(dir ?? ctx.cwd), head: openedOn ?? null });
         if ("duplicate" in armed) return out;
         if ("error" in armed) return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };
         return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${armNote(armed)}` }] };
@@ -664,6 +664,13 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     s.watches.release(key);
     throw err;
   }
+}
+
+/** The branch a `head` argument names: the part after the first colon of the fork form `owner:branch` (git forbids colons in branch names), else the argument; null when absent or empty. */
+function headBranch(head: unknown): string | null {
+  if (typeof head !== "string") return null;
+  const i = head.indexOf(":");
+  return (i >= 0 ? head.slice(i + 1) : head) || null;
 }
 
 /** The `pr` row of a watch that is armed (findings.ts): best effort, after the arm; a failed write is traced and never releases the watch or fails the tool. */

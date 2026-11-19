@@ -70,7 +70,14 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
     }
     filter.since = t;
   }
-  if (opts.workspace !== undefined) filter.workspace = opts.workspace === "here" ? workspaceKeyOf(d.cwd, await d.workspaceOverride()) : opts.workspace;
+  if (opts.workspace === "here") {
+    try {
+      filter.workspace = workspaceKeyOf(d.cwd, await d.workspaceOverride());
+    } catch (e) {
+      err(`foreman rounds: ${(e as Error).message}\n`);
+      return 2;
+    }
+  } else if (opts.workspace !== undefined) filter.workspace = opts.workspace;
   if (opts.branch !== undefined) filter.branch = opts.branch;
   if (opts.pr !== undefined) filter.pr = opts.pr;
   const changes = roundsOf(readStore(d.agentDir), filter);

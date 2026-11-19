@@ -145,3 +145,14 @@ test("a session without recordPr (an older caller) arms the watch as before", as
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("pr_create: a fork-form head owner:branch stores the branch after the first colon", async () => {
+  const dir = checkout("current-branch");
+  try {
+    const h = setup(created);
+    await h.call("pr_create", { title: "t", body: "b", head: "someone:feature/x" }, dir);
+    assert.equal(h.rows[0].branch, "feature/x");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

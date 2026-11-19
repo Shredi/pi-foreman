@@ -103,3 +103,16 @@ test("bad arguments print the usage and exit 2", async () => {
     h.done();
   }
 });
+
+test("rounds --workspace here with an override that is not a key: one error line, exit 2", async () => {
+  const h = rig([], { workspaceOverride: async () => ".." });
+  try {
+    const r = await h.run("--workspace", "here");
+    assert.equal(r.code, 2);
+    assert.equal(r.out, "");
+    assert.match(r.err, /^foreman rounds: .*\.\..*\n$/);
+    assert.equal(r.err.trim().split("\n").length, 1);
+  } finally {
+    h.done();
+  }
+});
