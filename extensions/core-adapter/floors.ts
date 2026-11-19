@@ -1320,26 +1320,23 @@ function psRemoteKind(text: string): string | null {
 
 const withFragment = (h: FloorHit, seg: ShellSegment): FloorHit => (h.fragment ? h : { ...h, fragment: cutFragment([seg.program, ...seg.argv].join(" ")) });
 
-/** The command behind `sudo`/`doas` and the like (`_strip_wrappers`): the privilege program's own options, `-u user` included, are taken off; the segment is otherwise as it was. */
-function behindPrivilege(seg: ShellSegment): ShellSegment {
-  let s = seg;
-  while (PRIVILEGE.has(base(s.program))) {
+/** The words left of a segment when its program is a privilege program (`_strip_wrappers`: its own options, `-u user` included, taken off) or a multiplexer (`busybox rm`); null when it is neither. */
+function behindWrapper(seg: ShellSegment): string[] | null {
+  const prog = base(seg.program);
+  if (PRIVILEGE.has(prog)) {
     let i = 0;
-    while (i < s.argv.length && s.argv[i].startsWith("-")) i += /^-[ugpCUhrt]$/.test(s.argv[i]) ? 2 : 1;
-    if (i >= s.argv.length) return s;
-    s = { ...s, program: s.argv[i], argv: s.argv.slice(i + 1) };
+    while (i < seg.argv.length && seg.argv[i].startsWith("-")) i += /^-[ugpCUhrt]$/.test(seg.argv[i]) ? 2 : 1;
+    return i < seg.argv.length ? seg.argv.slice(i) : null;
   }
-  return s;
+  return /^(?:busybox|toybox)$/.test(prog) && seg.argv.length > 0 && !seg.argv[0].startsWith("-") ? seg.argv : null;
 }
 
-/** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, an applet's words). */
-function localKind(seg0: ShellSegment, prog0: string, env: FloorEnv, rmAsks: boolean, inBody = false): FloorHit | null {
-  const seg = behindPrivilege(seg0);
-  const prog = seg === seg0 ? prog0 : base(seg.program);
+/** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, the words behind a wrapper). */
+function localKind(seg: ShellSegment, prog: string, env: FloorEnv, rmAsks: boolean): FloorHit | null {
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
-  // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) only where the rm stood as a literal command: not behind
-  // xargs, a shell string or eval, `sudo`/`doas`, nor behind `env`/`command` in a function body (the old check's bypass wrappers); the home, root and system targets and shred were denies
-  const literal = rmAsks && seg === seg0 && !seg.wrappers.some((w) => base(w) === "xargs" || (inBody && (base(w) === "env" || base(w) === "command")));
+  // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) only where the rm stood as a literal command: no wrapper of
+  // the parser (xargs, env, a shell string, eval ...) and nothing unwrapped before (`rmAsks`); the home, root and system targets and shred were denies
+  const literal = rmAsks && seg.wrappers.length === 0;
   if (d) return withFragment(d.rule === "floor-delete-outside" && literal && prog === "rm" ? { ...d, kind: "ask" } : d, seg);
   if (pythonDisk(seg, prog)) return withFragment(hit("disk", `\`${prog}\` formats, erases or overwrites a disk. Ask the user.`), seg);
   const unreadable = unknownWriteTarget(seg, prog);
@@ -1359,34 +1356,32 @@ function scriptsOf(seg: ShellSegment, prog: string): string[] {
   return rest.length ? [unquote(prog === "cmd" || prog === "pwsh" || prog === "powershell" ? rest.join(" ") : rest[0])] : [];
 }
 
-/** The segments of the applet behind `busybox` or `toybox` (`busybox rm -rf ~` is an `rm`): the same segment with the applet as its program; the words are kept as the applet reads them. */
-function appletOf(seg: ShellSegment): ShellSegment {
-  let s = seg;
-  while (/^(?:busybox|toybox)$/.test(base(s.program)) && s.argv.length > 0 && !s.argv[0].startsWith("-")) s = { ...s, program: s.argv[0], argv: s.argv.slice(1) };
-  return s;
-}
+/** How many unwrappings (privilege program, multiplexer, string, body, remote) the check follows before it refuses the line unread. */
+const NORMALISE_DEPTH = 16;
 
 /**
  * The Python-kind check set (PR B2, owner decisions of 2026-11-18 and 2026-11-19): what the old delete check refused in every mode, read from parsed segments and run
- * on every path that nests a command the parser does not unwrap itself: the body of a shell function, the applet behind `busybox`/`toybox`, and the command of
+ * on every path that nests a command the parser does not unwrap itself: the body of a shell function, what stands behind a privilege program or `busybox`/`toybox` (taken off, parsed again and checked whole, to a fixpoint), and the command of
  * `ssh`, `docker`/`podman` `exec`/`run` and `kubectl exec` (every kind there, a recursive `rm` over ssh excepted). The marker of the outer segment (`function_def`,
  * the runner's `unsupported`) stays as it was, so mode `auto` and the other floors see these lines as before; only the old check's decisions are added.
  * Until PR C moves them to the judge. `top` is the line itself: its own segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true, inBody = false): FloorHit | null {
-  if (depth > MAX_DEPTH) return null;
-  const eff: ShellSegment[] = [];
-  for (const s of segs) {
-    const seg = appletOf(s);
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true): FloorHit | null {
+  // fail closed: a nesting this deep is not read
+  if (depth > NORMALISE_DEPTH) return hit("delete-unknown-target", "This command nests wrappers too deep to be read. Run the command plainly.", text);
+  for (const seg of segs) {
     const prog = base(seg.program);
-    const applet = seg !== s;
-    // a body or string is read behind `sudo`/`doas` as the old check read it; a line's own `sudo` is the privilege floor's
-    eff.push(top ? seg : behindPrivilege(seg));
-    // the applet behind `busybox` or `toybox` is checked as the plain command is (`busybox xargs sh -c ...` is `xargs sh -c ...`)
-    if (applet) {
-      const appletText = [seg.program, ...seg.argv].map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
-      const h = pythonKinds(appletText, parseShell(appletText, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && !seg.wrappers.some((w) => base(w) === "xargs" || SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval"));
+    // one normaliser for every entry point: a privilege program or multiplexer is taken off, the rest is parsed again and gets the whole check (strings, eval, bodies, xargs,
+    // containers, ssh), to a fixpoint. The dialog of a literal rm is for what stood as a plain command: a bare applet (`busybox rm`) keeps it as the old check read it, any other
+    // unwrapping (privilege program, a parser wrapper, a string, a body behind one) is a deny. A line's own `sudo` is the privilege floor's.
+    const rest = top && PRIVILEGE.has(prog) ? null : behindWrapper(seg);
+    if (rest) {
+      const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
+      // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque }));
+      const h = pythonKinds(restText, inner, env, where, depth + 1, false, rmAsks && !PRIVILEGE.has(prog) && seg.wrappers.length === 0);
       if (h) return withFragment(h, seg);
+      continue;
     }
     const remote = remoteCommand(seg, prog);
     if (remote && remote.words.length > 0) {
@@ -1412,23 +1407,20 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && (prog === "pwsh" || prog === "powershell" || prog === "cmd"));
       if (h) return withFragment(h, seg);
     }
-    if (!top || applet) {
-      // a recursive rm the parser unwrapped out of a string run as code (`sh -c`, eval) was a deny, never the dialog of a literal command
-      const h = localKind(seg, prog, env, rmAsks && !seg.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval"), inBody);
+    if (!top) {
+      const h = localKind(seg, prog, env, rmAsks);
       if (h) return h;
     }
   }
-  if (where === "local" && (!top || eff.some((s, i) => s !== segs[i]))) {
-    const unknown = unknownFloor(text, eff, env);
+  if (where === "local" && !top) {
+    const unknown = unknownFloor(text, segs, env);
     if (unknown) return unknown;
   }
   if (segs.some((s) => s.opaque === "function_def")) {
     for (const body of opaqueBodies(text, true)) {
       const inner = parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
-      // a function inside a `-c` or eval string was a recursive rm in a string run as code: a deny, never the dialog of a literal command
-      const fnSeg = segs.find((x) => x.opaque === "function_def");
-      const inString = !!fnSeg?.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval");
-      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && !inString, true);
+      // a function inside a `-c` or eval string (or behind any wrapper) was a recursive rm run as code: a deny, never the dialog of a literal command
+      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && segs.find((x) => x.opaque === "function_def")?.wrappers.length === 0);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
