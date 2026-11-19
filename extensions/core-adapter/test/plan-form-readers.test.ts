@@ -111,8 +111,8 @@ test("planSummary: the old ## Goal heading is the fallback; a fenced **Goal:** i
 });
 
 test("page title: a plan without a heading gets its topic, one with a heading keeps it", () => {
-  assert.equal(titleOf(Buffer.from("## Summary\n\nx\n"), "widget"), "widget");
-  assert.equal(titleOf(Buffer.from("# Own\n\n## Summary\n"), "widget"), "Own");
+  assert.equal(planTitle(["## Summary", "", "x"], "widget"), "widget");
+  assert.equal(planTitle(["# Own", "", "## Summary"], "widget"), "Own");
   assert.equal(titleOf(Buffer.from("## Summary\n\nx\n")), "## Summary", "topic-less: the first line as before");
 });
 
@@ -125,4 +125,15 @@ test("dialog: a box inside a box loses its marker like the page's callout; a pla
   assert.match(out, /> quoted/);
   const html = renderMarkdown(md);
   assert.equal(html.match(/class="callout/g)?.length, 2, "the page renders both boxes");
+});
+
+test("appendix: the latin1 bytes C2 80 94 are no dash and keep the line in the body; E2 80 93/94 still cut", () => {
+  const base = planVersionHash(Buffer.from(BODY));
+  const bad = Buffer.concat([Buffer.from(`${BODY}\n## Ruling `), Buffer.from([0xc2, 0x80, 0x94]), Buffer.from(" x\nlater\n")]);
+  assert.notEqual(planVersionHash(bad), base);
+  assert.equal(planBody(bad).toString("latin1"), bad.toString("latin1"));
+  for (const b of [[0xe2, 0x80, 0x93], [0xe2, 0x80, 0x94]]) {
+    const ok = Buffer.concat([Buffer.from(`${BODY}\n## Ruling `), Buffer.from(b), Buffer.from(" x\nlater\n")]);
+    assert.equal(planVersionHash(ok), base);
+  }
 });

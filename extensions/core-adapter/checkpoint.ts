@@ -94,7 +94,13 @@ export function sha256(bytes: Buffer): string {
  */
 export function isAppendixLine(line: string): boolean {
   const l = line.replace(/\s+$/, "");
-  return l === "<!-- plan-appendix -->" || /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)(?=$|:|[ \t](?:-|[\u2013\u2014]|\u00e2\u0080[\u0093\u0094])|[ \t]\(|[ \t]\d)/i.test(l);
+  return l === "<!-- plan-appendix -->" || /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)(?=$|:|[ \t](?:-|[\u2013\u2014])|[ \t]\(|[ \t]\d)/i.test(l) || bytesDash(l);
+}
+
+/** The keyword part matches case-insensitively, the latin1 dash bytes (E2 80 93/94) case-sensitively: C2 80 94 is no dash. */
+function bytesDash(l: string): boolean {
+  const m = /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)[ \t]/i.exec(l);
+  return m !== null && /^\u00e2\u0080[\u0093\u0094]/.test(l.slice(m[0].length));
 }
 
 /** Start offset of the first appendix line in `text`, or -1 (no appendix). `text` must keep one char per byte (latin1) when used for offsets. */
