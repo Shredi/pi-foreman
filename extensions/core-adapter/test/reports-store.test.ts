@@ -328,3 +328,19 @@ test("a lock that stays held makes the write throw, never write", (t) => {
   assert.throws(() => recordReport(writer(dir), input(), store), /locked/, "waits the lock time (5 s) and gives up");
   assert.equal(fs.existsSync(store.file), false);
 });
+
+test("a report of a done entry reopens it with the earlier done kept in the reason and the file; dropped stays dropped", (t) => {
+  const dir = tmp(t);
+  const store = storeFor(dir);
+  const a = recordReport(writer(dir), input({ subject: "alpha" })) as { key: string };
+  const b = recordReport(writer(dir), input({ subject: "beta" })) as { key: string };
+  assert.equal(setState(store, a.key, { state: "done", pr: 12 }, "test").ok, true);
+  assert.equal(setState(store, b.key, { state: "dropped", reason: "noise" }, "test").ok, true);
+  recordReport(writer(dir, { session: "s2" }), input({ subject: "alpha" }));
+  recordReport(writer(dir, { session: "s2" }), input({ subject: "beta" }));
+  const entries = foldRows(readRows(store.file));
+  const ea = entries.find((e) => e.key === a.key)!;
+  assert.deepEqual([ea.state, ea.pr, ea.reason], ["open", null, "reopened after done (PR #12)"]);
+  assert.equal(entries.find((e) => e.key === b.key)!.state, "dropped");
+  assert.ok(readRows(store.file).some((r) => r.row === "state" && r.key === a.key && r.state === "done"), "the done row stays");
+});

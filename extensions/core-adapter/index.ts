@@ -2058,7 +2058,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
-    if (get(s.config.config, "retro.report") === false && pi.getActiveTools().includes(REPORT_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== REPORT_TOOL)); // retro.report: false = the tool is not offered
+    if (hidesDeclaredTools(s.isChild) && get(s.config.config, "retro.report") === false && pi.getActiveTools().includes(REPORT_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== REPORT_TOOL)); // retro.report: false = the tool is not offered (a child keeps a declared tool; execute refuses there)
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
@@ -6451,13 +6451,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   };
   /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
-  const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<void> => {
+  const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<boolean> => {
     const rs = reportSession(s);
-    if (!rs.enabled) return;
+    if (!rs.enabled) return false;
     try {
-      recordReport({ cwd: s.cwd, role: "foreman", session: rs.foremanSession, runId: null, source: "owner", ...(rs.expireDays !== undefined ? { expireDays: rs.expireDays } : {}), ...(await reportContext(s.cwd, rs.workspaceOverride)) }, { kind: "permission", subject: rec.family, what: rec.command, effect: "slowed", suggest: rec.note });
+      const r = recordReport({ cwd: s.cwd, role: "foreman", session: rs.foremanSession, runId: null, source: "owner", ...(rs.expireDays !== undefined ? { expireDays: rs.expireDays } : {}), ...(await reportContext(s.cwd, rs.workspaceOverride)) }, { kind: "permission", subject: rec.family, what: rec.command, effect: "slowed", suggest: rec.note });
+      return r.status === "recorded" || r.status === "seen";
     } catch {
       // a report never fails the command
+      return false;
     }
   };
   pi.registerTool({
@@ -7246,8 +7248,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         const rec = askFlag.flag(s.id, rest.join(" "));
         if (rec) s.trace?.emit(rec);
-        if (rec) await flagReport(s, rec);
-        ctx.ui.notify(rec ? `pi-foreman: flagged the last answered ask (${rec.family}${s.trace ? "" : "; tracing is off, nothing was written"}).` : "pi-foreman: no ask answered in this session yet; nothing flagged.", rec ? "info" : "warning");
+        const reportWritten = rec ? await flagReport(s, rec) : false;
+        ctx.ui.notify(rec ? `pi-foreman: flagged the last answered ask (${rec.family}${s.trace ? "" : `; tracing is off, ${reportWritten ? "the report was written" : "nothing was written"}`}).` : "pi-foreman: no ask answered in this session yet; nothing flagged.", rec ? "info" : "warning");
         return;
       }
       if (sub === "dialogs") {

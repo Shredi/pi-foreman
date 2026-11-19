@@ -59,13 +59,13 @@ class ReportConfig(unittest.TestCase):
         for role in fc.CHILD_ROLES:
             self.assertNotIn("foreman_report", fc.role_allowlist(cfg, role), role)
 
-    def test_agent_files_list_the_tool_and_keep_the_friction_line(self):
+    def test_agent_files_list_the_tool_and_drop_the_friction_line(self):
         for name in ("builder", "explorer", "reviewer"):
             text = read("agents", f"{name}.md")
             tools = [l for l in text.splitlines() if l.startswith("tools:")][0]
             self.assertIn("foreman_report", tools, name)
             self.assertIn("foreman_report", text.split("---", 2)[2], name)
-        self.assertIn("6. Friction: <what blocked, retried, or was missing", read("agents", "builder.md"))
+            self.assertNotIn("Friction:", text.split("---", 2)[2], name)
 
     def test_features_row_and_docs(self):
         feats = json.loads(read("config", "features.json"))

@@ -145,6 +145,16 @@ test("retro.report false takes the tool off the active tools and a call refuses 
   assert.equal(fs.existsSync(storeFor(off.project).file), false);
 });
 
+test("retro.report false in a child keeps the declared tool active; a call refuses with one line and writes no row", async (t) => {
+  const c = await rig(t, { role: "builder", config: { retro: { report: false } } });
+  assert.ok(c.active.includes("foreman_report"), "a declared tool is never hidden in a child");
+  const res = await c.call("foreman_report", REPORT);
+  assert.equal(res.isError, true);
+  assert.equal(res.text.split("\n").length, 1);
+  assert.match(res.text, /retro\.report/);
+  assert.equal(fs.existsSync(storeFor(c.project).file), false);
+});
+
 test("foreman_reports: list opens with the data line; group and set change the entries; invalid input is refused", async (t) => {
   const a = await rig(t);
   const x = (await a.call("foreman_report", { ...REPORT, subject: "alpha" })).text;

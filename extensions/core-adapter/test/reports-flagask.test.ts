@@ -36,3 +36,24 @@ test("flag-ask: one owner report of kind permission with a masked, capped comman
   assert.ok(!String(flag.command).includes("abcdef1234567890"));
   assert.ok(notes.some((n) => /flagged/.test(n)));
 });
+
+for (const [name, config, tail] of [
+  ["trace off, report written", { trace: { enabled: false } }, "; tracing is off, the report was written)."],
+  ["trace off, report off", { trace: { enabled: false }, retro: { report: false } }, "; tracing is off, nothing was written)."],
+] as const) {
+  test(`flag-ask notice, ${name}: it says what was written`, async (t) => {
+    const notes: string[] = [];
+    const commands = new Map<string, { handler: (a: string, c: unknown) => Promise<void> }>();
+    const ui = { notify: (m: string) => notes.push(m), confirm: async () => false, select: async () => "allow once", input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
+    const r = await r11Rig(t, {}, {
+      ctx: { modelRegistry: registry, ui },
+      config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } }, ...config },
+      piExtra: { registerCommand: (n: string, d: { handler: (a: string, c: unknown) => Promise<void> }) => void commands.set(n, d) },
+    });
+    assert.equal(await r.call("bash", { command: "pip install requests" }), undefined);
+    await commands.get("foreman")!.handler("flag-ask", r.ctx);
+    const note = notes.find((n) => /flagged/.test(n))!;
+    assert.ok(note.endsWith(tail), note);
+    assert.equal(readRows(storeFor(r.project).file).length, tail.includes("report was written") ? 1 : 0);
+  });
+}

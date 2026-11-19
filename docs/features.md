@@ -123,7 +123,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 |---|---|---|---|
 | `orchestration` | The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace. | shipped states | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` |
 | `standard` | Every toggleable feature in its shipped state; the package defaults. | shipped states | none |
-| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
+| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `reports`, `trace` | none |
 
 Toggleable features (`on` and `off` write these leaves into the user config; `*` = every provider present):
 

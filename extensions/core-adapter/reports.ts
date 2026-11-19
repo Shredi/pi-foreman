@@ -158,7 +158,7 @@ export interface Entry {
 const isReport = (r: Json): boolean => r.row === "report" && !!str(r.id) && !!str(r.key) && !!str(r.kind) && typeof r.subject === "string" && typeof r.what === "string";
 const keysOf = (r: Json): string[] => (Array.isArray(r.keys) ? r.keys.filter((k): k is string => typeof k === "string" && k !== "") : []);
 
-/** The entries of a row list, oldest first. Group rows merge keys (later rows win); the last state row of an entry gives its state; a report of an expired entry reopens it. */
+/** The entries of a row list, oldest first. Group rows merge keys (later rows win); the last state row of an entry gives its state; a report of an expired or done entry reopens it (dropped stays dropped). */
 export function foldRows(rows: readonly Json[]): Entry[] {
   const alias = new Map<string, string>();
   const canon = (k: string): string => alias.get(k) ?? k;
@@ -198,6 +198,7 @@ export function foldRows(rows: readonly Json[]): Entry[] {
       const session = str(r.session);
       if (session) e.sessions.add(session);
       if (e.state === "expired") Object.assign(e, { state: "open", stateTs: null, label: null, pr: null, reason: null });
+      else if (e.state === "done") Object.assign(e, { state: "open", stateTs: null, label: null, pr: null, reason: `reopened after done${e.pr ? ` (PR #${e.pr})` : ""}` }); // the done row stays in the file; show prints this reason
     } else if (r.row === "state") {
       const e = entries.get(canon(str(r.key) ?? ""));
       const state = r.state as State;
