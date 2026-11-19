@@ -303,7 +303,7 @@ const LEDGER_ROUTE_ENTRY = "pi-foreman-ledger-route";
 interface LedgerRoute {
   paths: (string | null)[];
   cited: string[][];
-  review?: { launch: string; items: ItemId[]; occasion: Occasion; shadow: boolean };
+  review?: { launch: string; items: ItemId[]; occasion: Occasion; shadow: boolean; failed?: boolean };
 }
 
 interface Session {
@@ -1518,6 +1518,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return record;
   }
 
+  /** A review run that did not complete gives no record, for the notice path too: null is cached and the route (persisted, so a reload knows) says `failed`. */
+  function failedReviewRun(s: Session, runId: string): void {
+    capSet(s.reviewRecords, runId, null);
+    const route = s.ledgerByRun.get(runId);
+    if (!route?.review || route.review.failed) return;
+    const next = { ...route, review: { ...route.review, failed: true } };
+    capSet(s.ledgerByRun, runId, next);
+    persistRoute(runId, next);
+  }
+
   /** The review results of a run end, the verdict from the run's record; a run of a high-stakes launch (its id is kept in the state) reads as `high-stakes` and counts nowhere, with or without bookkeeping. */
   function reviewResultsOfRun(s: Session, runId: string, data: unknown): ReturnType<typeof reviewResultsOfRunEnd> {
     const hs = s.hs.ownerOf(runId) !== null;
@@ -1620,11 +1630,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The `review` part of a route entry read back from a session file; undefined when it is not well formed. */
   function reviewRouteOf(raw: unknown): LedgerRoute["review"] {
     if (!raw || typeof raw !== "object") return undefined;
-    const r = raw as { launch?: unknown; items?: unknown; occasion?: unknown; shadow?: unknown };
+    const r = raw as { launch?: unknown; items?: unknown; occasion?: unknown; shadow?: unknown; failed?: unknown };
     if (typeof r.launch !== "string" || !r.launch || !Array.isArray(r.items) || !(OCCASIONS as readonly unknown[]).includes(r.occasion) && r.occasion !== "high-stakes") return undefined;
     const items = r.items.map(itemIdOf);
     if (items.some((i) => i === null)) return undefined;
-    return { launch: r.launch, items: items as ItemId[], occasion: r.occasion as Occasion, shadow: r.shadow === true };
+    return { launch: r.launch, items: items as ItemId[], occasion: r.occasion as Occasion, shadow: r.shadow === true, ...(r.failed === true ? { failed: true } : {}) };
   }
 
   /** The route of a run into the session file (so it survives a reload); a session file that is not writable keeps it in memory only. */
@@ -2894,7 +2904,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hsOwner = s.isChild ? null : s.hs.ownerOf(runId);
           const reviewResults = s.isChild ? [] : reviewResultsOfRun(s, runId, data);
           // a record of a run that did not complete is ignored (T7)
-          if (!s.isChild && reviewResults.length === 0 && s.reviewRecords.get(runId)) s.trace?.emit({ event: "review_record_ignored", runId, reason: "not_completed" });
+          if (!s.isChild && reviewResults.length === 0 && (s.launchedRoles.get(runId) ?? []).some((r) => REVIEW_ROLES.includes(r))) {
+            if (s.reviewRecords.get(runId)) s.trace?.emit({ event: "review_record_ignored", runId, reason: "not_completed" });
+            failedReviewRun(s, runId);
+          }
           if (!s.isChild) s.reviewerFails.onRun(runId, reviewResults.filter((r) => r.counts && r.role === "reviewer").map((r) => failedItemIds(r.items)), boundLedger(s.markerDir, s.id));
           if (reviewResults.length > 0) recordRunFindings(s, runId, reviewResults);
           if (!s.isChild) {
@@ -4780,14 +4793,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     // panel shadows only (panel.ts): no marks, rounds or review_done
-    const ids = noticeRuns(text)?.ids ?? [];
+    // only review runs this session launched (launch bookkeeping, or the route entry after a reload) are read; a run still going waits for its run end, which decides completion (T7)
+    const ids = (noticeRuns(text)?.ids ?? []).filter((id) => (s.launchedRoles.get(id) ?? []).some((r) => REVIEW_ROLES.includes(r)) || s.ledgerByRun.get(id)?.review);
     if (ids.length > 0 && ids.every((id) => shadowRun(s.reviewRuns.byRun.get(id)))) return;
     // a high-stakes run (its id is kept in the state, or its launch said so) marks no item and opens no round
     if (ids.length > 0 && ids.every((id) => s.hs.ownerOf(id) !== null || s.reviewRuns.byRun.get(id)?.entries.some((e) => e.occasion === "high-stakes"))) return;
     // the record of each run (read once, or the renamed file after a reload) and its occasion from the route entry, else the launch bookkeeping
     const verdicts: (Verdict | null)[] = [];
     for (const id of ids) {
-      const record = verdictRecordOf(s, id);
+      if (s.activeRuns.has(id) && !s.reviewRecords.has(id)) continue;
+      const record = s.ledgerByRun.get(id)?.review?.failed ? null : verdictRecordOf(s, id);
+      if (!record) continue;
       verdicts.push(record && record.verdict !== "incomplete" ? record.verdict : null);
       const launch = s.reviewRuns.byRun.get(id);
       const route = s.ledgerByRun.get(id)?.review;
@@ -4796,7 +4812,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // a second opinion, plan review or panel never marks items (occasion.ts); only a PASS of a counting occasion marks, once per run
       if (record?.verdict === "pass" && !shadow && !launch?.panel && countsForItems(occasion)) markByReview(s, id, [{ items: record.items }], 0);
     }
-    const verdict: Verdict | null = verdicts.includes("fail") ? "fail" : verdicts.length > 0 && verdicts.every((v) => v === "pass") ? "pass" : null;
+    if (verdicts.length === 0) return; // no review run of this notice has a record: the state of the run end stands
+    const verdict: Verdict | null = verdicts.includes("fail") ? "fail" : verdicts.every((v) => v === "pass") ? "pass" : null;
     s.round = onReviewDone(s.round, verdict);
     persistRounds(s);
   }
@@ -5538,9 +5555,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const namedLedger = s.ledgerByCall.get(event.toolCallId);
         s.ledgerByCall.delete(event.toolCallId);
         // a resume names no ledger: the resumed run's route carries over (same or new run id), persisted like the others
-        const resumed = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
+        const resumedRoute = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
+        // the resumed run is a new run: the earlier run's `failed` does not carry over
+        const resumed = resumedRoute?.review?.failed ? { ...resumedRoute, review: { ...resumedRoute.review, failed: undefined } } : resumedRoute;
         if (resumed && runId) {
           capSet(s.ledgerByRun, runId, resumed);
+          if (resumedRoute?.review?.failed) s.reviewRecords.delete(runId);
           if ((resumed.review || resumed.paths.some((p) => p !== null)) && resumeTarget(event.input as Record<string, unknown>) !== runId) persistRoute(runId, resumed);
         }
         // a review launch's route carries its launch id, the ids its verdict tool accepts and its occasion (the notice after a reload reads them)
