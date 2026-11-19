@@ -79,6 +79,8 @@ import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, un
 import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcpEntries } from "./mcpscope.ts";
 import { childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
+import { compareRunEnd, launchRunCwds, noticeText, readonlyRoles, spawnGit, takeStartEntry, traceLines } from "./readonlystate.ts";
+import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
@@ -502,6 +504,11 @@ interface Session {
   /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
   launchTreesByCall: Map<string, Map<string, string | null>>;
   launchTrees: Map<string, Map<string, string | null>>;
+  /** Foreman only: the run-end state hint's start entry (readonlystate.ts) by tool call id until the launch result names the run, then by run id until the run ends. */
+  readonlyStartByCall: Map<string, StartEntry>;
+  readonlyStart: Map<string, StartEntry>;
+  /** Foreman only: the tree roots a picture was taken for, by run id (a resume of that run reuses them). */
+  readonlyRoots: Map<string, string[]>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a reload brings back only the owner's own dialog approval: from the session's ceremony-state entry, planstate.ts, and without a handoff dir also from the approval store). */
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
@@ -575,12 +582,17 @@ export interface AdapterDeps {
   worktreeSnapshot?: (cwd: string) => Promise<string | null>;
   /** Tests: replaces Pi's shell resolution, used by the read question's entry condition (is the bash tool's shell a bash) and the win32 background-shell setup (default: Pi's getShellConfig). */
   getShellConfig?: ShellConfigFn;
+  /** Tests: replaces the git runs of the run-end state pictures (default: readonlystate.ts spawnGit). */
+  readonlyGit?: GitRunner;
+  /** Tests: the deadline of one picture set in ms (default 20 s). */
+  readonlyDeadlineMs?: number;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
   const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
+  const readonlyGit = deps.readonlyGit ?? spawnGit;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
   // The model-only tools line (deferred.ts): built at the first request of a session, then fixed so the prefix stays byte-stable.
@@ -1120,6 +1132,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeads: new Map(),
       launchTreesByCall: new Map(),
       launchTrees: new Map(),
+      readonlyStartByCall: new Map(),
+      readonlyStart: new Map(),
+      readonlyRoots: new Map(),
       plan: null,
       script: newScriptState(),
       scriptRun: null,
@@ -1865,10 +1880,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
-  function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
+  function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string, readOnlyChild = false): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -2812,6 +2827,60 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
   pi.on("session_shutdown", async () => launchWaits.abortAll());
 
+  /**
+   * Run-end state hint (readonlystate.ts, plan readonly-target B.1-B.2): at a reviewer or explorer launch, one picture per tree root the run works in, taken before the child starts.
+   * A launch that includes any other role, a workflow launch and a resume of an unknown or non-read-only run get the `not pictured` entry (no notice at run end).
+   */
+  async function noteReadonlyStart(s: Session, callId: string, input: Record<string, unknown>, cwd: string): Promise<void> {
+    try {
+      const action = actionOf(input);
+      if (action !== null && action !== "resume") return;
+      const target = action === "resume" ? resumeTarget(input) : null;
+      const roles = action === "resume" ? (target ? (s.launchedRoles.get(target) ?? []) : []) : subagentAgents(input);
+      if (!readonlyRoles(roles)) {
+        capSet(s.readonlyStartByCall, callId, { kind: "not pictured" });
+        return;
+      }
+      const ceiling = (c: string): string => treeCeilingOf({ cwd: c, agentDir: s.agentDir, foremanSession: s.id });
+      const known = target ? s.readonlyRoots.get(target) : undefined;
+      const roots = known ?? [...new Set((action === "resume" ? [cwd] : launchRunCwds(input, cwd)).map((c) => treeRootOf(c, ceiling(c))).filter((r): r is string => !!r))];
+      capSet(s.readonlyStartByCall, callId, await takeStartEntry(roots, os.homedir(), readonlyGit, deps.readonlyDeadlineMs));
+    } catch {
+      // no entry: the run end traces `not_compared`
+    }
+  }
+  /**
+   * Run end of a run this session launched: the end picture runs in the background; a difference is one notice, never a stop.
+   * A reviewer or explorer run end without a start entry gets only a trace; it may also fire for a run this session did not launch (a reloaded session cannot tell them apart).
+   */
+  function readonlyRunEnd(s: Session, runId: string, data: unknown): void {
+    const entry = s.readonlyStart.get(runId);
+    s.readonlyStart.delete(runId);
+    const ended = runEndOf(data);
+    const d = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+    if (!entry) {
+      const workflow = d.awaitedByWorkflow === true || !!d.parentWorkflowRunId;
+      if (!workflow && (ended?.role === "reviewer" || ended?.role === "explorer")) s.trace?.emit({ event: "readonly_state_diff", runId, role: ended.role, outcome: "not_compared", reason: "no start entry" });
+      return;
+    }
+    if (entry.kind !== "picture") return;
+    const role = [...new Set(s.launchedRoles.get(runId) ?? [])].join("+") || ended?.role || "child";
+    void compareRunEnd(entry, os.homedir(), readonlyGit, deps.readonlyDeadlineMs)
+      .then((r) => {
+        const lines = traceLines(r);
+        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
+        if (r.outcome === "unchanged") return;
+        let idle = true;
+        try {
+          idle = s.idleCtx ? s.idleCtx.isIdle() : true;
+        } catch {
+          // a stale context: treat as idle
+        }
+        pi.sendMessage({ customType: "pi-foreman-readonly-state", content: noticeText(role, runId, r), display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+      })
+      .catch(() => undefined);
+  }
+
   for (const channel of RUN_END_EVENTS) {
     pi.events?.on(channel, (data) => {
       launchWaits.onRunEnd(data);
@@ -2917,6 +2986,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             });
           }
         }
+        if (!s.isChild && typeof runId === "string") readonlyRunEnd(s, runId, data);
       }
     });
   }
@@ -3243,7 +3313,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       ...(readTools ? { readTools } : {}),
-      env: (cwd) => floorEnvOf(gs, cwd, roots?.sessionDir),
+      env: (cwd) => floorEnvOf(gs, cwd, roots?.sessionDir, roots?.roundReadOnly === true),
       ...(roots ? { roots: () => roots, facts: gateFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
@@ -3384,7 +3454,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           try {
             const entryOk = readClearEntry(
               { tool: event.toolName, text: cmdText, segments: out.segments, dangers: out.dangers, shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
-              floorEnvOf(gs, ctx.cwd, roots?.sessionDir),
+              floorEnvOf(gs, ctx.cwd, roots?.sessionDir, roots?.roundReadOnly === true),
             );
             if (entryOk && roots) {
               const rc = await rt.classifier.readClear({ tool: event.toolName, payload, kind, role, cwd: ctx.cwd, inside: insideDirs(roots), notes: readNotes(out.segments), ...(firstRow ? { follows: firstRow } : {}) }, classifierCtx);
@@ -4403,6 +4473,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the checkouts the verdict applies to (reviewgates.ts): each reviewer entry's own dir; a resume keeps its target's; one unresolved: unknown
           if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, (e) => { const o = occasions.get(e); return o !== undefined && countsForItems(o); })));
         }
+        await noteReadonlyStart(s, event.toolCallId, input, ctx.cwd);
       }
       // Kept for the tool result only once the launch passed every check.
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
@@ -5466,6 +5537,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
         if (trees && runId) capSet(s.launchTrees, runId, trees);
+        const roStart = s.readonlyStartByCall.get(event.toolCallId);
+        s.readonlyStartByCall.delete(event.toolCallId);
+        if (roStart && runId) {
+          capSet(s.readonlyStart, runId, roStart);
+          if (roStart.kind === "picture") capSet(s.readonlyRoots, runId, roStart.roots);
+        }
         const rl = s.reviewRuns.byCall.get(event.toolCallId);
         s.reviewRuns.byCall.delete(event.toolCallId);
         const namedLedger = s.ledgerByCall.get(event.toolCallId);
