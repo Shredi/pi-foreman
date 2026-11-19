@@ -12,11 +12,11 @@
 //
 // D2 required steps (`ceremony.required.<tier>`): counted per session from the run-end events
 // of runs this session launched (single, chain and tasks launches): builder = a builder run that
-// completed (not failed, timed out or stopped); reviewer = a reviewer run whose output has a
-// verdict (PASS/FAIL).
+// completed (not failed, timed out or stopped); reviewer = a reviewer run whose verdict record
+// (verdict.ts) says pass or fail.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { verdictOf, REVIEW_ROLES, type Verdict } from "./rounds.ts";
+import { REVIEW_ROLES, type Verdict } from "./rounds.ts";
 
 export interface TrivialBound {
   files: number;
@@ -205,36 +205,29 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.
  * completed only with status completed (or success true without a status) and no timeout,
  * stop or error.
  */
-export function stepsOfRunEnd(data: unknown): Step[] {
+export function stepsOfRunEnd(data: unknown, results: readonly { index: number; verdict: Verdict | null }[]): Step[] {
   const out: Step[] = [];
-  for (const { agent, verdict } of completedChildren(data)) {
+  for (const { agent, index } of completedChildren(data)) {
     if (agent === "builder") out.push("builder");
-    else if (REVIEW_ROLES.includes(agent) && verdict !== null) out.push("reviewer");
+    else if (REVIEW_ROLES.includes(agent) && results.find((r) => r.index === index)?.verdict) out.push("reviewer");
   }
   return out;
 }
 
-/** Verdicts (null = none parseable) of the completed reviewer children of a run-end event, in order. A builder child revises the tree: only the verdicts after the last one count (the last verdict on the current tree wins). */
-export function reviewVerdictsOfRunEnd(data: unknown): (Verdict | null)[] {
-  const out: (Verdict | null)[] = [];
-  for (const c of completedChildren(data)) {
-    if (c.agent === "builder") out.length = 0;
-    else if (REVIEW_ROLES.includes(c.agent)) out.push(c.verdict);
-  }
-  return out;
+/** Verdicts (null = no verdict: no record, an invalid one, or `incomplete`) of the counting review results of a run end, in order. A review launch is a single launch (review_single_launch), so a builder never shares a run end with a reviewer. */
+export function reviewVerdictsOfRunEnd(results: readonly { counts: boolean; verdict: Verdict | null }[]): (Verdict | null)[] {
+  return results.filter((r) => r.counts).map((r) => r.verdict);
 }
 
-function completedChildren(data: unknown): { agent: string; verdict: Verdict | null }[] {
+function completedChildren(data: unknown): { agent: string; index: number }[] {
   if (!isObj(data)) return [];
   const children = Array.isArray(data.results) && data.results.length > 0 ? data.results.filter(isObj) : [data];
-  const out: { agent: string; verdict: Verdict | null }[] = [];
-  for (const c of children) {
+  const out: { agent: string; index: number }[] = [];
+  children.forEach((c, index) => {
     const agent = typeof c.agent === "string" ? c.agent : typeof data.agent === "string" ? data.agent : "";
     const completed = (c.status === undefined ? c.success === true : c.status === "completed") && c.success !== false && c.timedOut !== true && c.stopped !== true && !c.error;
-    if (!completed) continue;
-    const verdict = REVIEW_ROLES.includes(agent) ? verdictOf([c.output, c.summary].filter((t): t is string => typeof t === "string").join("\n")) : null;
-    out.push({ agent, verdict });
-  }
+    if (completed) out.push({ agent, index });
+  });
   return out;
 }
 

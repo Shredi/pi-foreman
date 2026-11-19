@@ -368,12 +368,18 @@
   ],
   "r-d3": [
    {
-    "text": "[[replay:d3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:d3]] reviewed"
    }
   ],
   "r-d4": [
    {
-    "text": "[[replay:d4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:d4]] reviewed"
    }
   ],
   "b-s2": [
@@ -383,12 +389,18 @@
   ],
   "r-s3": [
    {
-    "text": "[[replay:s3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:s3]] reviewed"
    }
   ],
   "r-s4": [
    {
-    "text": "[[replay:s4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:s4]] reviewed"
    }
   ],
   "b-r2": [
@@ -398,7 +410,10 @@
   ],
   "r-r3": [
    {
-    "text": "[[replay:r3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:r3]] reviewed"
    }
   ],
   "b-r4": [
@@ -408,7 +423,10 @@
   ],
   "r-r5": [
    {
-    "text": "[[replay:r5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:r5]] reviewed"
    }
   ],
   "b-x2": [
@@ -418,12 +436,18 @@
   ],
   "r-x3": [
    {
-    "text": "[[replay:x3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]
+   },
+   {
+    "text": "[[replay:x3]] reviewed"
    }
   ],
   "r-x4": [
    {
-    "text": "[[replay:x4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"
+    "tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]
+   },
+   {
+    "text": "[[replay:x4]] reviewed"
    }
   ],
   "b-c2": [

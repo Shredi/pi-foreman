@@ -14,6 +14,20 @@ test("AGENTS.md carries the default-allow rule for command lines (less-command-p
   assert.ok(text.includes("no regex over a command line"));
 });
 
+test("AGENTS.md widens the rule to text one model writes for another (structured verdicts, D5)", () => {
+  const text = read("AGENTS.md");
+  assert.ok(text.includes("text one model writes for another (a report, a message, a plan): a gate reads no meaning from it"));
+  assert.ok(text.includes("the model gets a tool or a launch field with fields, and models read the prose"));
+  assert.ok(text.includes("A heading or file format the harness defines is a format, not meaning"));
+});
+
+test("builder and reviewer prompts carry the widened rule (structured verdicts, D5)", () => {
+  assert.ok(read("agents/builder.md").includes("text one model writes for another (a report, a message, a plan): code reads no meaning from it, so give the model a tool or a launch field with fields"));
+  const reviewer = read("agents/reviewer.md");
+  assert.ok(reviewer.includes("findings of kind `now` or `later` stay advisory"));
+  assert.ok(reviewer.includes("which are findings of kind `later`"));
+});
+
 test("builder role prompt keeps the guard-code rule (less-command-parsing, ledger 2)", () => {
   const text = read("agents/builder.md");
   assert.ok(text.includes("In guard or permission code (code that decides whether an agent's tool call may run)"));

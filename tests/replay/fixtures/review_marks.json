@@ -20,8 +20,8 @@
  },
  "*": {
   "b-p2": [{"text": "[[replay:p2]] built"}],
-  "r-p3": [{"text": "[[replay:p3]] VERDICT: PASS\n1. PASS a.txt:1\n2. PASS a.txt:2\n3. FAIL a.txt:3 not covered\nOverall verdict: PASS"}],
+  "r-p3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass", "items": [{"id": 1, "result": "pass"}, {"id": 2, "result": "pass"}, {"id": 3, "result": "open", "note": "a.txt:3 not covered"}]}}]}, {"text": "[[replay:p3]] reviewed"}],
   "b-f2": [{"text": "[[replay:f2]] built"}],
-  "r-f3": [{"text": "[[replay:f3]] VERDICT: FAIL\n1. PASS a.txt:1\n2. FAIL a.txt:2\nOverall verdict: FAIL"}]
+  "r-f3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "pass"}, {"id": 2, "result": "fail"}]}}]}, {"text": "[[replay:f3]] reviewed"}]
  }
 }

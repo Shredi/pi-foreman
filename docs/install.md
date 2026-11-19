@@ -468,7 +468,9 @@ pi update git:github.com/Shredi/pi-foreman    # or: pi update --extensions
 ```
 
 After an update, reload or restart running sessions: a running session keeps the code it loaded and can call a file
-the update removed.
+the update removed. Run `/foreman setup` again after an update that changes a role's tool list: setup writes the
+reviewers' tool lists into your settings, and a reviewer without `review_verdict` in its list ends every review with no
+verdict and the reason "run /foreman setup" (`/foreman doctor` flags the drift).
 
 Pi runs `git clean -fdx` in the clone on update, so never edit files under `<agentDir>/git/...`; edit a checkout
 (see [Developing](#developing)). To remove: `/foreman setup --remove` drops the managed

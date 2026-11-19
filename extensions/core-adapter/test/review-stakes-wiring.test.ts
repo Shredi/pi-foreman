@@ -28,16 +28,17 @@ async function rig(t: Parameters<typeof r11Rig>[0], ceremony: Record<string, unk
 
 test("item 1: an occasion model ranked above the foreman runs, traced policy_override", async (t) => {
   const r = await rig(t, { reviewByOccasion: { "plan-review": { model: "pa/top" } } });
-  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "[plan-review] x" }] };
+  const input: Record<string, unknown> = { agent: "reviewer", task: "[plan-review] x" };
   const res = await r.launch(input);
   assert.equal(res.res?.block, undefined, String(res.res?.reason));
-  assert.equal(String((input.tasks as Record<string, unknown>[])[0].model).split(":")[0], "pa/top");
+  assert.equal(String(input.model).split(":")[0], "pa/top");
   assert.deepEqual(r.events("review_occasion").map((e) => [e.model_overridden, e.policy_override]), [[true, true]]);
 });
 
-test("item 1: another entry that carries the same model is still rank-checked", async (t) => {
+// a reviewer never launches inside a group, so the other launch is a single one of the same role: the skip belongs to the occasion model only
+test("item 1: another launch that carries the same model is still rank-checked", async (t) => {
   const r = await rig(t, { reviewByOccasion: { "plan-review": { model: "pa/top" } } }, "pa/top");
-  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "[plan-review] x" }, { agent: "reviewer", task: "items 1" }] };
+  const input: Record<string, unknown> = { agent: "reviewer", task: "items 1" };
   const res = await r.launch(input);
   assert.equal(res.res?.block, true);
 });
@@ -45,10 +46,10 @@ test("item 1: another entry that carries the same model is still rank-checked", 
 test("a plan-review or second-opinion keeps its mapped model with highStakes.model set (the key replaces no other review's model)", async (t) => {
   for (const task of ["[plan-review] x", "[second-opinion] x"]) {
     const r = await rig(t, { highStakes: { model: "pa/top" } });
-    const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task }] };
+    const input: Record<string, unknown> = { agent: "reviewer", task };
     const res = await r.launch(input);
     assert.equal(res.res?.block, undefined, String(res.res?.reason));
-    assert.equal(String((input.tasks as Record<string, unknown>[])[0].model).split(":")[0], "pa/reviewer-m");
+    assert.equal(String(input.model).split(":")[0], "pa/reviewer-m");
     assert.deepEqual(r.events("review_stakes"), []);
   }
 });

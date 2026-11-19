@@ -22,8 +22,9 @@ test("the by-file text names the brief as the answer; the default text is the in
   assert.match(local, /If intercom cannot reach the parent \(it is not a Pi session, or the send says Session not found\), report by file \(ask\.md in the handoff dir\)/);
 });
 
-const FAIL1 = "1. FAIL: the goal is vague\nOverall verdict: FAIL";
-const FAIL2 = "1. FAIL: the scope is unclear\nOverall verdict: FAIL";
+// a plan review has no ledger items: its findings are located defects, and a located key repeats across plan versions, so the first round sits at another line band
+const FAIL1 = "1. FAIL plan.md:100: the goal is vague\nOverall verdict: FAIL";
+const FAIL2 = "1. FAIL plan.md:1: the scope is unclear\nOverall verdict: FAIL";
 
 /** Drives a parented session into the loop stop and returns the refusal text of the next review launch. */
 async function refusalText(t: { after(fn: () => void | Promise<void>): void }, remote: boolean): Promise<string> {
@@ -65,7 +66,7 @@ async function refusalText(t: { after(fn: () => void | Promise<void>): void }, r
 
 test("a remote child's loop-stop text is the origin/main text", async (t) => {
   const text = await refusalText(t, true);
-  const why = /^pi-foreman: launch refused \[review_loop\]: [^(]*\(item:1\)\./.exec(text)?.[0] ?? "";
+  const why = /^pi-foreman: launch refused \[review_loop\]: [^(]*\(at:[^)]*\)\./.exec(text)?.[0] ?? "";
   assert.ok(why, "the text opens as the origin/main text does");
   assert.equal(text, why + TAIL);
 });

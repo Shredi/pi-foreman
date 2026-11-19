@@ -102,12 +102,12 @@ The lessons brief ends with the same rule as one line.
 
 A round is one counted review run (primary `reviewer` on an `item` or `pre-pr` occasion; plan
 reviews, second opinions and panel shadows do not count). At its run end the foreman traces `critique {kind: raised,
-role, runId, count, lines}`: `count` is the number of `- [now]` and `- [later]` lines of the report's CRITIQUE block
+role, runId, count, lines}`: `count` is the number of findings of kind `now` and `later` in the review's verdict record
 (see [review](review.md#critique)), `lines` the added plus removed lines of the diff the review was launched on
 (working tree and untracked files against the builder's base; absent for a review with no diff, 0 for an empty diff). "Applied" is the
 signal the harness can see, not proof of a change: the first builder launch after that review and before the next
 counted review traces `critique {kind: applied, role: builder, count}` with the review's `now` count, because the
-foreman sends those lines back to the builder in that revision. A new counted review replaces `now` lines no builder
+foreman sends those findings back to the builder in that revision. A new counted review replaces `now` lines no builder
 launch took. `later` lines are never applied here; the foreman records them in result.md.
 
 ## Child traces

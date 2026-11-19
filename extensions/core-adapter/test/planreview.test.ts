@@ -8,6 +8,7 @@ import { reviewResultsOfRunEnd } from "../occasion.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewHash, planReviewOn, planReviewRefusalText, planReviewResults, planReviewSection, type PlanVerdict } from "../planreview.ts";
 import { applyReviewModelRule } from "../reviewerclimb.ts";
 import { sanitizeTrace } from "../trace.ts";
+import { recordFrom } from "./_verdict-rig.ts";
 
 const DEFAULTS = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../config/foreman.defaults.json"), "utf8"));
 const P = "/ws/.workflow/scratch/plan-x.md";
@@ -65,10 +66,12 @@ test("plan review: the dialog section names the verdict, the reviewer model and 
 
 test("plan review: run-end results and the plan_review trace", () => {
   const launch = { entries: [{ role: "reviewer", occasion: "plan-review" as const, model: "p/m-sonnet", shadow: null, rung: 0 }], started: 0, files: [], panel: null };
-  const res = reviewResultsOfRunEnd({ runId: "r1", agent: "reviewer", status: "completed", success: true, output: "Verdict: FAIL\n1. FAIL plan-x.md:3 order" }, launch);
+  const record = recordFrom({ verdict: "fail", findings: [{ kind: "defect", text: "order", file: "plan-x.md", line: 3 }] });
+  const res = reviewResultsOfRunEnd({ runId: "r1", agent: "reviewer", status: "completed", success: true, output: "report" }, launch, record);
   const pr = planReviewResults(res);
   assert.deepEqual(pr.map((r) => [r.verdict, r.model, r.counts]), [["fail", "p/m-sonnet", false]]);
-  assert.deepEqual(planReviewResults(reviewResultsOfRunEnd({ agent: "reviewer", status: "completed", success: true, output: "Verdict: PASS" })), [], "an item review is no plan review");
+  assert.deepEqual(planReviewResults(reviewResultsOfRunEnd({ agent: "reviewer", status: "completed", success: true, output: "report" }, null, recordFrom({ verdict: "pass" }))), [], "an item review is no plan review");
+  assert.deepEqual(planReviewResults(reviewResultsOfRunEnd({ runId: "r1", agent: "reviewer", status: "completed", success: true, output: "report" }, launch, null)), [], "no record, no plan verdict");
   assert.deepEqual(sanitizeTrace({ event: "plan_review", model: "p/m-sonnet", decision: "fail" }), { event: "plan_review", model: "p/m-sonnet", decision: "fail" });
   assert.deepEqual(planPathsOf(["plan-x.md", ".workflow/scratch/plan-y.md", "LEDGER-a.md"], ".workflow/scratch"), [path.join(".workflow/scratch", "plan-x.md"), ".workflow/scratch/plan-y.md"]);
 });

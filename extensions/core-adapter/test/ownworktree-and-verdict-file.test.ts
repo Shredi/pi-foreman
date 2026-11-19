@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ownWorktreeCheck, pathKey, pathWithin } from "../ownworktree.ts";
-import { appendHeadLine, headLine, lastHeadLine, reviewedHeadWhy, reviewsWithOutput as reviewsOfRunEnd } from "../reviews.ts";
+import { appendHeadLine, headLine, lastHeadLine, reviewedHeadWhy, reviewsWithOutput } from "../reviews.ts";
+import { PASS_SPEC, resultsOf } from "./_verdict-rig.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf-ownwt-"));
@@ -65,7 +66,8 @@ test("lastHeadLine: the last match wins over a Head line the reviewer wrote", ()
   assert.equal(lastHeadLine("PASS\n"), null);
 });
 
-test("reviewsOfRunEnd: the output file path of the result rides along when present", () => {
-  const r = reviewsOfRunEnd({ agent: "reviewer", status: "completed", cwd: "/w", output: "Overall verdict: PASS", artifactPaths: { outputPath: "/a/run_reviewer_output.md" } });
+test("reviewsWithOutput: the output file path of the result rides along when present", () => {
+  const data = { agent: "reviewer", status: "completed", cwd: "/w", output: "report", artifactPaths: { outputPath: "/a/run_reviewer_output.md" } };
+  const r = reviewsWithOutput(data, resultsOf(data, PASS_SPEC));
   assert.deepEqual(r, [{ role: "reviewer", verdict: "pass", cwd: "/w", outputPath: "/a/run_reviewer_output.md" }]);
 });

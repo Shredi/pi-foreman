@@ -25,7 +25,7 @@ Not security findings:
 - A looser default inside the own worktree.
 - The foreman pushing its own round branch.
 
-Parser bypasses go in the report as a `- [later]` CRITIQUE line or a known-limit note, never FAIL. The question is "does this change weaken a hard floor?", not "can I find any bypass?"
+Parser bypasses go in your `review_verdict` call as a finding of kind `later`, or in the report as a known-limit note, never FAIL. The question is "does this change weaken a hard floor?", not "can I find any bypass?"
 
 ## Checklist
 
@@ -55,4 +55,4 @@ Each is a FAIL unless the task text explicitly asks for it:
 
 ## Reporting
 
-Start the line of a security finding with `SECURITY:` only when it is on the threat-model list, then the reason and the evidence. Other guard or parser ideas go to CRITIQUE as `- [later]`. The harness exempts the builder revision that answers a `SECURITY:` finding from the revision cap. A security finding is a defect: it makes the verdict FAIL.
+Start the line of a security finding with `SECURITY:` only when it is on the threat-model list, then the reason and the evidence. Other guard or parser ideas are findings of kind `later` in your `review_verdict` call. The harness exempts the builder revision that answers a `SECURITY:` finding from the revision cap. A security finding is a defect: it makes the verdict FAIL.

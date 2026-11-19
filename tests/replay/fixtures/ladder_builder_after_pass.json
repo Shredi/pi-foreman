@@ -14,7 +14,7 @@
  },
  "*": {
   "b-c2": [{"text": "[[replay:c2]] built"}],
-  "r-c3": [{"text": "[[replay:c3]] VERDICT: PASS\nOverall verdict: PASS"}],
+  "r-c3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:c3]] reviewed"}],
   "b-c4": [{"text": "tweaked"}]
  }
 }

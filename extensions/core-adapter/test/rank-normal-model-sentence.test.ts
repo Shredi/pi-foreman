@@ -20,18 +20,18 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: Opts = {}) {
   return r11Rig(t, { default: "standard" }, { ctx, config: { providers: { fake: { review: { model: "m" }, roles, ranks: o.ranks ?? RANKS } }, ...(o.ladder ? { ladder: o.ladder } : {}) } });
 }
 
-// one rig, two launches: the reviewer (at-or-below) and the builder (below) both map to the foreman's model
-test("builder normal model ties with the foreman: the sentence with 'above'; reviewer listed first passes, the builder is refused: the sentence names the builder", async (t) => {
-  const roles = { reviewer: { model: "fake/foreman" }, builder: { model: "fake/foreman" } };
-  const a = await rig(t, { roles, ladder: { rolePolicy: { reviewer: "at-or-below" } } });
+// one rig, two launches: the explorer (at-or-below) and the builder (below) both map to the foreman's model (a reviewer cannot sit in a group launch)
+test("builder normal model ties with the foreman: the sentence with 'above'; explorer listed first passes, the builder is refused: the sentence names the builder", async (t) => {
+  const roles = { explorer: { model: "fake/foreman" }, builder: { model: "fake/foreman" } };
+  const a = await rig(t, { roles, ladder: { rolePolicy: { explorer: "at-or-below" } } });
   const alone = (await a.launch(builder())).res;
   assert.equal(alone?.block, true);
   assert.ok(alone?.reason?.includes("[rank_policy:below]"));
   assert.ok(alone?.reason?.includes(` ${sentence("fake/foreman", "builder")}`));
-  const both = (await a.launch({ tasks: [{ agent: "reviewer", task: "review it" }, builder()] })).res;
+  const both = (await a.launch({ tasks: [{ agent: "explorer", task: "look around" }, builder()] })).res;
   assert.equal(both?.block, true);
   assert.ok(both?.reason?.includes(sentence("fake/foreman", "builder")));
-  assert.ok(!both?.reason?.includes("the reviewer's normal model"));
+  assert.ok(!both?.reason?.includes("the explorer's normal model"));
 });
 
 // the other conditions on the pure function
