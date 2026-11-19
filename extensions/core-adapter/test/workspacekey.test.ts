@@ -1,4 +1,4 @@
-// The workspace key of the findings store: the TypeScript key equals the Python one (scripts/foreman_backlog.py derive_key and workspace_key).
+// The workspace key of the findings store: the TypeScript key equals the Python one (scripts/foreman_config.py derive_key and workspace_key).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -12,7 +12,7 @@ const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
 
 function pyKey(code: string, ...args: string[]): string {
-  const r = spawnSync(PY, ["-I", "-c", `import sys; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_backlog as bl\n${code}`, ...args], { encoding: "utf8" });
+  const r = spawnSync(PY, ["-I", "-c", `import sys; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_config as bl\n${code}`, ...args], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   return r.stdout.trim();
 }
@@ -135,7 +135,7 @@ const OVERRIDES = [" my key ", "my key", "  ", "", "\t", "a.b", "..", ".", "a/..
 test("workspaceKey override: same result as Python workspace_key for each value", { skip: spawnSync(PY, ["-I", "-c", "pass"]).status !== 0 }, () => {
   const root = tmp();
   for (const o of OVERRIDES) {
-    const py = spawnSync(PY, ["-I", "-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_backlog as bl\ntry:\n  print(json.dumps(bl.workspace_key(sys.argv[1], {}, sys.argv[2])))\nexcept ValueError:\n  print(json.dumps(None))`, root, o], { encoding: "utf8" });
+    const py = spawnSync(PY, ["-I", "-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_config as bl\ntry:\n  print(json.dumps(bl.workspace_key(sys.argv[1], {}, sys.argv[2])))\nexcept ValueError:\n  print(json.dumps(None))`, root, o], { encoding: "utf8" });
     assert.equal(py.status, 0, py.stderr);
     const want = JSON.parse(py.stdout.trim()) as string | null;
     let got: string | null;

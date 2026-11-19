@@ -95,9 +95,8 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval, always the owner's dialog answer, returns only from the session's own state entry, never from the approval store; no file from the parent approves a plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
-| [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
-| [reports](#reports) | retro | toggle | on | Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. | `{"retro": {"report": true}}` | [retro](retro.md#reporting-at-the-source) |
-| [repo-backlog](#repo-backlog) | retro |  | opt-in | Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`. | `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}` | [retro](retro.md#the-store) |
+| [retro](#retro) | retro | toggle | on | `/retro` and `foreman retro` print the session's friction metrics and write permission-allow proposals; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it. | on by default | [retro](retro.md#switches) |
+| [reports](#reports) | retro | toggle | on | Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over. | `{"retro": {"report": true}}` | [retro](retro.md#reporting-at-the-source) |
 | [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens and list-price cost in the footer, and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
@@ -374,9 +373,7 @@ Switch: `ceremony.planReview.standard` is true.
 
 **Findings store and reviewer model stats.** Records every reviewer run's located findings locally, keyed by workspace, repository and branch, with `foreman findings` to list, dismiss or export them, `foreman rounds` to count the review rounds of a change and `foreman retro models` to compare reviewer models.
 
-| Key | Default | Layer |
-|---|---|---|
-| `retro.panelThreshold` | `3` | not in project/session (the panel threshold comes from the user or overlay config) |
+No config key.
 
 ### bench
 
@@ -755,18 +752,17 @@ Switch: `sync.repos` is non-empty.
 
 ### retro
 
-**Retro and backlog.** `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`.
+**Retro report.** `/retro` and `foreman retro` print the session's friction metrics and write permission-allow proposals; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it.
 
 | Key | Default | Layer |
 |---|---|---|
 | `retro.proposalMinReviews` | `5` | not in project/session (the proposal threshold comes from the user or overlay config) |
 | `retro.enabled` | `null` | any layer |
-| `retro.workspaceKey` | `null` | not in project/session (the backlog key comes from the user or overlay config) |
-| `retro.askThreshold` | `2` | any layer |
+| `retro.workspaceKey` | `null` | not in project/session (the workspace key comes from the user or overlay config) |
 
 ### reports
 
-**Fault reports.** Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too.
+**Fault reports.** Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over.
 
 Switch: `retro.report` is true.
 
@@ -774,17 +770,7 @@ Switch: `retro.report` is true.
 |---|---|---|
 | `retro.report` | `true` | any layer |
 | `retro.expireDays` | `14` | any layer |
-
-### repo-backlog
-
-**Repository backlog.** Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`.
-
-Switch: `retro.repoBacklog` is non-empty.
-
-| Key | Default | Layer |
-|---|---|---|
-| `retro.backlogDir` | `null` | not in project/session (the backlog location comes from the user or overlay config) |
-| `retro.repoBacklog` | `[]` | not in project/session (repository backlogs come from the user or overlay config) |
+| `retro.startNote` | `true` | any layer |
 
 ### close
 
@@ -977,7 +963,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [open-prs](#open-prs) | `foreman radar --json`, `foreman prs` |
 | [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session remote notice`, `foreman session close-remote`, `foreman machine` |
 | [sync](#sync) | `/sync`, `foreman sync` |
-| [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
+| [retro](#retro) | `/retro`, `foreman retro` |
 | [reports](#reports) | `foreman reports`, `/foreman flag-ask` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
@@ -997,8 +983,7 @@ What a private or organisation overlay usually sets, in this order (see [overlay
 2. [ladder](#ladder): Give the builder and reviewer a strong rung so the ladder has somewhere to climb. Example: `{"providers": {"<provider>": {"roles": {"builder": {"strong": {"model": "<provider>/<stronger-model>"}}}}}}`
 3. [sessions](#sessions): pi-intercom ships with the package; keep it unless you set up with --no-intercom, and leave remote intercom off.
 4. [sync](#sync): List the repositories `/sync` may pull, commit and push; user or overlay config only. Example: `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}`
-5. [repo-backlog](#repo-backlog): Point the retro backlog at a directory or repository store you keep; user or overlay config only. Example: `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}`
-6. [review-panel](#review-panel): Add a second vendor's model as a silent shadow before a PR; user or overlay config only. Example: `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}`
+5. [review-panel](#review-panel): Add a second vendor's model as a silent shadow before a PR; user or overlay config only. Example: `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}`
 
 ## Invariants
 
@@ -1050,10 +1035,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `radar.openPrs` | the open PRs source (a GitHub search through gh) comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |
 | `retro.proposalMinReviews` | the proposal threshold comes from the user or overlay config |
-| `retro.backlogDir` | the backlog location comes from the user or overlay config |
-| `retro.repoBacklog` | repository backlogs come from the user or overlay config |
-| `retro.workspaceKey` | the backlog key comes from the user or overlay config |
-| `retro.panelThreshold` | the panel threshold comes from the user or overlay config |
+| `retro.workspaceKey` | the workspace key comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
 | `sessions.machines` | the machines a session may open on over hc come from the user or overlay config |

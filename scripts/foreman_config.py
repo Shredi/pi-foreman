@@ -109,7 +109,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.foremanReads[.<phase>]  not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
     ceremony.required                not an object: ignored; unknown steps dropped
-    sync.repos, retro.proposalMinReviews, retro.panelThreshold   ignored (L1/L3/L2 only)
+    sync.repos, retro.proposalMinReviews   ignored (L1/L3/L2 only)
     intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
     close.from                       intersect (a project can only narrow the allowed sources)
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
@@ -168,11 +168,14 @@ import argparse
 import copy
 import datetime
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import shlex
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -240,10 +243,7 @@ IGNORED_KEYS = [
     (("radar", "openPrs"), "the open PRs source (a GitHub search through gh) comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
     (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),
-    (("retro", "backlogDir"), "the backlog location comes from the user or overlay config"),
-    (("retro", "repoBacklog"), "repository backlogs come from the user or overlay config"),
-    (("retro", "workspaceKey"), "the backlog key comes from the user or overlay config"),
-    (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
+    (("retro", "workspaceKey"), "the workspace key comes from the user or overlay config"),
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
     (("sessions", "machines"), "the machines a session may open on over hc come from the user or overlay config"),
@@ -1058,6 +1058,98 @@ def resolve_agent_dir(agent_dir=None):
     if env:
         return Path(env)
     return Path.home() / ".pi" / "agent"
+
+
+LOCK_TIMEOUT = 5.0
+LOCK_STALE = 60.0
+
+
+class LockTimeout(RuntimeError):
+    pass
+
+
+def retro_cfg(cfg):
+    r = (cfg or {}).get("retro") if isinstance(cfg, dict) else None
+    return r if isinstance(r, dict) else {}
+
+
+def sanitize_key(key):
+    """`/`-separated segments of [A-Za-z0-9._-]; other characters become `-`. ValueError on `..`."""
+    segs = [re.sub(r"[^A-Za-z0-9._-]", "-", s) for s in str(key or "").replace("\\", "/").split("/") if s]
+    if not segs:
+        raise ValueError("empty workspace key")
+    if any(s in (".", "..") for s in segs):
+        raise ValueError("workspace key may not contain '.' or '..' segments: %r" % key)
+    return "/".join(segs)
+
+
+def derive_key(workspace_root):
+    import safe_ops
+    real = os.path.realpath(os.path.abspath(str(workspace_root)))
+    base = os.path.basename(real.rstrip("/\\")) or "root"
+    return sanitize_key("%s-%s" % (base, hashlib.sha1(safe_ops.norm(real).encode("utf-8")).hexdigest()[:8]))
+
+
+def workspace_key(workspace_root, cfg=None, key=None):
+    k = key or retro_cfg(cfg).get("workspaceKey")
+    return sanitize_key(k) if isinstance(k, str) and k.strip() else derive_key(workspace_root)
+
+
+def write_text_atomic(path, text):
+    """Atomic write: a temp file in the same directory, then os.replace."""
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:  # Windows: a reader holds the target open
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+class locked:
+    """Context manager holding `<path>.lock` (O_CREAT|O_EXCL); waits LOCK_TIMEOUT, breaks a stale lock."""
+
+    def __init__(self, path):
+        self.lock = path + ".lock"
+
+    def __enter__(self):
+        os.makedirs(os.path.dirname(os.path.abspath(self.lock)), exist_ok=True)
+        deadline = time.monotonic() + LOCK_TIMEOUT
+        while True:
+            try:
+                fd = os.open(self.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                os.write(fd, str(os.getpid()).encode("ascii"))
+                os.close(fd)
+                return self
+            except (FileExistsError, PermissionError) as err:
+                # Windows: creating a file whose delete is still pending (the previous holder's unlink) is access denied, i.e. held
+                if isinstance(err, PermissionError) and sys.platform != "win32":
+                    raise
+                try:
+                    if time.time() - os.path.getmtime(self.lock) > LOCK_STALE:
+                        os.unlink(self.lock)
+                        continue
+                except OSError:
+                    pass
+            if time.monotonic() >= deadline:
+                raise LockTimeout("store is locked: %s" % os.path.basename(self.lock))
+            time.sleep(0.05)
+
+    def __exit__(self, *exc):
+        try:
+            os.unlink(self.lock)
+        except OSError:
+            pass
 
 
 def discover_l3(agent_dir):

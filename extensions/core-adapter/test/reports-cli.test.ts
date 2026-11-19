@@ -1,4 +1,4 @@
-// `foreman reports list|show|set|expire` (reports-cli.ts): output, exit codes and the store it works on; no import or migrate command.
+// `foreman reports list|show|set|expire` (reports-cli.ts): output, exit codes and the store it works on; no import command.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -64,7 +64,7 @@ test("set changes the state with label, pr and reason; bad input prints usage an
   assert.match((await cli(dir, ["set", key, "done", "--pr", "12"])).out, /is now done/);
   const e = foldRows(readRows(storeFor(dir).file))[0];
   assert.deepEqual([e.state, e.pr, e.label], ["done", 12, null], "each state row stands for itself");
-  for (const bad of [["set", key], ["set", key, "expired"], ["set", key, "done", "--pr", "x"], ["set", key, "done", "--pr"], ["set", key, "done", "--bogus", "1"], ["list", "--state", "weird"], ["nope"], [], ["import"], ["migrate"]]) {
+  for (const bad of [["set", key], ["set", key, "expired"], ["set", key, "done", "--pr", "x"], ["set", key, "done", "--pr"], ["set", key, "done", "--bogus", "1"], ["list", "--state", "weird"], ["nope"], [], ["import"], ["migrate", "--bogus"], ["migrate", "--min-count", "x"]]) {
     const r = await cli(dir, bad);
     assert.equal(r.code, 2, JSON.stringify(bad));
     assert.match(r.err, /usage: foreman reports list/);

@@ -1,5 +1,5 @@
 // Identity of the repository a session works in, for the findings store (docs/review.md): the workspace key of the MAIN checkout
-// (same formula as `derive_key` and `workspace_key` of scripts/foreman_backlog.py) and `owner/name` of its remote.
+// (same formula as `derive_key` and `workspace_key` of scripts/foreman_config.py) and `owner/name` of its remote.
 import { execFile } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";

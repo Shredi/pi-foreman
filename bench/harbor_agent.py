@@ -599,7 +599,7 @@ class _BenchPi(BaseInstalledAgent):
             await environment.upload_file(p, remote)
 
     def task_id(self):
-        """The Harbor trial dir name (the logs dir's parent when it is `agent`), sanitised; keys the bench's retro backlog."""
+        """The Harbor trial dir name (the logs dir's parent when it is `agent`), sanitised; names the bench cell."""
         p = Path(self.logs_dir)
         name = p.parent.name if p.name == "agent" and p.parent.name else p.name
         return re.sub(r"[^A-Za-z0-9._-]", "_", name).strip(".") or "trial"

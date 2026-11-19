@@ -22,7 +22,7 @@ test("rounds --workspace here: the key of each retro.workspaceKey value is works
     try {
       fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ retro: { workspaceKey: value } }));
       const want = workspaceKey(root, value);
-      const py = spawnSync(PY, ["-I", "-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_backlog as bl\nprint(bl.workspace_key(sys.argv[1], {"retro": {"workspaceKey": json.loads(sys.argv[2])}}))`, root, JSON.stringify(value)], { encoding: "utf8" });
+      const py = spawnSync(PY, ["-I", "-c", `import sys, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_config as bl\nprint(bl.workspace_key(sys.argv[1], {"retro": {"workspaceKey": json.loads(sys.argv[2])}}))`, root, JSON.stringify(value)], { encoding: "utf8" });
       assert.equal(py.status, 0, py.stderr);
       assert.equal(want, py.stdout.trim(), JSON.stringify(value));
       const file = sessionFileOf(agentDir, "s1");
