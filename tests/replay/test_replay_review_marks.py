@@ -12,9 +12,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
-from test_replay_ceremony_gate import events  # noqa: E402
+from driver import load_fixture
+from test_replay import REASON, ReplayCase
+from test_replay_ceremony_gate import events
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)

@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import { pathDecide, type GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hpr-"));
 const wt = path.join(base, "wt");
 const O = path.join(base, "agent", "handoffs", "opened");
@@ -28,7 +28,7 @@ const shell = (command: string, o: Partial<GateRoots> = {}): Seen => {
 };
 const ALLOWED: Seen = { allow: "default-write-handoff-ruling", danger: null };
 
-test("redirect, cat >, heredoc, cp and mv into ruling*.md / brief*.md of an opened dir are an allow", { skip: !posix }, () => {
+test("redirect, cat >, heredoc, cp and mv into ruling*.md / brief*.md of an opened dir are an allow", { skip: posixOnly }, () => {
   for (const n of ["ruling.md", "ruling-3.md", "ruling-plan.md", "brief.md", "brief-2.md"]) {
     for (const l of [`echo x > ${O}/${n}`, `printf x >> ${O}/${n}`, `cat ${wt}/a > ${O}/${n}`, `cat > ${O}/${n} <<EOF\nhi\nEOF`, `cp ${wt}/a ${O}/${n}`, `mv ${wt}/a ${O}/${n}`]) {
       assert.deepEqual(shell(l), ALLOWED, l);
@@ -37,7 +37,7 @@ test("redirect, cat >, heredoc, cp and mv into ruling*.md / brief*.md of an open
   }
 });
 
-test("other names of an opened dir, other dirs and a missing opened root stay write-outside", { skip: !posix }, () => {
+test("other names of an opened dir, other dirs and a missing opened root stay write-outside", { skip: posixOnly }, () => {
   const cases: Array<[string, Partial<GateRoots>?]> = [
     [`echo x > ${O}/notes.md`], [`echo x > ${O}/ask.md`], [`echo x > ${O}/result.md`], [`cp ${wt}/a ${O}/close.json`], [`echo x > ${O}/ruling.txt`], [`echo x > ${O}/work/ruling.md`],
     [`echo x > ${F}/ruling.md`], [`cp ${wt}/a ${F}/brief.md`], [`echo x > ${O}/ruling.md`, { openedHandoffs: [] }],
@@ -45,19 +45,19 @@ test("other names of an opened dir, other dirs and a missing opened root stay wr
   for (const [l, o] of cases) assert.deepEqual(shell(l, o), { danger: "danger-write-outside" }, l);
 });
 
-test("every target must be a ruling target: a second redirect into the worktree or another dir is no allow", { skip: !posix }, () => {
+test("every target must be a ruling target: a second redirect into the worktree or another dir is no allow", { skip: posixOnly }, () => {
   for (const l of [`echo x > ${O}/ruling.md > ${wt}/b`, `echo x > ${O}/ruling.md > ${F}/ruling.md`, `cp ${wt}/a ${O}/ruling.md > ${wt}/b`]) assert.equal(shell(l).allow, undefined, l);
 });
 
-test("only echo, printf, cat, cp and mv: another program writing a ruling name is no allow", { skip: !posix }, () => {
+test("only echo, printf, cat, cp and mv: another program writing a ruling name is no allow", { skip: posixOnly }, () => {
   for (const l of [`sort ${wt}/a > ${O}/ruling.md`, `git log > ${O}/ruling.md`, `curl -s https://example.com > ${O}/ruling.md`]) assert.equal(shell(l).allow, undefined, l);
 });
 
-test("an earlier-call variable stays unresolved: no allow", { skip: !posix }, () => {
+test("an earlier-call variable stays unresolved: no allow", { skip: posixOnly }, () => {
   for (const l of [`echo x > $D/ruling.md`, `cp ${wt}/a $D/brief.md`]) assert.equal(shell(l).allow, undefined, l);
 });
 
-test("a dir where the session is the child never gets the ruling allow (ownHandoff, childHandoffs, opened-and-child)", { skip: !posix }, () => {
+test("a dir where the session is the child never gets the ruling allow (ownHandoff, childHandoffs, opened-and-child)", { skip: posixOnly }, () => {
   const cases: Array<Partial<GateRoots>> = [{ openedHandoffs: [MINE], ownHandoff: MINE }, { openedHandoffs: [MINE], childHandoffs: [MINE] }, { openedHandoffs: [O, MINE], childHandoffs: [MINE], ownHandoff: MINE }];
   for (const o of cases) {
     for (const l of [`echo x > ${MINE}/ruling.md`, `cat ${wt}/a > ${MINE}/brief.md`, `cp ${wt}/a ${MINE}/ruling-2.md`, `mv ${wt}/a ${MINE}/ruling.md`]) {

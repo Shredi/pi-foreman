@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(mkTestTmp("pf-cleanup-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "s", "l");
@@ -30,18 +30,18 @@ const allowed = (tool: string, inp: Record<string, unknown>): boolean => {
 };
 const blocked = (tool: string, inp: Record<string, unknown>): boolean => !!(decide(tool, inp).result as { block?: boolean } | undefined)?.block;
 
-test("a child may delete files and directories inside its worktree", { skip: !posix }, () => {
+test("a child may delete files and directories inside its worktree", { skip: posixOnly }, () => {
   for (const command of ["rm report.pdf", "rm -rf gen", "rm -rf gen/deep", "rm -f gen/deep/a.bin", `rm -rf ${path.join(wt, "gen")}`]) assert.equal(allowed("bash", { command }), true, command);
 });
 
-test("a child may overwrite an existing binary file in its worktree: write tool and cp", { skip: !posix }, () => {
+test("a child may overwrite an existing binary file in its worktree: write tool and cp", { skip: posixOnly }, () => {
   assert.equal(allowed("write", { path: path.join(wt, "report.pdf"), content: "%PDF-new" }), true);
   assert.equal(allowed("write", { path: "report.pdf", content: "%PDF-new" }), true);
   assert.equal(allowed("bash", { command: "cp new.pdf report.pdf" }), true);
   assert.equal(allowed("bash", { command: "cp -f new.pdf report.pdf" }), true);
 });
 
-test("outside the worktree both stay refused", { skip: !posix }, () => {
+test("outside the worktree both stay refused", { skip: posixOnly }, () => {
   assert.equal(blocked("bash", { command: `rm -rf ${outside}` }), true);
   assert.equal(blocked("write", { path: path.join(outside, "x.pdf"), content: "x" }), true);
   assert.equal(blocked("bash", { command: `cp new.pdf ${path.join(outside, "x.pdf")}` }), true);

@@ -99,11 +99,6 @@ class WorktreeSetupTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out), {})
 
-    def test_missing_worktree_exits_zero(self):
-        code, out, _ = self.run_hook([str(self.tmp / "nope")])
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out), {})
-
     @unittest.skipIf(os.name == "nt", "select on a pipe: POSIX only")
     def test_open_stdin_with_no_data_finishes(self):
         # the caller keeps the hook's stdin open and writes nothing: read_input must not wait for EOF

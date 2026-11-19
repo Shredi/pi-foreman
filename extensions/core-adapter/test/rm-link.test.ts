@@ -9,8 +9,8 @@ import { realSpelling } from "../pathrules.ts";
 import { contained, effectCtx } from "../effects.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-rmlink-"));
 const wt = path.join(base, "wt");
 const outside = path.join(base, "outside");
@@ -27,7 +27,7 @@ if (posix) {
 const roots: GateRoots = { worktree: wt, scratch: [], tmp: [], scratchBase: path.join(base, "s"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false };
 const out = (line: string): boolean => writesOutside({ tool: "bash", input: { command: line }, segments: parseShell(line, { cwd: wt }), text: line }, { roots, platform: process.platform, cwd: wt });
 
-test("rm / unlink of a symlink inside the checkout pointing outside is a write in; -r, a trailing slash and a path through the link keep today's judgement", { skip: !posix }, () => {
+test("rm / unlink of a symlink inside the checkout pointing outside is a write in; -r, a trailing slash and a path through the link keep today's judgement", { skip: posixOnly }, () => {
   for (const l of ["rm flink", "rm -f flink", "rm dlink", "unlink flink", "unlink dlink", "rm sub/up", "rm -f -- dlink"]) assert.equal(out(l), false, l);
   for (const l of ["rm -r dlink", "rm -rf dlink", "rm -R dlink", "rm dlink/", "rm -f flink/", "rm sub/up/f", "rm dlink/x", "touch flink", "rm -r sub/up"]) assert.equal(out(l), true, l);
   // a real file inside stays a write in; a target outside the checkout stays out
@@ -35,7 +35,7 @@ test("rm / unlink of a symlink inside the checkout pointing outside is a write i
   assert.equal(out(`rm ${path.join(outside, "f")}`), true);
 });
 
-test("effects contained(): the link flag resolves only the directory", { skip: !posix }, () => {
+test("effects contained(): the link flag resolves only the directory", { skip: posixOnly }, () => {
   const c = effectCtx(wt, []);
   assert.equal(contained(c, wt, "flink", true, undefined, true), true);
   assert.equal(contained(c, wt, "flink", true), false);
@@ -43,7 +43,7 @@ test("effects contained(): the link flag resolves only the directory", { skip: !
   assert.equal(contained(c, wt, ".", true, undefined, true), false);
 });
 
-test("realSpelling(link): realpath of the directory plus the name", { skip: !posix }, () => {
+test("realSpelling(link): realpath of the directory plus the name", { skip: posixOnly }, () => {
   const real = (p: string): string | null => {
     try {
       return fs.realpathSync.native(p);

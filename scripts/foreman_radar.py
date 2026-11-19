@@ -29,7 +29,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from foreman_session import agent_dir, entry_gone, hc_terminal_addresses  # noqa: E402
+from foreman_session import agent_dir, entry_gone, hc_terminal_addresses
 
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0

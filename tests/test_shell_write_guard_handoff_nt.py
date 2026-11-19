@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import shell_write_guard as swg  # noqa: E402
+import shell_write_guard as swg
 
 WS = "C:\\Users\\u\\proj"
 H = "C:\\Users\\u\\.pi\\agent\\handoffs\\h1"

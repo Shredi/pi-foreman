@@ -10,7 +10,7 @@ import type { FloorEnv } from "../floors.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { pathSelfmod } from "../selfmod.ts";
 
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 const base = fs.realpathSync.native(mkTestTmp("pf-r2-selfmod-"));
 test.after(() => rmTestTmp(base));
 const home = path.join(base, "home");
@@ -65,7 +65,7 @@ test("5g: other paths in .claude, a nested .mcp.json and reads stay free", () =>
   }
 });
 
-test("5g: the same files in another project are unchanged: a builder is refused as a write outside, main answers as for a plain file", posixOnly, () => {
+test("5g: the same files in another project are unchanged: a builder is refused as a write outside, main answers as for a plain file", { skip: posixOnly }, () => {
   for (const f of [path.join(other, ".claude", "settings.json"), path.join(other, ".mcp.json")]) {
     for (const [tool, input] of writers(f)) {
       assert.equal(ans("builder", tool, input), "block:child-write-outside", `${tool} ${JSON.stringify(input)}`);
@@ -86,7 +86,7 @@ test("5a: .agents/skills and .claude/agents in the own worktree are free for mai
   }
 });
 
-test("5a: a builder's write to .agents in another project is a write outside", posixOnly, () => {
+test("5a: a builder's write to .agents in another project is a write outside", { skip: posixOnly }, () => {
   const f = path.join(other, ".agents", "skills", "x", "SKILL.md");
   assert.equal(ans("builder", "write", { path: f, content: "x" }), "block:child-write-outside");
   assert.equal(ans("builder", "bash", { command: `echo x > ${f}` }), "block:child-write-outside");
@@ -130,7 +130,7 @@ test("5g darwin: a case variant of a settings file that does not exist yet hits 
   assert.ok(direct("darwin", dir, path.join(dir, ".PI", "settings.json"), { realpath: undefined }), "neighbour");
 });
 
-test("5g: a write to a hard link of .claude/settings*.json or .mcp.json from a free path hits, as for .pi/settings.json", posixOnly, (t) => {
+test("5g: a write to a hard link of .claude/settings*.json or .mcp.json from a free path hits, as for .pi/settings.json", { skip: posixOnly }, (t) => {
   const dir = path.join(base, "hl");
   fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
   fs.mkdirSync(path.join(dir, ".pi"), { recursive: true });
@@ -182,7 +182,7 @@ function refused(rule: string, tool: string, input: Record<string, unknown>, roo
   assert.equal(userAns("reviewer", tool, input, rootsExtra), `block:${rule}`, `reviewer: ${at}`);
 }
 
-test("5b: the agent dir harness folders and files are asked for main, denied for a builder, refused for a reviewer, whatever the write", posixOnly, () => {
+test("5b: the agent dir harness folders and files are asked for main, denied for a builder, refused for a reviewer, whatever the write", { skip: posixOnly }, () => {
   for (const name of ["extensions", "npm", "agents", "intercom", "claude-config"]) {
     const dir = path.join(uAgent, name);
     const file = path.join(dir, "x.ts");
@@ -204,20 +204,20 @@ test("5b: the agent dir harness folders and files are asked for main, denied for
   }
 });
 
-test("5b: a tilde spelling of the agent dir harness is resolved against the home folder", posixOnly, () => {
+test("5b: a tilde spelling of the agent dir harness is resolved against the home folder", { skip: posixOnly }, () => {
   refused("selfmod-agent-harness", "bash", { command: "echo x > ~/.pi/agent/extensions/x.ts" });
   refused("selfmod-agent-harness", "bash", { command: "cp a ~/.pi/agent/agents/" });
   refused("selfmod-agent-harness", "write", { path: "~/.pi/agent/foreman.json", content: "{}" });
 });
 
-test("5b: the handoff identity files live.json, parent and child are asked for main, denied for a builder, refused for a reviewer", posixOnly, () => {
+test("5b: the handoff identity files live.json, parent and child are asked for main, denied for a builder, refused for a reviewer", { skip: posixOnly }, () => {
   for (const name of ["live.json", "parent", "child"]) {
     refused("selfmod-identity", "write", { path: path.join(uHand, name), content: "x" });
     refused("selfmod-identity", "bash", { command: `echo x > ${path.join(uHand, name)}` });
   }
 });
 
-test("5c: the user git config and the Claude folder are asked for main and denied for children", posixOnly, () => {
+test("5c: the user git config and the Claude folder are asked for main and denied for children", { skip: posixOnly }, () => {
   const where: [string, string][] = [
     [path.join(uHome, ".gitconfig"), "~/.gitconfig"],
     [path.join(uHome, ".config", "git", "config"), "~/.config/git/config"],
@@ -234,7 +234,7 @@ test("5c: the user git config and the Claude folder are asked for main and denie
   }
 });
 
-test("5c: the config home spelled as a variable is not resolved (as the agent dir rules treat a variable); a roots object without home gives no 5c answer", posixOnly, () => {
+test("5c: the config home spelled as a variable is not resolved (as the agent dir rules treat a variable); a roots object without home gives no 5c answer", { skip: posixOnly }, () => {
   assert.ok(!/selfmod-user-config/.test(userAns("foreman", "bash", { command: "echo x > $XDG_CONFIG_HOME/git/config" })));
   const bare = { home: undefined, configHome: undefined };
   for (const [tool, input] of [["write", { path: path.join(uHome, ".gitconfig"), content: "x" }], ["write", { path: path.join(uXdg, "git", "config"), content: "x" }], ["bash", { command: "echo x > ~/.gitconfig" }], ["bash", { command: `echo x > ${path.join(uHome, ".claude", "settings.json")}` }]] as [string, Record<string, unknown>][]) {
@@ -242,7 +242,7 @@ test("5c: the config home spelled as a variable is not resolved (as the agent di
   }
 });
 
-test("5d: moving, replacing or removing the agent dir, its parent folder or its pi-foreman folder asks main and refuses a child", posixOnly, () => {
+test("5d: moving, replacing or removing the agent dir, its parent folder or its pi-foreman folder asks main and refuses a child", { skip: posixOnly }, () => {
   for (const d of [uAgent, path.dirname(uAgent), path.join(uAgent, "pi-foreman")]) {
     // `rmdir` of a dir outside the write roots is already a floor deny (`floor-delete-outside`) for every role, ahead of the selfmod layer
     for (const role of ["foreman", "builder", "reviewer"]) assert.equal(userAns(role, "bash", { command: `rmdir ${d}` }), "block:floor-delete-outside", `${role}: rmdir ${d}`);
@@ -255,7 +255,7 @@ test("5d: moving, replacing or removing the agent dir, its parent folder or its 
   }
 });
 
-test("5b to 5d: reads stay free", posixOnly, () => {
+test("5b to 5d: reads stay free", { skip: posixOnly }, () => {
   const ordinary = (role: string, line: string): string => userAns(role, "bash", { command: line });
   for (const role of ["foreman", "builder"]) {
     assert.equal(ordinary(role, "cat ~/.gitconfig"), ordinary(role, "cat ~/.zshrc"), role);
@@ -266,7 +266,7 @@ test("5b to 5d: reads stay free", posixOnly, () => {
   }
 });
 
-test("5c: `git config --file <protected>` in a write form is a write target for the self-modification rules; read forms and ordinary files keep their answers", posixOnly, () => {
+test("5c: `git config --file <protected>` in a write form is a write target for the self-modification rules; read forms and ordinary files keep their answers", { skip: posixOnly }, () => {
   const G = path.join(uHome, ".gitconfig");
   const P = path.join(work, ".pi", "settings.json");
   const writes = (f: string, spelled = f): string[] => [
@@ -303,7 +303,7 @@ const ansChild = (role: string, tool: string, input: Record<string, unknown>): s
 };
 const writesOf = (p: string): [string, Record<string, unknown>][] => [["write", { path: p, content: "x" }], ["bash", { command: `echo x > ${p}` }]];
 
-test("row 4: a child's write of another session's handoff dir, artifacts, harness config, a sibling worktree or another child's scratch is refused", posixOnly, () => {
+test("row 4: a child's write of another session's handoff dir, artifacts, harness config, a sibling worktree or another child's scratch is refused", { skip: posixOnly }, () => {
   const rows: [string, string][] = [
     [path.join(otherHandoff, "plan.md"), "child-write-outside"], [path.join(otherHandoff, "ruling.md"), "child-write-outside"], [path.join(otherHandoff, "brief.md"), "child-write-outside"],
     [path.join(agentDirC, "sessions", "x", "subagent-artifacts", "run", "result.json"), "child-write-outside"],
@@ -318,7 +318,7 @@ test("row 4: a child's write of another session's handoff dir, artifacts, harnes
   }
 });
 
-test("row 4: a child's own handoff plan.md and result.md, scratch and worktree stay open", posixOnly, () => {
+test("row 4: a child's own handoff plan.md and result.md, scratch and worktree stay open", { skip: posixOnly }, () => {
   for (const role of ["builder", "reviewer"]) {
     for (const f of ["plan.md", "result.md"]) {
       assert.equal(ansChild(role, "write", { path: path.join(ownHandoff, f), content: "x" }), "allow:path-write-handoff", `${role}: ${f}`);

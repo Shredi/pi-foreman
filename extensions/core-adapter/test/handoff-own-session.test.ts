@@ -8,8 +8,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import { pathDecide, type GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hos-"));
 const wt = path.join(base, "wt");
 const H = path.join(base, "agent", "handoffs", "h1");
@@ -47,24 +47,24 @@ test("write tool: nothing below a .git segment, in any case", () => {
   assert.equal(tool("work/.gitignore"), "path-write-handoff");
 });
 
-test("shell cp, and cat f >, into an own name are an allow", { skip: !posix }, () => {
+test("shell cp, and cat f >, into an own name are an allow", { skip: posixOnly }, () => {
   for (const n of ["result.md", "plan.md", "ask.md", "ask-2.md", "work/x.txt"]) {
     assert.deepEqual(shell(`cp ${wt}/a ${H}/${n}`), { allow: "default-write-in", danger: null }, `cp ${n}`);
     assert.deepEqual(shell(`cat ${wt}/a > ${H}/${n}`), { allow: "default-write-in", danger: null }, `cat > ${n}`);
   }
 });
 
-test("shell echo >, printf > and a heredoc into an own name carry no danger mark (mode step)", { skip: !posix }, () => {
+test("shell echo >, printf > and a heredoc into an own name carry no danger mark (mode step)", { skip: posixOnly }, () => {
   for (const l of [`echo x > ${H}/result.md`, `printf x >> ${H}/ask-1.md`, `cat > ${H}/result.md <<EOF\nhi\nEOF`, `echo x > ${H}/work/n.txt`]) assert.deepEqual(shell(l), { danger: null }, l);
 });
 
-test("shell mv, touch and mkdir on own names are an allow", { skip: !posix }, () => {
+test("shell mv, touch and mkdir on own names are an allow", { skip: posixOnly }, () => {
   assert.deepEqual(shell(`mv ${wt}/a ${H}/work/moved.txt`), { allow: "default-write-in", danger: null });
   assert.deepEqual(shell(`touch ${H}/ask.md`), { allow: "default-write-in", danger: null });
   assert.deepEqual(shell(`mkdir -p ${H}/work/d`), { allow: "default-write-in", danger: null });
 });
 
-test("shell writes of every other name stay write-outside", { skip: !posix }, () => {
+test("shell writes of every other name stay write-outside", { skip: posixOnly }, () => {
   for (const n of ["some-other.md", "ruling.md", "brief.md", "close.json", "parent", "child", "work/../x", "work/.git/HEAD", "work/.GIT/HEAD"]) {
     for (const l of [`echo x > ${H}/${n}`, `cp ${wt}/a ${H}/${n}`, `cat ${wt}/a > ${H}/${n}`, `mv ${wt}/a ${H}/${n}`]) {
       const s = shell(l);
@@ -74,11 +74,11 @@ test("shell writes of every other name stay write-outside", { skip: !posix }, ()
   }
 });
 
-test("without ownHandoff the same shell writes stay write-outside", { skip: !posix }, () => {
+test("without ownHandoff the same shell writes stay write-outside", { skip: posixOnly }, () => {
   for (const l of [`echo x > ${H}/result.md`, `cp ${wt}/a ${H}/result.md`]) assert.deepEqual(shell(l, { ownHandoff: undefined }), { danger: "danger-write-outside" }, l);
 });
 
-test("an earlier-call variable is no allow (opaque)", { skip: !posix }, () => {
+test("an earlier-call variable is no allow (opaque)", { skip: posixOnly }, () => {
   const s = shell(`cp ${wt}/a $D/result.md`);
   assert.equal(s.allow, undefined);
   assert.equal(s.danger, "danger-opaque");

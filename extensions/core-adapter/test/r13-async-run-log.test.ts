@@ -6,8 +6,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { launchLocations } from "../budget.ts";
 import { asyncRunDirs } from "../roundsurface.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r13-async-")));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const uidDir = path.join(base, "pi-subagents-uid-501");
@@ -24,6 +24,6 @@ test("launchLocations: details and the Async id; a Result path sentence is free 
   assert.deepEqual(launchLocations("Async: builder [a/b]", undefined, "/t/u"), []);
 });
 
-test("asyncRunDirs covers the run dir (so its output-*.log) of a recorded launch location", { skip: !posix }, () => {
+test("asyncRunDirs covers the run dir (so its output-*.log) of a recorded launch location", { skip: posixOnly }, () => {
   assert.ok(asyncRunDirs(launchLocations(LAUNCH, undefined, uidDir), "linux").includes(run));
 });

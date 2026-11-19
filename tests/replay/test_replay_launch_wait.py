@@ -19,8 +19,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import load_fixture, tool_results
+from test_replay import REASON, ReplayCase
 
 BLOCK = {"ceremony": {"launchWait": "block"}}
 ENDED = re.compile(r"pi-foreman launch-wait: run (\S+) \((\w[\w-]*)\) ended completed after \d+s\. Result path: (.+?)\. No bg_wait")

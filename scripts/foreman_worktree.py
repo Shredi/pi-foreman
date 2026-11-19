@@ -72,7 +72,9 @@ def _protected(main_dir, home, agent_dir, tmp_root, extra):
 
 
 def _blocks(spelled, real, template, prot):
-    star = lambda t: t.replace("<repo>", "*").rstrip("/\\") + "/*"
+    def star(t):
+        return t.replace("<repo>", "*").rstrip("/\\") + "/*"
+
     pats = [star(template)]
     i = template.find("<repo>")
     fixed = (template if i < 0 else template[:max(0, max(template[:i].rfind("/"), template[:i].rfind("\\")) + 1)]).rstrip("/\\")

@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hob-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
@@ -23,14 +23,14 @@ const rule = (command: string, withHandoff = true): string | undefined => {
   return r?.block ? r.rule : undefined;
 };
 
-test("child bash writes of allow-list names and work/ in the own handoff dir pass", { skip: !posix }, () => {
+test("child bash writes of allow-list names and work/ in the own handoff dir pass", { skip: posixOnly }, () => {
   for (const l of [`echo x > ${H}/result.md`, `cp ${wt}/a ${H}/result.md`, `cp ${wt}/a ${H}/work/n.txt`, `mkdir -p ${H}/work/d`, `echo x >> ${H}/ask-1.md`]) assert.equal(rule(l), undefined, l);
 });
 
-test("child bash writes of parent-owned names in the own handoff dir stay outside", { skip: !posix }, () => {
+test("child bash writes of parent-owned names in the own handoff dir stay outside", { skip: posixOnly }, () => {
   for (const l of [`echo x > ${H}/ruling.md`, `cp ${wt}/a ${H}/brief.md`, `echo x > ${H}/close.json`]) assert.equal(rule(l), "child-write-outside", l);
 });
 
-test("without a childHandoff root the same write stays outside", { skip: !posix }, () => {
+test("without a childHandoff root the same write stays outside", { skip: posixOnly }, () => {
   assert.equal(rule(`echo x > ${H}/result.md`, false), "child-write-outside");
 });

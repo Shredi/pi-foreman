@@ -69,7 +69,9 @@ def node(key, kind, name, sym, state, glyphs, pane=None, children=(), role=None,
 
 def snapshot(symbols="unicode"):
     g = SYMS[symbols]
-    run = lambda k, role, sym, state, rung=None: node(k, "run", role, sym, state, g, role=role, rung=rung)
+    def run(k, role, sym, state, rung=None):
+        return node(k, "run", role, sym, state, g, role=role, rung=rung)
+
     child = node("s2", "session", "fix-parser-a1b2c3d4", "working", "working", g, pane="w1:p2",
                  children=[run("r4", "reviewer", "asking", "ask")], tot=(1200, 300, 0.12))
     late = node("s3", "session", "docs-pass", "blocked", "blocked", g, pane="w1:p3",
@@ -174,7 +176,7 @@ class ComposeTest(unittest.TestCase):
         self.assertEqual(sidebar.compose(snap, 34)["w1:p1"]["fm_a1"].replace(B, " ").strip(), g["agent"] + " explorer")
 
     def test_lines_fit_budget_and_keep_age(self):
-        gap, inset = sidebar.GAP, sidebar.INSET
+        inset = sidebar.INSET
         for lead in (0, 1, 2):
             for width in (24, 26, 28, 34, 40):
                 out = sidebar.compose(snapshot(), width, lead=lead)

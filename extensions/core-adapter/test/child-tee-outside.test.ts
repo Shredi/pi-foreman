@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-tee-"));
 const wt = path.join(base, "wt");
 const out = path.join(base, "elsewhere");
@@ -24,22 +24,22 @@ const seen = (command: string, child = true, cwd = wt): string => {
   return r?.block ? `block:${r.rule}` : r?.allow ? `allow:${r.rule}` : `none:${o.danger?.name ?? "-"}`;
 };
 
-test("tee to a literal path outside is child-write-outside, also behind a pipe, with options and in a chain", { skip: !posix }, () => {
+test("tee to a literal path outside is child-write-outside, also behind a pipe, with options and in a chain", { skip: posixOnly }, () => {
   for (const l of [`echo x | tee ${out}/f`, `echo x | tee -a ${out}/f`, `echo x | tee ${wt}/ok ${out}/f`, `ls && echo x | tee ${out}/f`, `echo x | tee ../elsewhere/f`, `echo x | tee ${H}/ruling.md`, `echo x | tee ${H}/work/.git/x`, `echo x | tee ${H}/some-other.md`]) assert.equal(seen(l), "block:child-write-outside", l);
 });
 
-test("tee to the null device and the standard sinks is exempt", { skip: !posix }, () => {
+test("tee to the null device and the standard sinks is exempt", { skip: posixOnly }, () => {
   for (const l of [`echo x | tee /dev/null`, `echo x | tee /dev/stdout`, `echo x | tee /dev/stderr`, `echo x | tee -a /dev/null`]) assert.notEqual(seen(l), "block:child-write-outside", l);
 });
 
-test("tee inside the worktree, the scratch dir or onto a handoff name keeps today's result (mode step, opaque)", { skip: !posix }, () => {
+test("tee inside the worktree, the scratch dir or onto a handoff name keeps today's result (mode step, opaque)", { skip: posixOnly }, () => {
   for (const l of [`echo x | tee ${wt}/f`, `echo x | tee ${scr}/f`, `echo x | tee ${H}/result.md`, `echo x | tee ${H}/work/n.txt`, `echo x | tee out.txt`]) assert.equal(seen(l), "none:danger-opaque", l);
 });
 
-test("forms that cannot be resolved stay at the mode step (left open)", { skip: !posix }, () => {
+test("forms that cannot be resolved stay at the mode step (left open)", { skip: posixOnly }, () => {
   for (const l of [`echo x | tee $HOME/f`, `echo x | tee $D/f`, `echo x | tee "$(pwd)/f"`]) assert.equal(seen(l), "none:danger-opaque", l);
 });
 
-test("a session that is no subagent child keeps today's result", { skip: !posix }, () => {
+test("a session that is no subagent child keeps today's result", { skip: posixOnly }, () => {
   assert.notEqual(seen(`echo x | tee ${out}/f`, false), "block:child-write-outside");
 });

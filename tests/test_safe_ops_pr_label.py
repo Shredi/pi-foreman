@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_safe_ops_pr as pr_base  # noqa: E402
-from test_safe_ops import safe_ops  # noqa: E402
+import test_safe_ops_pr as pr_base
+from test_safe_ops import safe_ops
 
 ARGS = {"number": 7, "repo": "own/repo", "host": "ghe.example.com", "label": "ready", "on": True}
 R = ["-R", "ghe.example.com/own/repo"]

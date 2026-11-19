@@ -10,9 +10,9 @@ import type { FloorEnv } from "../floors.ts";
 import { dangerSegment } from "../defaults.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 // the A rows put host paths (backslashes on a win32 host) into the shell text, where a posix shell parser drops unquoted backslashes: they run on a posix host only
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(mkTestTmp("pf-r2-hf-label-"));
 test.after(() => rmTestTmp(base));
 const home = path.join(base, "home");
@@ -47,17 +47,17 @@ const got = (role: Role, line: string): Got => {
 const HFL = "danger-harness-folder";
 const row = (role: Role, line: string, verdict: string, labels: string[]): void => assert.deepEqual(got(role, line), { verdict, labels }, `${role}: ${line.replaceAll(base, "<base>")}`);
 
-test("A: an unknown program naming the harness folder itself is labelled danger-harness-folder, for main and builder; the verdict is unchanged", { skip: !posix }, () => {
+test("A: an unknown program naming the harness folder itself is labelled danger-harness-folder, for main and builder; the verdict is unchanged", { skip: posixOnly }, () => {
   for (const role of ["main", "builder"] as const) {
     for (const l of [`ditto d ${HF}`, `bsdtar -xf a.tar -C ${HF}`, `gtar -xf a.tar -C ${HF}`, `rclone copy d ${HF}`, `foo x ${HF}`, `foo x ${HF}/`, `foo x ${HF}/other.txt`, `foo x ${HF}/handoffs`]) row(role, l, "undecided", [HFL]);
   }
 });
 
-test("A: the reviewer's unknown-program lines gain the label", { skip: !posix }, () => {
+test("A: the reviewer's unknown-program lines gain the label", { skip: posixOnly }, () => {
   for (const l of [`ditto d ${HF}`, `foo x ${HF}`, `foo x ${HF}/other.txt`]) row("reviewer", l, "undecided", [HFL]);
 });
 
-test("A: tar and rsync keep their floor; lines already blocked or labelled keep their outcome", { skip: !posix }, () => {
+test("A: tar and rsync keep their floor; lines already blocked or labelled keep their outcome", { skip: posixOnly }, () => {
   for (const role of ["main", "builder", "reviewer"] as const) {
     for (const l of [`tar -xf a.tar -C ${HF}`, `rsync -a d ${HF}`, `rsync -a d ${HF}/state/`]) row(role, l, "block floor-overwrite-outside", []);
     for (const l of [`foo x ${HF}/permissions.json`, `foo ${HF}/*`]) row(role, l, "block floor-policy-file", []);
@@ -65,13 +65,13 @@ test("A: tar and rsync keep their floor; lines already blocked or labelled keep 
   for (const role of ["main", "builder"] as const) row(role, `mytool ${LT} ${HF}/managed.json`, "undecided", [HFL]);
 });
 
-test("A: known reads of the folder stay unlabelled", { skip: !posix }, () => {
+test("A: known reads of the folder stay unlabelled", { skip: posixOnly }, () => {
   for (const role of ["main", "builder"] as const) {
     for (const l of [`cat ${HF}`, `ls ${HF}`, `grep x ${HF}`]) row(role, l, "undecided", []);
   }
 });
 
-test("A exclusion: the session's own handoff, its child's handoff and its scratch dir gain no label (outcome of the base commit)", { skip: !posix }, () => {
+test("A exclusion: the session's own handoff, its child's handoff and its scratch dir gain no label (outcome of the base commit)", { skip: posixOnly }, () => {
   row("main", `echo x ${GT} ${OWN}/ask.md`, "undecided", ["danger-write-outside"]);
   row("main", `cat ${OWN}/brief.md`, "allow default-read", []);
   row("main", `foo ${OWN}/x`, "undecided", []);
@@ -85,7 +85,7 @@ test("A exclusion: the session's own handoff, its child's handoff and its scratc
   row("main", `foo ${scr}/x`, "undecided", []);
 });
 
-test("A exclusion: the wait folder gains no label (outcome of the base commit)", { skip: !posix }, () => {
+test("A exclusion: the wait folder gains no label (outcome of the base commit)", { skip: posixOnly }, () => {
   const W = path.join(HF, "state", "wait", "f");
   row("main", `echo x ${GT} ${W}`, "undecided", []);
   row("main", `foo ${W}`, "undecided", []);
@@ -97,7 +97,7 @@ test("A exclusion: the wait folder gains no label (outcome of the base commit)",
   row("builder", `foo ${W}`, "block selfmod-state-read", []);
 });
 
-test("A: another session's handoff dir is labelled (the harness folder, outside the session's own dirs)", { skip: !posix }, () => {
+test("A: another session's handoff dir is labelled (the harness folder, outside the session's own dirs)", { skip: posixOnly }, () => {
   for (const role of ["main", "builder"] as const) row(role, `foo ${OTHER}/x`, "undecided", [HFL]);
   row("reviewer", `foo ${OTHER}/x`, "undecided", [HFL]);
   row("main", `echo x ${GT} ${OTHER}/x`, "undecided", [HFL, "danger-write-outside"]);

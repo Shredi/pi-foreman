@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { msysEnv, patchShellEnv } from "../env.ts";
 import { buildOrientation } from "../orient.ts";
 import { tmpRoots } from "../pathrules.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -49,7 +50,7 @@ test("orientation names the shell and the native-path rule on win32 only", () =>
   assert.doesNotMatch(buildOrientation({ ...base, platform: "linux" }), /git-bash/);
 });
 
-test("bin/foreman and bin/ledger take the native path on MSYS (stubbed pwd -W)", { skip: process.platform === "win32" }, () => {
+test("bin/foreman and bin/ledger take the native path on MSYS (stubbed pwd -W)", { skip: posixOnly }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-msys-"));
   try {
     const bin = path.join(dir, "bin");

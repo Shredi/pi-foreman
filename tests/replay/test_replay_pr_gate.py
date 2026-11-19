@@ -12,7 +12,6 @@ Run: python -m unittest discover -s tests/replay -v (same prerequisites as test_
 """
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
@@ -20,8 +19,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results, trace_of  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import load_fixture, tool_results, trace_of
+from test_replay import REASON, ReplayCase
 
 PR_TOOL = "github_create_pr"
 ASK_YES = [{"confirmed": True, "value": "Yes"}] * 12  # answers a select and a confirm alike

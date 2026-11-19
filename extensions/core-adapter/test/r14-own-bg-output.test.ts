@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { ownTaskReadable } from "../roundsurface.ts";
 import { checkLogPath, registerWait } from "../wait.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -43,7 +44,7 @@ test("own_bg_output_foreman_wait_log_other_session_refused", () => {
   assert.ok("error" in checkLogPath(OWN, { ...bound, ownTasks: undefined }));
 });
 
-test("own_bg_output_foreman_wait_log_symlink_out_refused", { skip: process.platform === "win32" }, () => {
+test("own_bg_output_foreman_wait_log_symlink_out_refused", { skip: posixOnly }, () => {
   const link = `.pi/tasks/${SID}-66406/link.output`;
   fs.symlinkSync(path.join(ws, FOREIGN), path.join(ws, link));
   assert.ok("error" in checkLogPath(link, bound));

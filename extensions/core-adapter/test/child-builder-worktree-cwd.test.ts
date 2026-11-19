@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-builder-wt-"));
 const main = path.join(base, "pi-foreman");
 const wt = path.join(base, "pi-foreman.worktrees", "feat-x");
@@ -25,14 +25,14 @@ type Res = { block?: boolean; rule?: string } | undefined;
 const call = (tool: string, input: Record<string, unknown>, cwd = wt): Res =>
   gateEvaluate(tool, input, cwd, { env: (c) => baseFloorEnv(c, { child: true }), roots: () => roots() }).result as Res;
 
-test("a builder in its worktree is not refused child-write-outside for its own install and node_modules writes", { skip: !posix }, () => {
+test("a builder in its worktree is not refused child-write-outside for its own install and node_modules writes", { skip: posixOnly }, () => {
   for (const l of ["npm ci", "npm install", `echo x > ${wt}/node_modules/a.js`, `cp package.json node_modules/a.json`, `mv package.json node_modules/b.json`]) {
     assert.notEqual(call("bash", { command: l })?.rule, "child-write-outside", l);
   }
   assert.notEqual(call("write", { path: path.join(wt, "node_modules", "x", "index.js"), content: "x" })?.rule, "child-write-outside");
 });
 
-test("the same node_modules write into the main checkout stays child-write-outside (control)", { skip: !posix }, () => {
+test("the same node_modules write into the main checkout stays child-write-outside (control)", { skip: posixOnly }, () => {
   assert.equal(call("bash", { command: `echo x > ${main}/node_modules/a.js` })?.rule, "child-write-outside");
   assert.equal(call("write", { path: path.join(main, "node_modules", "x.js"), content: "x" })?.rule, "child-write-outside");
 });

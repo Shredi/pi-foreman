@@ -9,6 +9,7 @@ import { mkTestTmp } from "./_tmpbase.ts";
 import { effectCtx } from "../effects.ts";
 import { readBaseline } from "../baseline.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
+import { posixOnly } from "./_platform.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});
@@ -22,24 +23,23 @@ fs.writeFileSync(path.join(wt, ".workflow", "scratch", "plan-chair-mechanics.md"
 fs.writeFileSync(path.join(handoff, "brief.md"), "brief\n");
 fs.writeFileSync(path.join(handoff, "parent"), "p-1\n");
 fs.writeFileSync(path.join(handoff, "child"), "fm-demo-abc123\n");
-const posix = process.platform !== "win32";
 const allow = (cmd: string, own: string[] = [handoff]): string | null => deterministicAllow(rules, cmd, { effects: effectCtx(wt), ownDirs: own });
 
-test("R3 line: mkdir in the round worktree and cp the brief out of the own handoff dir", { skip: !posix }, () => {
+test("R3 line: mkdir in the round worktree and cp the brief out of the own handoff dir", { skip: posixOnly }, () => {
   const scratch = `${wt}/.workflow/scratch/pi-top-chair`;
   assert.equal(allow(`mkdir -p ${scratch} && cp ${handoff}/brief.md ${scratch}/brief.md`), "own-handoff");
 });
 
-test("R3 line: cp into the own handoff dir, then cat the parent file and ls the dir", { skip: !posix }, () => {
+test("R3 line: cp into the own handoff dir, then cat the parent file and ls the dir", { skip: posixOnly }, () => {
   assert.equal(allow(`cp ${wt}/.workflow/scratch/plan-chair-mechanics.md ${handoff}/plan.md && cat ${handoff}/parent; ls ${handoff}`), "own-handoff");
 });
 
-test("a trailing <dir>/* glob is accepted on a read", { skip: !posix }, () => {
+test("a trailing <dir>/* glob is accepted on a read", { skip: posixOnly }, () => {
   assert.equal(allow(`mkdir -p ${wt}/.workflow/scratch/copy && cp ${handoff}/* ${wt}/.workflow/scratch/copy`), "own-handoff");
   assert.equal(allow(`ls ${handoff}/*`), "own-handoff");
 });
 
-test("not allowed by this rule: the parent and child files, other handoff dirs, paths outside the two roots", { skip: !posix }, () => {
+test("not allowed by this rule: the parent and child files, other handoff dirs, paths outside the two roots", { skip: posixOnly }, () => {
   const no = (cmd: string, own?: string[]): void => assert.notEqual(allow(cmd, own), "own-handoff", cmd);
   no(`cp x ${handoff}/parent`);
   no(`cp x ${handoff}/child`);
@@ -61,7 +61,7 @@ test("not allowed by this rule: the parent and child files, other handoff dirs, 
   no(`cat /etc/hosts`);
 });
 
-test("a symlink inside the handoff dir cannot lead a write out", { skip: !posix }, () => {
+test("a symlink inside the handoff dir cannot lead a write out", { skip: posixOnly }, () => {
   const out = path.join(base, "outside");
   fs.mkdirSync(out, { recursive: true });
   fs.symlinkSync(out, path.join(handoff, "esc"));

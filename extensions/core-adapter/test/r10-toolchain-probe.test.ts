@@ -9,10 +9,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readBaseline } from "../baseline.ts";
 import { bashRules, hits } from "../timeoutallow.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
-const posix = process.platform !== "win32";
 
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r10-probe-")));
 after(() => fs.rmSync(w, { recursive: true, force: true }));
@@ -28,7 +28,7 @@ test("expected-open (R10c): the permission system's bash rules allow which/ls/st
   for (const cmd of ["which node", "ls /usr/local/bin", "stat ~/.npm/_npx"]) assert.ok(hits(prules.allow, cmd, home), cmd);
 });
 
-test("(decision: ask) exec of a found binary: the overlay leaves the command word to the permission system, whose bash rules have no allow row for it", { skip: !posix }, () => {
+test("(decision: ask) exec of a found binary: the overlay leaves the command word to the permission system, whose bash rules have no allow row for it", { skip: posixOnly }, () => {
   for (const cmd of ["/usr/local/bin/foo --version", `${path.join(home, ".npm", "_npx", "abc", "bin")} x`]) {
     assert.ok(!hits(prules.allow, cmd, home), `PS allow ${cmd}`);
   }
