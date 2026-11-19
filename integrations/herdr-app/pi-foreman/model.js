@@ -70,7 +70,12 @@ const prExtras = (p) => ({
   ...(p.unsettled === true ? { unsettled: true } : {}),
   // the host's head sha and merge state of a tracked entry (the pill's inputs); absent in an older feed
   ...(typeof p.head === "string" && p.head ? { head: p.head } : {}), ...(typeof p.mergeState === "string" && p.mergeState ? { mergeState: p.mergeState } : {}),
+  // the required checks a passed PR still waits on (the tracker's list, set without `unsettled`); anything else is dropped
+  ...(waitingNames(p.waiting).length ? { waiting: waitingNames(p.waiting) } : {}),
 });
+
+// Names of the checks a PR waits on: non-empty strings, at most 10, each cut to 120 characters.
+const waitingNames = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim()).slice(0, 10).map((s) => s.trim().slice(0, 120)) : []);
 
 function cleanRepoUrl(v) {
   const s = str(v).replace(/\.git$/, "").replace(/\/+$/, "");
@@ -483,7 +488,7 @@ function openOnce(prs) {
   const seen = new Set();
   return (Array.isArray(prs) ? prs : []).filter((p) => {
     if (!isObj(p) || p.state === "merged" || p.state === "closed") return false;
-    const id = str(p.url) || `${str(p.repo)}#${p.number}`;
+    const id = urlKey(p.url) || `${str(p.repo)}#${p.number}`;
     if (seen.has(id)) return false;
     seen.add(id);
     return true;
@@ -532,6 +537,7 @@ export function prStateText(pr) {
   if (p.state === "wip") return d.pulse ? "work in progress, CI running" : "work in progress";
   if (p.state === "unreviewed") return "CI passing, not reviewed";
   if (p.state === "ready") return p.reviewed ? "ready to merge" : "ready to merge (CI passing, no review claim)";
+  if (p.state === "required") return "checks passed, waiting on required checks";
   if (p.state === "waiting") return `${base.fill === "green" ? "CI passing" : "no CI checks"}, ${p.merge === "behind" ? "branch behind" : "merge blocked"}`;
   return d.fill === "red" ? (d.pulse ? "CI failing, still running" : "CI failing") : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
@@ -750,6 +756,15 @@ function repoName(url, fallback) {
 // owner/name of a repository given as an https URL or already as owner/name; "" for none.
 const nameOf = (v) => repoName(v, str(v));
 
+// The identity of a page address for the twin match and the open-PR list: parsed (so the default port drops out, as a browser reads it),
+// lower case; "" when it does not parse or radar gave none.
+function urlKey(u) {
+  try {
+    const x = new URL(str(u));
+    return `${x.protocol}//${x.host}${x.pathname}${x.search}${x.hash}`.toLowerCase();
+  } catch { return ""; }
+}
+
 // The twin lookup index of a feed array: entries by number and by URL, in feed order. Built once per array and rebuilt when its
 // length changed (the feeds are new arrays on every render, and nothing edits one in place); a non-array feed is an empty index,
 // never a WeakMap key. NaN numbers are not indexed (NaN matches nothing with ===).
@@ -762,8 +777,8 @@ function twinIndex(feed) {
   ix = { len: feed.length, byNumber: new Map(), byUrl: new Map() };
   feed.forEach((f, i) => {
     if (!isObj(f)) return;
-    // repository and URL compare in lower case, as GitHub does (see twinOf)
-    const rec = { f, i, url: prUrl(null, { url: f.url }).toLowerCase(), repo: nameOf(f.repo).toLowerCase() };
+    // repository and URL compare in lower case, as GitHub does (see urlKey)
+    const rec = { f, i, url: urlKey(prUrl(null, { url: f.url })), repo: nameOf(f.repo).toLowerCase() };
     const push = (m, k) => { const l = m.get(k); if (l) l.push(rec); else m.set(k, [rec]); };
     if (f.number === f.number) push(ix.byNumber, f.number);
     if (rec.url) push(ix.byUrl, rec.url);
@@ -777,7 +792,7 @@ function twinIndex(feed) {
  *  in lower case. */
 export function twinOf(pr, feed, fallbackRepo = "") {
   const repo = nameOf(pr.repo || fallbackRepo).toLowerCase();
-  const url = prUrl(null, { url: pr.url }).toLowerCase();
+  const url = urlKey(prUrl(null, { url: pr.url }));
   const number = pr.number;
   const ix = twinIndex(feed);
   const same = number === number ? ix.byNumber.get(number) ?? [] : [];
@@ -802,7 +817,7 @@ const gap = (v) => v === undefined || v === null || v === "";
 // Plain fields a later copy fills in where the first entry has none
 const FILL = ["url", "repo", "headRepo", "title", "bodyText", "branch", "baseRef", "state", "mergeable", "head", "mergeState"];
 // The check block: taken as one, never mixed
-const BLOCK = ["checks", "jobs", "unsettled"];
+const BLOCK = ["checks", "jobs", "unsettled", "waiting"];
 
 // The first entry, with the gaps of `later` filled in and its check block replaced when it has no jobs and `later` has some. A new object.
 function mergeEntry(first, later) {
@@ -853,7 +868,7 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
   const idOf = (s, pr) => {
     const twin = twinOf(pr, feed, s?.repoUrl);
     if (twin) return `f:${feed.indexOf(twin)}`;
-    const url = prUrl(s, pr).toLowerCase();
+    const url = urlKey(prUrl(s, pr));
     if (url) return `u:${url}`;
     const repo = nameOf(pr.repo || s?.repoUrl).toLowerCase();
     return repo ? `r:${repo}#${pr.number}` : "";
@@ -1200,6 +1215,7 @@ export function prDotState(pr) {
   const pulse = d.ring;
   if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
+  if (p.state === "required") return { pulse: false, fill: "amber", hollow: true, conflict: d.conflict }; // a still ring: waits on required checks
   if (p.state === "waiting") return { pulse: false, fill: "amber", conflict: d.conflict };
   if (p.state === "ready") return { pulse: false, fill: "green", mark: "check", conflict: d.conflict }; // checks passed, or none confirmed
   return { pulse, fill: d.fill === "red" ? "red" : pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
@@ -1207,14 +1223,16 @@ export function prDotState(pr) {
 
 /**
  * The pill state from the host's current head, draft flag, checks and merge state plus the session's review fact (`pr.review`, set from the live file's
- * `review` list), `d` being the checks' dot. `state` is red | wip | running | waiting | unreviewed | ready, or null for a PR the pill has nothing to add to (the plain green or grey dot):
+ * `review` list), `d` being the checks' dot. `state` is red | wip | running | unreviewed | ready | required | waiting, or null for a PR the pill has nothing to add to (the plain green or grey dot):
  * an older feed without head and merge state and without a session fact, a PR without checks, a green PR that is not mergeable.
  *  - red: a failed check, on a draft or work-in-progress PR too; wip: a draft on the host, or the session fact for the host's head is `wip`;
  *    running: checks running or unsettled;
- *  - waiting: settled (green, or no checks confirmed for the head) and the merge state is blocked or behind: amber and still;
  *  - unreviewed: settled green (or no checks confirmed for the head) and the fact is `unreviewed` or about another head than the host's;
  *  - ready (the check mark, see prDotState): settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
- *    facts alone (`reviewed` false: no review claim).
+ *    facts alone (`reviewed` false: no review claim);
+ *  - required: the checks passed (green, at least one passed, none running or failed), the tracker's `waiting` names are set, `unsettled` is not,
+ *    and the merge state is not behind: amber and still (a ring), the card lists the names;
+ *  - waiting: settled (green, or no checks confirmed for the head) and the merge state is blocked or behind: amber and still;
  */
 function pillOf(pr, d) {
   const rev = isObj(pr?.review) && typeof pr.review.head === "string" ? pr.review : null;
@@ -1228,10 +1246,14 @@ function pillOf(pr, d) {
   const settled = d.fill === "green" || (d.fill === "dim" && mine?.noChecks === true);
   if (!settled) return { state: null };
   if (rev && (!mine || mine.state === "unreviewed")) return { state: "unreviewed" };
+  if (pr?.mergeable === "MERGEABLE" && !["blocked", "behind", "dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
+  if (waitingOf(pr).length && d.fill === "green" && ms !== "behind") return { state: "required" };
   if (ms === "blocked" || ms === "behind") return { state: "waiting", merge: ms };
-  if (pr?.mergeable === "MERGEABLE" && !["dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
   return { state: null };
 }
+
+// The waiting check names as the card lists them: non-empty strings only.
+const waitingOf = (pr) => listOf(pr?.waiting).filter((s) => typeof s === "string" && s);
 
 function baseDot(pr) {
   const checks = listOf(pr?.checks).map(jobOf).filter(Boolean).map((j) => j.state);
@@ -1262,14 +1284,14 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
       ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
       baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
       ...(pr.head || twin.head ? { head: pr.head || twin.head } : {}), ...(pr.mergeState || twin.mergeState ? { mergeState: pr.mergeState || twin.mergeState } : {}),
-      ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks, ...(twin.unsettled ? { unsettled: true } : {}) } : {}),
+      ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks, ...(twin.unsettled ? { unsettled: true } : {}), ...(twin.waiting && !pr.waiting ? { waiting: twin.waiting } : {}) } : {}),
       ...(pr.unsettled ? { unsettled: true } : {}),
     };
   });
 }
 
-/** Data of the hover card: title, description excerpt, conflict line, counts, and the jobs grouped failed / running / passed,
- *  at most CARD_CAP names per group then `more`. */
+/** Data of the hover card: title, description excerpt, conflict line, counts, and the jobs grouped failed / running / waiting / passed,
+ *  at most CARD_CAP names per group then `more`. The waiting group (the required checks a passed PR waits on) shows only in the `required` pill. */
 export function prCard(pr) {
   const jobs = (listOf(pr?.jobs).length ? pr.jobs : listOf(pr?.checks)).map(jobOf).filter(Boolean);
   // A PR known only from its session dot (jobs without names, no feed twin) has no job list to show: no invented "job N".
@@ -1281,14 +1303,16 @@ export function prCard(pr) {
     const names = named.filter((j) => j.state === state).map((j) => j.name);
     return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
   };
-  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), group("passed", "passed", "ok")];
+  const waitNames = pillOf(pr, baseDot(pr)).state === "required" ? waitingOf(pr) : [];
+  const waitGroup = { key: "waiting", label: "waiting", count: waitNames.length, names: waitNames.slice(0, CARD_CAP), more: Math.max(0, waitNames.length - CARD_CAP) };
+  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), waitGroup, group("passed", "passed", "ok")];
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
     state: `#${pr?.number ?? "?"} · ${prStateText(pr)}${pr?.unreviewed === true ? ` · ${UNREVIEWED}` : ""}`,
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
-    counts: { failed: groups[0].count, running: groups[1].count, passed: groups[2].count },
+    counts: { failed: groups[0].count, running: groups[1].count, passed: groups[3].count },
     groups: dotOnly ? [] : groups.filter((g) => g.count > 0),
     status,
     note: dotOnly ? "details after the next feed refresh" : "",
