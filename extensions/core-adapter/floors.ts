@@ -1428,7 +1428,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (unknown) return unknown;
   }
   // every segment kind whose body `opaqueBodies` extracts (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
-  const opaque = segs.find((s) => s.opaque !== null);
+  const opaque = segs.find((s) => s.opaque !== null && s.opaque !== "parse_error");
   if (opaque) {
     for (const body of opaqueBodies(text, true)) {
       const inner = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
