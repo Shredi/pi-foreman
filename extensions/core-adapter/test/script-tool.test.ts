@@ -86,7 +86,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
     getThinkingLevel: () => "high",
     sendMessage: (m: unknown, opts: unknown) => void sent.push({ message: m as Record<string, unknown>, opts: opts as Record<string, unknown> }),
   };
-  coreAdapter(pi as never, { ...(o.platform ? { platform: o.platform } : {}), spawner: probeSpawner() });
+  coreAdapter(pi as never, { ...(o.platform ? { platform: o.platform } : {}), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
   if (o.child === "runtime") process.env.PI_SUBAGENT_CHILD = "1";
   const seen = { titles: [] as string[], choices: [] as string[][], notices: [] as string[], inputs: 0, blockedAtSelect: [] as boolean[] };
   const ctx = {
@@ -188,8 +188,20 @@ test("foreman_script: the real run follows the dry run, consumes the approval, a
   assert.deepEqual(runs.map((x) => [x.kind, x.hash, x.exit]), [["dry", short, 0], ["run", short, 0]]);
   assert.ok(runs.every((x) => typeof x.seconds === "number"), "seconds survives the trace writer");
   const stateDir = path.join(r.agentDir, "pi-foreman", "state");
-  const stateFiles = fs.readdirSync(stateDir, { recursive: true, encoding: "utf8" }).filter((n) => !/^trace-[^/\\]*\.jsonl$/.test(n) && fs.statSync(path.join(stateDir, n)).isFile());
-  for (const n of stateFiles) assert.ok(!fs.readFileSync(path.join(stateDir, n), "utf8").includes("set-key.sh"), `${n}: nothing about the approval is written to the state directory`);
+  // a file can vanish between the walk and the read (tmp+rename writers in the state dir)
+  const gone = <T>(f: () => T): T | undefined => {
+    try {
+      return f();
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw e;
+    }
+  };
+  const stateFiles = fs.readdirSync(stateDir, { recursive: true, encoding: "utf8" }).filter((n) => !/^trace-[^/\\]*\.jsonl$/.test(n) && gone(() => fs.statSync(path.join(stateDir, n)).isFile()));
+  for (const n of stateFiles) {
+    const body = gone(() => fs.readFileSync(path.join(stateDir, n), "utf8"));
+    if (body !== undefined) assert.ok(!body.includes("set-key.sh"), `${n}: nothing about the approval is written to the state directory`);
+  }
 });
 
 test("foreman_script: the tool description and the rules text tell the foreman to stop on an unexpected dry run", async (t) => {

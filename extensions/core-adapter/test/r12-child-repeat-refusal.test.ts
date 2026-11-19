@@ -16,6 +16,7 @@ import { LadderState } from "../ladder.ts";
 import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, REPEAT_STOP_REASONS, runEndOf } from "../launchwait.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { readTraceFiles } from "./_trace-walk.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Block = { block?: boolean; reason?: string } | undefined;
@@ -80,17 +81,7 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }) {
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   let calls = 0;
   const trace = (): Record<string, unknown>[] => {
-    const out: Record<string, unknown>[] = [];
-    const walk = (d: string): void => {
-      if (!fs.existsSync(d)) return;
-      for (const n of fs.readdirSync(d)) {
-        const p = path.join(d, n);
-        if (fs.statSync(p).isDirectory()) walk(p);
-        else if (n.startsWith("trace-") && n.endsWith(".jsonl")) out.push(...fs.readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>));
-      }
-    };
-    walk(agentDir);
-    return out;
+    return readTraceFiles(agentDir).flatMap((text) => text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>));
   };
   return {
     aborts: () => aborts,

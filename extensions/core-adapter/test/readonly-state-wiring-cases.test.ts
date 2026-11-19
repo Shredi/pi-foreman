@@ -122,16 +122,16 @@ test("the start picture is taken at the tool_call, before the launch result; a r
 
 test("a tasks launch and a chain launch of read-only roles are compared; an unchanged one is a trace record only", async (t) => {
   const e = await setup(t);
-  await e.run({ tasks: [{ agent: "reviewer", task: "x" }, { agent: "explorer", task: "y" }] }, "run-t");
+  await e.run({ tasks: [{ agent: "explorer", task: "x" }, { agent: "explorer", task: "y" }] }, "run-t");
   e.probe.oid = OID_B;
-  e.rig.end({ runId: "run-t", agent: "reviewer", success: true });
+  e.rig.end({ runId: "run-t", agent: "explorer", success: true });
   assert.ok(await until(() => e.notices().length === 1));
   assert.equal(e.traces()[0].outcome, "changed");
   e.probe.oid = OID_A;
   const before = e.probe.calls.length;
-  await e.run({ chain: [{ agent: "reviewer", task: "x" }] }, "run-c");
+  await e.run({ chain: [{ agent: "explorer", task: "x" }] }, "run-c");
   assert.ok(e.probe.calls.length > before, "the chain launch was pictured");
-  e.rig.end({ runId: "run-c", agent: "reviewer", success: true });
+  e.rig.end({ runId: "run-c", agent: "explorer", success: true });
   assert.ok(await until(() => e.traces().length === 2));
   assert.equal(e.traces()[1].outcome, "unchanged");
   assert.equal(e.notices().length, 1);
@@ -148,18 +148,18 @@ test("a failed and a stopped run end are compared too", async (t) => {
   }
 });
 
-test("builder launches, mixed builder+reviewer tasks (either order) and a builder resume send no notice and no trace", async (t) => {
+test("builder launches, mixed builder+explorer tasks (either order) and a builder resume send no notice and no trace", async (t) => {
   const e = await setup(t);
   const inputs: Array<[string, Record<string, unknown>]> = [
     ["rb", { agent: "builder", task: "build" }],
-    ["rm1", { tasks: [{ agent: "builder", task: "b" }, { agent: "reviewer", task: "r" }] }],
-    ["rm2", { tasks: [{ agent: "reviewer", task: "r" }, { agent: "builder", task: "b" }] }],
+    ["rm1", { tasks: [{ agent: "builder", task: "b" }, { agent: "explorer", task: "r" }] }],
+    ["rm2", { tasks: [{ agent: "explorer", task: "r" }, { agent: "builder", task: "b" }] }],
   ];
   for (const [id, input] of inputs) await e.run(input, id);
   await e.run({ action: "resume", id: "rb", message: "more" }, "rb2");
   assert.equal(e.probe.calls.length, 0, "no git run for any of them");
   e.probe.oid = OID_B;
-  for (const id of ["rb", "rm1", "rm2", "rb2"]) e.rig.end({ runId: id, agent: id.startsWith("rm") ? "reviewer" : "builder", success: true });
+  for (const id of ["rb", "rm1", "rm2", "rb2"]) e.rig.end({ runId: id, agent: id.startsWith("rm") ? "explorer" : "builder", success: true });
   await quiet(e);
   assert.equal(e.traces().length, 0);
 });
@@ -204,18 +204,18 @@ test("a child session is not pictured", async (t) => {
 
 test("launch cwds resolve like pi-subagents: a top-level cwd against the session cwd, a step cwd against the launch cwd; only that root is pictured", async (t) => {
   const e = await setup(t);
-  await e.run({ cwd: "../b", tasks: [{ agent: "reviewer", task: "x", cwd: "sub" }, { agent: "explorer", task: "y" }] }, "run-d");
+  await e.run({ cwd: "../b", tasks: [{ agent: "explorer", task: "x", cwd: "sub" }, { agent: "explorer", task: "y" }] }, "run-d");
   assert.ok(e.probe.calls.length > 0);
   assert.ok(e.probe.calls.every((c) => c === e.b), `only b: ${[...new Set(e.probe.calls)].join(",")}`);
 });
 
 test("two roots are pictured in parallel", async (t) => {
   const e = await setup(t);
-  await e.run({ tasks: [{ agent: "reviewer", task: "x" }, { agent: "reviewer", task: "y", cwd: "../b" }] }, "run-p");
+  await e.run({ tasks: [{ agent: "explorer", task: "x" }, { agent: "explorer", task: "y", cwd: "../b" }] }, "run-p");
   assert.ok(e.probe.calls.includes(e.a) && e.probe.calls.includes(e.b));
   assert.ok(e.probe.peakDirs >= 2, `peak ${e.probe.peakDirs}`);
   e.probe.oid = OID_B;
-  e.rig.end({ runId: "run-p", agent: "reviewer", success: true });
+  e.rig.end({ runId: "run-p", agent: "explorer", success: true });
   assert.ok(await until(() => e.notices().length === 1));
   assert.equal(e.notices().length, 1, "one notice for the run");
   assert.ok((e.notices()[0].content ?? "").includes(e.a) && (e.notices()[0].content ?? "").includes(e.b));
