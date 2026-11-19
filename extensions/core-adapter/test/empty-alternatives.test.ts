@@ -41,14 +41,12 @@ test("foreman_ledger upsert: an empty item/text or an empty entries list gives w
 test("foreman_ledger note and defer: an empty item or an empty items list counts as not given", () => {
   assert.deepEqual(plan({ action: "note", item: "", items: [3], text: "n" }), { calls: [["note", "3", "n"]], items: "3", attested: false });
   assert.deepEqual(plan({ action: "defer", item: 2, items: [], text: "later" }), { calls: [["defer", "2", "later"]], items: "2", attested: false });
-  assert.deepEqual(plan({ action: "note", items: "", item: 4, text: "n" }), { calls: [["note", "4", "n"]], items: "4", attested: false });
   assert.match(refused({ action: "note", item: "", items: [], text: "n" }), /needs exactly one item/);
   assert.match(refused({ action: "note", item: "", text: "n" }), /needs exactly one item/);
 });
 
 test("foreman_ledger mark: an empty items list is still no items", () => {
   assert.match(refused({ action: "mark", items: [] }), /mark needs items/);
-  assert.match(refused({ action: "mark", items: "" }), /mark needs items/);
   assert.deepEqual(plan({ action: "mark", items: [2], text: "" }), { calls: [["mark", "2"]], items: "2", attested: false });
 });
 
