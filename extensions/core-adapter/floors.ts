@@ -1333,13 +1333,14 @@ function behindPrivilege(seg: ShellSegment): ShellSegment {
 }
 
 /** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, an applet's words). */
-function localKind(seg0: ShellSegment, prog0: string, env: FloorEnv, rmAsks: boolean): FloorHit | null {
+function localKind(seg0: ShellSegment, prog0: string, env: FloorEnv, rmAsks: boolean, inBody = false): FloorHit | null {
   const seg = behindPrivilege(seg0);
   const prog = seg === seg0 ? prog0 : base(seg.program);
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
-  // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) where the rm stood as a command; the home, root and system
-  // targets, shred, and an rm inside a string run as code (`-c`, eval) were denies
-  if (d) return withFragment(d.rule === "floor-delete-outside" && rmAsks && prog === "rm" && !seg.wrappers.some((w) => base(w) === "xargs") ? { ...d, kind: "ask" } : d, seg);
+  // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) only where the rm stood as a literal command: not behind
+  // xargs, a shell string or eval, `sudo`/`doas`, nor behind `env`/`command` in a function body (the old check's bypass wrappers); the home, root and system targets and shred were denies
+  const literal = rmAsks && seg === seg0 && !seg.wrappers.some((w) => base(w) === "xargs" || (inBody && (base(w) === "env" || base(w) === "command")));
+  if (d) return withFragment(d.rule === "floor-delete-outside" && literal && prog === "rm" ? { ...d, kind: "ask" } : d, seg);
   if (pythonDisk(seg, prog)) return withFragment(hit("disk", `\`${prog}\` formats, erases or overwrites a disk. Ask the user.`), seg);
   const unreadable = unknownWriteTarget(seg, prog);
   if (unreadable !== undefined) return withFragment(unknownWriteHit(unreadable), seg);
@@ -1372,7 +1373,7 @@ function appletOf(seg: ShellSegment): ShellSegment {
  * the runner's `unsupported`) stays as it was, so mode `auto` and the other floors see these lines as before; only the old check's decisions are added.
  * Until PR C moves them to the judge. `top` is the line itself: its own segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true): FloorHit | null {
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true, inBody = false): FloorHit | null {
   if (depth > MAX_DEPTH) return null;
   const eff: ShellSegment[] = [];
   for (const s of segs) {
@@ -1384,7 +1385,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     // the applet behind `busybox` or `toybox` is checked as the plain command is (`busybox xargs sh -c ...` is `xargs sh -c ...`)
     if (applet) {
       const appletText = [seg.program, ...seg.argv].map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
-      const h = pythonKinds(appletText, parseShell(appletText, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && !seg.wrappers.some((w) => base(w) === "xargs"));
+      const h = pythonKinds(appletText, parseShell(appletText, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && !seg.wrappers.some((w) => base(w) === "xargs" || SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval"));
       if (h) return withFragment(h, seg);
     }
     const remote = remoteCommand(seg, prog);
@@ -1413,7 +1414,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     }
     if (!top || applet) {
       // a recursive rm the parser unwrapped out of a string run as code (`sh -c`, eval) was a deny, never the dialog of a literal command
-      const h = localKind(seg, prog, env, rmAsks && !seg.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval"));
+      const h = localKind(seg, prog, env, rmAsks && !seg.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval"), inBody);
       if (h) return h;
     }
   }
@@ -1427,7 +1428,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       // a function inside a `-c` or eval string was a recursive rm in a string run as code: a deny, never the dialog of a literal command
       const fnSeg = segs.find((x) => x.opaque === "function_def");
       const inString = !!fnSeg?.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval");
-      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && !inString);
+      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && !inString, true);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
