@@ -6,19 +6,20 @@ import { CritiqueCounter } from "../rounds.ts";
 import { diffLinesOf } from "../findings.ts";
 import { sanitizeTrace } from "../trace.ts";
 
-const REVIEW = "VERDICT: PASS\n1. PASS ok\nCRITIQUE:\n- [now] drop the unused flag\n- [now] inline the one-caller helper\n- [later] split the module\nMissing: none";
+// the findings of a pass record: two now, one later
+const REVIEW = [{ kind: "now", text: "drop the unused flag" }, { kind: "now", text: "inline the one-caller helper" }, { kind: "later", text: "split the module" }];
 
-test("CritiqueCounter: raised counts now + later lines with the round's diff lines; the next builder launch applies the now lines once", () => {
+test("CritiqueCounter: raised counts now + later findings with the round's diff lines; the next builder launch applies the now findings once", () => {
   const c = new CritiqueCounter();
   assert.deepEqual(c.onReview(REVIEW, "reviewer", "run1", 42), { event: "critique", kind: "raised", role: "reviewer", runId: "run1", count: 3, lines: 42 });
   assert.deepEqual(c.onBuilder(), { event: "critique", kind: "applied", role: "builder", count: 2 });
   assert.equal(c.onBuilder(), null, "a second builder launch applies nothing");
 });
 
-test("CritiqueCounter: a later review replaces unsent now lines; CRITIQUE: none raises 0 and applies nothing", () => {
+test("CritiqueCounter: a later review replaces unsent now findings; no advice findings raise 0 and apply nothing", () => {
   const c = new CritiqueCounter();
   c.onReview(REVIEW, "reviewer", "run1");
-  assert.deepEqual(c.onReview("VERDICT: PASS\nCRITIQUE: none", "reviewer", "run2"), { event: "critique", kind: "raised", role: "reviewer", runId: "run2", count: 0 });
+  assert.deepEqual(c.onReview([], "reviewer", "run2"), { event: "critique", kind: "raised", role: "reviewer", runId: "run2", count: 0 });
   assert.equal(c.onBuilder(), null);
 });
 
@@ -35,7 +36,7 @@ test("diffLinesOf counts added and removed lines, not the file headers", () => {
 
 test("index wiring: critique raised at a counted review run end, applied at an accepted builder launch, lines from the review launch diff", () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, "..", "index.ts"), "utf8");
-  assert.match(src, /for \(const r of reviewResults\) if \(r\.counts\) \{\r?\n\s+s\.trace\?\.emit\(s\.critique\.onReview\(r\.text, r\.role, runId, reviewLaunch\?\.lines\)\);/);
+  assert.match(src, /for \(const r of reviewResults\) if \(r\.counts\) \{\r?\n\s+s\.trace\?\.emit\(s\.critique\.onReview\(r\.findings, r\.role, runId, reviewLaunch\?\.lines\)\);/);
   assert.match(src, /subagentAgents\(input\)\.includes\("builder"\)\) \{\r?\n\s+const applied = s\.critique\.onBuilder\(\);/);
   assert.match(src, /if \(rl && diffText !== null\) rl\.lines = diffLinesOf\(diffText\);/);
 });

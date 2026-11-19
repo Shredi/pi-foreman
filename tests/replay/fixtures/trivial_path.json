@@ -61,7 +61,7 @@
    {"tools": [{"name": "edit", "arguments": {"path": "calc.py", "edits": [{"oldText": "return a - b", "newText": "return a + b if isinstance(a, (int, float)) else 0"}]}}]},
    {"text": "[[replay:s2]] built"}
   ],
-  "r-s3": [{"text": "[[replay:s3]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
-  "r-t5": [{"text": "[[replay:t5]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}]
+  "r-s3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:s3]] reviewed\nOverall verdict: PASS"}],
+  "r-t5": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:t5]] reviewed\nOverall verdict: PASS"}]
  }
 }

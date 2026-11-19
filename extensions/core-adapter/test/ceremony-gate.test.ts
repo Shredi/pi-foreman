@@ -8,6 +8,12 @@ import { addChange, changedLines, emptySteps, emptyTally, finishRefusal, initial
 import { escalate, initialCeremony } from "../ceremony.ts";
 import { recordLaunchRoles } from "../actions.ts";
 import { foremanTriage } from "../triage.ts";
+import { resultsOf, type RecSpec } from "./_verdict-rig.ts";
+
+/** The steps a run end counts, its reviewer having left `spec` (null: no verdict record). */
+const stepsWith = (data: unknown, spec: RecSpec | null = null) => stepsOfRunEnd(data, resultsOf(data, spec));
+const PASS: RecSpec = { verdict: "pass" };
+const FAIL: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "broken" }] };
 
 test("changedLines counts added + removed lines like numstat", () => {
   assert.equal(changedLines("", ""), 0);
@@ -54,14 +60,15 @@ test("required steps: list per tier, counted from run-end events; failed or time
   const req = { standard: ["builder", "reviewer"], heavy: ["builder", "reviewer", "finalizer", "bogus"] };
   assert.deepEqual(requiredSteps(req, "trivial"), []);
   assert.deepEqual(requiredSteps(req, "heavy"), ["builder", "reviewer"], "a removed role name is dropped like any unknown step");
-  assert.deepEqual(stepsOfRunEnd({ runId: "r", agent: "builder", success: true }), ["builder"]);
-  assert.deepEqual(stepsOfRunEnd({ runId: "r", agent: "builder", success: false, timedOut: true }), []);
-  assert.deepEqual(stepsOfRunEnd({ runId: "r", results: [{ agent: "builder", status: "failed", success: false, error: "Subagent timed out." }] }), []);
-  assert.deepEqual(
-    stepsOfRunEnd({ runId: "r", results: [{ agent: "builder", status: "completed", success: true }, { agent: "reviewer", status: "completed", success: true, output: "Verdict: APPROVE" }, { agent: "finalizer", status: "completed" }] }),
-    ["builder", "reviewer"],
-  );
-  assert.deepEqual(stepsOfRunEnd({ runId: "r", agent: "reviewer", success: true, summary: "looked at it" }), [], "a review without a verdict does not count");
+  assert.deepEqual(stepsWith({ runId: "r", agent: "builder", success: true }), ["builder"]);
+  assert.deepEqual(stepsWith({ runId: "r", agent: "builder", success: false, timedOut: true }), []);
+  assert.deepEqual(stepsWith({ runId: "r", results: [{ agent: "builder", status: "failed", success: false, error: "Subagent timed out." }] }), []);
+  // a review run is a single launch: a builder and a reviewer result in one event are not a launch the harness makes, but the event reader counts each completed child
+  const mixed = { runId: "r", results: [{ agent: "builder", status: "completed", success: true }, { agent: "finalizer", status: "completed" }] };
+  assert.deepEqual(stepsWith(mixed), ["builder"]);
+  assert.deepEqual(stepsWith({ runId: "r", agent: "reviewer", success: true }, PASS), ["reviewer"], "a pass record counts");
+  assert.deepEqual(stepsWith({ runId: "r", agent: "reviewer", success: true, summary: "looked at it" }), [], "a review without a verdict record does not count");
+  assert.deepEqual(stepsWith({ runId: "r", agent: "reviewer", success: true }, { verdict: "incomplete", reason: "no tests could run" }), [], "an incomplete record is no verdict");
   const counts = emptySteps();
   counts.builder++;
   assert.deepEqual(missingSteps(counts, requiredSteps(req, "standard")), ["reviewer"]);
@@ -82,19 +89,19 @@ test("reviewGate pass: only a current PASS (or APPROVE) satisfies the reviewer s
   const req = requiredSteps({ standard: ["builder", "reviewer"] }, "standard");
   const counts = emptySteps();
   counts.builder = 1;
-  const end = (agent: string, output: string) => ({ runId: "r", agent, success: true, output });
-  const after = (agent: string, output: string, g = initialReviewGate()) => onReviewVerdicts(g, reviewVerdictsOfRunEnd(end(agent, output)));
+  const end = (agent: string) => ({ runId: "r", agent, success: true, output: "report" });
+  const after = (agent: string, spec: RecSpec | null, g = initialReviewGate()) => onReviewVerdicts(g, reviewVerdictsOfRunEnd(resultsOf(end(agent), spec)));
   const open = (g: ReturnType<typeof initialReviewGate>) => openSteps(counts, req, "pass", g);
   assert.deepEqual(open(initialReviewGate()), ["reviewer"]);
-  const fail = after("reviewer", "VERDICT: FAIL");
+  const fail = after("reviewer", FAIL);
   assert.deepEqual(open(fail), ["reviewer"], "FAIL does not satisfy");
   assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL)");
-  const pass = after("reviewer", "VERDICT: PASS");
+  const pass = after("reviewer", PASS);
   assert.deepEqual(open(pass), [], "PASS satisfies");
-  assert.deepEqual(open(after("reviewer", "Verdict: APPROVE")), [], "a tolerated APPROVE satisfies");
-  assert.deepEqual(open(after("reviewer", "looked at it", pass)), ["reviewer"], "no verdict clears an earlier PASS");
-  assert.deepEqual(open(after("reviewer", "Verdict: BLOCK", pass)), ["reviewer"], "BLOCK clears an earlier PASS");
-  assert.deepEqual(open(after("reviewer", "VERDICT: PASS", fail)), [], "a re-review PASS satisfies again");
+  assert.deepEqual(open(after("reviewer", null, pass)), ["reviewer"], "no verdict clears an earlier PASS");
+  assert.deepEqual(open(after("reviewer", { verdict: "incomplete", reason: "could not run" }, pass)), ["reviewer"], "an incomplete record clears an earlier PASS");
+  assert.deepEqual(open(after("reviewer", FAIL, pass)), ["reviewer"], "FAIL clears an earlier PASS");
+  assert.deepEqual(open(after("reviewer", PASS, fail)), [], "a re-review PASS satisfies again");
 });
 
 test("reviewGate pass: a builder launch or a foreman project edit after the verdict re-opens it; a scratchpad edit does not", () => {
@@ -109,7 +116,7 @@ test("reviewGate pass: a builder launch or a foreman project edit after the verd
   assert.equal(reopened(onRevision(onReviewVerdicts(initialReviewGate(), ["fail"]))), "fail");
   assert.equal(onRevision(initialReviewGate()).revised, false, "no verdict yet: nothing to re-open");
   // A scratchpad edit calls no onRevision, and a non-review run end carries no verdict: the PASS holds.
-  const held = onReviewVerdicts(pass, reviewVerdictsOfRunEnd({ runId: "f", agent: "explorer", success: true, output: "Verdict: FAIL" }));
+  const held = onReviewVerdicts(pass, reviewVerdictsOfRunEnd(resultsOf({ runId: "f", agent: "explorer", success: true, output: "report" }, FAIL)));
   assert.deepEqual(openSteps(counts, req, "pass", held), []);
   assert.equal(reopened(pass), null);
   assert.deepEqual(openSteps(counts, req, "pass", onReviewVerdicts(revised, ["pass"])), [], "a fresh PASS after the revision");
@@ -120,7 +127,7 @@ test("reviewGate verdict: any verdict counts (4bbe2c3)", () => {
   assert.equal(reviewGateMode(undefined), "pass");
   assert.equal(reviewGateMode("bogus"), "pass");
   const counts = emptySteps();
-  for (const step of stepsOfRunEnd({ runId: "r", agent: "reviewer", success: true, output: "VERDICT: FAIL" })) counts[step]++;
+  for (const step of stepsWith({ runId: "r", agent: "reviewer", success: true, output: "report" }, FAIL)) counts[step]++;
   const fail = onRevision(onReviewVerdicts(initialReviewGate(), ["fail"]));
   assert.deepEqual(openSteps(counts, ["reviewer"], "verdict", fail), []);
   assert.deepEqual(openSteps(counts, ["reviewer"], "verdict", fail), missingSteps(counts, ["reviewer"]));

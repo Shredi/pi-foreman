@@ -37,9 +37,9 @@
   ]
  },
  "reviewer": {
-  "r-s2": [{"text": "[[replay:s2]] VERDICT: PASS\n1. PASS the plan covers item 1\nOverall verdict: PASS"}],
-  "r-k2": [{"text": "[[replay:k2]] VERDICT: FAIL\n1. FAIL the plan skips item 1\nOverall verdict: FAIL"}],
-  "r-k3": [{"text": "[[replay:k3]] VERDICT: FAIL\n1. FAIL the plan still skips item 1\nOverall verdict: FAIL"}]
+  "r-s2": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:s2]] reviewed"}],
+  "r-k2": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "the plan skips item 1"}]}}]}, {"text": "[[replay:k2]] reviewed"}],
+  "r-k3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "the plan still skips item 1"}]}}]}, {"text": "[[replay:k3]] reviewed"}]
  },
  "*": {
   "quiet": [{"text": "child: nothing to report"}]

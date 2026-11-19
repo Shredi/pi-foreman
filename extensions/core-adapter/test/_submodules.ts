@@ -5,9 +5,17 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+// git for Windows rejects `\\.\nul` as a config file, so win32 gets an empty file instead of os.devNull
+const emptyConfig = (): string => {
+  if (process.platform !== "win32") return os.devNull;
+  const f = path.join(os.tmpdir(), `pf-empty-gitconfig-${process.pid}`);
+  if (!fs.existsSync(f)) fs.writeFileSync(f, "");
+  return f;
+};
+
 export const gitIn = (cwd: string, ...args: string[]): string =>
   execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "protocol.file.allow=always", ...args], {
-    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1" },
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_CONFIG_GLOBAL: emptyConfig(), GIT_CONFIG_NOSYSTEM: "1" },
   }).trim();
 
 export interface SubmoduleRig {

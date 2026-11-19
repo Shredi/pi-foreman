@@ -4,7 +4,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { costAt, loadPrices, priceRecord, tableRate } from "../cost.ts";
-import { budgetCheck, failedItemsOf, prependReReview, budgetCap } from "../costguard.ts";
+import { budgetCheck, prependReReview, budgetCap } from "../costguard.ts";
+import { failedItemIds, type VerdictItem } from "../verdict.ts";
 import { ChildRuns, UsageTail } from "../runs.ts";
 import { footerText, zeroTotals, addMessage } from "../footer.ts";
 import { LiveState } from "../livestate.ts";
@@ -137,13 +138,13 @@ test("3c: budget guard fires on the summed estimate, not the foreman's own", () 
   assert.equal(budgetCap(2.5), 2.5);
 });
 
-test("3e: a re-review after FAIL gets [re-review items: N, M] from the failed items of the last FAIL", () => {
-  const fail = "1. PASS ok\n2. FAIL no test\n3. PASS\n4. FAIL wrong\nverdict: FAIL";
-  assert.deepEqual(failedItemsOf(fail), ["2", "4"]);
-  assert.deepEqual(failedItemsOf("1. PASS\nverdict: PASS"), []);
-  const task = prependReReview("Review the diff.", failedItemsOf(fail));
+test("3e: a re-review after FAIL gets [re-review items: N, M] from the failed items of the last FAIL record", () => {
+  const fail: VerdictItem[] = [{ id: 1, result: "pass" }, { id: 2, result: "fail" }, { id: 3, result: "pass" }, { id: 4, result: "fail" }];
+  assert.deepEqual(failedItemIds(fail), ["2", "4"]);
+  assert.deepEqual(failedItemIds([{ id: 1, result: "pass" }]), []);
+  const task = prependReReview("Review the diff.", failedItemIds(fail));
   assert.ok(task.startsWith("[re-review items: 2, 4]\n"));
-  assert.match(task, /must list each of them/);
+  assert.match(task, /give each of them a result in review_verdict/);
   assert.ok(task.endsWith("Review the diff."));
   assert.equal(prependReReview(task, ["9"]), task, "idempotent");
   assert.equal(prependReReview("t", []), "t");

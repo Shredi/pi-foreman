@@ -9,9 +9,8 @@
 // Code reviews (`loopVerdictOf`): an item-only repeat (no `at:` key) is not a repeat when both rounds carry a `work` count that grew and the known state changed.
 // Plan reviews (`loopVerdictOf`): an equal set across two different plan versions is a repeat only when it holds an `at:` key; an
 // unknown state ("") equals only another unknown state. A session with a parent gets `loopRefusalParented` instead of `loopRefusal`.
-import { failedItemsOf } from "./costguard.ts";
-import type { PanelFinding } from "./panel.ts";
 import type { Verdict } from "./rounds.ts";
+import { defectsOf, failedItemIds, type VerdictFinding, type VerdictItem } from "./verdict.ts";
 
 export type ReviewKind = "plan" | "code";
 export type LoopRule = "repeat" | "stalled";
@@ -33,14 +32,13 @@ export interface LoopStop {
   sig: string[];
 }
 
-/** The located finding's key: the `finding_id` triple of scripts/foreman_findings.py (file, line // 5, class); the note is not part of it. */
-export const findingKey = (f: PanelFinding): string => `at:${f.file}:${f.line === null ? "-" : Math.floor(f.line / 5)}:${f.class}`;
+/** The located finding's key: the `finding_id` triple of scripts/foreman_findings.py (file, line // 5, class); the note is not part of it. A line gives `-`, an absent class `""`. */
+export const findingKey = (f: { file: string; line: number | null; class: string }): string => `at:${f.file}:${f.line === null ? "-" : Math.floor(f.line / 5)}:${f.class}`;
 
-/** The finding set of a FAIL report: `item:<N>` per `N. FAIL` line, `at:<file>:<line/5>:<class>` per located finding. [] for anything but a FAIL. */
-export function sigOf(text: string, findings: readonly PanelFinding[]): string[] {
-  const items = failedItemsOf(text);
-  if (items.length === 0 && findings.length === 0) return [];
-  return [...new Set([...items.map((n) => `item:${n}`), ...findings.map(findingKey)])].sort();
+/** The finding set of a FAIL record: `item:<N>` per failed item, `at:<file>:<line/5>:<class>` per `defect` finding that names a file (advice kinds and a finding without a file give no key). */
+export function sigOf(items: readonly VerdictItem[], findings: readonly VerdictFinding[]): string[] {
+  const keys = defectsOf(findings).flatMap((f) => (f.file ? [findingKey({ file: f.file, line: f.line ?? null, class: f.class ?? "" })] : []));
+  return [...new Set([...failedItemIds(items).map((n) => `item:${n}`), ...keys])].sort();
 }
 
 /** The rule a FAIL round `cur` trips against the round before it of the same kind (`prev`, null = none), or null. */

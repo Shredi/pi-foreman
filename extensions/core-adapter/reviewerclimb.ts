@@ -16,7 +16,6 @@ import { OCCASIONS, type Occasion } from "./occasion.ts";
 import { ranksOf, tierOf } from "./ranks.ts";
 import { hasStrongRung, launchEntries } from "./ladder.ts";
 import { securityScan } from "./diffscan.ts";
-import { verdictItemsOf } from "./reviewmarks.ts";
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -54,45 +53,21 @@ export const modelIdOf = (m: string): string => {
   return b.slice(b.indexOf("/") + 1);
 };
 
-/**
- * Item numbers of the review's per-item `N. FAIL` lines, in order, without repeats. Accepts a list
- * marker (`-`, `*`), backticks or `**` around the number or the line, `N.` or `N)`, and the doubled
- * form "1. `1. FAIL`". Lines inside ``` fences are skipped.
- */
-export const failItemsOf = (text: string): string[] => verdictItemsOf(text, "FAIL");
-
-/** Completed `reviewer` children of a run-end event: text and model (when the result names one). */
-export function reviewerRunsOfRunEnd(data: unknown): { text: string; model: string | null }[] {
-  if (!isObj(data)) return [];
-  const results = Array.isArray(data.results) && data.results.length > 0 ? data.results.filter(isObj) : [data];
-  const out: { text: string; model: string | null }[] = [];
-  for (const r of results) {
-    const role = typeof r.agent === "string" ? r.agent : typeof data.agent === "string" ? data.agent : "";
-    if (role !== "reviewer") continue;
-    const completed = (r.status === undefined ? r.success === true : r.status === "completed") && r.success !== false && r.timedOut !== true && r.stopped !== true && !r.error;
-    if (completed) out.push({ text: [r.output, r.summary].filter((t): t is string => typeof t === "string").join("\n"), model: typeof r.model === "string" ? r.model : null });
-  }
-  return out;
-}
-
-/** Completed `reviewer` children's texts of a run-end event. */
-export const reviewerTextsOfRunEnd = (data: unknown): string[] => reviewerRunsOfRunEnd(data).map((r) => r.text);
-
 /** FAIL counts per ledger item across reviewer runs (one count per run), keyed by the bound ledger. */
 export class ReviewerFails {
   private readonly counts = new Map<string, number>();
   private readonly seen = new Set<string>();
   private ledger: string | null = null;
 
-  /** A reviewer run ended: count each item it FAILs once. */
-  onRun(runId: string, texts: string[], ledger: string | null): void {
-    if (this.seen.has(runId) || texts.length === 0) return;
+  /** A reviewer run ended: `runs` are the failed item ids (verdict record, `failedItemIds`) of each counted completed reviewer of it; count each item once. */
+  onRun(runId: string, runs: readonly (readonly string[])[], ledger: string | null): void {
+    if (this.seen.has(runId) || runs.length === 0) return;
     this.seen.add(runId);
     if (ledger !== this.ledger) {
       this.counts.clear();
       this.ledger = ledger;
     }
-    for (const n of new Set(texts.flatMap(failItemsOf))) this.counts.set(n, (this.counts.get(n) ?? 0) + 1);
+    for (const n of new Set(runs.flat())) this.counts.set(n, (this.counts.get(n) ?? 0) + 1);
   }
 
   /** The first item that failed in two or more reviewer runs, or null. */

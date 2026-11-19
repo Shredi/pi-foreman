@@ -30,9 +30,16 @@ test("FAIL, builder, PASS in the own checkout: the final PASS stands", async (t)
   const b = await launch(a, "builder", "build the widget");
   assert.equal(b.blocked, null, String(b.blocked));
   await end(a, b, "builder", "done");
-  const r = await launch(a, "reviewer", "x", { tasks: [{ agent: "reviewer", task: "[pre-pr] review" }, { agent: "builder", task: "fix it" }, { agent: "reviewer", task: "[pre-pr] review again" }] });
-  assert.equal(r.blocked, null, String(r.blocked));
-  a.endRunResults(r.id, [{ agent: "reviewer", output: FAIL }, { agent: "builder", output: "fixed" }, { agent: "reviewer", output: PASS }]);
+  // a review, builder, review chain is three single launches now (a reviewer never launches inside a group)
+  const r1 = await launch(a, "reviewer", "[pre-pr] review");
+  assert.equal(r1.blocked, null, String(r1.blocked));
+  await end(a, r1, "reviewer", FAIL);
+  const fix = await launch(a, "builder", "fix it");
+  assert.equal(fix.blocked, null, String(fix.blocked));
+  await end(a, fix, "builder", "fixed");
+  const r2 = await launch(a, "reviewer", "[pre-pr] review again");
+  assert.equal(r2.blocked, null, String(r2.blocked));
+  await end(a, r2, "reviewer", PASS);
   await tick(300);
   assert.doesNotMatch(await settle(a), /requires reviewer|last verdict FAIL/);
 });

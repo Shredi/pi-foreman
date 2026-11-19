@@ -26,7 +26,7 @@ function fixture() {
   return { base, work, g };
 }
 
-// one repository for the tests that only read it (few git starts: the suite has a child-process budget)
+// one repository for the tests that only read it (few git starts: each git start costs test time)
 let common: ReturnType<typeof fixture> | undefined;
 const shared = () => (common ??= fixture());
 after(() => {

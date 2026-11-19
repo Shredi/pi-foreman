@@ -13,7 +13,7 @@ import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { resolveGithubHosts } from "./prhost.ts";
 import type { GithubHosts } from "./prhost.ts";
-import { expectStep, holdPass, pollWatchBatch, settleMsOf, settledOf } from "./prwatch.ts";
+import { expectStep, holdPass, oneLine, pollWatchBatch, settleMsOf, settledOf, waitingOf } from "./prwatch.ts";
 import type { CommentEntry, RunOp, SourceStatus, WatchPoll } from "./prwatch.ts";
 import { inScope, noAnswerRun, parsePrSources, runSource, sourceComments, sourceRuns } from "./prsources.ts";
 import type { PrContext, SourceCfg, SourceResult } from "./prsources.ts";
@@ -41,6 +41,8 @@ const MAX_COMMENTS = 100;
 const BASELINE_TTL_MS = 10 * 60_000;
 const BASELINE_KEEP_MS = 24 * 3_600_000;
 const MAX_BASELINE = 100;
+/** The learning list of a baseline (`ran`): pr_ops.py omits `learn` when it would hold more names than this. */
+const MAX_LEARN = 200;
 export const DEADLINE = "deadline";
 
 export const USAGE = "usage: foreman prs poll [--json]";
@@ -109,9 +111,13 @@ function readState(agentDir: string): StateDoc | null {
   }
   const baselines: Record<string, BaselineEntry> = {};
   if (isObj(j.baselines))
-    for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at };
-  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}) };
+    for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at, ...learnOf(b.learn) };
+  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(finite(j.hostlessDroppedAt) ? { hostlessDroppedAt: j.hostlessDroppedAt } : {}) };
 }
+
+/** `{learn}` of a baseline answer when it is well formed (`ran` a string list of at most MAX_LEARN names, `merged` a whole number of at least 1); else `{}` (the base is not learnable). */
+const learnOf = (v: unknown): { learn?: { ran: string[]; merged: number } } =>
+  isObj(v) && Array.isArray(v.ran) && v.ran.length <= MAX_LEARN && v.ran.every((n) => typeof n === "string") && finite(v.merged) && Number.isInteger(v.merged) && v.merged >= 1 ? { learn: { ran: v.ran as string[], merged: v.merged } } : {};
 
 const validEntry = (e: Record<string, unknown>): boolean => typeof e.repo === "string" && finite(e.number) && finite(e.at);
 
@@ -150,7 +156,7 @@ function setOff(agentDir: string, now: number, off: boolean): void {
     withStateLock(agentDir, now, () => {
       const st = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
       if ((st.off === true) === off) return;
-      const next: StateDoc = { v: 1, trackedAt: st.trackedAt, prs: st.prs, ...(st.baselines ? { baselines: st.baselines } : {}), ...(off ? { off: true as const } : {}) };
+      const next: StateDoc = { v: 1, trackedAt: st.trackedAt, prs: st.prs, ...(st.baselines ? { baselines: st.baselines } : {}), ...(st.hostlessDroppedAt !== undefined ? { hostlessDroppedAt: st.hostlessDroppedAt } : {}), ...(off ? { off: true as const } : {}) };
       writeAtomic(trackedStateFile(agentDir), next);
     });
   } catch {
@@ -242,12 +248,34 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const { agentDir } = deps;
   const t0 = deps.now();
   const state = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
-  const listed = readTracked(agentDir);
+  let listed = readTracked(agentDir);
   if (listed.kind === "bad") {
     res.skipped = "list_unreadable";
     markHidden(state.prs, sx.hide);
-    if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs, ...(state.baselines ? { baselines: state.baselines } : {}) });
+    if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs, ...(state.baselines ? { baselines: state.baselines } : {}), ...(state.hostlessDroppedAt !== undefined ? { hostlessDroppedAt: state.hostlessDroppedAt } : {}) });
     return;
+  }
+  // once, with more than one host configured: the lines without a `host` field go (they were polled as github.com, and an older default may have put them on the wrong host);
+  // the marker is written with the state, so a line a session on older code adds later stays
+  let hostlessDroppedAt = state.hostlessDroppedAt;
+  if (hosts.length > 1 && hostlessDroppedAt === undefined) {
+    const done = await withTrackedLock(agentDir, () => {
+      const cur = readTracked(agentDir);
+      if (cur.kind !== "ok") return 0;
+      const keep = cur.lines.filter((l) => !(usableLine(l) && isObj(l) && l.host === undefined));
+      if (keep.length === cur.lines.length) return 0;
+      writeTracked(agentDir, keep);
+      return cur.lines.length - keep.length;
+    }, deps.now);
+    if (done) {
+      hostlessDroppedAt = t0;
+      if (done.value > 0) {
+        const note = `removed ${done.value} tracked PR line${done.value === 1 ? "" : "s"} without a host (several hosts are configured); follow ${done.value === 1 ? "it" : "them"} again`;
+        res.error = res.error ? `${res.error}; ${note}` : note;
+      }
+      listed = readTracked(agentDir);
+      if (listed.kind === "bad") return;
+    }
   }
   const lines = listed.kind === "ok" ? listed.lines : [];
   const seenKeys = new Set<string>();
@@ -328,6 +356,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       const s = settledOf(snap.runs, snap.required);
       const hold = s.result === "pass" && sx.settleMs > 0 && !snap.required?.length ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
       const held = hold?.held ?? false;
+      // a PR whose only missing runs are required names is decided again after the baseline step (expectSteps: merge-time, pre-merge or not learnable)
       const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && (!s.settled || held);
       prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), at: now };
       if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(0, MAX_COMMENTS).map(cap) };
@@ -342,12 +371,12 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   res.tracked = items.length;
   const commentsBefore = JSON.stringify(comments.prs); // sourceStep edits shared comment objects in place
   await sourceStep(deps, sx, pick, polls, state.prs, prs, newComments, deadline);
-  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now());
+  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now(), sx.settleMs);
 
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
   markHidden(prs, sx.hide);
   if (JSON.stringify(newComments) !== commentsBefore) writeAtomic(trackedCommentsFile(agentDir), { v: 1, prs: newComments });
-  writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs, ...(Object.keys(baselines).length ? { baselines } : {}) });
+  writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(hostlessDroppedAt !== undefined ? { hostlessDroppedAt } : {}) });
   if (drop.size) {
     const done = await withTrackedLock(agentDir, () => {
       const cur = readTracked(agentDir);
@@ -499,7 +528,7 @@ function flagBaselines(pick: TrackedPr[], prs: Record<string, StateEntry>, basel
  * A row without a `baseline` field is "not asked or not available" (an older answer, a host without the field, the fallback path): a known empty baseline.
  * An asked answer that failed carries `{error}`: unknown, asked again on the next poll, and the age of the stored one is not refreshed.
  */
-function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number): void {
+function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number, settleMs: number): void {
   // hosts whose flagged row came back without the field: the host does not have it (or the batch took the fallback path), so every other entry of that host with no stored
   // baseline counts as a known empty baseline in this poll too, not as unknown; a host that has the field answers every flagged row with it
   const none = new Set<string>();
@@ -511,7 +540,7 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     if (!hit || !flagged.has(rk)) continue;
     const b = hit.row.baseline;
     if (!isObj(b)) none.add(host);
-    else if (Array.isArray(b.names) && typeof hit.row.baseRef === "string") baselines[baseKey(host, p.repo, hit.row.baseRef)] = { names: names(b.names), at: hit.startedAt };
+    else if (Array.isArray(b.names) && typeof hit.row.baseRef === "string") baselines[baseKey(host, p.repo, hit.row.baseRef)] = { names: names(b.names), at: hit.startedAt, ...learnOf(b.learn) };
   }
   pick.forEach((p, i) => {
     const r = polls[i];
@@ -533,9 +562,36 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     const upgrade = !old?.exp && !!old?.snap && head !== "" && old.snap.head === head && settledOf(old.snap.runs, old.snap.required).result === "pass" && !old.unsettled;
     const { state, facts } = expectStep(old?.exp, { head, runs: e.snap.runs, required: e.snap.required, cut: e.snap.cut === true, draft: e.meta?.draft === true, ...(old?.snap && old.snap.head !== head ? { prevRuns: old.snap.runs } : {}), upgrade, baseline }, now);
     e.exp = state;
-    const { expect: _drop, ...rest } = e.snap;
-    e.snap = facts ? { ...rest, expect: facts } : rest;
-    if (facts && settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed")) e.unsettled = true;
+    const { expect: _drop, learn: _old, ...rest } = e.snap;
+    const open = settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed");
+    // every gating run passed and only required names have no run: merge-time (the base's recent merged PRs ran none of the missing names before their merge), pre-merge (one of them did)
+    // or not learnable (no complete answer); a source run merged in is counted, a failure is none of these (it is immediate)
+    const waiting = waitingOf(e.snap.runs, e.snap.required);
+    const ran = waiting.length > 0 && facts && !facts.unknown ? stored?.learn?.ran : undefined;
+    const mergeTime = ran ? (e.snap.required ?? []).filter((n) => !ran.includes(n)) : [];
+    if (ran && waiting.every((n) => mergeTime.includes(n))) {
+      // case 1: the merge-time names do not veto; the pass stands at once and the names ride along
+      e.snap = { ...rest, learn: "merge-time" };
+      e.waiting = waiting.slice(0, 10).map((n) => oneLine(n, 120));
+      delete e.unsettled;
+    } else if (ran && facts) {
+      // case 2: a missing name ran before the merge on a recent merged PR, a real check still to come; only those names veto
+      e.snap = { ...rest, learn: "pre-merge", expect: { ...facts, missing: facts.missing.filter((n) => !mergeTime.includes(n)) } };
+      e.unsettled = true;
+    } else if (waiting.length > 0) {
+      // case 3: not learnable; the veto stands, the pass is not claimed, and after the settle hold the PR shows the waiting names instead of `unsettled`
+      const hold = settleMs > 0 ? holdPass(old?.passSince, head, e.snap.runs, now, settleMs) : null;
+      if (hold) e.passSince = hold.since;
+      e.snap = facts ? { ...rest, expect: facts } : rest;
+      if (hold?.held) e.unsettled = true;
+      else {
+        delete e.unsettled;
+        e.waiting = waiting.slice(0, 10).map((n) => oneLine(n, 120));
+      }
+    } else {
+      e.snap = facts ? { ...rest, expect: facts } : rest;
+      if (facts && open) e.unsettled = true;
+    }
   });
 }
 

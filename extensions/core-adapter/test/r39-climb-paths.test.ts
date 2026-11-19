@@ -10,6 +10,7 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { pressurePath } from "../pressure.ts";
+import { writeFromReport } from "./_verdict-rig.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -81,6 +82,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong: boolean }): 
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   const dir = path.join(agentDir, "pi-foreman", "state");
+  const started = new Map<string, Record<string, unknown>>(); // the launch input by run id: its binding names the record folder
   const call = async (id: string, input: Record<string, unknown>) => {
     await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } }, ctx);
     return handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx) as Promise<{ block?: boolean; reason?: string } | undefined>;
@@ -97,10 +99,12 @@ async function rig(t: { after(fn: () => void): void }, o: { strong: boolean }): 
     },
     launch: call,
     async receipt(id, input, runId) {
+      started.set(runId, input);
       const res = (await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId }, content: [{ type: "text", text: "started" }], isError: false }, ctx)) as { content: { text: string }[] } | undefined;
       return (res?.content ?? []).map((c) => c.text).filter((x) => x.startsWith("pi-foreman: launched")).join("\n");
     },
     ended(runId, agent, summary) {
+      writeFromReport(started.get(runId), summary);
       channels.get("subagent:async-complete")!({ runId, agent, success: true, summary });
     },
   };

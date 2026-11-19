@@ -12,7 +12,7 @@ import { PrWatches, TRACKER_DOWN, countRuns, oneLine, reviewFact } from "./prwat
 import type { StoreRead, WatchSnapshot } from "./prwatch.ts";
 import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
-import { isTrackedKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
+import { isTrackedKey, keyText, parsePrUrl, remoteReposOf, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { commitOf, headOf, prGateRefusal } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
@@ -219,7 +219,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     op: "pr_watch",
     label: "Watch PR",
     description: "Watch a pull request in the background until it is merged or closed (pr_create arms this for the PR it opens; use this for one opened elsewhere; from a folder that is not a git checkout pass repo, number and host). Each tick that finds something new sends a pi-foreman-pr message (a failed check, the CI result once all checks settled, a new comment or review, a mergeable change, no CI, a head the reviewer never passed, merged, closed); the watch stays armed, do not re-arm. Returns at once; one watch per PR; pr_unwatch ends it.",
-    parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR; required with repo)."), repo: str(200, "Repository as owner/name: watch that repository's PR (needs number); without it the current checkout's repository is used."), host: str(253, "A host of tools.prGithubHosts (default: its first entry); only with repo.") }, additionalProperties: false },
+    parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR; required with repo)."), repo: str(200, "Repository as owner/name: watch that repository's PR (needs number); without it the current checkout's repository is used."), host: str(253, "A host of tools.prGithubHosts; only with repo. Default: the host of the checkout's remote for that repository, else the host the tracked list already has it on, else the only configured host; with none of these the call refuses and asks for host.") }, additionalProperties: false },
     foremanOnly: true,
   },
   {
@@ -287,6 +287,8 @@ export interface PrPackSession {
   tracker?: PrTracker;
   /** Adds a PR to the tracked list (prstore.ts addTracked), or says `off` when the PR feed is off. Absent: nothing is added. */
   track?(repo: string, n: number, host?: string): Promise<TrackOutcome>;
+  /** The hosts (of `hosts`) the tracked list already carries `repo#n` on (prstore.ts trackedHostOf; read-only). Absent: none. */
+  trackedHost?(repo: string, n: number, hosts: string[]): string[];
   /** The PR tracker's GitHub hosts (tools.prGithubHosts). Absent: github.com only. */
   githubHosts?(): GithubHosts;
   /** Draft handling is on (tools.prDraft not false, the review gate and the PR feed on). Absent: off, pr_create as it always was. */
@@ -460,15 +462,15 @@ export const PR_FOLLOW = "pr_follow";
 
 /**
  * `pr_follow {repo, number}` (docs/tools.md#pr-tools): adds a github.com PR to the tracked list that `foreman prs poll` polls. Foreman only; it makes no
- * GitHub call, runs no git and no host program (so no drift preflight). `defaultActive` false: index.ts activates it with the PR pack.
+ * GitHub call, runs no host program (so no drift preflight); it reads the checkout's git remotes to resolve a missing host. `defaultActive` false: index.ts activates it with the PR pack.
  */
 export function registerPrFollow(pi: Pick<ExtensionAPI, "registerTool">, deps: PrFollowDeps): string[] {
   if (deps.isChild) return [];
   pi.registerTool({
     name: PR_FOLLOW,
     label: "Follow PR",
-    description: "Follow a GitHub pull request: adds it to the tracked list that herdr-app's `foreman prs poll` polls for its checks, and drops once it is merged or closed (pr_create and pr_watch add theirs automatically). GitHub only, on a host of `tools.prGithubHosts` (default: its first entry). Makes no GitHub call. Needs radar.openPrs on.",
-    parameters: { type: "object", properties: { repo: str(200, "Repository as owner/name."), number: num("PR number."), host: str(253, "A host of tools.prGithubHosts (default: its first entry).") }, required: ["repo", "number"], additionalProperties: false } as never,
+    description: "Follow a GitHub pull request: adds it to the tracked list that herdr-app's `foreman prs poll` polls for its checks, and drops once it is merged or closed (pr_create and pr_watch add theirs automatically). GitHub only, on a host of `tools.prGithubHosts` (without host: the checkout's remote for that repository, else the host the tracked list has it on, else the only configured host, else it refuses and asks for host). Makes no GitHub call. Needs radar.openPrs on.",
+    parameters: { type: "object", properties: { repo: str(200, "Repository as owner/name."), number: num("PR number."), host: str(253, "A host of tools.prGithubHosts (default: the checkout's remote host for that repository, else the tracked list's, else the only configured host; otherwise required).") }, required: ["repo", "number"], additionalProperties: false } as never,
     defaultActive: false,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       let s: PrPackSession;
@@ -487,9 +489,15 @@ export function registerPrFollow(pi: Pick<ExtensionAPI, "registerTool">, deps: P
       if (params.host !== undefined && !validHost(params.host)) return failure(`${PR_FOLLOW}: bad arguments (host a host name); nothing was done.`, { decision: "bad_request" });
       const hosts = hostsOf(s);
       if ("error" in hosts) return failure(`${PR_FOLLOW}: ${hosts.error}; nothing was done.`, { decision: "hosts_unconfigured" });
-      const host = (typeof params.host === "string" ? params.host : hosts.hosts[0]).toLowerCase();
-      if (!hosts.hosts.includes(host)) return failure(`${PR_FOLLOW}: ${notListed(host, hosts.hosts)}; nothing was done.`, { decision: "host_unsupported" });
       const { repo, number } = params;
+      let host: string;
+      if (typeof params.host === "string") host = params.host.toLowerCase();
+      else {
+        const got = await hostOf(s, ctx.cwd, repo, number, hosts.hosts);
+        if ("error" in got) return failure(`${PR_FOLLOW}: ${got.error}; nothing was done.`, { decision: got.decision });
+        host = got.host;
+      }
+      if (!hosts.hosts.includes(host)) return failure(`${PR_FOLLOW}: ${notListed(host, hosts.hosts)}; nothing was done.`, { decision: "host_unsupported" });
       const tracked: TrackOutcome = s.track ? await s.track(repo, number, host).catch((): TrackOutcome => "unavailable") : "off";
       const details = { repo, number, tracked, ...(host !== "github.com" ? { host } : {}) };
       const at = `${host !== "github.com" ? `${host}/` : ""}${repo}#${number}`;
@@ -555,6 +563,21 @@ function noRepoCause(cwd: string): string {
     if (path.dirname(dir) === dir) return `no git checkout in ${cwd}; pass repo and host`;
   }
 }
+/**
+ * The host of `repo#n` when the caller names none, all local (no GitHub call): the checkout's remotes for that repository (exactly one listed host), else the tracked list's
+ * lines for it, else the only configured host; otherwise a refusal. Never the first of several hosts.
+ */
+async function hostOf(s: PrPackSession, cwd: string, repo: string, n: number, hosts: string[]): Promise<{ host: string } | { decision: "host_unresolved" | "host_ambiguous"; error: string }> {
+  const want = repo.toLowerCase();
+  const remotes = [...new Set((await remoteReposOf(cwd).catch(() => [])).filter((r) => r.repo.toLowerCase() === want && hosts.includes(r.host)).map((r) => r.host))];
+  if (remotes.length === 1) return { host: remotes[0] };
+  const listed = s.trackedHost?.(repo, n, hosts) ?? [];
+  if (listed.length === 1) return { host: listed[0] };
+  if (listed.length > 1) return { decision: "host_ambiguous", error: `host ambiguous for ${repo}#${n}: it is tracked on ${listed.join(", ")}; pass host` };
+  if (hosts.length === 1) return { host: hosts[0] };
+  return { decision: "host_unresolved", error: `host not resolved for ${repo}#${n}: pass host (one of ${hosts.join(", ")})` };
+}
+
 /** True when no `.git` entry sits at or above `cwd` (a file-system walk, no spawn). */
 export function outsideCheckout(cwd: string): boolean {
   for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
@@ -652,7 +675,13 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
     if (!validRepo(params.repo)) return failure(`${tool}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
     if (params.host !== undefined && !validHost(params.host)) return failure(`${tool}: bad arguments (host a host name); nothing was done.`, { decision: "bad_request" });
     if (n === undefined) return failure(`${tool}: number is required with repo; nothing was done.`, { decision: "bad_request" });
-    const host = (typeof params.host === "string" ? params.host : hosts.hosts[0]).toLowerCase();
+    let host: string;
+    if (typeof params.host === "string") host = params.host.toLowerCase();
+    else {
+      const got = await hostOf(s, ctx.cwd, params.repo, n, hosts.hosts);
+      if ("error" in got) return failure(`${tool}: ${got.error}; nothing was done.`, { decision: got.decision });
+      host = got.host;
+    }
     if (!hosts.hosts.includes(host)) return failure(`${tool}: ${notListed(host, hosts.hosts)}; nothing was done.`, { decision: "host_unsupported" });
     explicit = { host, repo: params.repo, n };
   }

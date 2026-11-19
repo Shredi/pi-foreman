@@ -45,13 +45,13 @@
   ]
  },
  "reviewer": {
-  "r-c2": [{"text": "[[replay:c2]] VERDICT: FAIL\n1. FAIL calc.py:2 off-by-one: add returns a - b\nOverall verdict: FAIL"}],
-  "r-c3": [{"text": "[[replay:c3]] VERDICT: FAIL\n1. FAIL calc.py:7 off-by-one: add still returns a - b\nOverall verdict: FAIL"}],
-  "r-p2": [{"text": "[[replay:p2]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
-  "r-q2": [{"text": "[[replay:q2]] VERDICT: PASS\n1. PASS the plan covers item 1\nOverall verdict: PASS"}]
+  "r-c2": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "add returns a - b", "file": "calc.py", "line": 2, "class": "off-by-one"}]}}]}, {"text": "[[replay:c2]] reviewed"}],
+  "r-c3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "add still returns a - b", "file": "calc.py", "line": 7, "class": "off-by-one"}]}}]}, {"text": "[[replay:c3]] reviewed"}],
+  "r-p2": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass", "items": [{"id": 1, "result": "pass"}]}}]}, {"text": "[[replay:p2]] reviewed"}],
+  "r-q2": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:q2]] reviewed"}]
  },
  "senior-reviewer": {
-  "r-c4": [{"text": "[[replay:c4]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
-  "r-p2": [{"text": "VERDICT: FAIL\n1. FAIL calc.py:2 race: the counter is shared without a lock\nOverall verdict: FAIL"}]
+  "r-c4": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass", "items": [{"id": 1, "result": "pass"}]}}]}, {"text": "[[replay:c4]] reviewed"}],
+  "r-p2": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "the counter is shared without a lock", "file": "calc.py", "line": 2, "class": "race"}]}}]}, {"text": "done"}]
  }
 }

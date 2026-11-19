@@ -104,11 +104,23 @@ test("overdue: a baseline that stays unreadable gives the same event with the un
   assert.ok(lines.includes(`report to the parent: PR #7 expected checks not reported on ${SHA.slice(0, 7)}, not counted as passed`), "a child reports it to its parent");
 });
 
-test("overdue under a readable required list: a required check that never appears gives the line, no pass", () => {
+test("overdue under a readable required list, base not learnable: a required check that never appears gives the fallback line after the hold, no overdue line, no pass (D101 case 3)", () => {
   const s = snap({ runs: [run("lint", "passed")], required: ["ci-ok"], expect: { missing: ["ci-ok"], overdue: true } });
+  const held = tick(baselineOf(snap({ runs: [run("lint", "pending")], required: ["ci-ok"] })), s, BOUND);
+  assert.deepEqual(events(held), [], "the hold starts when the run set is first seen");
+  const r = tick(held.state, s, BOUND + SETTLE);
+  assert.deepEqual(events(r), ["checks passed, waiting on required checks"]);
+  assert.equal(r.delta?.unreported, undefined);
+  assert.deepEqual(r.delta?.waiting, ["ci-ok"]);
+  assert.equal(r.state.ci, "", "not a pass");
+});
+
+test("overdue under a readable required list, a name that ran before the merge (learn pre-merge): the overdue line, no pass (D101 case 2)", () => {
+  const s = snap({ runs: [run("lint", "passed")], required: ["ci-ok"], learn: "pre-merge", expect: { missing: ["ci-ok"], overdue: true } });
   const r = tick(baselineOf(snap({ runs: [run("lint", "pending")], required: ["ci-ok"] })), s, BOUND);
   assert.deepEqual(events(r), [OVERDUE]);
   assert.deepEqual(r.delta?.unreported, ["ci-ok"]);
+  assert.equal(tick(r.state, s, BOUND + SETTLE * 5).delta, null, "no waiting line, no pass");
 });
 
 test("the overdue line is a no_checks event: a rule silencing no_checks silences it, and it is not replayed", () => {

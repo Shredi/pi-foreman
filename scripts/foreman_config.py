@@ -1197,15 +1197,15 @@ def cap_thinking(level, ceiling):
     return level if THINKING.index(level) <= THINKING.index(ceiling) else ceiling
 
 
-# ceremony.ledgerHelper "tool": reviewer roles get foreman_ledger, which lets them only mark V.
-LEDGER_TOOL = "foreman_ledger"
-LEDGER_TOOL_ROLES = ("reviewer",)
+# Reviewer roles give their verdict, the result per ledger item and the findings through review_verdict, in every ceremony.ledgerHelper
+# mode; they get no foreman_ledger (the verdict call closes item V).
+REVIEW_TOOL = "review_verdict"
+REVIEW_TOOL_ROLES = ("reviewer",)
 
 
-def with_ledger_tool(cfg, role, tools):
-    helper = (cfg.get("ceremony") or {}).get("ledgerHelper", "tool")
-    if role in LEDGER_TOOL_ROLES and helper not in ("bash", "off") and LEDGER_TOOL not in tools:
-        tools.append(LEDGER_TOOL)
+def with_review_tools(cfg, role, tools):
+    if role in REVIEW_TOOL_ROLES and REVIEW_TOOL not in tools:
+        tools.append(REVIEW_TOOL)
     return tools
 
 
@@ -1336,7 +1336,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_tool_search(with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, role_allowlist(cfg, role)))))
+        tools = with_tool_search(with_pr_pack(cfg, role, with_git_pack(cfg, role, with_review_tools(cfg, role, role_allowlist(cfg, role)))))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -1386,7 +1386,7 @@ def generate_subagents(cfg, agent_dir=None, project_dir=None):
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
-        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, role_allowlist(cfg, role))))
+        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_review_tools(cfg, role, role_allowlist(cfg, role))))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": with_tool_search(tools)}

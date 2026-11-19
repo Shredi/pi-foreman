@@ -16,10 +16,13 @@ One cell = one task x one model x one repeat = one reviewer launch through the h
 review path: the base is committed in a fresh git repo, the diff applied uncommitted, the diff
 facts block comes from extensions/core-adapter/diffscan.ts (bench/review_facts.mjs),
 and Pi runs the reviewer role prompt with the core-adapter extension loaded as a reviewer child
-(PI_SUBAGENT_CHILD=1, a launch binding with role reviewer), which adds instructions/reviewer.md
-and foreman_ledger exactly as in a session. Cells run in a work dir outside --out (the reviewer
-must not reach other cells' results or the ground truth). A cell whose json exists is skipped,
-so a second run resumes; failed launches are written as `<cell>.error.json` and retried.
+(PI_SUBAGENT_CHILD=1, a launch binding with role reviewer and its own verdictDir), which adds
+instructions/reviewer.md and the review_verdict tool exactly as in a session. The cell is scored
+from the record the reviewer's review_verdict call wrote (verdict.json in that folder), never from
+its report text. Cells run in a work dir outside --out (the reviewer must not reach other cells'
+results or the ground truth). A cell whose json holds a record is skipped, so a second run resumes;
+a cell from before the record switch has none: the table counts it `stale` and a run launches it
+again. Failed launches are written as `<cell>.error.json` and retried.
 
 Auth for claude-bridge models: the token is read from the file named by
 FOREMAN_BENCH_OAUTH_TOKEN_FILE (else FOREMAN_BENCH_OAUTH_TOKEN) and handed to Pi only as
@@ -51,11 +54,7 @@ REPO = HERE.parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import foreman_bench  # noqa: E402
-from foreman_findings import (  # noqa: E402,F401 - re-exported: the extraction half of scorer v3 lives there
-    CLASSES, CLASS_SYNONYMS, LINE_SLACK, _SYN, VERDICT_RE, ITEM_RE, MISSING_RE, DEFECTS_RE, OVERALL_RE, BULLET_RE,
-    NONE_RE, PATHTOKEN_RE, GENERIC_LINE_RE, NEGATION, PROCESS_RE, NOTE_RE, XREF_RE, NOTE_HEAD_RE, SYMBOL_RE, _NUM,
-    _indent, _line_spans, _negated, _norm, _unique, _has_symbol, fail_evidence, fail_units, items_of, names_file,
-    patch_files, symbols_of, verdict_of, located_findings, finding_id)
+from foreman_findings import CLASSES, LINE_SLACK, _has_symbol, _norm, finding_id, names_file, patch_files, symbols_of  # noqa: E402,F401
 
 DEFAULT_MODELS = ("claude-bridge/claude-haiku-5-5:medium", "claude-bridge/claude-sonnet-5-5:medium",
                   "claude-bridge/claude-opus-5-5:medium")
@@ -63,14 +62,15 @@ BRIDGE_PROVIDER = "claude-bridge"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
 BRIDGE = "pi-claude-bridge@0.9.2"  # same pins as bench/harbor_agent.py
 AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.293"
-# Pinned for comparability with older runs; no longer the reviewer role's list. The reviewer now also gets codemode by default
-# (roles.reviewer.codemode), and foreman_ledger is added for reviewer children (scripts/foreman_config.py with_ledger_tool, ceremony.ledgerHelper "tool").
-TOOLS = "read,ls,grep,find,bash,foreman_ledger"
+# Pinned; not the reviewer role's list. The reviewer also gets codemode by default (roles.reviewer.codemode), and review_verdict is
+# added for reviewer children in every ceremony.ledgerHelper mode (scripts/foreman_config.py with_review_tools).
+TOOLS = "read,ls,grep,find,bash,review_verdict"
 FACTS_SHIM = REPO / "bench" / "review_facts.mjs"
 ADAPTER = REPO / "extensions" / "core-adapter" / "index.ts"
 FAKE_PROVIDER = REPO / "tests" / "replay" / "fake_provider.ts"
 REVIEWER_AGENT = REPO / "agents" / "reviewer.md"
 FAKE_TAG = "[[replay:review-bench]]"
+LEDGER_ITEMS = [1, 2, 3]  # the numbered items of TASK_TEMPLATE
 # Words that must never reach the reviewer (its prompt, env, cwd or file names).
 FORBIDDEN = ("seeded", "ground_truth")
 
@@ -85,67 +85,95 @@ TASK_TEMPLATE = (
     "Owner's task:\n{prompt}")
 
 
-SCORER_VERSION = 3
+SCORER_VERSION = 4
 
 
-# ------------------------------------------------------------------ parsing and scoring
+# ------------------------------------------------------------------ reading and scoring
 
 
-def judge(unit, defect, files=()):
-    """(located, diagnosed) for one FAIL unit against one defect. Located: the unit names the defect's file and gives
-    a line within its range +-3 (on a line naming the file), one of its class's words, or its symbol. Diagnosed: the
-    unit names the file and a class word that is not negated (no not/no/isn't/without/never in the 3 words before)."""
-    text = "\n".join(unit)
-    if not names_file(text, defect["file"], files):
+def read_record(verdict_dir, launch_id):
+    """The reviewer's verdict record (`verdict.json` of its verdictDir, written by the review_verdict tool), or None when
+    there is none or it is not a record of this launch."""
+    try:
+        rec = json.loads((Path(verdict_dir) / "verdict.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict) or rec.get("v") != 1 or rec.get("launchId") != launch_id:
+        return None
+    return rec if rec.get("verdict") in ("pass", "fail", "incomplete") else None
+
+
+def has_record(cell):
+    """True for a cell written since the record switch: its json has a `record` key (null = the reviewer recorded no verdict).
+    A cell without the key is stale: it was scored from report text, which scorer v4 never reads."""
+    return isinstance(cell, dict) and "record" in cell
+
+
+def cell_has_record(path):
+    try:
+        return has_record(json.loads(Path(path).read_text("utf-8")))
+    except (OSError, ValueError):
+        return False
+
+
+def defect_findings(record):
+    return [f for f in (record or {}).get("findings") or [] if isinstance(f, dict) and f.get("kind") == "defect"]
+
+
+def judge(finding, defect, files=()):
+    """(located, diagnosed) for one defect finding against one defect. Located: the finding's file is the defect's file and
+    its line is within the defect's range +-LINE_SLACK, or its class is the defect's class, or its text names the defect's
+    symbol. Diagnosed: the file matches and the class is the defect's class."""
+    if not names_file(finding.get("file") or "", defect["file"], files):
         return False, False
-    syn = _SYN.get(defect["class"])
-    words = list(syn.finditer(text)) if syn else []
-    diagnosed = any(not _negated(text, m.start()) for m in words)
+    diagnosed = finding.get("class") == defect["class"]
+    line = finding.get("line")
     a, b = defect["lines"][0] - LINE_SLACK, defect["lines"][-1] + LINE_SLACK
-    by_line = any(lo <= b and hi >= a for ln in unit if names_file(ln, defect["file"], files)
-                  for lo, hi in _line_spans(ln, defect["file"]))
-    return bool(words) or by_line or _has_symbol(text, defect), diagnosed
+    by_line = isinstance(line, int) and a <= line <= b
+    return diagnosed or by_line or _has_symbol(finding.get("text") or "", defect), diagnosed
 
 
+def score(record, truth, files=()):
+    """Deterministic score of one review record against its ground truth (docs/bench.md "Review bench").
 
-def score(text, truth, files=()):
-    """Deterministic score of one review against its ground truth (docs/bench.md "Review bench").
-
-    An overall PASS scores nothing. Otherwise each FAIL unit (see fail_units) is judged against every defect: a
-    defect is located / diagnosed when some unit locates / diagnoses it (see judge). A unit that locates no defect is
-    a false alarm, one per unit, unless it is a process item (tests not added or not run), counted under `process`.
-    `files` should be the diff's files: a bare basename only names a file that is unique among them."""
-    verdict = verdict_of(text)
+    Only a `fail` record scores; a `pass`, an `incomplete` or no record scores nothing (the verdict shows it). Each
+    `defect` finding is judged against every defect: a defect is located / diagnosed when some finding locates /
+    diagnoses it (see judge). A defect finding that locates no defect is a false alarm. `now` and `later` findings are
+    notes. `files` should be the diff's files: a bare basename only names a file that is unique among them."""
+    verdict = record.get("verdict") if record else None
     defects = truth.get("defects") or []
     res = {"scorer": SCORER_VERSION, "verdict": verdict, "located": [], "diagnosed": [],
-           "missed": [d["id"] for d in defects], "false_alarms": [], "process": 0, "notes": 0, "defects": len(defects),
+           "missed": [d["id"] for d in defects], "false_alarms": [], "notes": 0, "defects": len(defects),
            "clean": bool(truth.get("clean"))}
-    if verdict == "pass":
+    if verdict != "fail":
         return res
     located, diagnosed = set(), set()
-    for unit in fail_units(text):
-        hits = [(d["id"],) + judge(unit, d, files) for d in defects]
+    for f in defect_findings(record):
+        hits = [(d["id"],) + judge(f, d, files) for d in defects]
         located.update(i for i, loc, _ in hits if loc)
         diagnosed.update(i for i, _, dia in hits if dia)
-        text = "\n".join(unit)
-        if any(loc for _, loc, _ in hits) or any(names_file(text, d["file"], files) or _has_symbol(text, d)
-                                                 for d in defects):
-            continue
-        if PROCESS_RE.search(text):
-            res["process"] += 1
-        elif _is_note(unit, text):
-            res["notes"] += 1
-        else:
-            res["false_alarms"].append(unit[0][:120])
+        if not any(loc for _, loc, _ in hits):
+            res["false_alarms"].append(str(f.get("text") or "")[:120])
+    res["notes"] = sum(1 for f in record.get("findings") or [] if isinstance(f, dict) and f.get("kind") in ("now", "later"))
     res["located"] = [d["id"] for d in defects if d["id"] in located]
     res["diagnosed"] = [d["id"] for d in defects if d["id"] in diagnosed]
     res["missed"] = [d["id"] for d in defects if d["id"] not in located]
     return res
 
 
-def _is_note(unit, text):
-    return bool(NOTE_RE.search(text) or NOTE_HEAD_RE.match(unit[0])
-                or (XREF_RE.search(text) and not PATHTOKEN_RE.search(text)))
+def located_findings(record, files):
+    """The defect findings of a record that name a file of the diff and give a line or a class, without a ground truth:
+    one per (file, line // 5, class). The climb policy stops a chain when a rung has none."""
+    files, out, seen = list(files or ()), [], set()
+    for f in defect_findings(record):
+        rel = next((x for x in files if names_file(f.get("file") or "", x, files)), None)
+        if rel is None or (f.get("line") is None and not f.get("class")):
+            continue
+        fid = finding_id(_norm(rel), f.get("line"), f.get("class"))
+        if fid not in seen:
+            seen.add(fid)
+            out.append(f)
+    return out
 
 
 # ------------------------------------------------------------------ task dirs
@@ -352,12 +380,14 @@ def blind_violations(texts, tree, task_dir):
     return sorted(set(out))
 
 
-def child_env(agent, tmp, scratch, repo, launch_id, token=None, fake_script=None):
+def child_env(agent, tmp, scratch, repo, launch_id, token=None, fake_script=None, verdict_dir=None):
     env = {k: v for k, v in os.environ.items()
            if not k.upper().startswith(("PI_", "FOREMAN_", "CLAUDE_", "ANTHROPIC_", "HERDR_"))
            and k.upper() not in ("TMPDIR", "TEMP", "TMP")}
     binding = {"foremanSession": "review-bench", "workspace": str(repo), "role": "reviewer", "launchId": launch_id,
                "kind": "first", "model": None, "scratch": str(scratch)}
+    if verdict_dir:  # the record folder of the review_verdict tool; the ledger of TASK_TEMPLATE has items 1-3
+        binding.update(verdictDir=str(verdict_dir), items=LEDGER_ITEMS)
     env.update({"PI_CODING_AGENT_DIR": str(agent), "TMPDIR": str(tmp), "TEMP": str(tmp), "TMP": str(tmp),
                 "PI_SUBAGENT_CHILD": "1", "PI_SUBAGENT_EXTENSION_BINDINGS": json.dumps({"pi-foreman/1": binding}),
                 "PI_TELEMETRY": "0", "PI_SKIP_VERSION_CHECK": "1",
@@ -493,6 +523,8 @@ class Bench:
         (agent / "pi-foreman" / "claude-config").mkdir(parents=True)
         scratch = tmp / "pi-foreman-scratch" / "review-bench" / uniq
         scratch.mkdir(parents=True)
+        verdict_dir = root / "verdict"  # next to the clone, never under --out: the reviewer cannot reach other cells' records
+        verdict_dir.mkdir(mode=0o700)
         fake = provider_of(model) in FAKE_PROVIDERS
         pkgs = [str(self.bridge)] if self.bridge and not fake else []
         (agent / "settings.json").write_text(json.dumps({"packages": pkgs}, indent=1), "utf-8")
@@ -501,7 +533,8 @@ class Bench:
         facts = facts_for(repo, base, scratch)
         system = reviewer_system_prompt()
         user = compose_task(base, (tdir / "prompt.md").read_text("utf-8"), facts, fake=fake)
-        env = child_env(agent, tmp, scratch, repo, "rb-" + uniq, fake_script=self.fake_script if fake else None)
+        launch_id = "rb-" + uniq
+        env = child_env(agent, tmp, scratch, repo, launch_id, fake_script=self.fake_script if fake else None, verdict_dir=verdict_dir)
         added = {k: v for k, v in env.items() if os.environ.get(k) != v}
         texts = {"system prompt": system, "task": user, "cwd": str(repo)}
         texts.update({"env " + k: v for k, v in added.items()})
@@ -509,7 +542,7 @@ class Bench:
         diff_text = (tdir / "diff.patch").read_text("utf-8", "replace").lower()
         bad += ["diff.patch contains %r" % w for w in FORBIDDEN if w in diff_text]
         return {"root": root, "repo": repo, "base": base, "facts": facts, "system": system, "user": user,
-                "env": env, "env_set": added, "fake": fake, "blind": bad, "files": repo_files(repo),
+                "verdict_dir": verdict_dir, "launch_id": launch_id, "env": env, "env_set": added, "fake": fake, "blind": bad, "files": repo_files(repo),
                 "diff_files": patch_files((tdir / "diff.patch").read_text("utf-8", "replace"))}
 
     def run_cell(self, task, model, rep):
@@ -556,9 +589,9 @@ class Bench:
         cost = foreman_bench.cost_of({"usage_requests": [["reviewer", bare] + r for r in reqs]}, self.prices) \
             if self.prices and reqs else None
         truth = self.truth(task)
+        record = read_record(prep["verdict_dir"], prep["launch_id"])
         rec.update({"secs": secs, "exit_code": proc.returncode, "timed_out": timed_out, "stop_reason": stop,
-                    "verdict": verdict_of(final), "items": items_of(final), "evidence": fail_evidence(final),
-                    "score": score(final, truth, prep["diff_files"]), "ground_truth": truth, "usage": usage,
+                    "record": record, "score": score(record, truth, prep["diff_files"]), "ground_truth": truth, "usage": usage,
                     "usd": None if cost is None or cost["unpriced"] else round(cost["usd"], 6),
                     "unpriced": cost["unpriced"] if cost else [], "base": prep["base"],
                     "facts_count": prep["facts"].get("count", 0), "files": prep["files"],
@@ -617,7 +650,7 @@ class Bench:
                                             "mode": self.mode})
         if self.mode == "climb":
             return self.run_climb()
-        todo = [c for c in plan_cells(sorted(self.tasks), self.models, self.repeats) if not self.cell_path(*c).exists()]
+        todo = [c for c in plan_cells(sorted(self.tasks), self.models, self.repeats) if not cell_has_record(self.cell_path(*c))]
         self.log("review bench: %d cells to run, %d done; work dir %s" % (
             len(todo), len(self.tasks) * len(self.models) * self.repeats - len(todo), self.work))
         code = 0
@@ -669,13 +702,21 @@ class Bench:
     def policy_path(self, task, rep):
         return self.out / "policies" / climb_slug(self.models) / ("%s__r%d.json" % (task, rep))
 
+    def policy_current(self, task, rep):
+        """A policy record whose rung cells all still have a record (a chain over a stale cell is not done)."""
+        try:
+            rungs = json.loads(self.policy_path(task, rep).read_text("utf-8"))["rungs"]
+            return all(cell_has_record(self.cells_dir / (r["cell"] + ".json")) for r in rungs)
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
     def run_chain(self, task, rep):
         """One task x repeat: rung 1, and the next rung on the same diff while a rung has a located finding. Returns
         "done", "cap" (token cap reached) or "error" (a rung failed to launch); writes the policy record when done."""
         rungs, stop = [], "exhausted"
         for i, model in enumerate(self.models, 1):
             path = self.cell_path(task, model, rep)
-            if not path.exists():
+            if not cell_has_record(path):  # a stale cell (no record) runs again
                 if self.token_cap and self.used_tokens() >= self.token_cap:
                     self.log("review bench: token cap %d reached; stopping (rerun to resume)" % self.token_cap)
                     return "cap"
@@ -688,7 +729,7 @@ class Bench:
                 if r.get("status") != "ok":
                     return "error"
             cell = json.loads(path.read_text("utf-8"))
-            n = len(located_findings(cell.get("final_text") or "", cell_diff_files(cell)))
+            n = len(located_findings(cell.get("record"), cell_diff_files(cell)))
             rungs.append({"model": model, "cell": cell_name(task, model, rep), "usd": cell.get("usd"),
                           "secs": cell.get("secs"), "located_count": n})
             if not n:
@@ -704,7 +745,7 @@ class Bench:
 
     def run_climb(self):
         chains = [(t, r) for r in range(1, self.repeats + 1) for t in sorted(self.tasks)
-                  if not self.policy_path(t, r).exists()]
+                  if not self.policy_current(t, r)]
         self.log("review bench: climb %s, %d chain(s) to run, %d done; work dir %s" % (
             self.policy, len(chains), len(self.tasks) * self.repeats - len(chains), self.work))
         code = 0
@@ -756,11 +797,11 @@ class Bench:
             self.log("policy %s: a later rung runs on the same diff only when the previous rung has a located finding" % self.policy)
             for r in range(1, self.repeats + 1):
                 for t in sorted(self.tasks):
-                    self.log("%s r%d: %s" % (t, r, " -> ".join("%s (%s)" % (bare_model(m), "done" if self.cell_path(
-                        t, m, r).exists() else "run") for m in self.models)))
+                    self.log("%s r%d: %s" % (t, r, " -> ".join("%s (%s)" % (bare_model(m), "done" if cell_has_record(self.cell_path(
+                        t, m, r)) else "run") for m in self.models)))
         else:
             for c in plan_cells(sorted(self.tasks), self.models, self.repeats):
-                self.log("%-60s %s" % (cell_name(*c), "done" if self.cell_path(*c).exists() else "run"))
+                self.log("%-60s %s" % (cell_name(*c), "done" if cell_has_record(self.cell_path(*c)) else "run"))
         self.log("launch: node <pi cli> -p --mode json --no-session --no-context-files --no-skills -e %s --model <model> "
                  "--tools %s --system-prompt <reviewer> <task>" % (Path(ADAPTER).relative_to(REPO).as_posix(), TOOLS))
         return 1 if problems else 0
@@ -931,20 +972,23 @@ def render_policies(out, cells, errors=()):
 
 def render_table(out, prices=None, tasks_root=None):
     """The markdown result: one row per model, the per-class matrix and the per-task detail. Scores are recomputed
-    with the current scorer from each cell's final text and ground truth (never the stored score), so a scorer change
-    applies to old cells without a launch. `tasks_root` supplies diff.patch for old cells without `diff_files`."""
+    with the current scorer from each cell's verdict record and ground truth (never the stored score), so a scorer
+    change applies to cached cells without a launch. A cell without a record (written before scorer v4) is stale: it is
+    named in the report and left out of every score. `tasks_root` supplies diff.patch for cells without `diff_files`."""
     cells, errors = load_cells(out)
+    stale = [c for c in cells if not has_record(c)]
+    cells = [c for c in cells if has_record(c)]
     for c in cells:
-        c["score"] = score(c.get("final_text") or "", c.get("ground_truth") or {"clean": True, "defects": []},
+        c["score"] = score(c["record"], c.get("ground_truth") or {"clean": True, "defects": []},
                            cell_diff_files(c, tasks_root))
     models = sorted({c["model"] for c in cells} | {e.get("model") for e in errors if e.get("model")})
     tasks = sorted({c["task"] for c in cells})
     lines = ["# Review bench %s" % Path(out).name, "",
-             "Scorer v%d. Cells: %d scored, %d failed launches. USD is the %s; `~est` marks chars/4 token estimates." % (
-                 SCORER_VERSION, len(cells), len(errors), foreman_bench.COST_LABEL), "",
-             "| model | cells | located | diagnosed | FA seeded | FA clean | process | clean PASS | USD | $/diagnosed "
+             "Scorer v%d. Cells: %d scored, %d stale, %d failed launches. USD is the %s; `~est` marks chars/4 token estimates." % (
+                 SCORER_VERSION, len(cells), len(stale), len(errors), foreman_bench.COST_LABEL), "",
+             "| model | cells | located | diagnosed | FA seeded | FA clean | clean PASS | USD | $/diagnosed "
              "| $/located | median s | errors |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for m in models:
         mc = [c for c in cells if c["model"] == m]
         seeded = [c for c in mc if not c["score"]["clean"]]
@@ -957,19 +1001,18 @@ def render_table(out, prices=None, tasks_root=None):
         est = any((c.get("usage") or {}).get("estimated") for c in mc)
         secs = [c["secs"] for c in mc if c.get("secs") is not None]
         pct = lambda n: " (%.0f%%)" % (100.0 * n / total) if total else ""  # noqa: E731
-        lines.append("| %s | %d | %d/%d%s | %d/%d%s | %d/%d | %d/%d | %d | %d/%d | %s%s | %s | %s | %s | %d |" % (
+        lines.append("| %s | %d | %d/%d%s | %d/%d%s | %d/%d | %d/%d | %d/%d | %s%s | %s | %s | %s | %d |" % (
             m, len(mc), loc, total, pct(loc), dia, total, pct(dia),
             sum(len(c["score"]["false_alarms"]) for c in seeded), len(seeded),
             sum(len(c["score"]["false_alarms"]) for c in clean), len(clean),
-            sum(c["score"]["process"] for c in mc),
             sum(1 for c in clean if c["score"]["verdict"] == "pass"), len(clean),
             _fmt_usd(usd), " ~est" if est and usd is not None else "",
             _fmt_usd(usd / dia) if usd is not None and dia else "-",
             _fmt_usd(usd / loc) if usd is not None and loc else "-",
             "%.0f" % statistics.median(secs) if secs else "-", sum(1 for e in errors if e.get("model") == m)))
-    lines += ["", "located / diagnosed: planted defects a FAIL item locates / diagnoses (docs/bench.md). FA seeded / FA "
-              "clean: FAIL items that locate no plant, over seeded / clean cells. process: FAIL items only about tests "
-              "not added or not run. clean PASS: clean cells with an overall PASS.", "",
+    lines += ["", "located / diagnosed: planted defects a defect finding of a `fail` record locates / diagnoses (docs/bench.md). "
+              "FA seeded / FA clean: defect findings that locate no plant, over seeded / clean cells. clean PASS: clean "
+              "cells with a `pass` record.", "",
               "## Diagnosed by class (located in brackets)", ""]
     classes = [k for k in CLASSES if any(d["class"] == k for c in cells for d in (c.get("ground_truth") or {}).get("defects", []))]
     lines += ["| model | " + " | ".join(classes) + " |", "|---|" + "---|" * len(classes)]
@@ -987,17 +1030,19 @@ def render_table(out, prices=None, tasks_root=None):
                         loc += d["id"] in c["score"]["located"]
             row.append("%d/%d (%d)" % (hit, tot, loc))
         lines.append("| %s | %s |" % (m, " | ".join(row)))
-    lines += ["", "## Per task", "", "| task | model | cells (verdict located diagnosed/defects fa process) |", "|---|---|---|"]
+    lines += ["", "## Per task", "", "| task | model | cells (verdict located diagnosed/defects fa) |", "|---|---|---|"]
     for t in tasks:
         for m in models:
             tc = sorted((c for c in cells if c["task"] == t and c["model"] == m), key=lambda c: c["repeat"])
             if tc:
-                lines.append("| %s | %s | %s |" % (t, m, ", ".join("r%d %s L%d D%d/%d fa%d p%d" % (
+                lines.append("| %s | %s | %s |" % (t, m, ", ".join("r%d %s L%d D%d/%d fa%d" % (
                     c["repeat"], c["score"]["verdict"] or "none", len(c["score"]["located"]),
-                    len(c["score"]["diagnosed"]), c["score"]["defects"], len(c["score"]["false_alarms"]),
-                    c["score"]["process"]) for c in tc)))
+                    len(c["score"]["diagnosed"]), c["score"]["defects"], len(c["score"]["false_alarms"])) for c in tc)))
     if cells:
         lines += render_policies(out, cells, errors)
+    if stale:
+        lines += ["", "## Stale cells", "", "No verdict record (scored from report text before scorer v4): left out of every score, "
+                  "launched again by the next run.", ""] + ["- %s" % cell_name(c.get("task"), c.get("model"), c.get("repeat") or 0) for c in stale]
     if errors:
         lines += ["", "## Failed launches", ""] + ["- %s %s r%s: %s" % (e.get("task"), e.get("model"), e.get("repeat"),
                                                                        str(e.get("error"))[:200]) for e in errors]
