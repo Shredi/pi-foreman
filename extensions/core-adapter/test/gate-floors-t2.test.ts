@@ -105,7 +105,8 @@ test("O4: PowerShell and cmd deletes of the home, the root or a system folder ar
 test("O4: any other recursive PowerShell or cmd delete is judge-first, not refused; so are -EncodedCommand and iex of a computed string", () => {
   const winEnv: FloorEnv = { ...env, home: "C:\\Users\\me" };
   for (const l of ["Remove-Item -Recurse C:\\Users\\me\\proj\\build", "rd /s /q build", "Get-ChildItem | Remove-Item -Recurse -Force", "Remove-Item @args -Recurse", "pwsh -EncodedCommand abc", "iex $s", "Invoke-Expression $s"]) {
-    assert.equal(lineFloors(l, segsOf(l, "powershell"), winEnv), null, `ps tool floor: ${l}`);
+    // the old Python check asked for all but the relative `rd` (PR B2): an ask-kind floor, which the judge replaces
+    assert.equal(lineFloors(l, segsOf(l, "powershell"), winEnv)?.kind ?? null, l === "rd /s /q build" ? null : "ask", `ps tool floor: ${l}`);
     assert.equal(unknownTargetDelete(l, segsOf(l, "powershell"), winEnv)?.name, LABEL, `ps tool: ${l}`);
   }
   // a variable operand is a floor until the permission modes go (PR B2); the label is read as well
@@ -162,7 +163,8 @@ test("gate: an unknown-target delete is the danger label; a child's own-scratch 
   // (until the permission modes go these forms are also the floor `floor-delete-unknown-target`, refused first; the label shows for the forms the floor leaves)
   const ruleOf = (o: ReturnType<typeof gate>): string | undefined => (o.result as { rule?: string } | undefined)?.rule;
   for (const l of ['rm -rf "$X"/*', "cd $D && rm -rf *", "ls | xargs rm -rf", "find build -exec rm -rf {} +"]) assert.equal(ruleOf(gate("bash", l)), "floor-delete-unknown-target", l);
-  assert.ok(gate("bash", "git clean -fd $X").danger, "git clean with a variable keeps the label");
+  // git clean with a variable operand is a floor again (PR B2: the old Python check denied it), so no label shows
+  assert.equal(ruleOf(gate("bash", "git clean -fd $X")), "floor-delete-unknown-target");
   assert.equal(ruleOf(gate("powershell", "Remove-Item -Recurse $p")), "floor-delete-unknown-target");
   for (const l of ["S=$FOREMAN_SCRATCH; rm -rf $S/p", "rm -rf $FOREMAN_SCRATCH/p"]) {
     const o = gate("bash", l, true);

@@ -42,6 +42,12 @@ const ROLES = ["reviewer", "explorer"];
 /** Every line refused for both read-only roles and not refused by this rule for a builder; `cwd` the directory the lines run in. */
 function mustRefuse(lines: string[], cwd = wt): void {
   for (const line of lines) {
+    // a line a PR B2 floor refuses (an unreadable write or delete target) is refused by that floor first, for every role alike
+    const first = verdict(line, "builder", "child", cwd);
+    if (first?.block && first.rule.startsWith("floor-")) {
+      for (const role of ROLES) assert.equal(verdict(line, role, "ro", cwd)?.rule, first.rule, `${role}: ${line}`);
+      continue;
+    }
     for (const role of ROLES) assert.ok(refused(verdict(line, role, "ro", cwd)), `${role}: ${line} -> ${JSON.stringify(verdict(line, role, "ro", cwd))}`);
     assert.ok(!refused(verdict(line, "builder", "child", cwd)), `builder: ${line} -> ${JSON.stringify(verdict(line, "builder", "child", cwd))}`);
   }

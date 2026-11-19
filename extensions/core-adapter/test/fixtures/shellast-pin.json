@@ -106,7 +106,7 @@
 {"command":"echo git push | bash","tool":"bash","fixture":"plain","main":["allow",""],"child":["deny","floor-git-push-child"],"digest":"0abd9e9378bb00ade4851ab7dbaae1949ff22b5a849c9c0af29fdb032632e52b"},
 {"command":"find . -name x -exec git push \\;","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"b23f34a597f89df26b88959b88b28a5402299768837f67896a23979c001f0291"},
 {"command":"pwsh -Command 'git push'","tool":"bash","fixture":"plain","main":["allow",""],"child":["deny","floor-git-push-child"],"digest":"51135fb67ecf3236848e75ac16a2c326f67fdf113c289c50114982b9f1e82d21"},
-{"command":"powershell -enc ZwBpAHQA","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"6857979fa2aa0ae516bcd3062a13b7868d6ef96f958e6b42c168ff8448726032"},
+{"command":"powershell -enc ZwBpAHQA","tool":"bash","fixture":"plain","main":["ask","floor-ps-unreadable"],"child":["ask","floor-ps-unreadable"],"digest":"6857979fa2aa0ae516bcd3062a13b7868d6ef96f958e6b42c168ff8448726032"},
 {"command":"git-push origin","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"e75b6ae3121bba8be484d1eecd0c8da8e7611f161a708060a9442c7ff3a84878"},
 {"command":"python3 -c \"import os; os.system('git push')\"","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"f599c710f3905f3f9a27a55dd154445e0b3e523db731f10088823d7cfef7157a"},
 {"command":"& git push","tool":"powershell","fixture":"plain","main":["allow",""],"child":["deny","floor-git-push-child"],"digest":"73aad5ee9e6a23cc51e75def50b187882d73ba489220594c4cb2929c0044b2ad"},
