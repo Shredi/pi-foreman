@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { leftoverLines, npmCountsByFile, readSpawnCounts, spawnGuardFailures, spawnSummaryLine, sumSpawnCounts, titledFiles } from "../../../scripts/foreman_test_run.mjs";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 // `node --import` takes a URL or a bare specifier; a Windows drive path would read as a URL scheme, so pass file URLs.
 const HERMETIC = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "_hermetic-env.mjs")).href;
@@ -135,17 +136,17 @@ function npmCountOf(code: string): number {
   }
 }
 
-test("an npm started through a shell is counted from the fake npm log", { skip: process.platform === "win32" }, () => {
+test("an npm started through a shell is counted from the fake npm log", { skip: posixOnly }, () => {
   const n = npmCountOf(`require("node:child_process").spawnSync("sh", ["-c", "npm root -g"]);`);
   assert.ok(n >= 1, `npm count ${n}`);
 });
 
-test("an npx started through a shell is counted from the fake npm log", { skip: process.platform === "win32" }, () => {
+test("an npx started through a shell is counted from the fake npm log", { skip: posixOnly }, () => {
   const n = npmCountOf(`require("node:child_process").spawnSync("sh", ["-c", "npx -v"]);`);
   assert.ok(n >= 1, `npm count ${n}`);
 });
 
-test("npx counts as npm, through the fake npx on PATH", { skip: process.platform === "win32" }, () => {
+test("npx counts as npm, through the fake npx on PATH", { skip: posixOnly }, () => {
   const dir = mkTestTmp("pf-spawn-npx-");
   try {
     const bin = path.join(dir, "bin");
@@ -161,7 +162,7 @@ test("npx counts as npm, through the fake npx on PATH", { skip: process.platform
   }
 });
 
-test("a direct npm spawn that hits the fake counts once", { skip: process.platform === "win32" }, () => {
+test("a direct npm spawn that hits the fake counts once", { skip: posixOnly }, () => {
   assert.equal(npmCountOf(`require("node:child_process").spawnSync("npm", ["root", "-g"]);`), 1);
 });
 

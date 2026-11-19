@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { effectCtx } from "../effects.ts";
 import { readBaseline } from "../baseline.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
+import { posixOnly } from "./_platform.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});
@@ -20,24 +21,23 @@ fs.writeFileSync(path.join(wt, ".workflow", "scratch", "plan.md"), "plan\n");
 fs.writeFileSync(path.join(handoff, "brief.md"), "brief\n");
 fs.writeFileSync(path.join(handoff, "parent"), "p-1\n");
 fs.writeFileSync(path.join(handoff, "child"), "fm-demo-abc123\n");
-const posix = process.platform !== "win32";
 const allow = (cmd: string): string | null => deterministicAllow(rules, cmd, { effects: effectCtx(wt), ownDirs: [handoff] });
 
-test("a link back to the handoff dir cannot reach parent or child", { skip: !posix }, () => {
+test("a link back to the handoff dir cannot reach parent or child", { skip: posixOnly }, () => {
   fs.symlinkSync(handoff, path.join(handoff, "self"));
   assert.notEqual(allow(`cp ${wt}/.workflow/scratch/plan.md ${handoff}/self/parent`), "own-handoff");
   assert.notEqual(allow(`mkdir -p ${handoff}/self/child`), "own-handoff");
   assert.notEqual(allow(`cp ${wt}/.workflow/scratch/plan.md ${handoff}/self/self/child`), "own-handoff");
 });
 
-test("a link whose final component points at parent is refused", { skip: !posix }, () => {
+test("a link whose final component points at parent is refused", { skip: posixOnly }, () => {
   fs.symlinkSync(path.join(handoff, "parent"), path.join(handoff, "alias"));
   fs.symlinkSync(path.join(handoff, "parent"), path.join(wt, ".workflow", "scratch", "plink"));
   assert.notEqual(allow(`cp ${wt}/.workflow/scratch/plan.md ${handoff}/alias`), "own-handoff");
   assert.notEqual(allow(`cp ${wt}/.workflow/scratch/plan.md ${wt}/.workflow/scratch/plink`), "own-handoff");
 });
 
-test("normal R3 lines still pass beside the links", { skip: !posix }, () => {
+test("normal R3 lines still pass beside the links", { skip: posixOnly }, () => {
   assert.equal(allow(`mkdir -p ${wt}/.workflow/scratch/top && cp ${handoff}/brief.md ${wt}/.workflow/scratch/top/brief.md`), "own-handoff");
   assert.equal(allow(`cp ${wt}/.workflow/scratch/plan.md ${handoff}/plan.md && cat ${handoff}/parent; ls ${handoff}`), "own-handoff");
 });

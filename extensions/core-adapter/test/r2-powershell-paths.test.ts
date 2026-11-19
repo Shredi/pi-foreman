@@ -18,6 +18,7 @@ import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
 const OPAQUE = "danger-opaque";
 const base = fs.realpathSync(mkTestTmp("pf-r2-ps-"));
@@ -30,7 +31,6 @@ const agentDir = path.join(home, ".pi", "agent");
 for (const d of [path.join(agentDir, "extensions"), path.join(wt, ".git", "hooks"), path.join(wt, "sub"), scr, inst, pkg]) fs.mkdirSync(d, { recursive: true });
 fs.writeFileSync(path.join(wt, "a.txt"), "x\n");
 after(() => fs.rmSync(base, { recursive: true, force: true }));
-const posix = process.platform !== "win32";
 /** A host path as bash text: unquoted backslashes of a native path are shell escapes there. */
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 
@@ -140,7 +140,7 @@ test("psWords: an empty line, a blank line and separators only have no words", (
   assert.deepEqual(w("''"), []);
 });
 
-test("psWords: the default resolver follows a link: a word spelled through a link to a folder is the real spelling", { skip: !posix }, () => {
+test("psWords: the default resolver follows a link: a word spelled through a link to a folder is the real spelling", { skip: posixOnly }, () => {
   const link = path.join(base, "lnk");
   try {
     fs.symlinkSync(inst, link);
@@ -231,7 +231,7 @@ test("B: the session's own worktree is exempt from install-root-write; a sibling
   assert.equal(name(outcome("foreman", `echo x > ${fwd(inst)}/f`, "bash", under).result), "ask:install-root-write");
 });
 
-test("B: the own ruling or brief file is refused by the check the old layer keeps (ruling.ts), for the powershell tool", { skip: !posix }, () => {
+test("B: the own ruling or brief file is refused by the check the old layer keeps (ruling.ts), for the powershell tool", { skip: posixOnly }, () => {
   const hand = path.join(base, ".workflow", "handoffs");
   const H = path.join(hand, "up");
   fs.mkdirSync(H, { recursive: true });

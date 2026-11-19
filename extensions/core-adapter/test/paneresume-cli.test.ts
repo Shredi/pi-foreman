@@ -11,10 +11,10 @@ import type { PaneResumeDeps, PiChild } from "../paneresume-cli.ts";
 import { COUNTDOWN_MS, HC_GET_TIMEOUT_MS, LOCK_STALE_MS, decideResume, notePath, panesDir, readNoteRaw, writeNote } from "../paneresume-core.ts";
 import type { PaneNote } from "../paneresume-core.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const SID2 = "22222222-2222-3333-4444-555555555555";
-const posix = process.platform !== "win32";
 
 class FakeStdin extends EventEmitter {
   isTTY = true;
@@ -318,7 +318,7 @@ test("a reboot with a terminal pid equal to the note's rootPid resumes (row 8); 
   assert.equal(decideResume({ ...base, pidAlive: () => false, note: { ok: true, note }, live: live(base.now - 5000) }).action, "clear", "same pid, heartbeat after the boot: a lone crash");
 });
 
-test("the fake hc through HC_BIN: the command asks `hc get t1 --json` and resumes", { skip: !posix }, async (t) => {
+test("the fake hc through HC_BIN: the command asks `hc get t1 --json` and resumes", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   const hc = path.join(r.root, "hc");
   fs.writeFileSync(hc, `#!/bin/sh\necho "$@" >> "${r.root}/hc.log"\nprintf '{"created_ms":1000,"pid":777}'\n`, { mode: 0o755 });

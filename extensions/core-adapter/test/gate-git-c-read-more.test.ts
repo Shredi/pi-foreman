@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-gitc2-"));
 const checkout = path.join(base, "checkout");
 const other = path.join(base, "other");
@@ -32,7 +32,7 @@ const READS = [
   "tag --sort=-creatordate", "tag --format=%(refname)", "tag --column", "tag -i -l 'V*'",
 ];
 
-test("new read forms under -C <outside> are no write outside nor into the checkout", { skip: !posix }, () => {
+test("new read forms under -C <outside> are no write outside nor into the checkout", { skip: posixOnly }, () => {
   for (const d of [other, checkout]) {
     for (const v of READS) {
       for (const l of [`git -C ${d} ${v}`, `git -C ${d} ${v} | grep x`, `git -C ${d} ${v} | tail -3`, `cd ${d} && git ${v}`, `cd ${d} && git ${v} | grep x`]) {
@@ -42,7 +42,7 @@ test("new read forms under -C <outside> are no write outside nor into the checko
   }
 });
 
-test("mutating -C forms stay denied outside and into the checkout", { skip: !posix }, () => {
+test("mutating -C forms stay denied outside and into the checkout", { skip: posixOnly }, () => {
   const MUT = ["commit -m x", "checkout x", "reset --hard", "worktree add x", "worktree remove x", "worktree prune", "worktree list --bogus", "branch -D x",
     "stash push", "stash pop", "config user.name x", "config --unset x", "config --add a b", "config --edit", "tag v1", "tag -d v1", "tag -a v1 -m x", "tag -f v1", "tag -l -d v1", "fetch"];
   for (const v of MUT) {
@@ -56,17 +56,17 @@ test("mutating -C forms stay denied outside and into the checkout", { skip: !pos
   }
 });
 
-test("a --output file option on a read form stays a write", { skip: !posix }, () => {
+test("a --output file option on a read form stays a write", { skip: posixOnly }, () => {
   const l = `git -C ${other} tag --list --output=${other}/x`;
   assert.equal(rule(l), "child-write-outside", l);
 });
 
-test("cd <dir> && redirect is judged against the cd target", { skip: !posix }, () => {
+test("cd <dir> && redirect is judged against the cd target", { skip: posixOnly }, () => {
   assert.equal(rule(`cd ${other} && echo x > out.txt`), "child-write-outside");
   assert.ok(!FENCES.includes(rule(`cd ${wt} && echo x > out.txt`) ?? ""), String(rule(`cd ${wt} && echo x > out.txt`)));
 });
 
-test("an opaque segment does not pass silently", { skip: !posix }, () => {
+test("an opaque segment does not pass silently", { skip: posixOnly }, () => {
   for (const l of [`cd $(echo ${other}) && git commit -m x`, `cd ${other} && git worktree list; eval "git commit"`]) {
     assert.equal(rule(l), "child-write-outside", l);
   }
