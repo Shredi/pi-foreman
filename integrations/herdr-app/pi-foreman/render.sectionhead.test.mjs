@@ -56,14 +56,14 @@ function twoSpaces() {
 }
 
 const SECTION = (el) => {
-  assert.equal(el.props.text_size, 12, "text_size 12");
+  assert.equal(el.props.text_size, 13, "text_size 13");
   assert.equal(el.props.font_semibold, true, "semibold");
   assert.equal(el.props.px, 8);
   assert.equal(el.props.pt, 8);
   assert.equal(el.props.h, 30);
 };
 
-test("sample window: Open PRs and every space-group heading share the look: 12 px semibold, label in t.muted", () => {
+test("sample window: Open PRs and every space-group heading share the look: 13 px semibold, label in t.foreground", () => {
   const root = sampleView().render({});
   const op = walk(root).find(isOpHead);
   const spaces = walk(root).filter(isSpaceHead);
@@ -73,7 +73,7 @@ test("sample window: Open PRs and every space-group heading share the look: 12 p
     SECTION(h);
     const label = labelOf(h, h === op ? "Open PRs" : texts(h)[0]);
     assert.ok(label, `label of ${idOf(h)}`);
-    assert.equal(label.props.text_color, "#muted", `${idOf(h)} label colour`);
+    assert.equal(label.props.text_color, "#foreground", `${idOf(h)} label colour`);
   }
 });
 
@@ -98,7 +98,7 @@ test("two space groups: the first has no rule, a later one has it; Open PRs keep
   assert.equal(spaces[1].props.mt, 10);
   const op = walk(root).find(isOpHead);
   assert.equal(op.props.border_t, 1, "Open PRs: rule");
-  assert.equal(labelOf(spaces[1], "beta").props.text_color, "#muted", "space label in t.muted");
+  assert.equal(labelOf(spaces[1], "beta").props.text_color, "#foreground", "space label in t.foreground");
 });
 
 test("the space label keeps its truncate; the Open PRs age text stays as a second child", () => {

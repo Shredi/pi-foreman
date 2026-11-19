@@ -90,9 +90,9 @@ const conflictMark = (t) => h_flex().flex_none().size(11).rounded(6).bg(t.blocke
 
 // A section heading ("Open PRs", the space groups): one look for all of them. `rule` draws a 1px line above it, with more space above the
 // line than a repository group gets (its own rule is 5 px down), so the section start does not look like one more repository divider.
-const sectionHead = (t, id, label, { rule = false } = {}) => h_flex().id(id).px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(12).font_semibold()
+const sectionHead = (t, id, label, { rule = false } = {}) => h_flex().id(id).px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(13).font_semibold()
   .when(rule, (el) => el.mt(10).border_t(1).border_color(t.border))
-  .child(div().truncate().text_color(t.muted).child(label));
+  .child(div().truncate().text_color(t.foreground).child(label));
 
 // A failed or garbled radar read (the binary busy, a half-written file) keeps the last good data for a few rounds, so costs,
 // waits and PR chips do not vanish from every row at once; after MISS_MAX misses the machine shows as having no radar.
