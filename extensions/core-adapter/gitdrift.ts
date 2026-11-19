@@ -395,13 +395,13 @@ export function deserializeGitSnapshot(o: unknown): GitSnapshot | null {
   }
 }
 
-const MAX_ITEMS = 12;
-const clean = (s: string): string => {
+export const MAX_ITEMS = 12;
+export const clean = (s: string): string => {
   const t = s.replace(/[\u0000-\u001f\u007f]/g, "?");
   return t.length > 80 ? `${t.slice(0, 77)}...` : t;
 };
 
-function listed(word: string, items: string[]): string | null {
+export function listed(word: string, items: string[]): string | null {
   if (!items.length) return null;
   const shown = items.slice(0, MAX_ITEMS).map(clean).join(", ");
   return `${word} ${shown}${items.length > MAX_ITEMS ? ` (+${items.length - MAX_ITEMS} more)` : ""}`;

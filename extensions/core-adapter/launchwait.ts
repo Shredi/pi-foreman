@@ -27,7 +27,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { NOTIFY_TYPE, verdictOf } from "./rounds.ts";
+import { NOTIFY_TYPE } from "./rounds.ts";
 
 export type LaunchWaitMode = "block" | "detach";
 export type WaitOutcome = "done" | "supervisor" | "released" | "timeout" | "abort";
@@ -100,17 +100,16 @@ function repeatRefused(data: Json, results: Json[], status: string, summary: str
   return [summary, str(data.error) ?? "", ...results.map((r) => str(r.error) ?? "")].some((t) => t.includes(REPEAT_REFUSAL_ERROR));
 }
 
-/** The usage-policy block marker of a child's output or error (a provider refusal under its usage policy). */
+/** The usage-policy block marker of a child's error (a provider refusal under its usage policy). */
 export const POLICY_BLOCK_RE = /\busage[ _-]?polic(?:y|ies)\b/i;
 
 /** The line a policy_block run's report carries: stopped, not retried, not climb-eligible. */
 export const POLICY_BLOCK_LINE = "pi-foreman: this run was stopped for a usage-policy block (policy_block: no verdict, exit 1) and is not retried: the harness does not relaunch it and it is not climb-eligible. Report it to the owner; do not relaunch the same task.";
 
-/** Whether a run end is a policy_block: not completed (role_result exit 1), no verdict in its output, a usage-policy marker in its output or error. */
-function policyBlocked(data: Json, results: Json[], status: string, summary: string): boolean {
+/** Whether a run end is a policy_block: not completed (role_result exit 1) and a usage-policy marker in an error field (the provider's message). The child's own summary is not read: its words can mention the policy without a refusal. */
+function policyBlocked(data: Json, results: Json[], status: string): boolean {
   if (status === "completed") return false;
-  const texts = [summary, str(data.error) ?? "", ...results.map((r) => str(r.error) ?? "")];
-  return texts.every((t) => verdictOf(t) === null) && texts.some((t) => POLICY_BLOCK_RE.test(t));
+  return [str(data.error) ?? "", ...results.map((r) => str(r.error) ?? "")].some((t) => POLICY_BLOCK_RE.test(t));
 }
 
 /** The parts of a run-end event (pi-subagents result-watcher payload) launch-wait reports. */
@@ -123,7 +122,7 @@ export function runEndOf(data: unknown): RunEnd | null {
   const role = str(data.agent) ?? str(results[0]?.agent) ?? null;
   const summary = str(data.summary) ?? results.map((r) => str(r.summary) ?? "").filter(Boolean).join("\n\n");
   const end: RunEnd = { runId: data.runId as string, status, role, summary, resultPath: str(data.asyncDir) ?? null };
-  if (policyBlocked(data, results, status, summary)) end.policyBlock = true;
+  if (policyBlocked(data, results, status)) end.policyBlock = true;
   // the child aborts its turn as it stops, which pi-subagents may report as paused/interrupted: the marker makes it a failed run
   if (repeatRefused(data, results, status, summary)) {
     end.repeatRefusal = true;

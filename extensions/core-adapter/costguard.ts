@@ -1,8 +1,5 @@
 // Cost guard (R6 lane 3): ceremony.budgetUsd on the summed estimate (the foreman
 // plus all its runs), and the item-only re-review line.
-import { verdictItemsOf } from "./reviewmarks.ts";
-import { verdictOf } from "./rounds.ts";
-
 export const BUDGET_WARN_SHARE = 0.8;
 
 const usd = (v: number): string => `$${v.toFixed(2)}`;
@@ -26,16 +23,11 @@ export function budgetCheck(foreman: number, runs: number, cap: number | null, w
 
 const MARK = "[re-review items:";
 
-/** Failed item numbers of a FAIL review text (`N. FAIL` lines); [] for a pass or a text with none. */
-export function failedItemsOf(text: string): string[] {
-  return verdictOf(text) === "fail" ? verdictItemsOf(text, "FAIL") : [];
-}
-
 /** The re-review line: `[re-review items: 2, 5]`. */
 export const reReviewLine = (items: readonly string[]): string => `${MARK} ${items.join(", ")}]`;
 
 /** Prepend the line to a review task; unchanged when there are no items or the task already carries one. */
 export function prependReReview(task: string, items: readonly string[]): string {
   if (items.length === 0 || task.includes(MARK)) return task;
-  return `${reReviewLine(items)}\nReview only these failed items again; the verdict must list each of them as N. PASS or N. FAIL.\n\n${task}`;
+  return `${reReviewLine(items)}\nReview only these failed items again; give each of them a result in review_verdict (pass or fail).\n\n${task}`;
 }

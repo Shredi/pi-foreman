@@ -18,9 +18,9 @@
  },
  "*": {
   "b-c2": [{"text": "[[replay:c2]] built"}],
-  "r-c3": [{"text": "[[replay:c3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "r-c3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:c3]] reviewed"}],
   "b-c4": [{"text": "[[replay:c4]] fixed on the strong rung"}],
   "b-c4b": [{"text": "fixed too"}],
-  "r-c5": [{"text": "[[replay:c5]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+  "r-c5": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:c5]] reviewed"}]
  }
 }

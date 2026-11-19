@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { findingKey, loopVerdict, sigOf } from "../reviewloop.ts";
 import type { LoopRound } from "../reviewloop.ts";
-import type { PanelFinding } from "../panel.ts";
+import type { VerdictFinding } from "../verdict.ts";
 
 const fail = (state: string, ...sig: string[]): LoopRound => ({ verdict: "fail", state, sig });
 const pass = (state: string): LoopRound => ({ verdict: "pass", state, sig: [] });
@@ -26,12 +26,13 @@ test("loopVerdict table", () => {
   for (const [name, prev, cur, want] of rows) assert.equal(loopVerdict(prev, cur), want, name);
 });
 
-test("sigOf: FAIL items and located findings, sorted and de-duplicated; a PASS or an empty report has none", () => {
-  const f = (file: string, line: number | null, cls: string): PanelFinding => ({ file, line, class: cls, note: "n" }) as PanelFinding;
-  const report = "2. FAIL: b\n1. FAIL: a\n3. PASS: c\nOverall verdict: FAIL";
-  assert.deepEqual(sigOf(report, [f("a.ts", 12, "bug"), f("a.ts", 14, "bug"), f("b.ts", null, "style")]), ["at:a.ts:2:bug", "at:b.ts:-:style", "item:1", "item:2"]);
-  assert.deepEqual(sigOf("Overall verdict: PASS", []), []);
-  assert.deepEqual(sigOf("Overall verdict: FAIL", []), []);
-  assert.equal(findingKey(f("x.ts", 4, "c")), "at:x.ts:0:c");
-  assert.equal(findingKey(f("x.ts", 5, "c")), "at:x.ts:1:c");
+test("sigOf: failed items and located defect findings, sorted and de-duplicated; a pass or an empty record has none", () => {
+  const f = (file: string | undefined, line: number | undefined, cls: string | undefined, kind: VerdictFinding["kind"] = "defect"): VerdictFinding => ({ kind, text: "n", file, line, class: cls });
+  const items = [{ id: 2, result: "fail" }, { id: 1, result: "fail" }, { id: 3, result: "pass" }, { id: 4, result: "open" }, { id: 1, result: "fail" }] as const;
+  const findings = [f("a.ts", 12, "bug"), f("a.ts", 14, "bug"), f("b.ts", undefined, "style"), f(undefined, 3, "bug"), f("c.ts", 1, "bug", "later")];
+  assert.deepEqual(sigOf(items, findings), ["at:a.ts:2:bug", "at:b.ts:-:style", "item:1", "item:2"]);
+  assert.deepEqual(sigOf([{ id: 1, result: "pass" }], []), []);
+  assert.deepEqual(sigOf([], []), []);
+  assert.equal(findingKey({ file: "x.ts", line: 4, class: "c" }), "at:x.ts:0:c");
+  assert.equal(findingKey({ file: "x.ts", line: 5, class: "c" }), "at:x.ts:1:c");
 });

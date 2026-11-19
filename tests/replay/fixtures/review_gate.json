@@ -52,16 +52,16 @@
  },
  "*": {
   "b-a2": [{"text": "[[replay:a2]] built"}],
-  "r-a3": [{"text": "[[replay:a3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
-  "r-a4": [{"text": "[[replay:a4]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "r-a3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:a3]] reviewed"}],
+  "r-a4": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:a4]] reviewed"}],
   "b-f2": [{"text": "[[replay:f2]] built"}],
-  "r-f3": [{"text": "[[replay:f3]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}],
+  "r-f3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:f3]] reviewed"}],
   "b-f4": [{"text": "[[replay:f4]] fixed"}],
-  "r-f5": [{"text": "[[replay:f5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "r-f5": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:f5]] reviewed"}],
   "b-p2": [{"text": "[[replay:p2]] built"}],
-  "r-p3": [{"text": "[[replay:p3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "r-p3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:p3]] reviewed"}],
   "z-p4": [{"text": "looked"}],
   "b-p6": [{"text": "[[replay:p6]] changed"}],
-  "r-p7": [{"text": "[[replay:p7]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+  "r-p7": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:p7]] reviewed"}]
  }
 }

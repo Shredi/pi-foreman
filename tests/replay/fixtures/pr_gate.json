@@ -9,7 +9,7 @@
   "pr-child": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-pr]] open the pull request"}}]}, {"text": "Builder launched."}, {"text": "Builder reported."}]
  },
  "reviewer": {
-  "r-pass": [{"text": "[[replay:pr-after]] no findings\nOverall verdict: PASS"}]
+  "r-pass": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:pr-after]] no findings"}]
  },
  "builder": {
   "b-pr": [

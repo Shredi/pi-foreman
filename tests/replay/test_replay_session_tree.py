@@ -3,7 +3,9 @@
 The parent waits with `foreman_wait kind child`; the child (a second session with a handoff dir whose
 `parent` file names the parent) sends `Plan from demo: <path>` and later `Result from demo: <path>` over
 intercom; each message starts a parent turn and ends the parent's wait with one quiet `foreman_wait_note` line
-(`ended by the notice above: child demo: plan ...`, then `... result ...`), no `foreman_wake`. A
+(`ended by the notice above: child demo: plan ...`, then `... result ...`), no `foreman_wake`. After a `Plan from` one fixed
+`demo waits for: ...` line follows (customType `pi-foreman-child-blocked`, from the child's round state; here a standard tier with no
+review yet); a `Result from` gets no such line. A
 `/foreman session open ... --dry-run --model <higher tier>` in the parent opens (no rank rule, no confirm window on a dry run).
 Same prerequisites and skips as test_replay.py.
 """
@@ -54,14 +56,19 @@ class TestSessionTree(ReplayCase):
         seen = drain_until(parent, "ended by the notice above: child demo: plan", 40)
         self.assertIn("ended by the notice above: child demo: plan .workflow/plan-demo.md", json.dumps(seen))
         seen += drain_until(parent, "agent_settled", 30)
-        self.assertEqual([m.get("customType") for m in custom_messages(seen)], ["intercom_message", "foreman_wait_note"], "one quiet line, no foreman_wake")
+        notes = custom_messages(seen)
+        self.assertEqual([m.get("customType") for m in notes], ["intercom_message", "foreman_wait_note", "pi-foreman-child-blocked"], "one quiet line and one wait line, no foreman_wake")
+        # the replay child's round-state.json says tier standard, no review passed, plan open: it goes on to build after its own review
+        self.assertIn("demo waits for: its own plan review, then it goes on to build; nothing from you.", json.dumps(notes[2]))
 
         parent.prompt("[[replay:p2]] wait for the result", timeout=90)  # the intercom turn did not start the second wait
         child.prompt("[[replay:c2]] send the result", timeout=90)
         seen = drain_until(parent, "ended by the notice above: child demo: result", 40)
         self.assertIn("ended by the notice above: child demo: result .workflow/result-demo.md", json.dumps(seen))
         seen += drain_until(parent, "agent_settled", 30)
-        self.assertNotIn("foreman_wake", [m.get("customType") for m in custom_messages(seen)])
+        types = [m.get("customType") for m in custom_messages(seen)]
+        self.assertNotIn("foreman_wake", types)
+        self.assertNotIn("pi-foreman-child-blocked", types, "a Result from gets no wait line")
 
         # No rank rule: a tier 0 model opens from a tier 1 parent; a dry run shows no confirm window.
         seen = parent.prompt("/foreman session open demo2 brief.md --dry-run --model foreman-fake/elite", timeout=30)

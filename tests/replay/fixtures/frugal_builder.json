@@ -45,7 +45,8 @@
  "reviewer": {
   "rv": [
    {"text": "checking", "tools": [{"name": "read", "arguments": {"path": "a.txt"}}]},
-   {"text": "VERDICT: PASS\n1. PASS a.txt"}
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]},
+   {"text": "reviewed"}
   ]
  }
 }

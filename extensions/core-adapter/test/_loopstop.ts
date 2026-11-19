@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { tick } from "./_r46world.ts";
 import type { world } from "./_r46world.ts";
 import type { r11Rig } from "./_r11rig.ts";
+import type { RecSpec } from "./_verdict-rig.ts";
 
 export type Adapter = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 type Res = { block?: boolean; reason?: string } | null | undefined;
@@ -10,12 +11,19 @@ type Res = { block?: boolean; reason?: string } | null | undefined;
 export const FAIL_REPORT = "1. FAIL: the guard is missing\nOverall verdict: FAIL";
 export const loopRefused = (r: Res | string): boolean => /\[review_loop\]/.test(typeof r === "string" ? r : (r && "reason" in r ? r.reason : "") ?? "");
 
-/** One code review (no `[plan-review]` tag) that starts and ends with `report`; returns the refusal text, or null once it ran. */
-export async function codeReview(a: Adapter, report: string, n = 1): Promise<string | null> {
-  const r = await a.reviewLaunch(`review items ${n} of the diff`);
+/**
+ * One code review (no `[plan-review]` tag) that starts and ends with `report`: a report string (its verdict and numbered FAIL lines become the record,
+ * see _verdict-rig.ts) or the record call itself; returns the refusal text, or null once it ran. FAIL_REPORT's item 1 is no item of the launch, so its record
+ * carries one located defect (`legacy/item-1`): the same key in every round.
+ */
+export async function codeReview(a: Adapter, report: string | RecSpec, n = 1): Promise<string | null> {
+  // a record that gives item results needs the launch to name those items (the record file is checked against them)
+  const ids = typeof report === "string" ? [] : (report.items ?? []).map((i) => i.id);
+  const r = await a.reviewLaunch(`review items ${n} of the diff`, ids.length > 0 ? { items: ids } : {});
   if (r.blocked) return r.blocked;
   const before = await a.recordedReviews();
-  a.endRun(r.id, report);
+  if (typeof report === "string") a.endRun(r.id, report);
+  else a.endRunRecord(r.id, report);
   // the review record is written after git reads of the checkout (slow on Windows): wait for it, loop check included
   const end = Date.now() + 10_000;
   while ((await a.recordedReviews()) <= before) {

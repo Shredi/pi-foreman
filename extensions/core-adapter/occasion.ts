@@ -11,7 +11,8 @@
 // ReviewerFails and the PR gate; second opinions, plan reviews and panel
 // shadows are recorded as findings only.
 import { launchEntries } from "./ladder.ts";
-import { REVIEW_ROLES, verdictOf, type Verdict } from "./rounds.ts";
+import { REVIEW_ROLES, type Verdict } from "./rounds.ts";
+import type { VerdictFinding, VerdictItem, VerdictRecord } from "./verdict.ts";
 
 export type Occasion = "plan-review" | "pre-pr" | "second-opinion" | "item" | "high-stakes";
 /** The config-facing occasions (reviewByOccasion keys, panel gates); `high-stakes` is not one of them. */
@@ -168,7 +169,16 @@ export interface ReviewResult {
   index: number;
   role: string;
   text: string;
+  /** From the verdict record (verdict.ts): pass or fail; null for no record, an invalid one, or `incomplete`. */
   verdict: Verdict | null;
+  /** The record's per-item results (ids the launch's `items` named); [] without a record. */
+  items: VerdictItem[];
+  /** The record's findings (defect, now, later); [] without a record. */
+  findings: VerdictFinding[];
+  /** The reviewer recorded `incomplete` (it could not run its checks): no verdict for the gates. */
+  incomplete: boolean;
+  /** The reason of an `incomplete` record. */
+  reason: string | null;
   model: string | null;
   cwd: string | null;
   occasion: Occasion;
@@ -186,12 +196,14 @@ const childrenOf = (data: Json): Json[] => (Array.isArray(data.results) && data.
 /**
  * The completed reviewer children of a run-end event with their occasion. Results
  * map to the launch entries by position (pi-subagents keeps launch order); a role mismatch or a run
- * without bookkeeping (a resume) reads the occasion from nothing: `item`, primary.
+ * without bookkeeping (a resume) reads the occasion from nothing: `item`, primary. `record` is the run's verdict record (read once by the
+ * caller): a review launch is a single launch (review_single_launch), so it belongs to the one result of the event; with more results it is ignored.
  */
-export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | null): ReviewResult[] {
+export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | null, record?: VerdictRecord | null): ReviewResult[] {
   if (!isObj(data)) return [];
   const out: ReviewResult[] = [];
-  childrenOf(data).forEach((r, index) => {
+  const kids = childrenOf(data);
+  kids.forEach((r, index) => {
     const role = typeof r.agent === "string" ? r.agent : typeof data.agent === "string" ? data.agent : "";
     if (!REVIEW_ROLES.includes(role) || !completed(r)) return;
     const entry = launch?.entries[index]?.role === role ? launch.entries[index] : undefined;
@@ -199,7 +211,9 @@ export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | nul
     const occasion = entry?.occasion ?? "item";
     const shadow = entry?.shadow ?? null;
     const cwd = typeof r.cwd === "string" && r.cwd ? r.cwd : typeof data.cwd === "string" && data.cwd ? data.cwd : null;
-    out.push({ index, role, text, verdict: verdictOf(text), model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, rung: entry?.rung ?? 0, counts: shadow === null && countsForItems(occasion) });
+    const rec = kids.length === 1 ? record ?? null : null;
+    const verdict: Verdict | null = rec && rec.verdict !== "incomplete" ? rec.verdict : null;
+    out.push({ index, role, text, verdict, items: rec?.items ?? [], findings: rec?.findings ?? [], incomplete: rec?.verdict === "incomplete", reason: rec?.reason ?? null, model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, rung: entry?.rung ?? 0, counts: shadow === null && countsForItems(occasion) });
   });
   return out;
 }
@@ -207,22 +221,3 @@ export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | nul
 /** The children of a run-end event in result order (the event itself when it has no results). */
 export const runEndChildren = childrenOf;
 
-/** The original result positions `countingView` keeps, in order (the view re-indexes them). */
-export function keptIndices(data: unknown, results: readonly ReviewResult[]): number[] {
-  if (!isObj(data)) return [];
-  const drop = new Set(results.filter((r) => !r.counts).map((r) => r.index));
-  return childrenOf(data).map((_, i) => i).filter((i) => !drop.has(i));
-}
-
-/**
- * The run-end event as the verdict consumers (item marks, review gate, ReviewerFails, PR gate)
- * see it: review children that do not count are dropped. With none left the
- * event names no child at all, so no consumer falls back to the event itself.
- */
-export function countingView(data: unknown, results: readonly ReviewResult[]): unknown {
-  if (!isObj(data)) return data;
-  const drop = new Set(results.filter((r) => !r.counts).map((r) => r.index));
-  if (drop.size === 0) return data;
-  const kept = childrenOf(data).filter((_, i) => !drop.has(i));
-  return kept.length > 0 ? { ...data, results: kept } : { runId: data.runId, agent: "", status: "excluded", results: [] };
-}

@@ -23,7 +23,7 @@
  },
  "*": {
   "b-n2": [{"text": "[[replay:n2]] built"}],
-  "r-n3": [{"text": "[[replay:n3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
-  "r-n5": [{"text": "[[replay:n5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}]
+  "r-n3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:n3]] reviewed"}],
+  "r-n5": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:n5]] reviewed"}]
  }
 }
