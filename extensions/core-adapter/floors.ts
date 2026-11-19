@@ -1361,6 +1361,19 @@ function scriptsOf(seg: ShellSegment, prog: string): string[] {
   return rest.length ? [unquote(prog === "cmd" || prog === "pwsh" || prog === "powershell" ? rest.join(" ") : rest[0])] : [];
 }
 
+/** A shell that reads its program from stdin (no `-c` string, no script file) runs the here-document or here-string on it as code: the texts, else none. */
+function heredocScripts(seg: ShellSegment, prog: string): string[] {
+  if (!(SHELLS.has(prog) || prog === "ash") || !seg.heredocs?.length) return [];
+  if (scriptsOf(seg, prog).length > 0 || seg.argv.some((w) => !w.startsWith("-"))) return [];
+  return seg.heredocs;
+}
+
+/** Hangs the stdin texts of `outer` on the segments parsed from what it unwrapped (the parser leaves the property off a clone). */
+function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
+  if (!outer.heredocs?.length) return;
+  for (const x of inner) if (!x.heredocs?.length) Object.defineProperty(x, "heredocs", { value: outer.heredocs, enumerable: false, configurable: true });
+}
+
 /** How many unwrappings (privilege program, multiplexer, string, body, remote) the check follows before it refuses the line unread. */
 const NORMALISE_DEPTH = 16;
 
@@ -1384,6 +1397,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
       const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}) }));
+      // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
+      withHeredocs(inner, seg);
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, rmAsks && !PRIVILEGE.has(prog) && seg.wrappers.length === 0);
       if (h) return withFragment(h, seg);
       continue;
@@ -1393,15 +1408,28 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       const inWhere: Where = where === "container" || remote.where === "container" ? "container" : "ssh";
       const rtext = remote.words.join(" ");
       const inner = parseShell(rtext, { cwd: seg.cwd, platform: env.platform });
+      withHeredocs(inner, seg);
+      const texts: [string, ShellSegment[]][] = [[rtext, inner]];
+      // the remote shell runs the command from its first spaced word on as one string (a compound: `if ...; then ...; fi`, `{ ...; }`); the host, the container and the options
+      // before it do not belong to it, and the joined text above does not parse with them in front: read only then, the verdicts of a command that parses stay as they were.
+      const at = inner.some((x) => x.opaque === "parse_error") ? remote.words.findIndex((w) => /\s/.test(w)) : -1;
+      if (at >= 0) {
+        const ctext = remote.words.slice(at).join(" ");
+        if (ctext !== rtext) {
+          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform });
+          texts.push([ctext, cparsed]);
+        }
+      }
+      // a shell in the remote command reads the here-document of this segment as its program
+      if (seg.heredocs?.length && remote.words.some((w) => SHELLS.has(base(w)))) for (const body of seg.heredocs) texts.push([body, parseShell(body, { cwd: seg.cwd, platform: env.platform })]);
       // the old check refused a recursive rm anywhere in the text first; over ssh that is the owner's exception, and the text is not read further
-      if (inner.some((x) => wordsRemove([x.program, ...x.argv]))) {
+      if (texts.some(([, parsed]) => parsed.some((x) => wordsRemove([x.program, ...x.argv])))) {
         if (inWhere === "ssh") continue;
         return withFragment(remoteHit("a recursive rm", inWhere), seg);
       }
       // a container takes its words as argv: a word that holds whitespace is a string some program may run (`zsh -c "sh -c 'rm -rf /'"`, `su -c ...`), whatever precedes it; it is parsed
       // and read the same way, in the words with spaces inside it too. Only a recursive rm found there is refused; every other kind in such a word is ignored
       if (remote.where === "container" && remote.words.some((w) => /\s/.test(w) && spacedRemove(w, seg, env))) return withFragment(remoteHit("a recursive rm", inWhere), seg);
-      const texts: [string, ShellSegment[]][] = [[rtext, inner]];
       for (const [t, parsed] of texts) {
         const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, rmAsks);
         if (h) return withFragment(h, seg);
@@ -1414,7 +1442,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       if (kind) return withFragment(remoteHit(kind, where), seg);
       continue;
     }
-    for (const script of scriptsOf(seg, prog)) {
+    for (const script of [...scriptsOf(seg, prog), ...heredocScripts(seg, prog)]) {
       const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && (prog === "pwsh" || prog === "powershell" || prog === "cmd"));
       if (h) return withFragment(h, seg);
     }
@@ -1676,6 +1704,8 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   // a quoted assignment runs inside `bash -c '...'`: the profile floor reads the unmasked text
   const profile = RAW.find((r) => r.name === "perms-profile" && r.re.test(text));
   if (profile) return hit(profile.name, profile.reason, profile.re.exec(text)?.[0]);
+  // `$( )` nested past the walker's depth cap: the script inside was never read, so the line is refused unread
+  if (segments.some((s) => s.tooDeep)) return hit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels). Run the inner command plainly.`, text);
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
     const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));

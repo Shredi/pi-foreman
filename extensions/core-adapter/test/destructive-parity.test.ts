@@ -23,6 +23,7 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   6: { dir: "stricter", why: "the redirect target ends its command by the parser's node offsets: a trailing comment or a closing `)` no longer hides `> $F` (the Python regex let `echo hi > $F # c` and `( echo hi > $F )` run)" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
   8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs until PR C; no text match, no program list" },
+  10: { dir: "stricter", why: "owner 2026-11-19: coproc bodies, stricter until PR C: `coproc { rm -rf ~; }`, `coproc { rm -rf $X; }` and `coproc { find $X -delete; }` ran before (the Python guard and the floors at f0d8b980 looked inside no coproc); their bodies are checked now" },
 };
 
 const base = fs.realpathSync(mkTestTmp("pf-parity-"));
@@ -73,7 +74,7 @@ test("every class is used, and a row with a class differs for the foreman or the
     if (!differs) stale.push(r.line);
   }
   assert.deepEqual(stale, []);
-  assert.deepEqual([...seen].sort().map(String), Object.keys(CLASSES));
+  assert.deepEqual([...seen].sort((x, y) => x - y).map(String), Object.keys(CLASSES));
 });
 
 test("the restored forms are refused again for both", () => {

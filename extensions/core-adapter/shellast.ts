@@ -61,6 +61,10 @@ export interface ShellSegment {
   opaque: OpaqueReason | null;
   /** Set (not enumerable) on a segment that stands for a function, select, coproc or arithmetic for, or a nested string too deep to walk: the source text of the bodies it holds. */
   bodies?: string[];
+  /** Set (not enumerable): the texts of the here-documents and here-strings that feed stdin (`bash <<'E'` runs its body as code). */
+  heredocs?: string[];
+  /** Set (true, not enumerable) on a `$( )` the walker stopped at on MAX_DEPTH with a script inside it: that script was never walked. */
+  tooDeep?: boolean;
 }
 
 export interface ShellParseOptions {
@@ -116,6 +120,8 @@ interface Scope {
   stdin: boolean;
   redirects: ShellRedirect[];
   heredoc: boolean;
+  /** The texts of the here-documents and here-strings on stdin. */
+  docs: string[];
   reason: OpaqueReason | null;
   /** The source text of the script being walked (set by `walkScript`), for the body slices. */
   src?: string;
@@ -126,6 +132,7 @@ interface Cmd {
   sc: Scope;
   redirs: ShellRedirect[];
   heredoc: boolean;
+  docs: string[];
   feeds: boolean;
   reason: OpaqueReason | null;
   /** The command text ends in its last redirect (nothing follows the redirect target); true for redirects inherited from a compound command. */
@@ -254,6 +261,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "stdinFed", { value: Boolean(c ? c.feeds : sc.stdin), enumerable: false });
   // not enumerable either: the old delete check read a `> $X` only when the target ended the command (`echo > $F arg` is none)
   Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
+  Object.defineProperty(out, "heredocs", { value: [...(c ? c.docs : sc.docs)], enumerable: false, configurable: true });
   sc.run.out.push(out);
 }
 
@@ -265,9 +273,13 @@ function withBodies(sc: Scope, bodies: string[]): void {
 
 function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {
   for (const s of subs) {
-    if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth");
+    if (sc.depth + 1 > MAX_DEPTH) {
+      seg(sc, s.label, [], "depth");
+      // the script inside was never walked: a consumer must not read the segment as a plain unresolved word
+      if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
+    }
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
+    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null });
   }
 }
 
@@ -278,7 +290,14 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
     const stdin = fd === null || fd === "0";
     if (r.type === "HereDoc" || r.type === "HereString") {
       c.heredoc = true;
-      if (stdin) c.feeds = true;
+      if (stdin) {
+        c.feeds = true;
+        if (r.type === "HereDoc") c.docs.push(r.body.text);
+        else if (r.target) {
+          const w = wordOf(r.target, vars);
+          c.docs.push(w.value ?? w.text.replace(/^(["'])([\s\S]*)\1$/, "$2"));
+        }
+      }
       continue;
     }
     const t = r.target ? wordOf(r.target, vars) : { text: "", value: null, reason: "unsupported" as OpaqueReason };
@@ -337,12 +356,12 @@ function walkNode(n: any, sc: Scope): string | null {
       return cwd;
     }
     case "Redirected": {
-      const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, feeds: sc.stdin, reason: sc.reason };
+      const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, docs: [...sc.docs], feeds: sc.stdin, reason: sc.reason };
       redirectsOf(n.redirects, c);
       const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
       for (const r of n.redirects as Redirection[]) scriptsIn(r, acc);
       walkSubs(acc.subs, sc);
-      return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
+      return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
     }
     case "Subshell":
       walkList(n.body.commands, sc);
@@ -381,7 +400,7 @@ function walkNode(n: any, sc: Scope): string | null {
 
 function doCommand(cmd: Command, sc: Scope): string | null {
   const vars = sc.run.vars.get(cmd);
-  const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, feeds: sc.stdin || sc.heredoc, reason: sc.reason };
+  const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, docs: [...sc.docs], feeds: sc.stdin || sc.heredoc, reason: sc.reason };
   const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
   scriptsIn(cmd, acc);
   if (acc.proc) c.reason = pick(c.reason, "process_substitution");
@@ -521,7 +540,7 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
     seg(sc, label, [src], "parse_error", c);
     return cwd;
   }
-  walkScript(script, src, { ...sc, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, stdin: c.feeds, reason: c.reason });
+  walkScript(script, src, { ...sc, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
   return cwd;
 }
 
@@ -862,7 +881,7 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
     const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [] };
-    return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
+    return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   const unreadable = (): ShellSegment[] => {
     const sc = start();
