@@ -24,8 +24,8 @@ to stop and return a handoff report starting `RUNG_UP: context` (also `RUNG_UP: 
 launch of that role needs no reason, gets the prior report prepended to its task, and the trace records
 `rung_up {reason: "context"}` (or `turns`, `stuck`, `checks_failed`). When the rank policy refuses the builder's strong rung for the launch, no strong launch will happen: the next builder launch on any other rung gets the prior report instead, the report is used up, and the launch result says the report was prepended because the strong rung is not allowed by the rank policy (trace `rung_top` with reason `strong rung refused by rank policy`). With the strong rung allowed, a default-rung launch gets nothing and the report waits for the strong launch.
 
-The foreman's own strong launch passes `reason` as an extra top-level field of the `subagent` call (the published
-schema stays unchanged; the adapter removes the field before the tool sees it). Without a reason, and without a
+The foreman's own strong launch passes `reason` as a top-level field of the `subagent` call (the adapter declares it in the
+tool schema the model sees, see [launch fields](#launch-fields-in-the-tool-schema), and removes it before the tool runs). Without a reason, and without a
 climb-eligible run, the launch is refused: `strong launch of builder refused [strong_no_reason]: pass `reason` as
 an extra top-level field of the subagent call ...`.
 
@@ -166,12 +166,12 @@ Use `[research]` on an explorer launch that reads the web or PDFs; add `[fact-cr
 
 ## Launch sizing
 
-A builder launch may carry two extra top-level fields (like `reason`, per `tasks`/`chain`/`parallel` entry too; the entry wins). The adapter strips them from every launch and picks the rung from them. A launch without them runs as before (`launch_sizing` rule `undeclared`). They (and `reason`) are keys of the `subagent` call itself, never inside `options` or `args`: the `subagent` schema belongs to pi-subagents, so the adapter adds this to the foreman's tool description (naming `size`, `risk` and `reason`), moves a value found in `options` (or in `args` of a launch without `workflow`) to the top level (trace `sizing_lifted`; a top-level value wins; `reason` moves the same way, and a `reason` in `options` is not refused) and, when pi-subagents still refuses the call (`unknown options key 'size'`, `'risk'` or `'reason'`, `args requires workflow`), appends the fix text to the refusal (trace `sizing_hint`). The hint on a refusal naming `reason` says it is a top-level key.
+A builder launch may carry two extra top-level fields (like `reason`, per `tasks`/`chain`/`parallel` entry too; the entry wins). The adapter strips them from every launch and picks the rung from them. A launch without them runs as before (`launch_sizing` rule `undeclared`). They (and `reason`) are keys of the `subagent` call itself, beside `agent` and `task`, never inside `options` or `args`: the `subagent` schema belongs to pi-subagents, so the adapter adds the fields to the schema the model sees (see [launch fields](#launch-fields-in-the-tool-schema)) and a sentence naming `size`, `risk` and `reason` to the foreman's tool description, moves a value found in `options` (or in `args` of a launch without `workflow`) to the top level (trace `sizing_lifted`; a top-level value wins; `reason`, `occasion`, `items`, `reads` and `install` move the same way, and none of them in `options` is refused; `mcp` in `options` stays refused and the refusal names it as a top-level key) and, when pi-subagents still refuses the call (`unknown options key 'size'`, `'risk'` or `'reason'`, `args requires workflow`), appends the fix text to the refusal (trace `sizing_hint`). The hint on a refusal naming `reason` says it is a top-level key.
 
 - `size: { files: string[], largestFileLines?: number, modules?: number }`: the files the builder will touch.
 - `risk: string[]`, from `guard, permission, parser, concurrency, security, design`.
 
-The upstream schema does not declare these keys, so some provider paths send them as JSON text (`size: '{"files": ["a.py"]}'`, `risk: '["guard"]'`). The adapter accepts a string that parses, once, to exactly the declared type (an object for `size`, an array for `risk`) and runs every check on the parsed value; the launch fields `mcp` (array), `reads` (number), `install` (`true`/`false`) and `occasion` (one of `pre-pr`, `high-stakes`, `plan-review`, `second-opinion`, a string) get the same strict treatment. Any other string is refused as before.
+Some provider paths send these keys as JSON text (`size: '{"files": ["a.py"]}'`, `risk: '["guard"]'`). The adapter accepts a string that parses, once, to exactly the declared type (an object for `size`, an array for `risk`) and runs every check on the parsed value; the launch fields `mcp` (array), `reads` (number), `install` (`true`/`false`) and `occasion` (one of `pre-pr`, `high-stakes`, `plan-review`, `second-opinion`, a string) get the same strict treatment. Any other string is refused as before.
 
 Malformed fields (wrong type, unknown tag, negative or non-integer number, an entry in `files` that is neither a file nor a directory) refuse the foreman's launch with `[sizing_invalid]` and a one-line fix. Other roles ignore the fields.
 
@@ -198,6 +198,20 @@ The first matching row wins. Sizing only raises the rung:
 Keys (user or overlay config only; a project layer cannot change them): `ladder.sizing.enabled` (false: the fields are stripped and ignored), `ladder.sizing.largeFileLines` (1500), `ladder.sizing.maxModules` (2), `ladder.sizing.strongRisks`, `ladder.sizing.topRisks`, `ladder.sizing.topRung`. A project or session can set `ladder.equalOnStrongRisk` to `false` only.
 
 `foreman retro` lists per rule the launches, the final rungs, later climbs and later review FAILs. The join is heuristic: a record belongs to the last `launch_sizing` of the same role before it, so parallel builders and rounds that overlap can be misattributed. Read it as a trend, not a count per task.
+
+### Launch fields in the tool schema
+
+The `subagent` schema belongs to pi-subagents and declares none of the launch fields. A model that fills in only the declared parameters would never send them, so the foreman's `prepareLoadout` (the triage tool's hook) sets an extended copy of the schema on Pi's per-refresh declaration of `subagent` (`launchschema.ts`). pi-subagents' own schema object and a recorded transcript declaration are never changed. The copy adds, as top-level keys with a one-sentence description each:
+
+| Key | Declared | Typed as (the description names the allowed values) |
+|---|---|---|
+| `reason`, `items`, `occasion`, `reads`, `install` | always | text; item numbers and `"V"`; text; number; boolean |
+| `size`, `risk` | with `ladder.sizing.enabled` | `{files, largestFileLines?, modules?}`; list of tags |
+| `mcp` | when a role has an MCP ceiling (`roles.<role>.mcp`) | list of `server` or `server/tool` |
+
+`skill` is not declared (no gate reads it). Every added field is `anyOf: [<typed branches>, {}]`: the typed branches tell the model the shape, and the empty branch lets Pi's argument check pass every value unchanged and unconverted. The gates keep their own checks and refusal texts, so a value they refused before is refused with the same text, and a value they accepted (JSON text, numeric item strings, `"v"`) is still accepted. The copy is cached per source schema, so its bytes are stable; an old session that is resumed gets the longer declaration once, which restarts its prompt cache at that point. A truly unknown key inside `options` is still refused by pi-subagents at execute, after the launch folders exist; they are swept after 7 days.
+
+**What makes a provider strict.** Pi sends `strict: true` for a tool only when its definition sets `constrainedSampling` with `strict` `prefer` or `require`, on an API that supports it (OpenAI completions with `compat.supportsStrictMode` not false, Anthropic and Bedrock through the same resolver; OpenAI responses defaults to non-strict). The `subagent` tool sets none, so it is sent non-strict on every provider, and a model that omits undeclared keys does so by its own behaviour, which declaring the fields fixes.
 
 ## Trace records
 

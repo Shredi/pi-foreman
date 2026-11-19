@@ -30,8 +30,8 @@ which relaunches it with `model: "strong"`:
 - **Context cap**: a single-launch child on any rung whose call context reaches `ladder.contextCap.<role>` (builder 250000, 0 = off)
   is steered once to hand off (`RUNG_UP: context`; trace `rung_up_steer` with `reason: "context_cap"`). See [ladder](ladder.md#context-cap).
 - **Stuck**: a report with `STATUS: stuck` or "own checks failed".
-- **Foreman**: `model: "strong"` plus a `reason` passed as an extra top-level field of the `subagent` call (the
-  published tool schema does not list it; the adapter reads and removes it). A strong launch with no reason and no
+- **Foreman**: `model: "strong"` plus a `reason` passed as a top-level field of the `subagent` call (the adapter
+  declares it in the schema the model sees, [ladder](ladder.md#launch-fields-in-the-tool-schema), reads it and removes it). A strong launch with no reason and no
   trigger is refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
   A builder launch may also carry `size` and `risk` (top-level keys of the `subagent` call, never inside `options` or `args`); the adapter reads and removes them and a large or risky
   task goes strong without a `reason` (see [ladder](ladder.md#launch-sizing)).
