@@ -42,12 +42,6 @@ const ROLES = ["reviewer", "explorer"];
 /** Every line refused for both read-only roles and not refused by this rule for a builder; `cwd` the directory the lines run in. */
 function mustRefuse(lines: string[], cwd = wt): void {
   for (const line of lines) {
-    // a line a PR B2 floor refuses (an unreadable write or delete target) is refused by that floor first, for every role alike
-    const first = verdict(line, "builder", "child", cwd);
-    if (first?.block && first.rule.startsWith("floor-")) {
-      for (const role of ROLES) assert.equal(verdict(line, role, "ro", cwd)?.rule, first.rule, `${role}: ${line}`);
-      continue;
-    }
     for (const role of ROLES) assert.ok(refused(verdict(line, role, "ro", cwd)), `${role}: ${line} -> ${JSON.stringify(verdict(line, role, "ro", cwd))}`);
     assert.ok(!refused(verdict(line, "builder", "child", cwd)), `builder: ${line} -> ${JSON.stringify(verdict(line, "builder", "child", cwd))}`);
   }
@@ -63,7 +57,9 @@ test("(a) a link to the worktree counts as inside, the real scratch dir stays fr
 });
 
 test("(b) a write target that does not resolve is refused; $FOREMAN_SCRATCH forms are free", () => {
-  mustRefuse(['echo x > "$OUT"', "HOME=/x echo y > ~/f", `export HOME=${W} && echo y > ~/f`, 'echo x | tee "$OUT"', 'cp a "$D"']);
+  mustRefuse(["HOME=/x echo y > ~/f", `export HOME=${W} && echo y > ~/f`, 'echo x | tee "$OUT"', 'cp a "$D"']);
+  // `> "$OUT"` is refused by the B2 floor before this rule, for the read-only roles and the builder alike
+  for (const [role, kind] of [["reviewer", "ro"], ["explorer", "ro"], ["builder", "child"]] as const) assert.equal(verdict('echo x > "$OUT"', role, kind)?.rule, "floor-unknown-write-target", role);
   mustFree(["echo x > $FOREMAN_SCRATCH/x", 'echo x > "$FOREMAN_SCRATCH/x"', "echo x > ${FOREMAN_SCRATCH}/x", "cat a > /dev/null", "ls 2>&1"]);
   // after `cd "$X"` the cwd is unknown: child-write-outside refuses it first (not this rule), for the read-only roles and the builder alike
   for (const [role, kind] of [["reviewer", "ro"], ["explorer", "ro"], ["builder", "child"]] as const) assert.equal(verdict('cd "$X" && touch f', role, kind)?.rule, "child-write-outside", role);
@@ -72,7 +68,9 @@ test("(b) a write target that does not resolve is refused; $FOREMAN_SCRATCH form
 const GIT_WRITES = ["commit -m x", "add .", "rm f", "mv a b", "merge x", "rebase x", "reset --hard", "checkout -- f", "switch x", "restore f", "stash", "tag v1", "cherry-pick x", "revert x", "apply p", "am p", "pull", "clone . c", "init", "clean -fd", "worktree add x", "branch x", "submodule update", "config user.name x", "gc", "prune", "update-index --add f", "update-ref r HEAD", "notes add", "bisect start"];
 
 test("(c) a git subcommand that writes is refused in the worktree (cwd, -C <wt>, an unresolved -C); a scratch clone is free", () => {
-  mustRefuse(GIT_WRITES.flatMap((s) => [`git ${s}`, `git -C ${W} ${s}`, `git -C "$D" ${s}`]));
+  mustRefuse(GIT_WRITES.flatMap((s) => [`git ${s}`, `git -C ${W} ${s}`, ...(s === "clean -fd" ? [] : [`git -C "$D" ${s}`])]));
+  // `git -C "$D" clean -fd` is refused by the B2 delete floor before this rule, for every role alike
+  for (const [role, kind] of [["reviewer", "ro"], ["explorer", "ro"], ["builder", "child"]] as const) assert.equal(verdict('git -C "$D" clean -fd', role, kind)?.rule, "floor-delete-unknown-target", role);
   // a plain `git fetch origin` is a fetch rule (free); with -C it is not that rule's form
   mustRefuse([`git -C ${W} fetch origin`, `git -C "$D" fetch origin`]);
   mustFree(["git fetch origin", "git config --get x", `cd ${S} && git clone ${W} c2`]);
@@ -162,7 +160,11 @@ test("revision: the ordinary git read options that share a prefix with a write o
 });
 
 test("revision: a find with an action whose root is relative under an unknown cwd is refused; absolute roots and plain finds stay free", () => {
-  mustRefuse(['cd "$X" && find . -delete', 'cd "$X" && find . -exec rm {} +', 'pushd "$X" && find . -exec rm {} +', 'cd "$X" && find sub -delete', 'cd "$X" && find -delete']);
+  mustRefuse(['cd "$X" && find . -exec rm {} +', 'pushd "$X" && find . -exec rm {} +']);
+  // `find -delete` after `cd "$X"` is refused by the B2 delete floor before this rule, for every role alike
+  for (const l of ['cd "$X" && find . -delete', 'cd "$X" && find sub -delete', 'cd "$X" && find -delete']) {
+    for (const [role, kind] of [["reviewer", "ro"], ["explorer", "ro"], ["builder", "child"]] as const) assert.equal(verdict(l, role, kind)?.rule, "floor-delete-unknown-target", `${role}: ${l}`);
+  }
   mustFree(['cd "$X" && find . -name x', `cd "$X" && find ${S} -delete`, `find ${S} -delete`]);
 });
 
