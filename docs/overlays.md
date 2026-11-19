@@ -70,7 +70,7 @@ and `foreman:ready`. There is no second handshake.
 | Display names | `displayNames` preset or per-id map |
 | Skills | `skills/` in the overlay package (Pi skills format) |
 | Deferred tools and searchable skills | `tools.deferred` (tools or globs whose declarations are left out until `tool_search` finds them), `skills.visible` / `skills.hidden` (which skills are listed; the rest are found with `tool_search`) and `roles.<x>.searchable` (tools a child role may find through `tool_search`; a child still declares them, see [tools](tools.md#deferred-tools-and-searchable-skills)). User or overlay config sets them; a project or session may only add names. See [tools](tools.md#deferred-tools-and-searchable-skills). |
-| Gate rules | None: an overlay has no policy files. Permission rules and the classifier whitelist live in the user's `permissions.json` (see [permissions](permissions.md)); `permissions.profile` may be set from an overlay, as may `gate.readTools` (extension tools judged like read/grep, see [permissions](permissions.md#read-tools)). An overlay can read the key-file list the secret-path floor uses, `config/secret-paths.json` in the pi-foreman package (a JSON array of name globs). An overlay can only tighten the gate's other keys |
+| Gate rules | None: an overlay has no policy files. The protected targets live in the user's `permissions.json` (see [permissions](permissions.md)); `permissions.profile` has no effect any more, `gate.readTools` may be set from an overlay (extension tools judged like read/grep, see [permissions](permissions.md#read-tools)). An overlay can read the key-file list the secret-path floor uses, `config/secret-paths.json` in the pi-foreman package (a JSON array of name globs). An overlay can only tighten the gate's other keys |
 | Child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
@@ -104,7 +104,7 @@ A provider an extension registers at runtime (no registry file) can name another
 
 ### Gate rules
 
-The gate no longer reads policy files. `gate.policy.userFile` and `safety.policy.files` are removed keys (`foreman setup` prints one line per key it finds and names a leftover `<agentDir>/pi-foreman/policy.md`; the doctor fails on them). Rules and the classifier whitelist sentences live in `permissions.json` (see [permissions](permissions.md)). An overlay can only tighten: the classifier model, the floors and every other `gate.*` key stay under the gate. `permissions.profile` is read from the user, organisation and default layers only; a project or session value is ignored with a warning.
+The gate no longer reads policy files. `gate.policy.userFile` and `safety.policy.files` are removed keys (`foreman setup` prints one line per key it finds and names a leftover `<agentDir>/pi-foreman/policy.md`; the doctor fails on them). The protected targets and `classifier.deny` sentences live in `permissions.json` (see [permissions](permissions.md)). An overlay can only tighten: the classifier model, the floors and every other `gate.*` key stay under the gate. `permissions.profile` has no effect: profiles are gone.
 
 ### Own host CLI
 

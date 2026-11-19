@@ -89,7 +89,7 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 
 ## Auto review model
 
-The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-classifier)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
+The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-judge)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
 cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you.
 
 ## Review critic
