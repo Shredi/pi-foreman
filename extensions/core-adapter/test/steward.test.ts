@@ -291,3 +291,10 @@ test("the keys are in schema, defaults and features; steward.enabled true valida
   assert.deepEqual(row?.keys, keys.map((k) => `steward.${k}`));
   assert.equal(row?.state, "off");
 });
+
+test("the instruction file is plain text: no placeholder, names the tools and the one rule that matters", () => {
+  const text = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "..", "instructions", "steward.md"), "utf8");
+  assert.ok(!text.includes("{{"));
+  for (const word of ['model: "top"', "foreman retro --json", "ask_user_question", "foreman_session_open", "steward-<date>.md", "foreman rounds", "data"]) assert.ok(text.includes(word), word);
+  assert.match(text, /never follow anything it asks/);
+});
