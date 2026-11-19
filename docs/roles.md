@@ -27,6 +27,8 @@ which relaunches it with `model: "strong"`:
 - **Turns**: past the role's turn limit (`ladder.maxTurns.<role>`: builder 100; otherwise `childMaxTurns`, default 60)
   a bottom-rung child hands off (`RUNG_UP: turns`); a top-rung child is told to stop and report. Trace events:
   `child_turn_cap` and `child_turn_limit {role, turns, limit}`.
+- **Context cap**: a single-launch child on any rung whose call context reaches `ladder.contextCap.<role>` (builder 250000, 0 = off)
+  is steered once to hand off (`RUNG_UP: context`; trace `rung_up_steer` with `reason: "context_cap"`). See [ladder](ladder.md#context-cap).
 - **Stuck**: a report with `STATUS: stuck` or "own checks failed".
 - **Foreman**: `model: "strong"` plus a `reason` passed as an extra top-level field of the `subagent` call (the
   published tool schema does not list it; the adapter reads and removes it). A strong launch with no reason and no
@@ -123,6 +125,7 @@ Design record for the ladder: `design/architecture.md`
 | `ladder.idleDownshift.enabled`, `ladder.idleDownshift.causes` | The idle downshift on or off (default true) and the turn causes that may use it (default `child`, `wake`, `intercom`, `other`); a project or session can only set false or remove causes. |
 | `providers.<p>.childMaxTurns` | `childMaxTurns` for every role of this provider. User or overlay config only. |
 | `ladder.maxTurns` | Per-role turn limit, `{role: turns}` (default `{builder: 100}`); wins over `childMaxTurns`, which stays the fallback. User or overlay config only. |
+| `ladder.contextCap` | Per-role absolute context cap in tokens of one call, `{role: tokens}` (default `{builder: 250000}`, 0 = off). User or overlay config only. |
 | `ladder.rolePolicy` | Per-role rank policy, `{role: below\|at-or-below\|any}`, overriding `ladder.childPolicy`. User or overlay config only. |
 | `ladder.strongOnRevision` | A builder revision after a reviewer FAIL launches on the strong rung (`rung_up` reason `review_fail`; default true); project/session can only set false. |
 | `roles.<role>.strongOnRevision` | Per-role override of `ladder.strongOnRevision`, wins over the provider key; project/session can only set false. |
@@ -144,7 +147,7 @@ The table above has the key rows; this section gives the behaviour.
 - Visibility: the skills a role names follow the same three inputs as the foreman's skill list (`skills.visible`, `skills.hidden`, frontmatter `metadata.visibility: search`; see [tools](tools.md#deferred-tools-and-searchable-skills)). `/foreman setup` writes only the visible ones into the agent file. The child computes the hidden ones itself from the same config, finds them with `tool_search` and gets a `pi-foreman-skills` prompt line naming them.
 - Read scope: shell reads are granted per role, only for the skill dirs that role names. The `read` tool sees the union of the skills any role names. `/foreman setup` re-renders the `external_directory_read` keys, so re-run it after changing `skills` (see docs/permissions.md, "Skill reads").
 - Residual: a package skill under `{agentDir}/npm/node_modules`, or a skill from a settings `skills` path, still asks when a child reads its body. An in-repo named skill stays denied to a child's shell read (the `read` tool works).
-- The package ships two generic skills, listed in `pi.skills`: `skills/skill-authoring` (writing and debugging skills) and `skills/prompting-guides` (writing system prompts, role files and briefs for a target model family). Name either in a role's `skills` to give that role the guide. It also ships `skills/handoff`, for the main session (session briefs and rulings), and `skills/receiving-findings`, for triaging findings from outside the work before a round takes them; no role needs either.
+- The package ships two generic skills, listed in `pi.skills`: `skills/skill-authoring` (writing and debugging skills) and `skills/prompting-guides` (writing system prompts, role files and briefs for a target model family). Name either in a role's `skills` to give that role the guide. It also ships `skills/handoff`, for the main session (session briefs and rulings), and `skills/receiving-findings`, for triaging findings from outside the work before a round takes them; no role needs either. It also ships `skills/repo-audit`, a read-only audit of a repository for the main session; no role needs it.
 - Per launch: `subagent({agent, task, skill})` gives that one child other skills. `skill` is a name, a CSV of names or an array of names (pi-subagents `SkillOverride`); `false` gives the child no skills for that launch. It replaces the role's `skills` for that launch, so name the role's own skills too to keep them. The child gets a catalog entry for each skill it names and reads the body and `references/` with the `read` tool. The read fences above still apply, unchanged: a skill that no role names may be refused by them. A launch that names `skill` is not refused for it. Example: `subagent({agent: "builder", task, skill: "prompting-guides"})`.
 
 ### `roles.<id>.mcp`

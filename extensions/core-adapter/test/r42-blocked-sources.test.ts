@@ -13,7 +13,7 @@ import { writeChildAsk } from "../childask.ts";
 import { r11Rig } from "./_r11rig.ts";
 import type { Spawner } from "../spawn.ts";
 
-const GUARDS = new Set(["shell_write_guard.py", "destructive_guard.py", "ledger_guard_spawn.py"]);
+const GUARDS = new Set(["shell_write_guard.py", "ledger_guard_spawn.py"]);
 /**
  * The three guard lines this file sends through the gate (the install line, the self-ruling cp line, a subagent launch) are lines every Python guard
  * lets pass (stdout empty, exit 0: the real guards were run on them); the dialogs under test come from the classifier and the gate after the guards.

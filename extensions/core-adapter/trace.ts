@@ -9,7 +9,7 @@ export const TRACE_FIELDS = ["ts", "event", "role", "toolFamily", "guard", "deci
 export type TraceField = (typeof TRACE_FIELDS)[number];
 export type TraceRecord = Partial<Record<TraceField, string | number | boolean | null>>;
 
-// `surface` (R18 `dialog` records: permission|child|checkpoint|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
+// `surface` (R18 `dialog` records: permission|child|checkpoint|pressure_override|ask_user|drift) is allowed beside the pinned TRACE_FIELDS list.
 // `code` and `attempts` (`hint_write_failed`: the rename error code and the attempts made) likewise.
 // The warm-policy fields (budget, presence, self-warm source, compaction trigger) are allowed the same way: the pinned list stays as it is.
 // R39 `launch_sizing` keys likewise (base rung, declared and measured sizes, risk tags, files outside the workspace).

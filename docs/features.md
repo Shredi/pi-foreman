@@ -69,7 +69,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [foreman-show](#foreman-show) | tools |  | on | The foreman-only `foreman_show` tool publishes a markdown or HTML note as a page (text, tables, code fences, mermaid diagrams) that the Herdr plan panel lists and opens in the browser; each call adds a page. | on by default | [herdr](herdr.md#notes) |
 | [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the pi-background-tasks add-on (installed by default by `foreman setup`, skip with `--skip-addon background-tasks`; setup writes `PI_BG_FEATURES=process` into the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
+| [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own scratch dir (`$FOREMAN_SCRATCH`, under the worktree root, else the temp dir) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
 | [permissions](#permissions) | safety |  | on | Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. The user file can also name work folders: reads there are allowed and an auto folder lets writes no other root covers run as under mode auto, except in protected places (`/foreman perms list` shows them). | on by default | [permissions](permissions.md) |
 | [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots. | on by default | [permissions](permissions.md#owned-paths) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
@@ -112,7 +112,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
-| [resources](#resources) | ops |  | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
+| [resources](#resources) | ops |  | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most); for a load-only critical one new launch can start anyway when the owner says Yes in a dialog (one Yes, one launch). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
 | [idle-cache](#idle-cache) | models | toggle | off | Per-provider prompt-cache TTL and keep-alive so an idle session does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs (claude-* 300 s, gpt-* 1800 s; keep-alive on, children included, keepalive.children false stops them); a legacy per-request plan sets keepalive.enabled false; any other provider stays off until it has a TTL and keepalive.enabled: true; silent without an entry. keepalive.enabled is the only switch: pi-foreman sends every idle warm itself (Pi's own warmer is never used), at min(0.9 x TTL, TTL - 10 s) after the last touch, for any TTL above 10 s. A budget tier caps the spend per idle: half a cold re-cache while a subagent, background task or wait runs (or the owner is present and a turn, question, dialog or command is open), a quarter otherwise; the last warm is followed by one compaction above 0.6 x the context window. keepalive.beyondPiCap, windowMinutes, selfWarmWindowMinutes, awayTicks, whileWaiting and intervalSeconds are deprecated: accepted, ignored, and doctor warns. A downshifted session uses the cache entry of the idle model's provider. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or /foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
 ## Profiles
@@ -259,6 +259,7 @@ Switch: `providers.*.roles.*.strong` is set.
 | `ladder.sizing.topRisks` | `["design"]` | not in project/session (the launch sizing rules come from the user or overlay config) |
 | `ladder.sizing.topRung` | `null` | not in project/session (the launch sizing rules come from the user or overlay config) |
 | `ladder.maxTurns` | `{"builder": 100}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
+| `ladder.contextCap` | `{"builder": 250000}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.research.factCriticalRung` | `null` | not in project/session (the fact-critical research rung comes from the user or overlay config) |
 
 ### idle-downshift
@@ -425,10 +426,10 @@ No config key.
 | `ceremony.foremanReads.after.warn` | `8` | tighten-only (lower only, minimum 1) |
 | `ceremony.foremanReads.after.every` | `8` | tighten-only (lower only, minimum 1) |
 | `ceremony.foremanReads.after.deny` | unset | tighten-only (lower only, minimum 1) |
-| `ceremony.childReads.<x>.warn` | `builder`: `20`, `reviewer`: `15` | tighten-only (lower only) |
-| `ceremony.childReads.<x>.deny` | `builder`: `40`, `reviewer`: `30` | tighten-only (lower only) |
-| `ceremony.childReads.<x>.perFile` | `builder`: `5`, `reviewer`: `2` | tighten-only (lower only) |
-| `ceremony.childReads.<x>.max` | `builder`: `120`, `reviewer`: `120` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.warn` | `reviewer`: `15` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.deny` | `reviewer`: `30` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.perFile` | `reviewer`: `2` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.max` | `reviewer`: `120` | tighten-only (lower only) |
 
 ### launch-wait
 
@@ -483,7 +484,7 @@ Switch: `ceremony.orientation.enabled` is true.
 
 ### child-scratch
 
-**Child scratch dirs.** Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends.
+**Child scratch dirs.** Gives every single-child launch its own scratch dir (`$FOREMAN_SCRATCH`, under the worktree root, else the temp dir) that the guards allow writes in and the harness removes when the run ends.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -912,7 +913,7 @@ No config key.
 
 ### resources
 
-**Host pressure gate.** Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample.
+**Host pressure gate.** Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most); for a load-only critical one new launch can start anyway when the owner says Yes in a dialog (one Yes, one launch). `/foreman doctor` prints the current level and `/foreman status` the last sample.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -1065,6 +1066,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.childPolicy` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.rolePolicy` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.maxTurns` | the ladder and the child rank policy come from the user or overlay config |
+| `ladder.contextCap` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.reviewerClimb` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.research` | the fact-critical research rung comes from the user or overlay config |
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |

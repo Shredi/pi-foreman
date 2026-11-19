@@ -1,5 +1,8 @@
 // Programmatic child scratch (retro-harvest item 5). Every single-child launch gets its own dir
-// `<os.tmpdir()>/pi-foreman-scratch/<sessionId>/<launchId>` (mode 0700), named in a short prompt
+// `<worktree root>/.foreman/scratch/<sessionId>/<launchId>` (mode 0700; the root is `close.worktreeDir`, worktreeroot.ts sessionScratchRoot), or
+// `<os.tmpdir()>/pi-foreman-scratch/<sessionId>/<launchId>` when the session has no usable worktree root (no git top, a root inside a git work tree, the
+// npm root still resolving, or any failure making the folders: from then on the session uses the temp folder). Lanes under the temp folder from older
+// runs are still removed and swept; nothing is migrated. A session start removes session lanes under `.foreman/scratch` older than 7 days. Named in a short prompt
 // block and, through the launch binding (usage.ts), as the child's env FOREMAN_SCRATCH. The child
 // keeps copies, mutation checks and temp files there instead of in the repo or `.workflow/`.
 // The launching session removes the dir when the run ends (`child_scratch {bytes, files}` trace,
@@ -32,7 +35,21 @@ export interface ScratchFs {
   platform?: string;
   tmpdir?: () => string;
   uid?: () => number | null;
+  /** The session's worktree-side scratch base (`<root>/.foreman/scratch`): lanes strictly inside it may be removed too. */
+  wtBase?: string | null;
 }
+
+/** A session's worktree-side scratch location: `base` is `<root>/.foreman/scratch`; `failed` once making it failed (the session then uses the temp folder). */
+export interface ScratchWt {
+  root: string;
+  base: string;
+  failed: boolean;
+}
+
+export const FOREMAN_DIR_NAME = ".foreman";
+
+/** `<root>/.foreman/scratch`. */
+export const wtScratchBase = (root: string): string => path.join(root, FOREMAN_DIR_NAME, "scratch");
 
 const realNative = (p: string): string | null => {
   try {
@@ -85,10 +102,32 @@ function mkdirOwn(p: string, deps: ScratchFs): boolean {
   return true;
 }
 
-/** Create the launch's scratch dir; null when anything is off (the launch then has none). */
-export function createScratch(sessionId: string, launchId: string, deps: ScratchFs = {}): string | null {
+/** The worktree root (plain mkdir only when missing, an existing one is never chmodded), then `.foreman` and `scratch` (own dirs, 0700, no symlink). */
+function ensureWtBase(wt: ScratchWt, deps: ScratchFs): boolean {
+  try {
+    if (!fs.existsSync(wt.root)) fs.mkdirSync(wt.root, { recursive: true });
+  } catch {
+    return false;
+  }
+  return mkdirOwn(path.dirname(wt.base), deps) && mkdirOwn(wt.base, deps);
+}
+
+/**
+ * Create the launch's scratch dir; null when anything is off (the launch then has none). With `wt` the dir lies under the worktree root; when that
+ * cannot be made the session falls back to the temp folder for this and every later launch (`wt.failed`).
+ */
+export function createScratch(sessionId: string, launchId: string, deps: ScratchFs = {}, wt?: ScratchWt | null): string | null {
+  if (wt && !wt.failed) {
+    const dir = ensureWtBase(wt, deps) ? laneIn(wt.base, sessionId, launchId, deps) : null;
+    if (dir) return dir;
+    wt.failed = true;
+  }
   const root = scratchRoot(deps);
   if (!root || !mkdirOwn(root, deps)) return null;
+  return laneIn(root, sessionId, launchId, deps);
+}
+
+function laneIn(root: string, sessionId: string, launchId: string, deps: ScratchFs): string | null {
   const session = path.join(root, safeId(sessionId));
   if (!mkdirOwn(session, deps)) return null;
   const dir = path.join(session, safeId(launchId));
@@ -143,8 +182,7 @@ export type RemoveResult = { removed: true } | { removed: false; reason: "missin
  */
 export function removeScratch(dir: string, repos: string[], deps: ScratchFs = {}): RemoveResult {
   const platform = deps.platform ?? process.platform;
-  const root = scratchRoot(deps);
-  const realRoot = root ? realNative(root) : null;
+  const roots = [scratchRoot(deps), deps.wtBase ?? null].map((r) => (r ? realNative(r) : null)).filter((r): r is string => !!r);
   const abs = path.resolve(dir);
   try {
     const st = fs.lstatSync(abs);
@@ -153,7 +191,7 @@ export function removeScratch(dir: string, repos: string[], deps: ScratchFs = {}
     return { removed: false, reason: "missing" };
   }
   const real = realNative(abs);
-  if (!realRoot || !real || !strictlyInside(realRoot, real, platform) || !strictlyInside(realRoot, abs, platform)) return { removed: false, reason: "outside_root" };
+  if (!real || !roots.some((root) => strictlyInside(root, real, platform) && strictlyInside(root, abs, platform))) return { removed: false, reason: "outside_root" };
   for (const r of repos) {
     const rr = realNative(r) ?? path.resolve(r);
     const fold = (x: string): string => (platform === "win32" || platform === "darwin" ? x.toLowerCase() : x);
@@ -167,10 +205,36 @@ export function removeScratch(dir: string, repos: string[], deps: ScratchFs = {}
   }
 }
 
-/** The session's root (`<root>/<sessionId>`), for the shutdown sweep. */
+/** The session's lane (`<base>/<sessionId>`) in the worktree base when `deps.wtBase` is set, else in the temp folder, for the shutdown sweep. */
 export function sessionScratchDir(sessionId: string, deps: ScratchFs = {}): string | null {
-  const root = scratchRoot(deps);
+  const root = deps.wtBase ?? scratchRoot(deps);
   return root ? path.join(root, safeId(sessionId)) : null;
+}
+
+/**
+ * Session start: remove the session lanes (depth 1 below `base`) whose mtime is older than 7 days (the `sweepKept` rule), through `removeScratch`'s checks.
+ * lstat only; nothing happens unless `.foreman` and `scratch` are real own dirs. Returns the number removed.
+ */
+export function sweepOldLanes(base: string, repos: string[], now: number = Date.now(), deps: ScratchFs = {}): number {
+  if (!ownDir(path.dirname(base), deps) || !ownDir(base, deps)) return 0;
+  const cutoff = now - KEPT_DAYS * 86400000;
+  let removed = 0;
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(base);
+  } catch {
+    return 0;
+  }
+  for (const n of names) {
+    const lane = path.join(base, n);
+    try {
+      if (!ownDir(lane, deps) || fs.lstatSync(lane).mtimeMs >= cutoff) continue;
+    } catch {
+      continue;
+    }
+    if (removeScratch(lane, repos, { ...deps, wtBase: base }).removed === true) removed++;
+  }
+  return removed;
 }
 
 /** `<realpath(agentDir)>/pi-foreman/child-out`, the kept output folders' root, or null when the agent dir does not resolve. */
@@ -479,17 +543,27 @@ export interface ScratchHost {
   scratch: ChildScratch;
   /** The Pi agent dir; without it a launch gets no kept output dir. */
   agentDir?: string;
+  /** The worktree-side scratch location (`<root>/.foreman/scratch`), null/absent: the temp folder. */
+  scratchWt?: ScratchWt | null;
+  /** Set once `child_scratch_root` is traced (the first launch that creates a lane). */
+  scratchRootTraced?: boolean;
 }
+
+const depsOf = (h: ScratchHost, deps: ScratchFs): ScratchFs => (h.scratchWt ? { ...deps, wtBase: h.scratchWt.base } : deps);
 
 const keepOf = (h: ScratchHost): boolean => get(h.config.config, "ceremony.childScratch.keep") === true;
 const reposOf = (h: ScratchHost): string[] => [h.cwd, workspaceOf(h.cwd).root];
 
 /** At a single-child launch: create the dir, put it into the binding and the task, record it. */
 export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b: LaunchBinding, deps: ScratchFs = {}): void {
-  const dir = createScratch(h.id, b.launchId, deps);
+  const dir = createScratch(h.id, b.launchId, deps, h.scratchWt);
   if (!dir) {
     h.trace?.emit({ event: "child_scratch", role: b.role, action: "unavailable" });
     return;
+  }
+  if (!h.scratchRootTraced) {
+    h.scratchRootTraced = true;
+    h.trace?.emit({ event: "child_scratch_root", source: h.scratchWt && !h.scratchWt.failed ? "worktree" : "tmp" });
   }
   b.scratch = dir;
   h.scratch.add(b.launchId, dir, b.role);
@@ -507,7 +581,7 @@ export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b:
  */
 export function storeBrief(h: ScratchHost, runId: string, text: string, deps: ScratchFs = {}): string | null {
   const id = `brief-${safeId(runId)}`;
-  const dir = createScratch(h.id, id, deps);
+  const dir = createScratch(h.id, id, deps, h.scratchWt);
   if (!dir) return null;
   const file = path.join(dir, "explorer-brief.md");
   try {
@@ -528,13 +602,18 @@ export function finishScratch(h: ScratchHost, launchId: string | null, deps: Scr
     h.trace?.emit({ event: "child_scratch", role: e.role, bytes: st.bytes, files: st.files, action: "kept" });
     return;
   }
-  const r = removeScratch(e.dir, reposOf(h), deps);
+  const r = removeScratch(e.dir, reposOf(h), depsOf(h, deps));
   h.trace?.emit({ event: "child_scratch", role: e.role, bytes: st.bytes, files: st.files, action: r.removed === true ? "removed" : r.reason === "missing" ? "gone" : `refused_${r.reason}` });
 }
 
-/** Session shutdown: remove the session's whole scratch root unless kept. */
+/** Session shutdown: remove the session's lane in the worktree base and in the temp folder (older runs) unless kept. */
 export function sweepScratch(h: ScratchHost, deps: ScratchFs = {}): void {
   if (keepOf(h)) return;
-  const dir = sessionScratchDir(h.id, deps);
-  if (dir) removeScratch(dir, reposOf(h), deps);
+  const d = depsOf(h, deps);
+  for (const dir of [sessionScratchDir(h.id, d), h.scratchWt ? sessionScratchDir(h.id, deps) : null]) if (dir) removeScratch(dir, reposOf(h), d);
+}
+
+/** Session start (foreman): remove worktree-side session lanes older than 7 days. */
+export function sweepOldScratch(h: ScratchHost, now: number = Date.now(), deps: ScratchFs = {}): number {
+  return h.scratchWt ? sweepOldLanes(h.scratchWt.base, reposOf(h), now, deps) : 0;
 }

@@ -16,6 +16,10 @@
 //   (d) turns: a child on its bottom rung past childMaxTurns assistant turns is steered once to
 //       hand off (`RUNG_UP: turns`); on the top rung it is steered to stop and report (a looping
 //       small model is the failure this catches).
+//   (f) context cap: a child (any rung, single launches) whose last call's context reaches ladder.contextCap.<role>
+//       (default builder 250000, 0 = off) is steered once to hand off (`RUNG_UP: context`). On the bottom rung this is
+//       climb-eligible as for (a). A top-rung run is no climb source, so its handoff goes into `topHandoffs`: the next
+//       single launch with a foreman-written `model: "strong"` takes it (a fresh run on the same rung, reason `context`).
 // The bottom rung never escalates thinking (launchmodel.ts: a configured rung level wins); the
 // climb is by model.
 //
@@ -53,6 +57,8 @@ export const DEFAULT_STRONG_ABOVE = 100_000;
 export const RUNG_UP_MARKER = "RUNG_UP:";
 export const DEFAULT_CHILD_MAX_TURNS = 60;
 export const HANDOFF_MAX = 8_000;
+/** Default `ladder.contextCap.<role>`: absolute context tokens of one call. A role with no entry has no cap. */
+export const DEFAULT_CONTEXT_CAP: Record<string, number> = { builder: 250_000 };
 const LEDGER_LINES_MAX = 12;
 
 export type ClimbCause = "context" | "turns" | "stuck" | "checks_failed";
@@ -97,6 +103,13 @@ export function childMaxTurns(config: Json | undefined, provider: string | undef
   return posInt(v) ? v : knob(config, provider, role, "childMaxTurns", DEFAULT_CHILD_MAX_TURNS);
 }
 
+/** The context cap of `role` (ladder.contextCap.<role>, else the coded default); 0 = off. */
+export function contextCap(config: Json | undefined, role: string): number {
+  const v = get(config, `ladder.contextCap.${role}`);
+  if (typeof v === "number" && Number.isInteger(v) && v >= 0) return v;
+  return DEFAULT_CONTEXT_CAP[role] ?? 0;
+}
+
 /** Context tokens of one call: input + cacheRead + cacheWrite of its usage. */
 export function contextTokens(usage: unknown): number {
   if (!isObj(usage)) return 0;
@@ -111,6 +124,8 @@ export interface ChildSteer {
   count: number;
   /** context: the first call's context tokens (the baseline the growth is measured from). */
   baseline?: number;
+  /** context: the steer came from the absolute `contextCap`, not the growth limit. */
+  cap?: number;
   /** turns: the turn limit that was passed. */
   limit?: number;
   rung: "bottom" | "top";
@@ -126,8 +141,8 @@ export class ChildLadder {
   private steered = false;
   private turns = 0;
   private baseline: number | null = null;
-  private readonly o: { strongAbove?: number; maxTurns?: number; bottom?: boolean };
-  constructor(o: { strongAbove?: number; maxTurns?: number; bottom?: boolean } | undefined) {
+  private readonly o: { strongAbove?: number; maxTurns?: number; contextCap?: number; bottom?: boolean };
+  constructor(o: { strongAbove?: number; maxTurns?: number; contextCap?: number; bottom?: boolean } | undefined) {
     this.o = o ?? {};
   }
 
@@ -143,6 +158,10 @@ export class ChildLadder {
       this.steered = true;
       return { trigger: "context", count: tokens, baseline: prior, rung, text: steerText("context", `your context grew by ${tokens - prior} tokens since your first call (${tokens} now), above strongAbove ${this.o.strongAbove} for this model`) };
     }
+    if (posInt(this.o.contextCap) && tokens >= this.o.contextCap) {
+      this.steered = true;
+      return { trigger: "context", count: tokens, cap: this.o.contextCap, rung, text: steerText("context", `your context reached ${tokens} tokens, at or above the context cap ${this.o.contextCap}`, "The foreman relaunches a fresh run with your report.") };
+    }
     if (posInt(this.o.maxTurns) && this.turns > this.o.maxTurns) {
       this.steered = true;
       const why = `you have used ${this.turns} turns, above childMaxTurns ${this.o.maxTurns}`;
@@ -152,12 +171,12 @@ export class ChildLadder {
   }
 }
 
-export function steerText(trigger: "context" | "turns", why: string): string {
+export function steerText(trigger: "context" | "turns", why: string, last = "The foreman relaunches the task on a stronger model with your report."): string {
   return [
     `pi-foreman ladder: ${why}. Stop now and start no new work.`,
     `Reply with a handoff report. Its first line is exactly: ${RUNG_UP_MARKER} ${trigger}`,
     "Then: Done: <what is finished>; Remaining: <what is left>; Files touched: <paths>.",
-    "The foreman relaunches the task on a stronger model with your report.",
+    last,
   ].join("\n");
 }
 
@@ -177,6 +196,11 @@ export interface Handoff {
   cause: ClimbCause;
   summary: string;
   resultPath: string | null;
+}
+
+/** One line for the foreman's launch result when a top-rung run stopped at the context cap. */
+export function topClimbHint(h: Handoff): string {
+  return `pi-foreman ladder: run ${h.runId} (${h.role}) stopped at the context cap. Relaunch ${h.role} with model "strong" for a fresh run; the harness prepends this run's report.`;
 }
 
 /** One line for the foreman's launch result when a run ended climb-eligible. */
@@ -235,6 +259,8 @@ export interface Climb {
   revisionReason?: string;
   /** The strong rung model the rank policy refuses: the pending handoff went to this default-rung launch instead of a strong one. */
   handoffFor?: string;
+  /** The handoff is a top-rung run's (LadderState.topHandoffs), not an eligible one. */
+  fromTop?: true;
 }
 
 export interface LadderOptions {
@@ -268,6 +294,8 @@ export class LadderState {
   private readonly byCall = new Map<string, { role: string; bottom: boolean }>();
   private readonly byRun = new Map<string, { role: string; bottom: boolean }>();
   readonly eligible = new Map<string, Handoff>();
+  /** Per role: the handoff of a top-rung run that stopped at the context cap; only a single foreman-written `strong` launch takes it (plan). */
+  readonly topHandoffs = new Map<string, Handoff>();
   /** Per role: the model of its latest launch (the live rung). */
   readonly live = new Map<string, string>();
   /** Risk tags of builder launches (sizing.ts) that the next item or pre-pr reviewer is asked to probe for bypasses. */
@@ -295,12 +323,17 @@ export class LadderState {
     if (!end) return null;
     const r = this.byRun.get(end.runId);
     this.byRun.delete(end.runId);
-    if (!r || !r.bottom) return null;
+    if (!r) return null;
     if (end.policyBlock) return null; // policy_block (launchwait.ts): stopped, never climb-eligible, never relaunched
     if (end.repeatRefusal) return null; // repeat_refusal (launchwait.ts, R12 item 4): the same family
     const cause = climbCause(end.summary);
     if (!cause) return null;
     const h: Handoff = { role: r.role, runId: end.runId, cause, summary: end.summary, resultPath: end.resultPath };
+    if (!r.bottom) {
+      if (cause !== "context") return null; // a top-rung run climbs nowhere; only the context cap hands off to a fresh run
+      this.topHandoffs.set(r.role, h);
+      return h;
+    }
     this.eligible.set(r.role, h);
     return h;
   }
@@ -314,6 +347,7 @@ export class LadderState {
     const topReason = input.reason;
     delete input.reason;
     const entries: { e: Json; passed: unknown; reason: unknown }[] = [];
+    const singleCall = !Array.isArray(input.tasks) && !Array.isArray(input.chain) && typeof input.agent === "string";
     if (Array.isArray(input.tasks) || Array.isArray(input.chain)) {
       const visit = (list: unknown): void => {
         if (!Array.isArray(list)) return;
@@ -333,8 +367,20 @@ export class LadderState {
       const role = e.agent as string;
       const r = roles[role];
       const strong = isObj(r) && isObj(r.strong) && typeof r.strong.model === "string" && r.strong.model ? (r.strong.model as string) : null;
-      if (!strong || !isObj(r) || typeof r.model !== "string") continue;
       const keyword = typeof passed === "string" ? splitLevel(passed.trim()).base : "";
+      // a top-rung run's handoff (context cap): a single launch with the foreman's own `strong` takes it; it needs no ladder trigger and stays on the strong rung (none mapped: the live rung)
+      const topH = singleCall && keyword === "strong" && !opts.sizing?.has(e) ? this.topHandoffs.get(role) : undefined;
+      if (topH) {
+        const lv = this.live.get(role);
+        const base = strong ? splitLevel(strong).base : lv ? splitLevel(lv).base : isObj(r) && typeof r.model === "string" ? splitLevel(r.model).base : role;
+        if (!strong) {
+          delete e.model;
+          if (lv) e.model = lv;
+        }
+        climbs.push({ entry: e, role, from: base, to: base, reason: "context", handoff: topH, top: true, fromTop: true });
+        continue;
+      }
+      if (!strong || !isObj(r) || typeof r.model !== "string") continue;
       const bottom = splitLevel(r.model).base;
       const lv = this.live.get(role);
       const from = lv ? splitLevel(lv).base : bottom;
@@ -408,7 +454,8 @@ export class LadderState {
       if (c.handoff) {
         const task = typeof c.entry.task === "string" ? c.entry.task : "";
         c.entry.task = handoffBlock(c.handoff, ledgerOf(task, c.entry)) + task;
-        this.eligible.delete(c.role);
+        if (c.fromTop) this.topHandoffs.delete(c.role);
+        else this.eligible.delete(c.role);
       }
       out.push(c.top ? { event: "rung_top", role: c.role, model: c.to, reason: c.reason, ...(c.source ? { source: c.source } : {}) } : { event: "rung_up", role: c.role, from: c.from, to: c.to, reason: c.reason });
     }

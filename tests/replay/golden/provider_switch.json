@@ -46,6 +46,9 @@
    "role": "explorer"
   },
   {
+   "event": "child_scratch_root"
+  },
+  {
    "event": "role_launched",
    "role": "explorer",
    "model": "foreman-fake/explorer",
@@ -129,6 +132,9 @@
   {
    "event": "roots_block",
    "role": "explorer"
+  },
+  {
+   "event": "child_scratch_root"
   },
   {
    "event": "role_launched",

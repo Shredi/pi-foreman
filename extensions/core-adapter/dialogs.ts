@@ -9,7 +9,7 @@ export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_r
 /** The families that are no blocking dialog: an ask the auto reviewer allowed without one, and a refusal. Everything else counts in `total`. */
 const NOT_BLOCKING = new Set<string>(["auto_review_allow", "self_ruling_refusal"]);
 /** `dialog` record `surface` -> family. */
-const SURFACE_FAMILY: Record<string, DialogFamily> = { checkpoint: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask", script: "script" };
+const SURFACE_FAMILY: Record<string, DialogFamily> = { checkpoint: "checkpoint", pressure_override: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask", script: "script" };
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */
@@ -19,7 +19,7 @@ export function dialogFamily(command: string): DialogFamily {
   if (/\.pi\/tasks\//.test(c)) return "own_bg_output";
   if (/\bpi-bash-[0-9a-f]+\.log\b/.test(c)) return "own_bash_output_log";
   if (/\.pi\/scratch\b/.test(c)) return "pi_scratch_read";
-  if (/pi-foreman-scratch/.test(c)) return "owned_scratch";
+  if (/pi-foreman-scratch|\/\.foreman\/scratch\//.test(c)) return "owned_scratch";
   if (/\bLEDGER-[^\s/]*\.md\b|\.workflow\/LEDGER/.test(c)) return "hub_ledger_read";
   if (/\.pi\/[^\s/]*\/?runs?\/|\/\.pi\/runs?\b|\/pi-subagents?\/runs?\b|\basync-subagent-(?:runs|results)\b/.test(c)) return "own_run_dir";
   if (/(^|[\s/])trace-[\w.-]*\.jsonl?\b/.test(c)) return "trace_read";

@@ -11,10 +11,10 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
-import { childHandoffDirs, isSelfHost, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
+import { childHandoffDirs, isSelfHost, openedHandoffDirs, literalOwnedDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
+import { launchNeedsNestedRefusal, sessionRootInputs, sessionScratchRoot, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
 import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
@@ -53,7 +53,7 @@ import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, 
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
-import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
+import { guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { dormantDoctorLine, withBuiltinKeepalive } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
@@ -96,13 +96,14 @@ import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappe
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepScratch } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepOldScratch, sweepScratch, wtScratchBase } from "./childscratch.ts";
+import type { ScratchWt } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, marksVerifierCommand, mentionsLedger, planLedgerCall, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
+import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -141,7 +142,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, takeBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -221,7 +222,7 @@ import { shellPathSetting } from "./bg.ts";
 import type { ShellConfigFn } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
+import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overrideAvailability, overrideDeclinedReason, overrideHint, overrideShape, overrideSpec, overrideUnavailableReason, takePressureOverride, taskHash, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
@@ -235,7 +236,7 @@ import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, tri
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
-import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
+import { ChildLadder, childMaxTurns, climbHint, contextCap, topClimbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
@@ -536,6 +537,10 @@ interface Session {
   childReads: ChildReads;
   /** Child scratch dirs of this session's launches (childscratch.ts). */
   scratch: ChildScratch;
+  /** The worktree-side scratch location (`<root>/.foreman/scratch`) once the npm root resolved; null: the temp folder. Set together with `owned.childScratchRoot`. */
+  scratchWt: ScratchWt | null;
+  /** `child_scratch_root` was traced (at the first launch that created a lane). */
+  scratchRootTraced?: boolean;
   /** Foreman only: the usage sync of stray Pi warm entries (keepalive.ts), the latest event context and assistant message time. */
   keepalive: KeepaliveLog;
   /** The warm owner (budget, cache touch, the idle warms of every cache; selfwarm.ts) and the presence gate (the presence probe runs in the foreman only). */
@@ -556,6 +561,10 @@ interface Session {
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
   pressureSampler: PressureSampler | null;
   pressureQ: { gen: number; entries: unknown[]; started: boolean } | null;
+  /** Foreman only: the owner declined or dismissed a pressure override; cleared by the next owner prompt (input source interactive or rpc). */
+  overrideDeclined: boolean;
+  /** Foreman only: tool call ids whose launch the owner approved at critical load, with the launch arguments; settled at tool_execution_end (one approval, one launch). */
+  overridden: Map<string, Record<string, unknown>>;
 }
 
 export interface AdapterDeps {
@@ -853,8 +862,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.questionCalls.forEach(releaseQuestion);
   });
   let isoSetting: unknown = "auto";
-  // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
-  const launchBinding = readBinding(process.env);
+  // A child's launch binding is in the env while its extensions load (usage.ts); read it now. A child removes it from its env
+  // after the read, so a pi it starts has no role; the foreman's env stays as it is.
+  const launchBinding = process.env.PI_SUBAGENT_CHILD === "1" ? takeBinding(process.env) : readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.out) process.env[OUT_ENV] = launchBinding.out;
   /** A child's write roots of this kind: its scratch dir first, then its kept output dir (`$FOREMAN_OUT`). */
@@ -911,11 +921,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rootInputsOf = (npmRoot: string | null) => sessionRootInputs(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
     // unresolved until the npm root is known (or failed): no owned custom root, so a root under the npm root is never briefly owned
     let rootInputs: ReturnType<typeof rootInputsOf> = {};
+    // the child scratch base: the temp folder (null) until the npm root is known, then `<worktree root>/.foreman/scratch` when the session has a usable root
+    let scratchWtNow: ScratchWt | null = null;
     const computeOwned = (npmRoot: string | null, resolved = true): OwnedRoots => {
-      if (resolved) rootInputs = rootInputsOf(npmRoot);
+      if (resolved) {
+        rootInputs = rootInputsOf(npmRoot);
+        const root = sessionScratchRoot(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
+        scratchWtNow = root ? { root, base: wtScratchBase(root), failed: false } : null;
+      }
       // while pending: block globs are always safe to add early; only the owned root waits
       const globs = resolved ? rootInputs.worktreeGlobs : rootInputsOf(null).worktreeGlobs;
-      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
+      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, ...(scratchWtNow ? { scratchBase: scratchWtNow.base } : {}), npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
     };
     const owned = computeOwned(null, false);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
@@ -1138,6 +1154,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       brief: new ExplorerBrief(),
       childReads: new ChildReads(),
       scratch: new ChildScratch(),
+      scratchWt: null,
       keepalive: new KeepaliveLog(),
       selfWarm: warm.selfWarm,
       presence: warm.presence,
@@ -1151,17 +1168,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       openPrs: null,
       pressureSampler: null,
       pressureQ: null,
+      overrideDeclined: false,
+      overridden: new Map(),
     };
     sessions.set(id, s);
+    // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman removes worktree-side lanes older than 7 days
+    const applyScratchBase = (): void => {
+      s.scratchWt = scratchWtNow;
+      if (isChild) return;
+      try {
+        sweepOldScratch(s);
+      } catch {
+        // a failed sweep never stops the session
+      }
+    };
     // `npm root -g` once per process, never awaited on the hot path; the owned roots take the root when it resolves.
     void npmRootOnce({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
       .then((npmRoot) => {
         s.owned = computeOwned(npmRoot);
+        applyScratchBase();
         s.npmRootPending = false;
         if (rootInputs.notice && !isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
       })
       .catch(() => {
         s.owned = computeOwned(null);
+        applyScratchBase();
         s.npmRootPending = false;
       });
     if (!isChild) {
@@ -1852,7 +1883,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string, readOnlyChild = false): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -2669,7 +2700,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function childReadCheck(s: Session | undefined, toolName: string, callId: string, input: unknown) {
     if (!s || !s.isChild) return undefined;
     const role = s.usage.line.role;
-    const limits = childReadLimits(s.config.config, role, launchBinding?.reads);
+    const found = childReadLimits(s.config.config, role, launchBinding?.reads);
+    const limits = found ? { ...found, role } : null;
     const d = s.childReads.check(toolName, callId, input, limits);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
@@ -2940,7 +2972,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
               const top = await rootOf(cwd);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd, true))) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
@@ -3002,16 +3034,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Loop guard (reviewloop.ts): the kind, state and finding set of a counting review round, for its ReviewRecord. */
-  async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig">> {
+  async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig" | "work">> {
     const fail = r?.verdict === "fail";
     const found = r && fail ? await (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []) : [];
-    return { kind, state: (await state) ?? "", sig: r && fail ? sigOf(r.text, found) : [] };
+    return { kind, state: (await state) ?? "", sig: r && fail ? sigOf(r.text, found) : [], work: s.work.builders + s.work.edits };
   }
 
   /** Loop guard: the round just recorded (last of its kind in `s.reviews`) against `prev`, the last round of that kind before the run; a trip sets the stop. One round per run. */
   function loopCheck(s: Session, runId: string, prev: ReviewRecord | undefined, cur: ReviewRecord): void {
     if (!cur.kind) return;
-    const rule = loopVerdictOf(cur.kind, prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [] } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [] });
+    const rule = loopVerdictOf(cur.kind, prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [], ...(prev.work !== undefined ? { work: prev.work } : {}) } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [], ...(cur.work !== undefined ? { work: cur.work } : {}) });
     if (!rule) return;
     s.loopStop = { rule, kind: cur.kind, sig: cur.sig ?? [] };
     s.trace?.emit({ event: "review_loop", rule, kind: cur.kind, runId });
@@ -3173,6 +3205,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(s.isChild && launchBinding?.scratch && launchBinding.out ? { out: launchBinding.out } : {}),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
+      scratchBases: [s.owned.tmpScratchRoot],
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
       install: [pi.installRoot, pi.npmRoot, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
@@ -3797,7 +3830,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     const mapping = mapTool(event.toolName);
-    if (mapping.pre.length === 0) return undefined;
+    // Shell tools have no core script now but still pass the checks below (pre-bash hooks, empty-command refusal, git drift).
+    if (mapping.pre.length === 0 && !isShellTool(event.toolName)) return undefined;
     try {
       const s = await ensureSession(ctx);
       const input = event.input as Record<string, unknown>;
@@ -3831,6 +3865,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let heavyDefault: Json[] = []; // builder entries the heavy tier put on the strong rung (launchModel's tier default; no Climb record)
       let sizingClimbs: ReadonlySet<Json> = new Set();
       let sizingTop: string | null = null;
+      let override: ReturnType<typeof takePressureOverride> = { nested: false };
       let occasions = new Map<Record<string, unknown>, Occasion>();
       let panel: ReturnType<typeof primaryPanel> = null;
       let shadow: ShadowDecision = { kind: "none" };
@@ -3840,6 +3875,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
+        // The owner-approval request of a deferred launch leaves every call here, before the copy: pi-subagents and a relaunch never carry it.
+        override = takePressureOverride(input);
+        if (override.text !== undefined && s.isChild) s.trace?.emit({ event: "pressure_override", decision: "not_needed", reason: "child" });
         rawLaunch = JSON.parse(JSON.stringify(input)) as Record<string, unknown>; // the arguments as the model gave them, for a deferred or queued launch
         // R39 launch sizing (sizing.ts): `size` and `risk` leave every launch here (after the copy, so a relaunch is sized again); malformed ones refuse only the foreman's own launches.
         const lifted = liftSizing(input);
@@ -3941,16 +3979,57 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Host pressure (pressure.ts): critical defers the launch (nothing below runs or counts), high narrows the fan-out to one and suppresses climbs.
         if (!s.isChild && isLaunchArgs(input) && !explorerOnly(rawLaunch)) {
           const p = pressureOf(s);
+          const ovTrace = { agent: typeof rawLaunch.agent === "string" ? rawLaunch.agent : "", hash: taskHash(rawLaunch.task), reasons: p.reasons.join(","), level: p.level };
+          let approved = false;
           if (p.level === "critical") {
             const args = rawLaunch;
-            const w = await waits.startPressure(ctx, { kind: "pressure", mode: "critical", args: [args], pollMs: sampleSecondsOf(s.config.config) * 1000, boundSeconds: CRITICAL_WAIT_SECONDS, note: "launch deferred" });
-            s.trace?.emit({ event: "launch_deferred", level: p.level, reasons: p.reasons.join(",") });
-            return { block: true, reason: `${criticalReason(p.reasons)}${"error" in w ? ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})` : ""}` };
+            let refusal = criticalReason(p.reasons);
+            let deferWait = true;
+            const availability = overrideAvailability({ reasons: p.reasons, call: rawLaunch, nested: override.nested, ui: !!ctx.hasUI && (ctx.mode === "tui" || ctx.mode === "rpc"), declinedRecently: s.overrideDeclined });
+            if (override.text === undefined) {
+              refusal = `${refusal}. ${overrideHint(availability === "declined_recently" ? "ok" : availability, overrideShape(rawLaunch))}`;
+            } else if (availability !== "ok") {
+              s.trace?.emit({ event: "pressure_override", decision: "unavailable", ...ovTrace, reason: availability });
+              refusal = overrideUnavailableReason(p.reasons, availability);
+              deferWait = !waits.hasPressure(ctx, args);
+            } else {
+              s.trace?.emit({ event: "dialog", surface: "pressure_override" });
+              const spec = overrideSpec({ agent: ovTrace.agent, task: typeof rawLaunch.task === "string" ? rawLaunch.task : "", reason: override.text, host: p.host, maxLoadPerCore: get(s.config.config, "resources.maxLoadPerCore") });
+              let answer: string | undefined;
+              try {
+                answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, cleanDialogText(spec.ask), () => shapedSelect(ctx.ui, ctx.mode, spec, ["Yes", "No"], { signal: ctx.signal }));
+              } catch {
+                answer = undefined;
+              }
+              if (answer === "Yes") {
+                approved = true;
+                s.overridden.set(event.toolCallId, args);
+                s.trace?.emit({ event: "pressure_override", decision: "approved", ...ovTrace });
+              } else {
+                s.overrideDeclined = true;
+                s.trace?.emit({ event: "pressure_override", decision: answer === "No" ? "declined" : "dismissed", ...ovTrace });
+                refusal = overrideDeclinedReason(p.reasons);
+                deferWait = !ctx.signal?.aborted && !waits.hasPressure(ctx, args);
+              }
+            }
+            if (!approved) {
+              let failed = "";
+              if (deferWait) {
+                const w = await waits.startPressure(ctx, { kind: "pressure", mode: "critical", args: [args], pollMs: sampleSecondsOf(s.config.config) * 1000, boundSeconds: CRITICAL_WAIT_SECONDS, note: "launch deferred" });
+                if ("error" in w) failed = ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})`;
+              }
+              s.trace?.emit({ event: "launch_deferred", level: p.level, reasons: p.reasons.join(",") });
+              return { block: true, reason: `${refusal}${failed}` };
+            }
+          } else if (override.text !== undefined) {
+            s.trace?.emit({ event: "pressure_override", decision: "not_needed", ...ovTrace, reason: "level" });
           }
-          if (p.level === "high") {
+          if (p.level === "high" && !approved) {
             const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
             if (queued) return { block: true, reason: queued };
           }
+        } else if (override.text !== undefined && !s.isChild) {
+          s.trace?.emit({ event: "pressure_override", decision: "not_needed", reason: isLaunchArgs(input) ? "explorer" : "action" });
         }
         // D6: pi-subagents' isolation worktree is a plain `git worktree add` of the innermost repo; inside a nested submodule checkout it would not carry the tree
         if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
@@ -4289,12 +4368,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (hr.blocked) return { block: true, reason: hr.blocked };
         }
       }
+      if (isShellTool(event.toolName)) {
+        const bad = guardPayloadBlock(event.toolName, input);
+        if (bad) return { block: true, reason: bad };
+      }
       for (const guard of mapping.pre) {
         let agents: string[] = [];
-        if (guard === "destructive_guard") {
-          const bad = guardPayloadBlock(event.toolName, input);
-          if (bad) return { block: true, reason: bad };
-        }
         if (guard === "ledger_guard_spawn") {
           agents = subagentAgents(input);
           // Plan phase: explorers research before any ledger exists; the core gate would ask for one, so it is not called for them.
@@ -4310,9 +4389,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           payload.permission_mode = spawnPermissionMode(planModeOn(ctx.sessionManager.getBranch?.() ?? []), agents);
         }
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
-        if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
-          s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
-        }
         const target = guard === "ledger_guard_write" ? resolveToolPath(input.path, ctx.cwd, os.homedir()) : null;
         const t = await translateToolCall({
           guard,
@@ -4331,7 +4407,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const role of agents) s.trace?.emit({ event: "role_launch", role, ...(modelOf.has(role) ? { model: modelOf.get(role) } : {}), ...(REVIEW_ROLES.includes(role) ? { occasion: [...occasions].find(([e]) => e.agent === role)?.[1] ?? "item" } : {}) });
         }
       }
-      // A main-session shell line that names git or a forge tool: hooks and git config changed since the snapshot stop it (after the destructive guard, as before).
+      // A main-session shell line that names git or a forge tool: hooks and git config changed since the snapshot stop it (after the pre-bash checks, as before).
       if (isShellTool(event.toolName) && !s.isChild && mainNeedsGitGuard(input.command)) {
         const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), event.toolCallId);
         if (drift) return drift;
@@ -4481,7 +4557,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const bottom = onBottomRung(ladderRoles, single, input.model);
         const p = s.configProvider ?? ctx.model?.provider;
         s.ladder.onLaunch(event.toolCallId, single, bottom);
-        limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
+        const cap = contextCap(s.config.config, single);
+        limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(cap > 0 ? { contextCap: cap } : {}), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent" && !s.isChild && hsModel(s)) {
         // High stakes: a builder's repository is seen (its first HEAD is the base fallback); a risk tag of the builder entries (read with the ladder or sizing off too) and a heavy task fire the review;
@@ -4551,7 +4628,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = sessionFor(ctx);
       // pi-subagents 0.89: the wake is a custom run with no `input`, so a notice appended with triggerTurn:false (held after an Esc, reserved, compaction) is caught up here: it is still the trailing entry before this message is saved
       if (s && !s.isChild) for (const unseen of s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? [])) onCustomMessage(s, unseen);
-      if (s) onCustomMessage(s, event.message);
+      if (s) onCustomMessage(s, event.message, true);
       if (s && !s.isChild) s.customSeen.mark(event.message);
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
@@ -4609,7 +4686,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "child_turn_cap", role: s.usage.line.role, turns: steer.count, rung: steer.rung });
         s.trace?.emit({ event: "child_turn_limit", role: s.usage.line.role, turns: steer.count, limit: steer.limit ?? null });
       }
-      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, baseline: steer.baseline ?? null, rung: steer.rung, reason: "context" });
+      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, baseline: steer.baseline ?? null, rung: steer.rung, reason: steer.cap !== undefined ? "context_cap" : "context" });
       pi.sendUserMessage(steer.text, { deliverAs: "steer" });
     }
     const usageRecord = usageLine(s.usage.line, event.message);
@@ -4651,7 +4728,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** A custom message the foreman received: at message_end, or appended while idle and found at the next input (idlecustom.ts). */
-  function onCustomMessage(s: Session, message: unknown): void {
+  function onCustomMessage(s: Session, message: unknown, fresh = false): void {
     const m = message as { customType?: string; details?: unknown; content?: unknown };
     const live = (runId: string): boolean => isLiveRun(s, runId);
     const stale = s.supervisor.staleRequest(message, live);
@@ -4669,6 +4746,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) evalOwnAsk(s);
     if (m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender(m.details);
+    // D27: a message of the parent recorded at spawn is a prompt like the owner's: it opens a new pause window. Only the first handling (message_end) counts, never a catch-up of a message handled before; no text is read.
+    if (fresh && m.customType === INTERCOM_MESSAGE_TYPE) {
+      const parent = parentIntercomId(process.env);
+      const sender = senderOf(m.details)?.id;
+      const cross = (m.details as { message?: { crossMachine?: unknown } } | undefined)?.message?.crossMachine;
+      if (parent && sender === parent && !cross) (s.workAtPrompt = { ...s.work }), savePause(s);
+    }
     if (m.customType === INTERCOM_MESSAGE_TYPE) noteQuestion(s, m.details);
     if (m.customType === NOTIFY_TYPE) onCompletionNotice(s, m.content);
   }
@@ -4709,6 +4793,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) ownAskFor(s).typed();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) persistRounds(s);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.overrideDeclined = false; // a declined override may be asked again after an owner prompt
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       const was = s.budget.phase;
@@ -4997,26 +5082,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { block: true, reason: boundRefusal(toolName, targets[0].raw, next, bound) };
   }
 
-  /** The owned read-write roots as literal dirs: the `*` segment (one dir per session) is expanded from disk. */
-  function literalOwnedDirs(roots: string[]): string[] {
-    const out: string[] = [];
-    for (const r of roots) {
-      const i = r.split(path.sep).indexOf("*");
-      if (i < 0) {
-        out.push(r);
-        continue;
-      }
-      const parts = r.split(path.sep);
-      const parent = parts.slice(0, i).join(path.sep) || path.sep;
-      try {
-        for (const e of fs.readdirSync(parent, { withFileTypes: true })) if (e.isDirectory()) out.push(path.join(parent, e.name, ...parts.slice(i + 1)));
-      } catch {
-        // the parent does not exist yet: nothing to allow
-      }
-    }
-    return out;
-  }
-
   /** The roots a foreman session owns, for the permission reviewer's prompt (roundsurface.ts sessionOwnedSplit: read-write and read only); none for a child session. */
   const sessionOwnedRoots = (s: Session): { write: string[]; read: string[] } => {
     if (s.isChild) return { write: [], read: [] };
@@ -5187,7 +5252,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
       const { mode, scratchDir } = editModeOfSession(s);
       const ownHandoff = ownChildHandoff(s);
-      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite), { ...(ownHandoff ? { handoffDir: ownHandoff } : {}) });
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite, s.owned.childScratchRoot), { ...(ownHandoff ? { handoffDir: ownHandoff } : {}) });
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
@@ -5280,6 +5345,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.questionCalls.delete(event.toolCallId);
     s?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
+    // An owner-approved launch (pressure override) is spent here, whether it started or a later check refused it.
+    const spent = s?.overridden.get(event.toolCallId);
+    if (s && spent) {
+      s.overridden.delete(event.toolCallId);
+      s.trace?.emit({ event: "pressure_override", decision: event.isError ? "not_launched" : "launched", agent: typeof spent.agent === "string" ? spent.agent : "", hash: taskHash(spent.task) });
+      if (!event.isError) {
+        try {
+          await waits.dropPressure(ctx, spent);
+        } catch { /* best effort: the rest of this handler still runs */ }
+      }
+    }
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       s.loopStop = null;
@@ -5639,8 +5715,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const asyncDir = typeof raw === "string" ? raw : null;
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
     const climb = s.ladder.eligible.get(run.role);
+    const topClimb = s.ladder.topHandoffs.get(run.role);
     // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
-    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
+    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : topClimb && topClimb.runId === runId ? `${text}\n${topClimbHint(topClimb)}` : text, !ctx.signal?.aborted);
     return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
   }
 
@@ -6132,8 +6209,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6154,6 +6231,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
+      if (kind === "init") {
+        const r = await initLedger(s, ctx, params);
+        s.trace?.emit({ event: "ledger_call", kind, allowed: r.ok });
+        return r.ok ? { content: [{ type: "text" as const, text: r.text }], details: { decision: "done" } } : refuse(r.text);
+      }
       const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
@@ -6294,6 +6376,50 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   } as never);
 
+  /**
+   * `foreman_ledger` init: a new ledger file is created exclusively and bound like a `write` of it (the binding is replaced, the diff base resets);
+   * an existing file binds under the `edit` rule (no live binding, or this path) and takes no texts.
+   */
+  async function initLedger(s: Session, ctx: ExtensionContext, params: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
+    const plan = planLedgerInit(params);
+    if ("error" in plan) return { ok: false, text: plan.error };
+    const file = path.join(s.cwd, ".workflow", `LEDGER-${plan.topic}.md`);
+    if (!ownWorkPath(s, file)) return { ok: false, text: `${LEDGER_TOOL}: ${file} is outside this session's workspace.` };
+    let created = false;
+    if (fs.existsSync(file)) {
+      if (plan.texts.length > 0) return { ok: false, text: `ledger_exists: ${file} exists; init with texts creates a new file only. Call init without texts to bind it, or add items with action add.` };
+      const live = boundLedger(s.markerDir, s.id);
+      const real = (p: string): string => {
+        try {
+          return fs.realpathSync.native(p);
+        } catch {
+          return path.resolve(p);
+        }
+      };
+      if (live && real(live) !== real(file)) return { ok: false, text: `ledger_bound_elsewhere: this session is bound to ${live}; ${file} is left unbound.` };
+    } else {
+      try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const t = s.ceremony;
+        fs.writeFileSync(file, ledgerInitContent(plan.topic, t.triaged || t.source !== "default" ? t.tier : null, plan.texts), { encoding: "utf8", flag: "wx" });
+        created = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") return { ok: false, text: `ledger_exists: ${file} exists; call init again without texts to bind it.` };
+        return { ok: false, text: `${LEDGER_TOOL}: ${(err as Error).message}` };
+      }
+    }
+    // The write post path: ledger_bind, a new diff base for a ledger written, the tier from the header.
+    const outcome = await run(s, ctx, "ledger_bind", postToolPayload("write", { path: file, file_path: file }, payloadCtx(s, ctx), false), mapTool("write").coreName);
+    if (outcome.kind === "failure") return { ok: false, text: `${LEDGER_TOOL}: the ledger ${created ? "was created but " : ""}could not be bound: ${outcome.message}` };
+    if (created) reviewFacts.reset();
+    refreshLedgerTier(s);
+    const bound = boundLedger(s.markerDir, s.id);
+    // A new ledger is a subject change like a direct write of it (#264: ledger changes reopen review); binding an existing file changes nothing.
+    if (created && bound) bumpLedgerRev(s);
+    const st = await runLedger(s, ["status"], null);
+    return { ok: !!bound && st.ok, text: [`${created ? "created" : "bound"} ${file}`, bound ? "" : "not bound: the ledger bind did not take effect.", st.text].filter(Boolean).join("\n") };
+  }
+
   /** One core ledger.py run, bound like the bin/ledger shim (session id + marker dir); `file` adds -f. */
   async function runLedger(s: Session, args: string[], file: string | null): Promise<{ ok: boolean; text: string }> {
     const py = pyPath(s);
@@ -6418,6 +6544,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             delete process.env.PI_FOREMAN_PLAN_PHASE;
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
           }
+          s.live?.recordCheckpoint("approve");
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
         }
         if (answer === "revise") {
@@ -6430,11 +6557,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           rec.status = "revise";
           s.show?.planDecided("revise", rec.hash);
           if (note && note.trim()) rec.note = note.trim();
+          s.live?.recordCheckpoint("revise");
           return done("revise", null, `The owner asked for a revision of ${name}. The owner's words:\n${rec.note ?? "(no note given)"}\nChange the plan (edit it), then call ${CHECKPOINT_TOOL} again. Builders stay refused at tier heavy until the owner approves.`);
         }
         rec.status = "rejected";
         s.show?.planDecided("rejected", rec.hash);
         ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
+        s.live?.recordCheckpoint("reject");
         return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
       },
     } as never);
@@ -6979,7 +7108,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else fail(`no Python ≥ 3.13 (tried: ${s.python.rejected.join("; ") || "nothing"})`, NO_PYTHON_FIX.replace(/; run \/foreman doctor\.$/, "."));
     for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
 
-    if (fs.existsSync(path.join(CORE_DIR, "scripts", "destructive_guard.py"))) ok(`core scripts at ${CORE_DIR}`);
+    if (fs.existsSync(path.join(CORE_DIR, "scripts", "ledger_guard_write.py"))) ok(`core scripts at ${CORE_DIR}`);
     else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ is vendored with the package).");
     const unbundled = missingBundled(PKG_ROOT);
     if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm ci in a checkout), then restart.");

@@ -6,51 +6,51 @@ import { runGuard } from "../runguard.ts";
 import type { GuardRun } from "../runguard.ts";
 import type { Spawner } from "../spawn.ts";
 
-const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "DESTRUCTIVE GUARD: no" } });
-const ask = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "DESTRUCTIVE GUARD: sure?" } });
+const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "BLOCKED: no" } });
+const ask = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "BLOCKED: sure?" } });
 const ran = (stdout: string, code = 0): GuardRun => ({ status: "ran", code, stdout, stderr: "" });
 const tui: AskEnv = { isChild: false, mode: "tui", hasUI: true };
 
 test("deny -> block with the core reason", async () => {
-  const t = await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", ran(deny), "py"), piTool: "bash", input: { command: "x" }, ask: tui });
-  assert.deepEqual(t.result, { block: true, reason: "DESTRUCTIVE GUARD: no" });
+  const t = await translateToolCall({ guard: "shell_write_guard", outcome: evaluateRun("shell_write_guard", ran(deny), "py"), piTool: "bash", input: { command: "x" }, ask: tui });
+  assert.deepEqual(t.result, { block: true, reason: "BLOCKED: no" });
 });
 
 test("updatedInput mutates event.input in place for bash, not for powershell", async () => {
   const upd = JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput: { command: "PREFIX; rm a" } } });
   const input = { command: "rm a", timeout: 3 };
-  const t = await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", ran(upd), "py"), piTool: "bash", input, ask: tui });
+  const t = await translateToolCall({ guard: "shell_write_guard", outcome: evaluateRun("shell_write_guard", ran(upd), "py"), piTool: "bash", input, ask: tui });
   assert.equal(t.result, undefined);
   assert.deepEqual(input, { command: "PREFIX; rm a", timeout: 3 });
   const ps = { command: "rm a" };
-  await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", ran(upd), "py"), piTool: "powershell", input: ps, ask: tui });
+  await translateToolCall({ guard: "shell_write_guard", outcome: evaluateRun("shell_write_guard", ran(upd), "py"), piTool: "powershell", input: ps, ask: tui });
   assert.equal(ps.command, "rm a");
 });
 
 test("ask: TUI and RPC confirm; print/JSON block; detached child blocks with 'ask the foreman'", async () => {
-  const outcome = evaluateRun("destructive_guard", ran(ask), "py");
+  const outcome = evaluateRun("shell_write_guard", ran(ask), "py");
   const titles: string[] = [];
   for (const mode of ["tui", "rpc"]) {
-    const yes = await translateToolCall({ guard: "destructive_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: false, mode, hasUI: true, confirm: async (t) => (titles.push(t), true) } });
+    const yes = await translateToolCall({ guard: "shell_write_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: false, mode, hasUI: true, confirm: async (t) => (titles.push(t), true) } });
     assert.equal(yes.result, undefined);
-    const no = await translateToolCall({ guard: "destructive_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: false, mode, hasUI: true, confirm: async () => false } });
+    const no = await translateToolCall({ guard: "shell_write_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: false, mode, hasUI: true, confirm: async () => false } });
     assert.match(no.result!.reason, /Denied by the user/);
   }
   assert.equal(titles.length, 2);
   for (const mode of ["print", "json"]) {
-    const t = await translateToolCall({ guard: "destructive_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: false, mode, hasUI: false } });
+    const t = await translateToolCall({ guard: "shell_write_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: false, mode, hasUI: false } });
     assert.match(t.result!.reason, /needs approval, no UI/);
   }
-  const child = await translateToolCall({ guard: "destructive_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: true, mode: "json", hasUI: false, confirm: async () => true } });
+  const child = await translateToolCall({ guard: "shell_write_guard", outcome, piTool: "bash", input: { command: "x" }, ask: { isChild: true, mode: "json", hasUI: false, confirm: async () => true } });
   assert.match(child.result!.reason, /ask the foreman/);
 });
 
 test("allow / empty output -> no result", async () => {
-  const t = await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", ran(""), "py"), piTool: "bash", input: { command: "ls" }, ask: tui });
+  const t = await translateToolCall({ guard: "shell_write_guard", outcome: evaluateRun("shell_write_guard", ran(""), "py"), piTool: "bash", input: { command: "ls" }, ask: tui });
   assert.deepEqual(t, {});
 });
 
-test("destructive guard fails closed: missing python, timeout, crash, garbage", async () => {
+test("a closed guard fails closed: missing python, timeout, crash, garbage", async () => {
   const cases: GuardRun[] = [
     { status: "failed", failure: "no-python", detail: "" },
     { status: "failed", failure: "timeout", detail: "no answer within 5 s" },
@@ -59,19 +59,19 @@ test("destructive guard fails closed: missing python, timeout, crash, garbage", 
     ran("Traceback (most recent call last)", 0),
   ];
   for (const run of cases) {
-    const t = await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", run, "py"), piTool: "bash", input: { command: "ls" }, ask: tui });
+    const t = await translateToolCall({ guard: "shell_write_guard", outcome: evaluateRun("shell_write_guard", run, "py"), piTool: "bash", input: { command: "ls" }, ask: tui });
     assert.equal(t.result?.block, true, JSON.stringify(run));
-    assert.match(t.result!.reason, /pi-foreman: destructive guard could not run/);
+    assert.match(t.result!.reason, /pi-foreman: shell write guard could not run/);
   }
-  const noPy = await translateToolCall({ guard: "destructive_guard", outcome: evaluateRun("destructive_guard", cases[0], null), piTool: "bash", input: {}, ask: tui });
+  const noPy = await translateToolCall({ guard: "shell_write_guard", outcome: evaluateRun("shell_write_guard", cases[0], null), piTool: "bash", input: {}, ask: tui });
   assert.match(noPy.result!.reason, /no Python ≥ 3\.13 found\). Install Python 3\.13\+ or set python\.path \/ PI_FOREMAN_PYTHON; run \/foreman doctor\./);
 });
 
 test("runGuard maps a 5 s timeout and a spawn error to failures", async () => {
   const slow: Spawner = async (_c, _a, o) => ({ code: null, stdout: "", stderr: "", timedOut: o.timeoutMs === 5000 });
-  const r1 = await runGuard({ python: "py", coreDir: "/c", guard: "destructive_guard", payload: {}, env: {}, cwd: "/", spawner: slow });
+  const r1 = await runGuard({ python: "py", coreDir: "/c", guard: "shell_write_guard", payload: {}, env: {}, cwd: "/", spawner: slow });
   assert.deepEqual(r1.status === "failed" && r1.failure, "timeout");
-  const r2 = await runGuard({ python: null, coreDir: "/c", guard: "destructive_guard", payload: {}, env: {}, cwd: "/", spawner: slow });
+  const r2 = await runGuard({ python: null, coreDir: "/c", guard: "shell_write_guard", payload: {}, env: {}, cwd: "/", spawner: slow });
   assert.deepEqual(r2.status === "failed" && r2.failure, "no-python");
 });
 

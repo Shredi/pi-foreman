@@ -7,7 +7,7 @@ import { handoffBlock } from "../ladder.ts";
 const end = (runId: string, role: string | null, summary: string, status = "completed") => ({ runId, status, role, summary, resultPath: `/r/${runId}` });
 
 test("childReadLimits: coded defaults without config, config wins, absent role = no budget", () => {
-  assert.deepEqual(childReadLimits({}, "builder"), { warn: 20, deny: 40 });
+  assert.equal(childReadLimits({}, "builder"), null); // D70: a builder has no coded read budget
   assert.deepEqual(childReadLimits({}, "reviewer"), { warn: 15, deny: 30 });
   assert.equal(childReadLimits({}, "explorer"), null);
   const cfg = { ceremony: { childReads: { builder: { warn: 5, deny: 6 }, explorer: { deny: 9 } } } };

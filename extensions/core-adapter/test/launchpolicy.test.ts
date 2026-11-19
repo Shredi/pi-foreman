@@ -2,11 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ACTION_TABLE, classifyAction, isManagementCall, recordLaunch, subagentActionCheck } from "../actions.ts";
 import type { ActionContext, RunRegistry } from "../actions.ts";
-import { buildGuardEnv } from "../env.ts";
-import { dropDeadPathRewrite, expandGuardDir, guardPayloadBlock } from "../guardgaps.ts";
+import { guardPayloadBlock } from "../guardgaps.ts";
 import { roleLaunchBlock } from "../roles.ts";
 import { SupervisorWindow, roleToolsFrom } from "../supervisor.ts";
-import type { HookDecision } from "../translate.ts";
 
 // pi-subagents 0.75.0 src/shared/types.js SUBAGENT_ACTIONS, verbatim.
 const UPSTREAM = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "command.status", "command.yield", "command.cancel", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"];
@@ -88,32 +86,6 @@ test("shell payload validation: a non-empty command string is required", () => {
   assert.match(guardPayloadBlock("powershell", {}) ?? "", /powershell call has no command/);
   assert.match(guardPayloadBlock("bash", { command: ["rm", "-rf", "x"] }) ?? "", /type array/);
   assert.match(guardPayloadBlock("bash", { command: 7 }) ?? "", /type number/);
-});
-
-test("guard env sets the fork patch's opt-in switches for the destructive guard only", () => {
-  const dg = buildGuardEnv({ base: { FABLE_ORCH_GUARD_BIN: "/host/bin", FABLE_ORCH_GUARD_FAIL_CLOSED: "0" }, coreDir: "/c", sessionId: "s", guard: "destructive_guard", markerDir: "/m" });
-  assert.equal(dg.FABLE_ORCH_GUARD_FAIL_CLOSED, "1");
-  assert.equal(dg.FABLE_ORCH_GUARD_BIN, "");
-  const other = buildGuardEnv({ base: {}, coreDir: "/c", sessionId: "s", guard: "ledger_bind", markerDir: "/m" });
-  assert.equal(other.FABLE_ORCH_GUARD_FAIL_CLOSED, undefined);
-});
-
-test("a PATH-only rewrite to a missing guard bin dir is dropped; the decision stays", () => {
-  const cmd = "rm -rf ./tmpdir"; // a string only; never executed
-  const rewrite = (): HookDecision => ({ decision: "none", updatedInput: { command: `export PATH="$HOME/.claude/guard/bin:$PATH"; ${cmd}` } });
-  const none = (_p: string) => false;
-  const d = rewrite();
-  assert.equal(dropDeadPathRewrite(d, cmd, "/hd/u", none), true);
-  assert.equal(d.updatedInput, undefined);
-  assert.equal(d.decision, "none");
-  // Kept: the dir exists, the rest differs from the original, or the dir cannot be resolved.
-  const seen: string[] = [];
-  assert.equal(dropDeadPathRewrite(rewrite(), cmd, "/hd/u", (p) => (seen.push(p), true)), false);
-  assert.equal(seen[0], expandGuardDir("$HOME/.claude/guard/bin", "/hd/u"));
-  assert.equal(dropDeadPathRewrite(rewrite(), "rm -rf ./other", "/hd/u", none), false);
-  assert.equal(dropDeadPathRewrite({ decision: "allow", updatedInput: { command: `export PATH="$X/bin:$PATH"; ${cmd}` } }, cmd, "/hd/u", none), false);
-  assert.equal(dropDeadPathRewrite({ decision: "allow", updatedInput: { command: `export PATH="/g:$PATH"; ${cmd}`, timeout: 5 } }, cmd, "/hd/u", none), false);
-  assert.equal(dropDeadPathRewrite({ decision: "allow" }, cmd, "/hd/u", none), false);
 });
 
 test("supervisor window: open on the request, block tools the role lacks, close on reply or run end", () => {

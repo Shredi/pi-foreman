@@ -50,6 +50,9 @@
    "role": "builder"
   },
   {
+   "event": "child_scratch_root"
+  },
+  {
    "event": "guard",
    "role": "foreman",
    "toolFamily": "subagent",
@@ -187,13 +190,6 @@
     "toolFamily": "bash",
     "guard": "gate",
     "decision": "allowed"
-   },
-   {
-    "event": "guard",
-    "role": "builder",
-    "toolFamily": "Bash",
-    "guard": "destructive_guard",
-    "decision": "none"
    },
    {
     "event": "bash_timeout",
