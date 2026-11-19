@@ -1325,7 +1325,7 @@ function localKind(seg: ShellSegment, prog: string, env: FloorEnv, rmAsks: boole
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
   // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) where the rm stood as a command; the home, root and system
   // targets, shred, and an rm inside a string run as code (`-c`, eval) were denies
-  if (d) return withFragment(d.rule === "floor-delete-outside" && rmAsks && prog === "rm" ? { ...d, kind: "ask" } : d, seg);
+  if (d) return withFragment(d.rule === "floor-delete-outside" && rmAsks && prog === "rm" && !seg.wrappers.some((w) => base(w) === "xargs") ? { ...d, kind: "ask" } : d, seg);
   if (pythonDisk(seg, prog)) return withFragment(hit("disk", `\`${prog}\` formats, erases or overwrites a disk. Ask the user.`), seg);
   const unreadable = unknownWriteTarget(seg, prog);
   if (unreadable !== undefined) return withFragment(unknownWriteHit(unreadable), seg);
@@ -1369,7 +1369,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     // the applet behind `busybox` or `toybox` is checked as the plain command is (`busybox xargs sh -c ...` is `xargs sh -c ...`)
     if (applet) {
       const appletText = [seg.program, ...seg.argv].map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
-      const h = pythonKinds(appletText, parseShell(appletText, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks);
+      const h = pythonKinds(appletText, parseShell(appletText, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && !seg.wrappers.some((w) => base(w) === "xargs"));
       if (h) return withFragment(h, seg);
     }
     const remote = remoteCommand(seg, prog);
