@@ -1411,13 +1411,17 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       withHeredocs(inner, seg);
       const texts: [string, ShellSegment[]][] = [[rtext, inner]];
       // the remote shell runs the command from its first spaced word on as one string (a compound: `if ...; then ...; fi`, `{ ...; }`); the host, the container and the options
-      // before it do not belong to it, and the joined text above does not parse with them in front: read only then, the verdicts of a command that parses stay as they were.
+      // before it do not belong to it, and the joined text above does not parse with them in front: read only then, each command of it as the plain path reads a command behind the host.
+      let compound: ShellSegment[] | null = null;
       const at = inner.some((x) => x.opaque === "parse_error") ? remote.words.findIndex((w) => /\s/.test(w)) : -1;
       if (at >= 0) {
         const ctext = remote.words.slice(at).join(" ");
         if (ctext !== rtext) {
-          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform });
+          // each command of the compound stands where the plain path has the host: a word after the program, so the same rules read it as read `ssh h 'cmd'`
+          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}) }));
+          withHeredocs(cparsed, seg);
           texts.push([ctext, cparsed]);
+          compound = cparsed;
         }
       }
       // a shell in the remote command reads the here-document of this segment as its program
@@ -1434,7 +1438,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, rmAsks);
         if (h) return withFragment(h, seg);
       }
-      const ps = psRemoteKind(rtext);
+      // the compound's own units, each behind the host as the plain path reads a command (the joined text would put the keywords at command position); a function body is read as it stands
+      const ps = psRemoteKind(compound ? compound.flatMap((x) => [[x.program, ...x.argv].join(" "), ...(x.bodies ?? [])]).join("; ") : rtext);
       if (ps) return withFragment(remoteHit(ps, inWhere), seg);
     }
     if (where !== "local") {

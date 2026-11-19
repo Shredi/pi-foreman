@@ -51,9 +51,21 @@ test("a shell that reads a heredoc or here-string runs its body: the body gets t
 });
 
 test("a compound command in a remote string reads as the same body without the compound", () => {
-  for (const l of ["docker exec c sh -c 'if true; then echo hi > $F; fi'", "ssh h '{ echo hi > $F; }'", "ssh h 'if true; then chmod -R 777 $D; fi'", "docker exec c sh -c 'while :; do truncate -s 0 $F; done'",
-    "ssh h 'if true; then git clean -e x; fi'", "docker exec c sh -c 'if true; then rm -rf /data; fi'", "docker exec c sh -c '{ rm -rf $X; }'"]) refused(l);
+  for (const l of ["docker exec c sh -c 'if true; then echo hi > $F; fi'", "ssh h '{ echo hi > $F; }'", "docker exec c sh -c 'if true; then rm -rf /data; fi'", "docker exec c sh -c '{ rm -rf $X; }'"]) refused(l);
   for (const l of ["ssh h 'if true; then echo hi; fi'", "docker exec c sh -c 'while :; do echo hi; done'", "ssh h '{ ls; }'", "ssh h 'if true; then rm -rf /data; fi'", "docker exec c sh -c 'for i in 1 2; do echo $i; done'"]) runs(l);
+});
+
+test("each compound in a remote string has the verdict of its plain form, for ssh and docker", () => {
+  const bodies = ["find /data -delete", "shred /x", "mkfs.ext4 /dev/sdb", "git clean -fd -e x", "echo hi > $F", "chmod -R 777 $D", "truncate -s 0 $F", "rm -rf /data"];
+  const wraps: Array<[string, (b: string) => string]> = [["if", (b) => `if true; then ${b}; fi`], ["brace", (b) => `{ ${b}; }`], ["while", (b) => `while :; do ${b}; done`]];
+  for (const b of bodies) {
+    for (const [pre, plainPre] of [["ssh h", "ssh h"], ["docker exec c sh -c", "docker exec c sh -c"]]) {
+      for (const child of [false, true]) {
+        const plain = run("bash", `${plainPre} '${b}'`, child);
+        for (const [name, w] of wraps) assert.equal(run("bash", `${pre} '${w(b)}'`, child), plain, `${child ? "child" : "foreman"} ${name}: ${pre} '${w(b)}' vs plain ${plain}`);
+      }
+    }
+  }
 });
 
 test("a $( ) nested past the depth cap is refused unread; the harmless 5-deep line is reported", () => {
