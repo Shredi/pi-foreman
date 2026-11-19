@@ -22,7 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { clean, handoffPlanPath, HANDOFF_PLAN, HANDOFF_RESULT, isPlanPath, PLAN_MAX_BYTES, planBody, planHash, readHandoffPlan, readHandoffResult, readPlan, sha256 } from "./checkpoint.ts";
+import { clean, handoffPlanPath, HANDOFF_PLAN, HANDOFF_RESULT, isPlanPath, PLAN_MAX_BYTES, PLAN_NAME, planBody, planHash, planTitle, readHandoffPlan, readHandoffResult, readPlan, sha256 } from "./checkpoint.ts";
 import type { PlanOpts } from "./checkpoint.ts";
 import { scratchRoot } from "./editmode.ts";
 import { planReviewFiles } from "./findings.ts";
@@ -149,18 +149,17 @@ const codeOf = (e: unknown): string => String((e as { code?: unknown } | null)?.
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
 
-/** First `# ` heading of the plan body, else its first non-blank line (a comment line such as the generated marker skipped), at most 120 chars without control characters. */
-export function titleOf(bytes: Buffer): string {
+/** First `# ` heading of the plan body (else the plan's `topic`), else its first non-blank line (a comment line such as the generated marker skipped), at most 120 chars without control characters. */
+export function titleOf(bytes: Buffer, topic: string | null = null): string {
   const lines = planBody(bytes).toString("utf8").split(/\r?\n/);
-  const heading = lines.map((l) => /^#[ \t]+(.+?)[ \t#]*$/.exec(l)).find((m) => m);
-  const raw = heading ? heading[1] : (lines.find((l) => l.trim() && !l.startsWith("<!--")) ?? "");
+  const raw = planTitle(lines, topic) ?? lines.find((l) => l.trim() && !l.startsWith("<!--")) ?? "";
   return raw.replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 120) || "plan";
 }
 
-/** The page title of a read plan: an HTML plan's own `<h1>` (else `<title>`), else the first heading or line of its markdown. */
+/** The page title of a read plan: an HTML plan's own `<h1>` (else `<title>`), else the first heading of its markdown, else the plan topic, else its first line. */
 function titleOfCur(cur: Cur): string {
   const own = cur.kind === "html" ? (cur.title ?? "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 120) : "";
-  return own || titleOf(cur.kind === "html" ? Buffer.from(cur.markdown, "utf8") : cur.bytes);
+  return own || titleOf(cur.kind === "html" ? Buffer.from(cur.markdown, "utf8") : cur.bytes, PLAN_NAME.exec(path.basename(cur.path))?.[1] ?? null);
 }
 
 /** A tracked plan as read now: the source bytes and their version hash, and for an HTML plan the generated markdown copy, title and rulings. */

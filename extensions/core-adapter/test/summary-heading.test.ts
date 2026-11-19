@@ -75,12 +75,12 @@ test("jargon in the Summary gets an advice line and never blocks a review", asyn
 test("a form fault and jargon give both lines, form first; a clean plan gets neither", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
-  fs.writeFileSync(w.planFile, "# W\n\n## Goal\nx\n\n## Summary\nWe change `src/a.ts`.\n");
+  fs.writeFileSync(w.planFile, "# W\n\n## Goal\nx\n\n## Summary\n**Goal:** We change `src/a.ts`.\n\n1. Ship it.\n");
   const r = await a.call("write", { path: w.planFile, content: "x" });
   assert.match(r.note, /^ok\npi-foreman: the plan form is wrong \(not the first ## section\)/);
   assert.match(r.note, ADVICE);
   assert.doesNotMatch(r.note.split("\n")[1], /advice/);
-  fs.writeFileSync(w.planFile, "# W\n\n## Summary\n\nGoal: ship the widget.\n\n" + REST);
+  fs.writeFileSync(w.planFile, "# W\n\n## Summary\n\n**Goal:** ship the widget.\n\n1. Ship it.\n\n" + REST);
   assert.equal((await a.call("write", { path: w.planFile, content: "x" })).note, "");
 });
 
@@ -98,6 +98,8 @@ test("alert markers: dialog and page agree on malformed input", () => {
     ["> text\n> [!NOTE]\n> body", false], // marker mid-quote
     ["> [!NOTE]\nlazy body", true], // lazy continuation line is the body
     [">\t[!NOTE]\n> body", false], // tab after `>` is not the marker form
+    ["> [!NOTE] x\n> body", false], // text after the marker
+    ["> [!WARNING]\n> **Outer**\n> > [!NOTE]\n> > body", true], // a box inside a box loses its marker in the dialog too
   ];
   for (const [body, callout] of cases) {
     const r = agrees(body);
