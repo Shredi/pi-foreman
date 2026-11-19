@@ -206,9 +206,28 @@ export function roleTimeoutMs(configRoles: unknown, role: string): number | unde
 export function applyLaunchTimeouts(input: Json, configRoles: unknown, childTimeoutSeconds?: unknown, capMinutes?: unknown): LaunchTimeoutClamp | undefined {
   if (!isObj(input) || isActionCall(input)) return undefined;
   const capMs = launchTimeoutCapMs(capMinutes);
+  hoistOptionTimeouts(input);
   const clamp = applyRoleTimeouts(input, configRoles, capMs);
   applyChildTimeout(input, childTimeoutSeconds, capMs);
   return clamp;
+}
+
+/**
+ * D96: a value only in `options.timeoutMs` / `options.toolTimeoutMs` moves to the top level (a numeric string is converted),
+ * so the adapter's own top-level value is not a duplicate that pi-subagents refuses. Both places set, a non-numeric value
+ * and `maxRuntimeMs` (refused inside `options` on purpose) stay as they are.
+ */
+function hoistOptionTimeouts(input: Json): void {
+  const opts = input.options;
+  if (!isObj(opts)) return;
+  for (const key of ["timeoutMs", "toolTimeoutMs"]) {
+    if (input[key] !== undefined || opts[key] === undefined) continue;
+    const v = opts[key];
+    const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+    if (!Number.isFinite(n)) continue;
+    input[key] = n;
+    delete opts[key];
+  }
 }
 
 /** A launch timeout the cap clamped: `requested_ms` is the foreman's value, `written_ms` the cap. */

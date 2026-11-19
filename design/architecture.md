@@ -172,8 +172,8 @@ launch. A refusal is traced `launch_refused {reason: rank_policy, policy, forema
   and the brief always names `[full brief at <path>]` when that file was written, a cut brief adds
   `[... cut at 16000 characters]` before it) is prepended once to the next fresh builder launch's task, after any rung-up handoff
   (handoff, brief, task); a resume gets none. Trace `explorer_brief {role, chars}`.
-- **Child read budget.** `ceremony.childReads.<role>.{warn,deny}` (defaults builder 20/40, reviewer 15/30, explorer and
-  others none) counts a child's read, grep, find, ls and read-only bash calls (`childreads.ts`; a test or build bash
+- **Child read budget.** `ceremony.childReads.<role>.{warn,deny}` (default reviewer 15/30; builder, explorer and
+  others none unless configured; a builder's bound is `ladder.contextCap`, default 250000) counts a child's read, grep, find, ls and read-only bash calls (`childreads.ts`; a test or build bash
   call is not counted). At warn the result carries a notice; above deny the call is refused and the child is told to
   return its report with what it has, or `STATUS: stuck` (ladder trigger b). Trace `child_read_budget {role, count,
   action}`.
@@ -215,7 +215,7 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 | Layer | Mechanism | Scope | On error |
 |---|---|---|---|
 | 1. Permission map | The adapter's own gate: floors, default rules, review model and dialog, with the deny overlay below enforced by the adapter itself. User rules belong in `foreman.json`. No permission package is installed or registered. | Main + children (the adapter is a required child extension) | Fail-closed |
-| 2. Destructive/secret guard | Vendored core `destructive_guard.py` via the adapter (§7) on `bash`/`powershell`. The adapter checks the payload first and sets two opt-in switches for the core: `FABLE_ORCH_GUARD_FAIL_CLOSED=1` (an internal error exits non-zero) and `FABLE_ORCH_GUARD_BIN` (empty: no PATH rewrite). Until the re-pin it drops the core's PATH rewrite itself. PowerShell and cmd patterns are in the core since 0.23.0 (vendored at `8376da1`). | Main + children (required child extension) | Fail-closed: a missing interpreter, a timeout, a non-zero exit or a shell call without a command string blocks it, with a reason that explains the fix. This is stricter than the core's own fail-open, on purpose. |
+| 2. Delete/secret floors | No vendored guard any more: Pi reads the line itself (`floors.ts`: `rm-system`, `delete-outside`, `disk`, recursive chmod/chown on system roots, the PowerShell units, and the judge-first label `danger-delete-unknown-target`). The adapter still checks the payload first (a shell call without a command string is blocked). The vendored `core/scripts/destructive_guard.py` stays in the tree and is no longer called by Pi. | Main + children | Floors deny; the unknown-target label goes to the judge. |
 | 3. Model review of `ask` | The gate's review rung. It reads `providers.<active>.review` (`model`, `timeoutMs`, default 15 s) on every ask; with no `model` it picks the cheapest role-map model of that provider (`model` and `strong` of every role, by registry `cost.input`, with auth) and traces `by: "auto"`. | Asks on bash, MCP and skill surfaces; children defer | Fail-safe: an error, timeout, unsure, soft deny, no review model or a value too long to send whole (over 4000 characters) defers to the human prompt. Only an allow, or a deny with high or critical risk, decides. The value and the user's request reach the reviewer between nonce markers as untrusted data. |
 | 4. Git guards (removed) | The Python git guard (`scripts/git_guard.py`: commit lint, push lint, the child rules) was removed; the gate's floors now stop the plain push, remote and git-config forms and the rest meets the permission step or runs (see [docs/safety.md](../docs/safety.md#what-the-gate-floors-cover)). | Floors: deny. Rest: the permission step | An unreadable line is judged, with text floors on push words |
 | 5. Required child extensions | `registerRequiredChildExtensions({extensions: [core adapter, git child guard], requireForAllRunners: true})` at `session_start`, disposed at `session_shutdown`. Every launch uses `agentScope: "user"`, so project agents cannot redefine a role. | Every child | Launch refused if an extension cannot load (hands-on check in Phase 2) |
@@ -260,7 +260,7 @@ How thinking reaches each provider (Pi 1.0.0 catalogue and source):
 - Windows 8.3 short names of files whose deny rule is a wildcard name (`*.env`, `*.pem`, `*.key`): only literal folder and file names (`.ssh`, `.aws`, `.claude`) are matched against short names, so `ENV~1` for `.env` passes.
 - Project Claude Code settings: `env`, `enabledPlugins` and `extraKnownMarketplaces` are flagged as a whole; the doctor cannot tell a harmless `env` entry from one that runs code.
 - The installer (`setup.mjs`) resolves Python without the workspace check the adapter applies.
-- Order of checks: the permission system's handler runs before the adapter's (package load order). A command it asks about reaches the human or the review link first; the adapter's guards (the destructive guard) run only after an approval and can still block it. Live run 2: `git push --force origin main` was denied by the review link before the push lint (since removed) saw it.
+- Order of checks: the permission system's handler runs before the adapter's (package load order). A command it asks about reaches the human or the review link first; the adapter's guards (the payload check) run only after an approval and can still block it. Live run 2: `git push --force origin main` was denied by the review link before the push lint (since removed) saw it.
 
 **Foreman shell-write scanner** (`scripts/shell_write_guard.py`, run by the adapter on the foreman's `bash` and `powershell` calls at every tier, trivial included; children are not checked). It reads the command string and refuses it when it would write a file inside the workspace and outside the allowed dirs: `<workspace>/.workflow/` always (ledger and notes), plus `ceremony.scratchDir` in `scratchpad` mode (§6, foreman edit modes). It covers redirects, `tee`, in-place edits (`sed -i`, `perl -i`, `ruby -i`), `cp`/`mv`/`install`/`ln`/`rsync` destinations, `touch`/`truncate`/`dd`, deletes and renames (`rm`, `rmdir`, `unlink`, `shred`, `git rm`, `git mv`, `git clean`), `sort -o`, `curl -o|-O`, `wget`, `tar x`, `unzip`, `awk -i inplace`, git forms that rewrite the tree (`apply`, `am`, `restore`, every `checkout`/`switch` except creating a branch at HEAD, `stash pop|apply`, `reset --hard`), `patch`, and interpreter code (`python`, `node`, `perl`, `ruby`, `deno`, `tsx`: `-c`/`-e`, here-docs, piped text) with a write-open pattern (method `.open('w')` included); `sh -c` (option clusters too), here-docs and `eval` are scanned as shell. It tracks `cd`/`pushd` (subshell-scoped), resolves file targets through symlinks before `..`, looks through wrappers (`sudo`, `env`, `timeout`, `xargs`, `find -exec`, ...) and project runners (`uv run`, `poetry run`, `pipenv run`, `npx`, `pnpm exec|dlx`, `yarn exec`, `bunx`) and scans `$(..)`, backticks and process substitutions. It is conservative: an unresolvable target (`$VAR`, glob, brace list, a cwd lost through `cd $X`) counts as a write, and a command that cannot be tokenised or nests deeper than 4 is refused. Fail-closed: an internal error blocks the call. A refusal tells the foreman to use `edit`/`write` (measured by the trivial bound, §6) or delegate; trace `shell_write_refused` with the write form as `kind`, never the command. **Blind spots** (not a sandbox; they belong to the OS-boundary round): a script written earlier and run later (`python .workflow/x.py`, `bash x.sh`, `source`, `make`, `npm run`); build and format tools that write (`cargo fmt`, `gofmt -w`, `prettier --write`, `npm install`, code generators); composed program names, aliases and shell functions; interpreter writes through other APIs (`subprocess`, `os.system`, `zipfile`, `sqlite`, `os.chdir` before a relative open, `$^I`); git forms outside the list (`merge`, `pull`, `rebase`, `cherry-pick`, `revert`, `stash push`, `worktree`); a symlink into the project made under `.workflow/` in the same call. **PowerShell** (`shell: "powershell"`) gets a small cmdlet scan: `Set-Content`, `Add-Content`, `Clear-Content`, `Out-File`, `Tee-Object`, `New-Item`, `Copy-Item`, `Move-Item`, `Remove-Item`, `Rename-Item` and their aliases, `-OutFile`/`-DestinationPath`, `>`/`>>` (not `$null`), `[IO.File]::` writers, `Set-Location` tracking; other programs get the bash analysis. Its blind spots: other writing cmdlets and .NET types, `cmd /c`, script files, `iex $var`. All of this is part of the OS-boundary round (§15 #10).
 
@@ -288,7 +288,7 @@ The tools are registered by pi-foreman. The logic is own Python in `scripts/safe
 
 | Tool | Preconditions (all required) | Action |
 |---|---|---|
-| `foreman_worktree_remove` | The path is a linked worktree of the current repo (not the main one). `git status --porcelain` is empty, including untracked files. There are no ignored files, except paths under `safety.ops.worktreeDisposable`. The worktree HEAD is merged into the base branch, or contained in its pushed upstream. No stash entries reference the branch. | `git worktree remove <path>` (no `--force`), then `git branch -d` (never `-D`) |
+| `foreman_worktree_remove` | The path is a linked worktree of the current repo, or of the repo of an absolute path when the session folder is not a repository (not the main one). `git status --porcelain` is empty, including untracked files. There are no ignored files, except paths under `safety.ops.worktreeDisposable`. The worktree HEAD is merged into the base branch, or contained in its pushed upstream. No stash entries reference the branch. | `git worktree remove <path>` (no `--force`), then `git branch -d` (never `-D`) |
 | `foreman_move` | The real paths of source and destination are inside the workspace root, with symlinks resolved. The destination does not exist. Neither path is inside `.git/`. A tracked source is clean. | `git mv` if tracked, otherwise a rename with no-overwrite semantics |
 | `foreman_copy` | Same path rules. The destination does not exist. The source is a regular file or directory under a size cap. | Exclusive-create copy (`COPYFILE_EXCL` semantics) |
 
@@ -426,7 +426,7 @@ The proposals go to `<agent dir>/pi-foreman/state/retro/permission-proposals-<da
 
 | Pi tool | Core name | Guards fired |
 |---|---|---|
-| `bash`, `powershell` | `Bash` | destructive guard (pre); fails closed |
+| `bash`, `powershell` | `Bash` | payload check only (no pre guard) |
 | `write` | `Write` | write gate (pre), ledger bind (post) |
 | `edit` | `Edit` | ledger bind (post). Not write-gated, as in the core's own hook config: the gate would deny the Edit that binds an existing ledger. |
 | `subagent` | `Agent` | spawn gate (pre; the input is the task text) |
@@ -437,7 +437,7 @@ The proposals go to `<agent dir>/pi-foreman/state/retro/permission-proposals-<da
 | Pi event | Core script | Translation |
 |---|---|---|
 | `before_agent_start` | none: pi-foreman's own `instructions/foreman.md` | System-prompt section, main session only. The core's `inject_instructions` is not called: its text names Claude model tiers and it reads Claude config dirs. |
-| `tool_call` | permission overlay, `destructive_guard`, `ledger_guard_write`, `ledger_guard_spawn` | Result handling below |
+| `tool_call` | permission overlay, `ledger_guard_write`, `ledger_guard_spawn` | Result handling below |
 | permission asks | `foreman-review` chain link (own, layer 3) | allow, deny or defer to the human prompt |
 | `tool_result` | `ledger_bind` | Side effect only |
 | `agent_before_settle` | `ledger_guard_stop` | Block → `{continue: true}` plus the reason as a message |
@@ -468,9 +468,9 @@ How `tool_call` results are translated:
 2. `PI_FOREMAN_PYTHON`
 3. Windows: `py -3`, then `python`. Unix: `python3`, then `python`.
 
-The interpreter must report version ≥ 3.9. The Windows Store alias stub is rejected. The result is cached per session. If no interpreter is found, layer 2 fails closed for shell tools and `/foreman doctor` explains the fix.
+The interpreter must report version ≥ 3.9. The Windows Store alias stub is rejected. The result is cached per session. Layer 2 is `floors.ts` and needs no Python.
 
-**Latency** (CI run above: 50 warm spawns from Node, `destructive_guard`):
+**Latency** (historical, CI run above: 50 warm spawns from Node, `destructive_guard`; Pi no longer spawns it per shell call):
 
 | Runner | Warm p50 | Warm p95 |
 |---|---|---|
@@ -600,7 +600,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 | Permission map | **replaced** by the own tool gate (r41); formerly `@gotgenes/pi-permission-system` 39.0.2 | n/a | Hands-on in the earlier layer notes; see `docs/permissions.md` |
 | Model review | **own** chain link `foreman-review` (replaces `pi-permission-ai-guard`) | n/a | ai-guard 0.13.0 ran with PS 39.0.2 and all verdict paths behaved, but its reviewer cannot switch with the provider without a restart. Replay covers all paths and the switch. |
 | Model review (rejected) | `@mzwing/pi-permission-auto-review` / `pi-verdict` | 0.7.0 / 0.14.0 | Auto-review needs Node ≥ 24 and PS 33–36. pi-verdict runs its own gate beside PS (double prompts). Load test only. |
-| Destructive/secret guard | **own** (vendored core) | core 0.23.0 @ fork SHA `8376da1` (latency run: `1be4960`) | CI latency run on three OSes |
+| Delete/secret floors | **own** (`floors.ts`; the vendored `destructive_guard.py` is no longer called) | n/a | Design; gate floor tests |
 | Ledger, gates, gate floors, permission overlay, bridge isolation, precondition ops, ceremony, `/retro`, trace, installer | **own** | n/a | Design |
 | Claude provider (private) | adopt `pi-claude-bridge` in L2 | 0.9.2 (hands-on on 0.9.1) | Hands-on: child turns, thinking level reached |
 | Copilot, Codex subscription | Pi built-in providers | Pi 1.0.4, pin 1.1.0 | Source read: Copilot device-flow `/login github-copilot` or `COPILOT_GITHUB_TOKEN`. Not run. |

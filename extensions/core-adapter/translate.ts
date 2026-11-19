@@ -13,7 +13,6 @@ export type GuardOutcome = { kind: "decision"; d: HookDecision } | { kind: "fail
 
 /**
  * What happens when a script cannot give an answer (no Python, timeout, crash, garbage):
- *   destructive_guard   closed: the shell call is blocked (stricter than the core's own fail-open)
  *   ledger_guard_spawn  closed: the gate IS the ledger rule's enforcement; a silent pass drops it
  *   ledger_guard_write  closed only when the target is a live ledger under .workflow/ (the only
  *                       files the gate protects); every other write passes so a missing Python
@@ -24,7 +23,6 @@ export type GuardOutcome = { kind: "decision"; d: HookDecision } | { kind: "fail
  */
 export type FailPolicy = "closed" | "open" | "closed-if-ledger-target";
 export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
-  destructive_guard: "closed",
   ledger_guard_spawn: "closed",
   ledger_guard_write: "closed-if-ledger-target",
   ledger_bind: "open",
@@ -33,7 +31,6 @@ export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
 };
 
 const LABEL: Record<GuardName, string> = {
-  destructive_guard: "destructive guard",
   ledger_guard_spawn: "spawn gate",
   ledger_guard_write: "ledger write gate",
   ledger_bind: "ledger binding",

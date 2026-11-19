@@ -68,13 +68,15 @@ class TestPresenceStates(ReplayCase):
         pi.close()
 
     def test_replay_presence_needs_you(self):  # an own permission ask is needs-you since round 73 (was waiting-owner)
+        # the ask is a user rule: Pi no longer runs the vendored destructive guard, which used to ask on `find -delete`
+        self.user_permissions(self.rig_, {"mode": "ask", "ask": ["Bash(find *)"]})
         pi = self.rig_.start()
         path = self._file(pi)
         seen = []
 
         def look(_rec):
             seen.append(self._until(path, "needs-you"))
-            return {"confirmed": True}
+            return {"value": "allow once"}
 
         recs = pi.prompt("[[replay:p_ask]] ask", answers=[look], timeout=60)
         pi.close()

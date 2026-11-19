@@ -23,7 +23,7 @@ test("trace: a guard deny record keeps command and rule; a guard allow record dr
 test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
   const out = sanitizeTrace({
     event: "guard",
-    guard: "destructive_guard",
+    guard: "ledger_guard_spawn",
     decision: "deny",
     latencyMs: 41,
     prompt: "secret prompt",
@@ -36,7 +36,7 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     cost: Number.NaN,
   });
   // a guard deny keeps its (redacted) command now (protected-review plan: guard blocks go through denyFields)
-  assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41, command: "rm -rf x" });
+  assert.deepEqual(out, { event: "guard", guard: "ledger_guard_spawn", decision: "deny", latencyMs: 41, command: "rm -rf x" });
   assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "family", "rule", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command", "tool", "message", "width", "reasons", "level"]);
 });
 
@@ -90,11 +90,11 @@ test("trace: a bound child traces when the parent's retro is on, to trace-<launc
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-trace-"));
   const w = openTrace({ enabled: t.enabled, dir: null, stateDir: dir, sessionId: t.id, base: t.base, now: () => new Date(0) })!;
   assert.equal(w.file, traceFile(null, dir, "L1-ab"));
-  w.emit({ event: "ask", guard: "destructive_guard", toolFamily: "Bash", decision: "no-ui" });
+  w.emit({ event: "ask", guard: "ledger_guard_spawn", toolFamily: "Bash", decision: "no-ui" });
   w.emit({ event: "session_start", role: "child" });
   const lines = fs.readFileSync(w.file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   assert.deepEqual(lines, [
-    { ts: "1970-01-01T00:00:00.000Z", role: "builder", runId: "L1-ab", event: "ask", guard: "destructive_guard", toolFamily: "Bash", decision: "no-ui" },
+    { ts: "1970-01-01T00:00:00.000Z", role: "builder", runId: "L1-ab", event: "ask", guard: "ledger_guard_spawn", toolFamily: "Bash", decision: "no-ui" },
     { ts: "1970-01-01T00:00:00.000Z", role: "child", runId: "L1-ab", event: "session_start" },
   ]);
 });

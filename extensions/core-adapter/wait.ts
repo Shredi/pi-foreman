@@ -16,6 +16,7 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { rulingFresh } from "./ruling.ts";
 import { get } from "./config.ts";
@@ -457,6 +458,16 @@ export class WaitRuntime {
     return this.cancelWith(id, "dropped");
   }
 
+  /** The ids of the open critical pressure waits whose one relaunch argument equals `args` (deep JSON equality). */
+  pressureIds(args: unknown): string[] {
+    return [...this.waits.values()].filter((e) => e.press?.mode === "critical" && e.press.args.length === 1 && isDeepStrictEqual(e.press.args[0], args)).map((e) => e.id);
+  }
+
+  /** Cancels those waits; returns their ids. */
+  dropPressure(args: unknown): string[] {
+    return this.pressureIds(args).filter((id) => this.cancel(id));
+  }
+
   private cancelWith(id: string, how: "cancelled" | "dropped"): boolean {
     const e = this.drop(id);
     if (!e) return false;
@@ -610,7 +621,7 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string, carried?: boolean) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; restore: (ctx: ExtensionContext) => Promise<void>; settled: (sessionId: string) => void } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string, carried?: boolean) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; hasPressure: (ctx: ExtensionContext, args: unknown) => boolean; dropPressure: (ctx: ExtensionContext, args: unknown) => Promise<number>; restore: (ctx: ExtensionContext) => Promise<void>; settled: (sessionId: string) => void } {
   /** `held`: outcomes that resolved while a run was active; `settled` sends them as one wake that starts a run of its own. */
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext; held: Outcome[]; send: (outcomes: Outcome[], followUp?: boolean) => void }>();
   const listeners = new Map<string, Set<() => void>>();
@@ -629,6 +640,8 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       return rt?.cancelAll() ?? [];
     },
     startPressure: async (_ctx: ExtensionContext, _spec: Extract<ValidSpec, { kind: "pressure" }>): Promise<{ id: string } | { error: string }> => ({ error: "pressure waits are for the foreman only" }),
+    hasPressure: (_ctx: ExtensionContext, _args: unknown): boolean => false,
+    dropPressure: async (_ctx: ExtensionContext, _args: unknown): Promise<number> => 0,
     /** agent_settled (after the adapter reset its per-run state): a wake held during the run goes out as one message that triggers its own run. */
     settled: (sessionId: string): void => {
       const h = runtimes.get(sessionId);
@@ -735,6 +748,13 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     const r = ensureRuntime(s, ctx).start(spec);
     if (!("error" in r)) s.onStart?.(spec, r.id);
     return r;
+  };
+  handle.hasPressure = (ctx, args) => (runtimes.get(ctx.sessionManager.getSessionId())?.rt.pressureIds(args).length ?? 0) > 0;
+  handle.dropPressure = async (ctx, args) => {
+    const s = await deps.session(ctx);
+    const ids = runtimes.get(s.id)?.rt.dropPressure(args) ?? [];
+    for (const id of ids) s.onCancel?.(id);
+    return ids.length;
   };
   const waitTool = {
     name: WAIT_TOOL,

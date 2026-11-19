@@ -1,6 +1,6 @@
 // The background-tasks add-on `pi-background-tasks`, which ships with pi-foreman (package.json lists its extensions). Background commands run
-// with its tool `bg_run`; index.ts routes `bg_run` through the same tool_call guards as a foreground `bash` call (overlay, shell write guard,
-// destructive guard and the config-change check) and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
+// with its tool `bg_run`; index.ts routes `bg_run` through the same tool_call guards as a foreground `bash` call (overlay, shell write guard
+// and the config-change check) and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
 //
 // The add-on package is never imported or required. It is detected by its tool `bg_run` (or its package directory), and `/foreman waits`
 // lists its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`. What else stays here: `bgSpawnFlags` (scriptrun.ts and
