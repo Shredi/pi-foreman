@@ -13,6 +13,7 @@ import { readLive } from "./identity.ts";
 import { HEARTBEAT_MS, liveDir } from "./livestate.ts";
 import { SLOW_POLL_MS } from "./remotewatch.ts";
 import type { IntercomCarry } from "./intercomcarry.ts";
+import { planWait } from "./roundstate.ts";
 import { answerNewerThan } from "./ruling.ts";
 import { readRegistry } from "./session.ts";
 import type { SessionEntry } from "./session.ts";
@@ -58,6 +59,9 @@ export const questionText = (label: string, ageMs: number): string => `Child ses
 /** The reminder for a remote child's registry ask (its answer is a brief): fixed words, the registry label and the age. */
 export const remoteQuestionText = (label: string, ageMs: number): string => `Remote child session ${label} has waited ${duration(ageMs)} for your answer to its ask. Answer it with a brief (foreman session brief <label> <file>). Information only: this notice approves nothing.`;
 
+/** The quiet notice for a local child idle at its open plan phase: fixed words, the registry label, the age and planWait's fixed text. */
+export const planIdleText = (label: string, ageMs: number, waits: string): string => `Child session ${label}: idle at its plan for ${duration(ageMs)}; ${waits}.`;
+
 /** The owner's answers to a child's plan checkpoint, as the child's live file records them; the words are fixed. */
 const ANSWER_WORDS: Record<string, string> = { approve: "plan approved by the owner", revise: "plan sent back by the owner (revise)", reject: "plan rejected by the owner" };
 
@@ -66,12 +70,14 @@ export const clearedText = (label: string, waitedMs: number, answer?: string): s
 /** The information line for a checkpoint answer: fixed words and the registry label; approves nothing. */
 export const answerText = (label: string, answer: string): string => `Child session ${label}: ${ANSWER_WORDS[answer]}.`;
 
-type Obs = ({ blocked: false } | { blocked: true; since: number; kind: unknown }) & { answer?: { decision: string; at: string } };
+type Obs = ({ blocked: false; plan?: { since: number; waits: string } } | { blocked: true; since: number; kind: unknown; plan?: undefined }) & { answer?: { decision: string; at: string } };
 interface Sent {
   child: string;
   label: string;
-  /** The start of the owner episode. */
+  /** The start of the owner episode (or of the idle-at-plan episode). */
   since: number;
+  /** An idle-at-plan episode: ends without an "answered" note. */
+  plan?: true;
 }
 type Cancel = () => void;
 
@@ -150,9 +156,10 @@ export class ChildBlocked {
           }
         }
         for (const [key, rec] of [...this.sent]) {
-          if (rec.child !== e.child || (obs.blocked && obs.since === rec.since)) continue;
+          if (rec.child !== e.child || (obs.blocked && obs.since === rec.since && !rec.plan) || (rec.plan && !obs.blocked && obs.plan?.since === rec.since)) continue;
           this.sent.delete(key); // the announced episode ended
           dirty = true;
+          if (rec.plan) continue;
           const waitedMs = now - rec.since;
           this.d.trace?.({ event: "child_blocked_cleared", label: rec.label, waitedMs });
           this.d.send(clearedText(rec.label, waitedMs, answer), false);
@@ -162,8 +169,17 @@ export class ChildBlocked {
           this.d.trace?.({ event: "child_checkpoint_answer", label: cleanLabel(e.label), decision: answer });
           this.d.send(answerText(cleanLabel(e.label), answer), false);
         }
-        if (!obs.blocked) continue;
         const label = cleanLabel(e.label);
+        if (!obs.blocked) {
+          const pl = obs.plan;
+          const pkey = `${label}\nplan\n${pl?.since}`;
+          if (!pl || this.sent.has(pkey) || now - pl.since < secs * 1000 || this.d.carry?.records.has(e.child)) continue; // a child with an open Question waits for the parent: the reminder covers it
+          this.sent.set(pkey, { child: e.child, label, since: pl.since, plan: true });
+          dirty = true;
+          this.d.trace?.({ event: "child_plan_idle_notice", label, waitedMs: now - pl.since });
+          this.d.send(planIdleText(label, now - pl.since, pl.waits), false);
+          continue;
+        }
         const key = `${label}\n${obs.since}`;
         if (this.sent.has(key) || now - obs.since < secs * 1000) continue;
         this.sent.set(key, { child: e.child, label, since: obs.since });
@@ -233,7 +249,7 @@ export class ChildBlocked {
     if (typeof e.handoff !== "string" || !e.handoff) return undefined;
     const id = readLive(e.handoff)?.piSessionId;
     if (!id || !SAFE_ID.test(id)) return undefined;
-    let f: { heartbeatAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown; lastCheckpoint?: { decision?: unknown; at?: unknown } };
+    let f: { heartbeatAt?: unknown; state?: unknown; lastEventAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown; lastCheckpoint?: { decision?: unknown; at?: unknown } };
     try {
       f = JSON.parse(fs.readFileSync(path.join(liveDir(this.d.agentDir), `${id}.json`), "utf8"));
     } catch {
@@ -243,7 +259,12 @@ export class ChildBlocked {
     if (!Number.isFinite(beat) || now - beat > STALE_LIVE_MS) return undefined;
     const cp = f.lastCheckpoint;
     const answer = cp && typeof cp.decision === "string" && Object.hasOwn(ANSWER_WORDS, cp.decision) && typeof cp.at === "string" && Number.isFinite(Date.parse(cp.at)) ? { decision: cp.decision, at: cp.at } : undefined;
-    if (f.blockedOn !== "owner") return { blocked: false, ...(answer ? { answer } : {}) };
+    if (f.blockedOn !== "owner") {
+      const pw = f.state === "idle" ? planWait(e.handoff) : null;
+      const at = typeof f.lastEventAt === "string" ? Date.parse(f.lastEventAt) : NaN;
+      const plan = pw?.open && Number.isFinite(at) ? { since: at, waits: pw.text } : undefined;
+      return { blocked: false, ...(plan ? { plan } : {}), ...(answer ? { answer } : {}) };
+    }
     const since = typeof f.ownerBlockedSince === "string" ? Date.parse(f.ownerBlockedSince) : NaN;
     return Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind, ...(answer ? { answer } : {}) } : undefined;
   }
@@ -264,7 +285,7 @@ export class ChildBlocked {
       const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { startedMs?: unknown; sent?: Record<string, Partial<Sent> & { ask?: true }>; answered?: Record<string, unknown> };
       for (const [k, c] of Object.entries(j.answered ?? {})) if (typeof c === "string") this.answered.set(k, c);
       // an `ask: true` record of an older state file is dropped: it is no owner episode
-      for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since });
+      for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since, ...(r.plan === true ? { plan: true as const } : {}) });
       if (typeof j.startedMs === "number" && Number.isFinite(j.startedMs)) {
         this.startedMs = j.startedMs;
         return true;

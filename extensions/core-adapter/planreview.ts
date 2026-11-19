@@ -66,6 +66,8 @@ export function planPathsOf(files: readonly string[], scratchDir: string): strin
 /** Plan-review verdicts per plan lineage (real plan path). */
 export class PlanReviews {
   private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number; reviews: number }>();
+  /** The plan path of the newest recorded or restored verdict. */
+  private newestPath: string | null = null;
   /** The plan text a launched reviewer reads, and the text the last verdict is for (in memory only; keyed by the real plan path). */
   private readonly launched = new Map<string, { hash: string; text: string }>();
   private readonly reviewed = new Map<string, { hash: string; text: string }>();
@@ -108,6 +110,12 @@ export class PlanReviews {
   record(planPath: string, v: PlanVerdict): void {
     const l = this.byPath.get(planPath);
     this.byPath.set(planPath, { latest: v, rounds: (l?.rounds ?? 0) + (l && l.latest.hash === v.hash ? 0 : 1), reviews: (l?.reviews ?? 0) + 1 });
+    this.newestPath = planPath;
+  }
+
+  /** The lineage of the newest recorded or restored verdict, or null (the reload file's review flag, roundstate.ts; no checkpoint needed). */
+  newest(): { latest: PlanVerdict; rounds: number; reviews: number } | null {
+    return this.newestPath ? this.byPath.get(this.newestPath) ?? null : null;
   }
 
   /** Every lineage (the session entry, planstate.ts). */
@@ -123,6 +131,7 @@ export class PlanReviews {
   /** After a reload: put back a lineage the reload file kept. */
   restore(planPath: string, latest: PlanVerdict, rounds: number, reviews: number = rounds): void {
     this.byPath.set(planPath, { latest, rounds, reviews });
+    this.newestPath = planPath;
   }
 
   /**
