@@ -700,7 +700,7 @@
       "area": "retro",
       "toggle": {"on": {"retro.report": true}, "off": {"retro.report": false}},
       "title": "Fault reports",
-      "purpose": "Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over.",
+      "purpose": "Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over, and the reports of a remote or parent-opened session are imported when its notice arrives (`foreman reports import`).",
       "doc": "docs/retro.md#reporting-at-the-source",
       "keys": ["retro.report", "retro.expireDays", "retro.startNote"],
       "commands": ["foreman reports", "/foreman flag-ask"],
