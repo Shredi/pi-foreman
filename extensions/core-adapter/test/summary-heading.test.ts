@@ -243,7 +243,7 @@ test("alert markers: a box inside a plain quote loses its marker as on the page"
     const dialog = ownerSummary(md);
     assert.equal(count(dialog, /\[!/g), 0, `${body}\n${dialog}`);
   }
-  assert.match(ownerSummary("## Summary\n\n> text\n> > plain\n"), /\n {2}> text\n {2}> plain$/);
+  assert.match(ownerSummary("## Summary\n\n> text\n> > plain\n"), /\n {2}> text\n {2}> > plain$/);
 });
 
 test("the write result names the form hints of a Summary and gives none for a complete one", async (t) => {
