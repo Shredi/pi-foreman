@@ -13,9 +13,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
-import test_safe_ops as base  # noqa: E402
-from test_safe_ops import safe_ops  # noqa: E402
-from pr_host_shims import make_bin  # noqa: E402
+import test_safe_ops as base
+from test_safe_ops import safe_ops
+from pr_host_shims import make_bin
 
 GIT = shutil.which("git")
 GH_URL = "https://github.com/own/repo/pull/12"
@@ -600,7 +600,9 @@ class BatchTest(RepoLessCase):
         self.scn({"gh api graphql": {"stdout": j({"data": {"r0": gql_pr(5, rollup())}})}})
         self.ok(self.at("pr_batch", host="ghe.example.com", prs=[{"repo": "acme/lib", "n": 5}]))
         self.assertEqual(pair(argv_of(self.calls()[0]), "--hostname"), "ghe.example.com")
-        many = lambda k: [{"repo": "acme/lib", "n": i + 1} for i in range(k)]
+        def many(k):
+            return [{"repo": "acme/lib", "n": i + 1} for i in range(k)]
+
         self.failed(self.at("pr_batch", prs=many(51)), "bad_request")
         self.failed(self.at("pr_batch", prs=[]), "bad_request")
         for bad in ({"repo": "-x/y", "n": 1}, {"repo": "a/..", "n": 1}, {"repo": "a/b/c", "n": 1}, {"repo": "a/b", "n": 0}, {"repo": "a/b", "n": True}, {"repo": "a/b"}, {"repo": "a/b", "n": 1, "x": 1}):

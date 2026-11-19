@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import tool_results
+from test_replay import REASON, ReplayCase
 
 CHILD = "fm-demo-abc123"
 

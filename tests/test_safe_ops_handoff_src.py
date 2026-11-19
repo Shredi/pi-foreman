@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_safe_ops import NO_SYMLINK, SYMLINKS, SafeOpsCase  # noqa: E402
-import safe_ops  # noqa: E402
+from test_safe_ops import NO_SYMLINK, SYMLINKS, SafeOpsCase
+import safe_ops
 
 
 class HandoffSrcCopyTest(SafeOpsCase):

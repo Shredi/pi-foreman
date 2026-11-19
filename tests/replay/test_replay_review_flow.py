@@ -17,8 +17,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture, tool_results, wait_until  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import PROVIDER_A, load_fixture, tool_results, wait_until
+from test_replay import REASON, ReplayCase
 
 STRONG = {"providers": {PROVIDER_A: {"roles": {"builder": {"strong": {"model": "%s/finalizer" % PROVIDER_A}}}}}}
 # The heavy rigs here test triage and revision rounds, not the plan review before the checkpoint.
@@ -94,7 +94,9 @@ class TestRevisionRounds(ReplayCase):
             pi = rig.start()
             sid = pi.session_id()
             pi.prompt("[[replay:s1]] build it", answers=[{"value": "approve"}], timeout=60)
-            rows = lambda: [(x["kind"], x["model"]) for x in usage(rig, sid) if x["role"] == "builder"]
+            def rows():
+                return [(x["kind"], x["model"]) for x in usage(rig, sid) if x["role"] == "builder"]
+
             # The first reviewer FAIL launches the revision builder; wait until its launch is in the usage log.
             wait_until(lambda: len(rows()) >= 2, timeout=240)
             pi.close()

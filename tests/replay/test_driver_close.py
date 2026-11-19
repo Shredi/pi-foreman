@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PiRpc  # noqa: E402
+from driver import PiRpc
 
 EXITS_ON_EOF = "import sys; sys.stdin.read()"
 IGNORES_EOF = "import time; time.sleep(120)"

@@ -10,9 +10,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import _isolation  # noqa: E402,F401  (agent dir -> temp)
-import foreman_backlog as fb  # noqa: E402
-import foreman_retro as fr  # noqa: E402
+import _isolation  # noqa: F401  (agent dir -> temp)
+import foreman_backlog as fb
+import foreman_retro as fr
 
 T0 = "2026-01-01T00:00:00Z"
 LONG = "grep -c x /state/trace-01a.jsonl | cut -c1-700 | head -5 " + "&& echo padding " * 30  # well over MAX_TEXT, with a path

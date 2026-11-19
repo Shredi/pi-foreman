@@ -1,10 +1,8 @@
 """Setup profiles, feature toggles and add-ons: the shipped data in config/ (features.json toggles,
 profiles.json, addons.json), the `profile` key and `foreman_config.py --user-file`."""
 import contextlib
-import copy
 import io
 import json
-import re
 import sys
 import tempfile
 import unittest

@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import driver  # noqa: E402
+import driver
 
 PKG = ("@earendil-works", "pi-coding-agent")
 

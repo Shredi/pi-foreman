@@ -723,7 +723,9 @@ def explorer_metrics(trace, usage, sid, ranks=None):
 
 
 def render_explorer(e):
-    short = lambda m: m.rsplit("/", 1)[-1]
+    def short(m):
+        return m.rsplit("/", 1)[-1]
+
     order = sorted(e["models"], key=lambda m: (e["tiers"].get(m) is None, e["tiers"].get(m) or 0, m))
     items, inline = [], False
     for m in order:

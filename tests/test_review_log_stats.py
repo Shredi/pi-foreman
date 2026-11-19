@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import review_log_stats as rls  # noqa: E402
+import review_log_stats as rls
 
 SECRET = "cat-the-secret-command"
 _n = [0]

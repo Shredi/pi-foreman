@@ -7,8 +7,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
-import foreman_radar as fr  # noqa: E402
-import foreman_session as fs  # noqa: E402
+import foreman_radar as fr
+import foreman_session as fs
 
 NOW = 1_800_000_000.0
 

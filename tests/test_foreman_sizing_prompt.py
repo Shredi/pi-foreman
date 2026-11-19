@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
+from test_foreman_config import render_prompt, review_loop_rewrite
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold

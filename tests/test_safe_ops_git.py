@@ -4,15 +4,13 @@ Repositories live in temp dirs this test creates and removes on that exact path.
 """
 import json
 import os
-import shutil
-import subprocess
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_safe_ops as base  # noqa: E402
-from test_safe_ops import safe_ops  # noqa: E402
+import test_safe_ops as base
+from test_safe_ops import safe_ops
 
 
 class GitReadTest(base.SafeOpsCase):
