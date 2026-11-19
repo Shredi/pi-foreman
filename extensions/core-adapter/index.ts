@@ -2139,8 +2139,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
         notify: (msg, level) => ctx.ui.notify(msg, level),
         trace: (rec) => s.trace?.emit(rec),
-        importReports: async (data) => {
-          if (get(s.config.config, "retro.report") === false) return;
+        importReports: get(s.config.config, "retro.report") === false ? undefined : async (data) => {
           try {
             const counts = importText(storeFor(s.cwd), (await reportContext(s.cwd)).repo, data.toString("utf8"));
             s.trace?.emit(importEvent(counts, "remote"));

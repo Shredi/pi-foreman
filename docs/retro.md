@@ -68,9 +68,13 @@ The file is data from outside, so every line is checked again and the row is reb
 
 - Only rows of type `report` come in; `state`, `group`, `lesson` and `emitted` rows are skipped.
 - `repo` must equal the `repo` of this store. A row or a store without a repository is no match.
-- `kind` and `effect` must be in the lists above, `id` ten hex characters, `session` and `ts` present (a time more than a day ahead is refused). Text over the caps (40, 300, 200) or a line over 4096 characters is skipped, not cut; the texts pass masking and the file-name cut again, and the key is computed again from the stored subject.
+- `kind` and `effect` must be in the lists above, `id` ten hex characters, `session` and `ts` present (a time more than a day ahead, or older than the archive age of 90 days, is refused), and `role` one of `foreman`, `explorer`, `builder`, `reviewer`, `owner` or `child` (an unknown role is refused as invalid; the report tool refuses it as well). Text over the caps (40, 300, 200) or a line over 4096 characters is skipped, not cut; the texts pass masking and the file-name cut again, and the key is computed again from the stored subject. Unicode format characters (category Cf: bidi overrides, zero-width marks) are removed from every stored report text, local or imported.
 - `count`, `firstSeen`, `lastSeen` and `source` never survive, so an imported row counts as one report of its own `session`.
 - The file may be CRLF; a file above 512 KiB, a malformed line or a missing file imports nothing and is no error for the notice (the command exits 1 for a missing or oversized file).
+
+The watcher writes the fetched file to the session's mirror dir as `reports.jsonl` (next to `result.md`; not a notice file) before it imports. If the import fails (the store lock stays busy, say), the mirror stays and `foreman reports import <mirror dir>/reports.jsonl` imports it later. One `reports_import` trace event per import carries counts only: `lines`, `added`, `known`, `malformed`, `notReport`, `otherRepo`, `invalid` and the boolean `oversized`; a failed import carries `failed: true`.
+
+Known limits: a forged session id can inflate the count of an imported entry (nothing gates on counts); once the file passes 512 KiB no further import takes it; the fetch runs in the watcher's serial queue, so a hanging read delays the next notice (the fetch timeout bounds it); a notice that reaches the parent only through the intercom relay triggers no fetch (use the command).
 
 A second import of the same file adds nothing (rows are known by `id`, also in the archive); writers hold the store lock, so imports and local reports at the same time lose nothing. The command prints how many rows it imported, knew and skipped.
 

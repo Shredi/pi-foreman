@@ -123,7 +123,7 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
       }
       const lines = [DATA_LINE, `key ${e.key}${e.keys.length > 1 ? ` (group of ${e.keys.join(", ")})` : ""}`, `state ${e.state}${e.label ? ` round ${quoted(e.label, 60)}` : ""}${e.pr ? ` PR #${e.pr}` : ""}${e.reason ? ` reason ${quoted(e.reason, 200)}` : ""}`, `kind ${e.kind}, effect ${e.effect}, ${e.count} session${e.count === 1 ? "" : "s"}, first ${e.first}, last ${e.last}`, `subject ${quoted(e.subject, 400)}`, `what ${quoted(e.what, 400)}`];
       if (e.suggest) lines.push(`suggest ${quoted(e.suggest, 400)}`);
-      for (const r of readRows(store.file)) if (r.row === "report" && e.keys.includes(String(r.key))) lines.push(`- ${String(r.ts)} ${String(r.id)} ${String(r.role)} session ${quoted(String(r.session), 80)} branch ${quoted(String(r.branch), 80)} ${String(r.source)}${typeof r.lastSeen === "string" ? ` last seen ${quoted(r.lastSeen, 40)}` : ""}${typeof r.count === "number" ? ` x${r.count}` : ""}`);
+      for (const r of readRows(store.file)) if (r.row === "report" && e.keys.includes(String(r.key))) lines.push(`- ${String(r.ts)} ${String(r.id)} ${r.role ? quoted(String(r.role), 40) : "-"} session ${quoted(String(r.session), 80)} branch ${quoted(String(r.branch), 80)}${typeof r.source === "string" ? ` ${quoted(r.source, 20)}` : ""}${typeof r.lastSeen === "string" ? ` last seen ${quoted(r.lastSeen, 40)}` : ""}${typeof r.count === "number" ? ` x${r.count}` : ""}`);
       out(`${lines.join("\n")}\n`);
       return 0;
     }

@@ -877,12 +877,19 @@ export class RemoteWatcher {
     if (a.kind === "result" || a.kind === "update" || a.kind === "closed") await this.fetchReports(w);
   }
 
-  /** The remote session's report copy (`reports.jsonl` in the remote handoff dir, the same dir as the notice files) goes to `importReports`. Best effort: absent, unreadable or failing changes nothing. */
+  /** The remote session's report copy (`reports.jsonl` in the remote handoff dir, the same dir as the notice files) is written to the session's mirror dir, then goes to `importReports`. Best effort: absent, unreadable or failing changes nothing. */
   private async fetchReports(w: Watched): Promise<void> {
     if (!this.d.importReports) return;
     try {
       const r = await this.hc(["file", "read", "--on", w.machine, remotePath(w, HANDOFF_REPORTS)], fetchTimeoutMs(this.d.fetchTimeoutSeconds?.()), this.abort.signal);
       if (this.stopped || r.code !== 0 || r.timedOut || r.overflow || !r.stdout.length) return;
+      // the fetched text is kept in the mirror dir (not a mirrored notice file) so a failed import can be rerun with `foreman reports import <file>`
+      try {
+        const mirror = readRegistry(this.d.agentDir).sessions.find((e) => e.child === w.child)?.mirror;
+        if (typeof mirror === "string" && mirror) writeBytes(path.join(mirror, HANDOFF_REPORTS), r.stdout);
+      } catch {
+        // no mirror copy: the import goes on
+      }
       await this.d.importReports(r.stdout);
     } catch {
       // a report copy never disturbs the notice

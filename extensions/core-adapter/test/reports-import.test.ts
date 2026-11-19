@@ -80,12 +80,12 @@ test("rows of other types never come in", (t) => {
 
 test("secrets and paths are masked and cut to names again; long fields are cut", (t) => {
   const store = storeFor(tmp(t));
-  importText(store, REPO, lines(row({ subject: "/opt/tools/run.sh", what: "password=hunter2hunter2 failed in /var/log/app/out.txt", suggest: "see ~/conf/x.json", role: "builder token=abcdef1234567890", branch: `b${"x".repeat(300)}` })), NOW);
+  importText(store, REPO, lines(row({ subject: "/opt/tools/run.sh", what: "password=hunter2hunter2 failed in /var/log/app/out.txt", suggest: "see ~/conf/x.json", session: "s1 token=abcdef1234567890", branch: `b${"x".repeat(300)}` })), NOW);
   const [r] = readRows(store.file);
   assert.equal(r.subject, "run.sh");
   assert.ok(!String(r.what).includes("hunter2") && String(r.what).includes("out.txt") && !String(r.what).includes("/var/log"), String(r.what));
   assert.equal(r.suggest, "see x.json");
-  assert.ok(!String(r.role).includes("abcdef1234567890"), String(r.role));
+  assert.ok(!String(r.session).includes("abcdef1234567890"), String(r.session));
   assert.equal((r.branch as string).length, 200);
 });
 

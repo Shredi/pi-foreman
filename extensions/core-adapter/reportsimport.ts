@@ -4,7 +4,7 @@
 // never copied; nothing reads meaning from report text.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CAPS, EFFECTS, KINDS, cleanText, importRows, keyOf, type Store } from "./reports.ts";
+import { ARCHIVE_DAYS, CAPS, EFFECTS, KINDS, REPORT_ROLES, cleanText, importRows, keyOf, type Store } from "./reports.ts";
 import { withFileLock } from "./statefile.ts";
 import { redactCommand } from "./trace.ts";
 
@@ -15,6 +15,7 @@ export const IMPORT_MAX_BYTES = 512 * 1024;
 /** A line above this length is skipped as invalid (the largest row is about 1 KB). */
 export const IMPORT_MAX_LINE = 4096;
 const FUTURE_MS = 86_400_000;
+const PAST_MS = ARCHIVE_DAYS * 86_400_000;
 
 type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
@@ -40,7 +41,7 @@ const emptyCounts = (): ImportCounts => ({ lines: 0, added: 0, known: 0, malform
 /** A short field (role, branch, session, …): control characters turned into spaces, secrets masked, cut to 200; null when empty or not text. */
 const field = (v: unknown): string | null => {
   if (typeof v !== "string") return null;
-  const t = redactCommand(v.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")).trim().slice(0, 200);
+  const t = redactCommand(v.replace(/\p{Cf}/gu, "").replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")).trim().slice(0, 200);
   return t || null;
 };
 
@@ -62,13 +63,14 @@ export function checkRow(raw: Json, repo: string | null, now: number): { row: Js
   const what = capped(raw.what, CAPS.what);
   const session = field(raw.session);
   const ts = typeof raw.ts === "string" ? Date.parse(raw.ts) : NaN;
+  const role = field(raw.role);
   const suggest = raw.suggest === undefined || raw.suggest === null ? null : capped(raw.suggest, CAPS.suggest);
   const bad = raw.suggest !== undefined && raw.suggest !== null && (typeof raw.suggest !== "string" || raw.suggest.length > CAPS.suggest);
-  if (!id || !kind || !effect || !subject || !what || !session || Number.isNaN(ts) || ts > now + FUTURE_MS || bad) return { skip: "invalid" };
+  if (!id || !kind || !effect || !subject || !what || !session || Number.isNaN(ts) || ts > now + FUTURE_MS || ts < now - PAST_MS || (role !== null && !REPORT_ROLES.includes(role)) || bad) return { skip: "invalid" };
   return {
     row: {
       row: "report", id, key: keyOf(kind, subject), kind, subject, what, effect, suggest, repo,
-      workspace: field(raw.workspace), branch: field(raw.branch), role: field(raw.role), session, runId: field(raw.runId), version: field(raw.version), ts: new Date(ts).toISOString(),
+      workspace: field(raw.workspace), branch: field(raw.branch), role, session, runId: field(raw.runId), version: field(raw.version), ts: new Date(ts).toISOString(),
     },
   };
 }

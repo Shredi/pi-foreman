@@ -1,4 +1,4 @@
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for PowerShell. reports takes list|show|set|expire|migrate (old backlog import).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for PowerShell. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = @(if ($args.Count -gt 1) { $args[1..($args.Count - 1)] })
 if ($sub -eq 'setup') {
