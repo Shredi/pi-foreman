@@ -392,10 +392,13 @@ function blockEl(el: El): Blk[] {
       return tableBlock(el);
     case "blockquote": {
       const t = joinBlocks(blocksOf(el.kids));
-      return t ? [{ text: t.split("\n").map((l) => (l ? `> ${l}` : ">")).join("\n"), kind: "other" }] : [];
+      const alert = /^(?:note|tip|important|warning|caution)$/i.exec(el.attrs.get("data-alert") ?? "")?.[0].toUpperCase(); // a declared alert; any other value is a plain quote
+      return t ? [{ text: (alert ? [`[!${alert}]`, ...t.split("\n")] : t.split("\n")).map((l) => (l ? `> ${l}` : ">")).join("\n"), kind: "other" }] : [];
     }
     case "summary":
     case "dt": {
+      const heading = el.tag === "summary" ? el.kids.find((k): k is El => isEl(k) && /^h[1-6]$/.test(k.tag)) : undefined; // a heading as the whole summary stays that heading
+      if (heading && el.kids.every((k) => k === heading || (typeof k === "string" && !k.trim()))) return blockEl(heading);
       const t = collapse(inline(el.kids).replaceAll(BR, " ")).trim();
       return t ? [{ text: `**${t}**`, kind: "p" }] : [];
     }

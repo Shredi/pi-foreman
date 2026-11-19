@@ -10,7 +10,7 @@ import { planVersionHash } from "../checkpoint.ts";
 import { PROSE_FIELDS } from "../gate.ts";
 import { fenceSha } from "../mermaid.ts";
 import type { Engine } from "../mermaid.ts";
-import { fileOfId, NOTES_KEPT, PAGE_MAX_BYTES, foldPlanSection, parsePagesJson, renderMarkdown, renderPage } from "../pages.ts";
+import { fileOfId, NOTES_KEPT, PAGE_MAX_BYTES, STYLE, foldPlanSection, parsePagesJson, renderMarkdown, renderPage } from "../pages.ts";
 import type { PagesIndex } from "../pages.ts";
 import { ownerSectionIssues, ownerSummary, planFormIssues } from "../ownertext.ts";
 import { PrWatches } from "../prwatch.ts";
@@ -104,7 +104,7 @@ test("page: over 900 KiB the diagrams become code blocks; still over it, the pag
   assert.match(dropped, /language-mermaid/);
   assert.doesNotMatch(dropped, /base64/);
   const huge = renderPage({ title: "T", kicker: "k", markdown: `# t\n\n${"word ".repeat(PAGE_MAX_BYTES / 4)}`, source: "plan-x.md" });
-  assert.ok(Buffer.byteLength(huge) < 4000);
+  assert.ok(Buffer.byteLength(huge) < Buffer.byteLength(STYLE) + 2582); // the page style grew from 1.4 KB to about 4 KB; the page is still small
   assert.match(huge, /too large/);
   assert.match(huge, /<code>plan-x\.md<\/code>/);
   assert.doesNotMatch(huge, /word word/);
@@ -473,8 +473,8 @@ const FOLDED = "# P\n\nIntro text.\n\n## For the owner\n- Goal: x.\n\n## Plan\n1
 
 test("fold: a folded section sits in details with its heading visible; the owner and open questions sections stay open", () => {
   const html = renderMarkdown(FOLDED, { fold: foldPlanSection });
-  assert.match(html, /<details><summary>Plan<\/summary>\n<ol>/);
-  assert.equal((html.match(/<details>/g) ?? []).length, 1);
+  assert.match(html, /<details class="fold" id="plan"><summary><h2>Plan<\/h2><\/summary>\n<ol>/);
+  assert.equal((html.match(/<details[ >]/g) ?? []).length, 1);
   assert.match(html, /<h2>For the owner<\/h2>/);
   assert.match(html, /<h2>Open questions<\/h2>/);
   assert.match(html, /^<h1>P<\/h1>\n<p>Intro text\.<\/p>\n<h2>For the owner/);
@@ -485,7 +485,7 @@ test("fold: a folded section sits in details with its heading visible; the owner
 
 test("fold: a `## ` line inside a fence does not split a section", () => {
   const html = renderMarkdown(FOLDED, { fold: foldPlanSection });
-  assert.match(html, /<details><summary>Plan<\/summary>[\s\S]*## Not a heading[\s\S]*<\/details>/);
+  assert.match(html, /<details class="fold" id="plan"><summary><h2>Plan<\/h2><\/summary>[\s\S]*## Not a heading[\s\S]*<\/details>/);
   assert.equal((html.match(/<summary>/g) ?? []).length, 1);
   const tilde = renderMarkdown("## A\n~~~\n## B\n~~~\n", { fold: () => true });
   assert.equal((tilde.match(/<summary>/g) ?? []).length, 1);
@@ -495,11 +495,11 @@ test("fold: without it the output is unchanged, and a folded body equals the unf
   assert.equal(renderMarkdown(FOLDED), renderMarkdown(FOLDED, { fold: () => false }));
   const body = "1. One.\n\n```md\n## Not a heading\n```\n";
   const folded = renderMarkdown(`## Plan\n${body}`, { fold: () => true });
-  assert.equal(folded, `<details><summary>Plan</summary>\n${renderMarkdown(body)}\n</details>`);
+  assert.equal(folded, `<details class="fold" id="plan"><summary><h2>Plan</h2></summary>\n${renderMarkdown(body)}\n</details>`);
 });
 
 test("fold: a ## heading indented inside a list item does not start a folded section", () => {
   const html = renderMarkdown("## Plan\n- item\n  ## inner\n\n## Goal\nx\n", { fold: () => true });
-  assert.equal((html.match(/<details>/g) ?? []).length, 2);
-  assert.doesNotMatch(html, /<summary>inner<\/summary>/);
+  assert.equal((html.match(/<details[ >]/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /<summary><h2>inner<\/h2>/);
 });

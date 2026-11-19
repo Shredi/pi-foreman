@@ -132,8 +132,8 @@ test("show: the plan page folds a reviewer section in details and keeps the owne
   const out = await show.checkpointed(e.plan());
   assert.ok("path" in out);
   const html = fs.readFileSync(out.path, "utf8");
-  assert.match(html, /<details><summary>Goal<\/summary>[\s\S]*Ship it\.[\s\S]*<\/details>/);
-  assert.doesNotMatch(html, /<summary>For the owner<\/summary>/);
+  assert.match(html, /<details class="fold" id="goal"><summary><h2>Goal<\/h2><\/summary>[\s\S]*Ship it\.[\s\S]*<\/details>/);
+  assert.doesNotMatch(html, /<summary><h2[^>]*>For the owner/);
   assert.match(html, /<h2[^>]*>For the owner<\/h2>/);
 });
 

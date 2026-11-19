@@ -152,14 +152,25 @@ function ownerFactLine(p: string, cwd: string, opts?: PlanOpts): string {
   return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
 }
 
+const ALERT_MARKER = /^ {0,3}>[ \t]?\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i;
+const QUOTED = /^ {0,3}>[ \t]?/;
+
 /** The whole owner section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
 export function ownerSummary(text: string): string {
   const sec = ownerSection(text);
   if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "For the owner" summary in this plan.';
   const spans = diagramSpans(sec.lines);
+  let alert = false; // inside a GitHub alert quote: its marker line is dropped and the quote prefix of its lines stripped
   const shown = sec.lines.flatMap((l, i) => {
     const span = spans.find(([a, b]) => i >= a && i <= b);
-    return span ? (i === span[0] ? ["(diagram: see the plan page)"] : []) : [l];
+    if (span) return i === span[0] ? ["(diagram: see the plan page)"] : [];
+    if (ALERT_MARKER.test(l)) {
+      alert = true;
+      return [];
+    }
+    if (alert && QUOTED.test(l)) return [l.replace(QUOTED, "")];
+    alert = false;
+    return [l];
   });
   const lines = shown.filter((l) => l.trim());
   return ["For the owner", ...lines.map((l) => `  ${clean(l)}`)].join("\n");
