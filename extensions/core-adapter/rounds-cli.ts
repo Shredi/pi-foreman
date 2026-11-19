@@ -35,7 +35,7 @@ export function realDeps(env: NodeJS.ProcessEnv = process.env): RoundsDeps {
         const py = await resolvePython({ configPath: null, envPath: env.PI_FOREMAN_PYTHON, platform: process.platform, spawner });
         const cfg = await loadMergedConfig({ python: py.ok ? py.info.executable : null, pkgRoot: PKG_ROOT, agentDir, projectDir: cwd, trusted: false, spawner });
         const v = get(cfg.config, "retro.workspaceKey");
-        return typeof v === "string" && v.trim() ? v : undefined;
+        return typeof v === "string" ? v : undefined;
       } catch {
         return undefined;
       }

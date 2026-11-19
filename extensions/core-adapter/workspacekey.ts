@@ -27,7 +27,7 @@ export function deriveKey(real: string, platform: NodeJS.Platform = process.plat
 }
 
 // Python `str.strip()` whitespace: JS `\s` minus U+FEFF, plus the separators U+001C-U+001F and U+0085
-const PY_BLANK = /^[\s\x1c-\x1f\x85]*$/u.source === "" ? /^$/ : /^(?:(?!\uFEFF)[\s\x1c-\x1f\x85])*$/;
+const PY_BLANK = /^(?:(?!\uFEFF)[\s\x1c-\x1f\x85])*$/;
 
 /** Python `workspace_key`: the `retro.workspaceKey` override (sanitised) when it is a non-blank string, else the key derived from `root`'s real path. */
 export function workspaceKey(root: string, override?: unknown): string {

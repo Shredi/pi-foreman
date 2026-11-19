@@ -152,7 +152,7 @@ Any repository where agents write changes may keep these stores. They are generi
 - Findings stores: review or triage logs with ids, status and a rule or cause. Each finding id is the evidence for its group.
 - Run logs: a record of agent runs with a pass or fail result. It is the basis for a run count, when one exists.
 
-A store can be large. Sample it as step 3 says, and say how many items the store holds in total. A store may also hold rows from other repositories; filter to the target repository and report how many rows you kept.
+A store can be large. Sample it as step 3 says, and say how many items the store holds in total. A store may also hold rows from other repositories; keep the target repository's rows (`foreman findings list --repo OWNER/NAME` or `--workspace here`, see the adapters) and report how many rows you kept.
 
 ## Runtime verification sources
 
