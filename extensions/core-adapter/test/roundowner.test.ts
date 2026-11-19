@@ -6,8 +6,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { childSurface } from "../roundsurface.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-owner-")));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const rt = path.join(base, "repo.worktrees", "round");
@@ -17,7 +17,7 @@ for (const d of [path.join(rt, "src"), path.join(isoA, "src"), path.join(isoB, "
 for (const f of [path.join(rt, "src", "a.ts"), path.join(isoA, "src", "a.ts"), path.join(isoB, "src", "a.ts")]) fs.writeFileSync(f, "x\n");
 const top = (d: string): string | null => (d.startsWith(isoA) ? isoA : d.startsWith(isoB) ? isoB : d.startsWith(rt) ? rt : null);
 
-test("childSurface: write roots by role", { skip: !posix }, () => {
+test("childSurface: write roots by role", { skip: posixOnly }, () => {
   assert.deepEqual(childSurface([rt], rt, "builder", process.platform, top), { write: [rt], read: [rt] });
   assert.deepEqual(childSurface([rt], rt, "reviewer", process.platform, top), { write: [], read: [rt] });
   assert.deepEqual(childSurface([rt], isoA, "builder", process.platform, top), { write: [isoA], read: [rt] });

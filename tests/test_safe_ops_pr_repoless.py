@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_safe_ops_pr import GH_CHECKS, GH_STATUS, RepoLessCase, j, safe_ops  # noqa: E402
+from test_safe_ops_pr import GH_CHECKS, GH_STATUS, RepoLessCase, j, safe_ops
 
 
 class RepolessStatusChecksTest(RepoLessCase):

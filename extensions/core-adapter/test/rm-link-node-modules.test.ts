@@ -8,8 +8,8 @@ import { writesOutside } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-rmnm-"));
 const wt = path.join(base, "wt");
 const outside = path.join(base, "outside-modules");
@@ -23,14 +23,14 @@ const floor = (line: string) => lineFloors(line, segs(line), { cwd: wt, writeRoo
 const roots: GateRoots = { worktree: wt, scratch: [], tmp: [], scratchBase: path.join(base, "s"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false };
 const childOut = (line: string): boolean => writesOutside({ tool: "bash", input: { command: line }, segments: segs(line), text: line }, { roots, platform: process.platform, cwd: wt });
 
-test("foreman: removing the node_modules link itself hits no floor; -r and a trailing slash keep today's judgement", { skip: !posix }, () => {
+test("foreman: removing the node_modules link itself hits no floor; -r and a trailing slash keep today's judgement", { skip: posixOnly }, () => {
   for (const l of ["unlink node_modules", "rm node_modules", "rm -f node_modules"]) assert.equal(floor(l), null, l);
   // today's judgement of the other shapes is unchanged: the same answer as for any path lexically inside the worktree
   assert.equal(floor("rm -r node_modules")?.rule ?? null, floor("rm -r sub")?.rule ?? null);
   assert.equal(floor("rm node_modules/")?.rule ?? null, floor("rm sub/")?.rule ?? null);
 });
 
-test("child: the node_modules link is a write in; -r and a trailing slash keep today's judgement (outside)", { skip: !posix }, () => {
+test("child: the node_modules link is a write in; -r and a trailing slash keep today's judgement (outside)", { skip: posixOnly }, () => {
   for (const l of ["unlink node_modules", "rm node_modules", "rm -f node_modules"]) assert.equal(childOut(l), false, l);
   for (const l of ["rm -r node_modules", "rm -rf node_modules", "rm node_modules/"]) assert.equal(childOut(l), true, l);
 });

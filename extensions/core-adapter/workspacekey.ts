@@ -32,13 +32,20 @@ const PY_BLANK = /^(?:(?!\uFEFF)[\s\x1c-\x1f\x85])*$/;
 /** Python `workspace_key`: the `retro.workspaceKey` override (sanitised) when it is a non-blank string, else the key derived from `root`'s real path. */
 export function workspaceKey(root: string, override?: unknown): string {
   if (typeof override === "string" && !PY_BLANK.test(override)) return sanitizeKey(override);
-  let real: string;
+  return deriveKey(realPath(path.resolve(root)));
+}
+
+/** Python `os.path.realpath`: the native variant expands Windows 8.3 short names (`RUNNER~1`) and drops the `\\?\` prefix as Python does; the JS variant does neither. Falls back to the JS one, then to `p`. */
+export function realPath(p: string): string {
   try {
-    real = fs.realpathSync(path.resolve(root));
+    return fs.realpathSync.native(p);
   } catch {
-    real = path.resolve(root);
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
   }
-  return deriveKey(real);
 }
 
 /** The main checkout of `cwd`: the parent of the git common dir when that dir is named `.git` (a linked worktree resolves to its main checkout); a submodule or bare layout and a folder outside git use the workspace root. */

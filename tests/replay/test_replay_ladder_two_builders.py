@@ -14,10 +14,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
-from test_replay_ladder_fail_climb import CONFIG  # noqa: E402
-from test_replay_review_flow import usage  # noqa: E402
+from driver import PROVIDER_A, load_fixture
+from test_replay import REASON, ReplayCase
+from test_replay_ladder_fail_climb import CONFIG
+from test_replay_review_flow import usage
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)

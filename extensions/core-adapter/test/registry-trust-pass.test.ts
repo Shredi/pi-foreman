@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { CORE_KEY, STARTED_KEY, claimCore, markCoreStarted } from "../registry.ts";
+import { posixOnly } from "./_platform.ts";
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-trustpass-")));
 process.on("exit", () => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -70,7 +71,7 @@ test("a symlinked override of the real global entry stays inert", () => {
   assert.equal(takeover("symlink", userRoot, off(link)), false);
 });
 
-test("a case-changed override path stays inert on non-win32", { skip: process.platform === "win32" }, () => {
+test("a case-changed override path stays inert on non-win32", { skip: posixOnly }, () => {
   assert.equal(takeover("case", userRoot, off(userRoot.replace("user-copy", "USER-COPY"))), false);
 });
 

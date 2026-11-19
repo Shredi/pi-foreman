@@ -11,8 +11,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import PROVIDER_A, load_fixture, tool_results
+from test_replay import REASON, ReplayCase
 
 CFG = {"ceremony": {"launchWait": "block", "childReads": {"builder": {"warn": 2, "deny": 3}}}}
 # R41: a child's npm ci is the review's ask (package-install); the fake child-only reviewer asks, the gate adds the R46 text to the ask

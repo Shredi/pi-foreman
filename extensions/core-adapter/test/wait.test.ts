@@ -9,6 +9,7 @@ import { causeOfCustom } from "../usage.ts";
 import { checkRunId, checkWaitPath, Governor, parseStart, resolveBin, resolveGh, WaitRuntime, wakeMessage } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-wait-")));
@@ -173,7 +174,7 @@ test("wait: ci start is refused when ghRefusal reports no gh", () => {
   assert.equal(rt.active, 0);
 });
 
-test("resolveGh: skips empty, relative and workspace PATH entries, so a planted gh is not picked", { skip: process.platform === "win32" }, () => {
+test("resolveGh: skips empty, relative and workspace PATH entries, so a planted gh is not picked", { skip: posixOnly }, () => {
   const bin = path.join(root, "bin");
   fs.mkdirSync(bin, { recursive: true });
   for (const d of [ws, bin]) {
@@ -188,7 +189,7 @@ test("resolveGh: skips empty, relative and workspace PATH entries, so a planted 
   assert.equal(resolveGh(ws, env([ws, bin].join(":")), "linux"), null);
 });
 
-test("resolveBin: glab and gh are found outside the workspace only, with explicit extensions on win32", { skip: process.platform === "win32" }, () => {
+test("resolveBin: glab and gh are found outside the workspace only, with explicit extensions on win32", { skip: posixOnly }, () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "pf-bin-ws-"));
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), "pf-bin-"));
   try {

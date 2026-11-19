@@ -14,10 +14,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
-from test_replay_ceremony_gate import events, gate_messages  # noqa: E402
-from test_replay_diff_facts import git  # noqa: E402
+from driver import load_fixture, tool_results
+from test_replay import REASON, ReplayCase
+from test_replay_ceremony_gate import events, gate_messages
+from test_replay_diff_facts import git
 
 CALC = "def add(a, b):\n    return a - b\n"
 TEST = "from calc import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"

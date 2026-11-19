@@ -9,9 +9,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const posix = process.platform !== "win32";
 
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r10-usage-")));
 after(async () => {
@@ -30,7 +30,7 @@ const U = usage;
 const F = path.join(usage, "u.jsonl");
 
 // the rendered external_directory_read rules (permissions_gen.py external_rules): last match wins, `*` matches any characters including `/`
-test("rendered external_directory_read: the usage dir and its files are read-allowed, not write-allowed (permissions_gen external_rules)", { skip: !posix }, () => {
+test("rendered external_directory_read: the usage dir and its files are read-allowed, not write-allowed (permissions_gen external_rules)", { skip: posixOnly }, () => {
   const ext = (JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { externalDirectory: { allow: string[]; read: string[]; ask: string[] } }).externalDirectory;
   const fill = (ps: string[]): string[] => ps.map((p) => p.replaceAll("{agentDir}", ag)).filter((p) => !p.includes("{"));
   const re = (p: string): RegExp => new RegExp(`^${p.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);

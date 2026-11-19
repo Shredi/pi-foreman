@@ -20,8 +20,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import REPO, load_fixture  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import REPO, load_fixture
+from test_replay import REASON, ReplayCase
 
 FIXTURE_SERVER = REPO / "extensions" / "core-adapter" / "test" / "fixtures" / "mcp-fixture-server.mjs"
 CHILD_PROVIDER = "foreman-fake"

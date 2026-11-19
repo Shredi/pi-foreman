@@ -11,8 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_safe_ops_ignored_files import put, safe_ops  # noqa: E402
-from test_safe_ops_workflow_untracked import RepoCase  # noqa: E402
+from test_safe_ops_ignored_files import put, safe_ops
+from test_safe_ops_workflow_untracked import RepoCase
 
 
 class WorkflowHasGitTest(unittest.TestCase):

@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import _isolation  # noqa: E402,F401  (agent dir -> temp)
-import foreman_retro as fr  # noqa: E402
+import _isolation  # noqa: F401  (agent dir -> temp)
+import foreman_retro as fr
 
 
 def event(reason):

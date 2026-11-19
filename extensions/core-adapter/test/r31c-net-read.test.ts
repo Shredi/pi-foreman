@@ -14,8 +14,8 @@ import { classify, effectCtx, SAFE_CLASSES } from "../effects.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
 import type { BashRules } from "../timeoutallow.ts";
 import { netUrlOk } from "../netread.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r31c-net-")));
 after(() => rmTestTmp(w));
 const repo = path.join(w, "repo");
@@ -62,7 +62,7 @@ const BOTH = [
   "curl -fsSL -XHEAD http://example.org/x",
 ];
 
-test("R4.1 / R5.1 positives: net-read for an orchestrator and a child", { skip: !posix }, () => {
+test("R4.1 / R5.1 positives: net-read for an orchestrator and a child", { skip: posixOnly }, () => {
   for (const cmd of BOTH) {
     assert.equal(allow(cmd), "net-read", `orchestrator: ${cmd}`);
     assert.equal(allow(cmd, kidCtx()), "net-read", `child: ${cmd}`);
@@ -71,7 +71,7 @@ test("R4.1 / R5.1 positives: net-read for an orchestrator and a child", { skip: 
   assert.ok(!SAFE_CLASSES.includes("net-read"), "net-read never joins SAFE_CLASSES");
 });
 
-test("R5.1 output only into the named scratch dir; wget for orchestrators only", { skip: !posix }, () => {
+test("R5.1 output only into the named scratch dir; wget for orchestrators only", { skip: posixOnly }, () => {
   assert.equal(allow(`curl -sSL -o ${orch}/f https://h.example/x`), "net-read");
   assert.equal(allow(`curl -sS https://h.example/x > ${orch}/f`), "net-read");
   assert.equal(allow(`curl -sSL -o ${kid}/f https://h.example/x`, kidCtx()), "net-read");
@@ -84,7 +84,7 @@ test("R5.1 output only into the named scratch dir; wget for orchestrators only",
   }
 });
 
-test("R4.3 / R5.3 bypasses ask (both roles)", { skip: !posix }, () => {
+test("R4.3 / R5.3 bypasses ask (both roles)", { skip: posixOnly }, () => {
   for (const cmd of [
     "gh api -XPOST x", "gh api --method=POST x", "gh api -f a=b x", "gh api -F a=b x", "gh api --input f x", "gh api --field a=b x", "gh api -H 'X: y' repos/o/n",
     "gh api https://host/x", "gh api //host/x", "gh api /repos/o/n", "gh api 'repos/{owner}/{repo}'", "gh api @x", "gh api --hostname h x", "gh api user --jq '$ENV'", "gh api user --jq 'env.GH_TOKEN'",
@@ -111,7 +111,7 @@ test("R4.3 / R5.3 bypasses ask (both roles)", { skip: !posix }, () => {
   }
 });
 
-test("R4.2 / R5.2 the base asks: the base decides none of the BOTH shapes, and the orchestrator-only wget, with a net-read", { skip: !posix }, async (t) => {
+test("R4.2 / R5.2 the base asks: the base decides none of the BOTH shapes, and the orchestrator-only wget, with a net-read", { skip: posixOnly }, async (t) => {
   const base = loadBase();
   if (!base) return t.skip("base commit not in this clone");
   try {
@@ -128,7 +128,7 @@ test("R4.2 / R5.2 the base asks: the base decides none of the BOTH shapes, and t
   }
 });
 
-test("R4.3 npm tarball-like and file-like specs ask", { skip: !posix }, () => {
+test("R4.3 npm tarball-like and file-like specs ask", { skip: posixOnly }, () => {
   for (const cmd of ["npm view x.tgz", "npm view x@1.tgz", "npm view x.tar", "npm view x.tar.gz", "npm info x@1.0.0.tgz version", "npm ls x.tgz", "npm view @s/x.tgz", "npm view x@file:y", "npm view x@../y"]) {
     assert.equal(allow(cmd), null, `orchestrator: ${cmd}`);
     assert.equal(allow(cmd, kidCtx()), null, `child: ${cmd}`);
@@ -141,7 +141,7 @@ test("R5.3 authority checks of netUrlOk", () => {
   for (const u of ["https://x@github.com/", "https://github.com%2eevil/", "https://github.com./", "evil.example/x", "https://GitHub.com/", "https://h:8080/", "https://h/{a,b}", "https://[::1]/", "https://a.b\\.c.com/", "file:///etc/passwd", "https://", "javascript:alert(1)", "https://1.2.3/", "https://0x7f.1/"]) assert.equal(netUrlOk(u), false, u);
 });
 
-test("R4.5 a network read never composes with a user-allowed program, a write or a build", { skip: !posix }, () => {
+test("R4.5 a network read never composes with a user-allowed program, a write or a build", { skip: posixOnly }, () => {
   assert.equal(allow("curl -sS https://h.example/x | python3 -c 'print(1)'"), null);
   assert.equal(allow("gh pr list && cp tracked.txt copy.txt"), null);
   assert.equal(allow("gh pr list && npm test"), null);
@@ -149,7 +149,7 @@ test("R4.5 a network read never composes with a user-allowed program, a write or
   assert.equal(allow("gh pr list | sed -n 1p"), "net-read");
 });
 
-test("R4.3 npm-package-arg file and directory specs ask (all four subcommands)", { skip: !posix }, () => {
+test("R4.3 npm-package-arg file and directory specs ask (all four subcommands)", { skip: posixOnly }, () => {
   const specs = ["x@.", "x@..", "x@./y", "x@/y", "x@~/y", "x@file:y", "x.tar-gz", "x@1.tar_gz", "x@1.tarxgz", "x@1.TGZ", "x.zip", "x@1.tar.bz2", "@s/x@.", "@s/x.tar-gz", "x@C:y"];
   for (const s of specs) {
     for (const sub of ["view", "info", "ls", "search"]) {

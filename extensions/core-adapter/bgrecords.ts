@@ -27,7 +27,6 @@ const BG_TERMINAL_SCHEMA = "pi-background-tasks.extension-terminal.v1";
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function encode(text: string, maxBytes: number): string {
-  // eslint-disable-next-line no-control-regex
   let bytes = Buffer.from(text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim(), "utf-8");
   if (bytes.length > maxBytes) {
     let end = maxBytes;

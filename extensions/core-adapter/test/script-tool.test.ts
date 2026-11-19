@@ -19,7 +19,7 @@ type Tool = { name: string; execute: (...a: unknown[]) => Promise<Result> };
 const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PARENT_INTERCOM", "HERDR_ENV", "HERDR_PANE_ID"];
 const SCRIPT = ".workflow/scratch/set-key.sh";
 const TEXTS = { description: "Sets one key in the user config.", risk: "A wrong value in the user config.", undo: "Run the script again with the old value." };
-const skipWin = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 
 interface RigOpts {
   /** The owner's answer to the script dialog; undefined = dismissed. May edit files first. */
@@ -149,7 +149,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
 
 const textOf = (r: Result): string => r.content[0]?.text ?? "";
 
-test("foreman_script: approve runs the dry run at once and returns its output; the dialog shows summary, path and hash, not the body", skipWin, async (t) => {
+test("foreman_script: approve runs the dry run at once and returns its output; the dialog shows summary, path and hash, not the body", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   const out = await r.propose();
   assert.equal(out.details?.decision, "approve", textOf(out));
@@ -169,7 +169,7 @@ test("foreman_script: approve runs the dry run at once and returns its output; t
   assert.ok(!r.seen.notices.some((n) => n.includes("would set the key")), "the script body is not shown");
 });
 
-test("foreman_script: the real run follows the dry run, consumes the approval, and the trace keeps its records", skipWin, async (t) => {
+test("foreman_script: the real run follows the dry run, consumes the approval, and the trace keeps its records", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   await r.propose();
   const run = await r.call({ action: "run" });
@@ -299,7 +299,7 @@ test("foreman_script: a subagent child session is refused at runtime with script
   assert.deepEqual(r.runs(), []);
 });
 
-test("foreman_script: dry, run and status with a path refuse", skipWin, async (t) => {
+test("foreman_script: dry, run and status with a path refuse", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   await r.propose();
   for (const action of ["dry", "run", "status"]) {
@@ -310,7 +310,7 @@ test("foreman_script: dry, run and status with a path refuse", skipWin, async (t
   assert.deepEqual(r.runs(), ["mode:--dry-run"], "only the dry run of the approve ran");
 });
 
-test("foreman_script: a second propose drops the first approval", skipWin, async (t) => {
+test("foreman_script: a second propose drops the first approval", { skip: posixOnly }, async (t) => {
   let answer: string | undefined = "approve";
   const r = await rig(t, { answer: () => answer });
   assert.equal((await r.propose()).details?.status, "dry_ok");
@@ -338,7 +338,7 @@ test("foreman_script: a session with a parent gets the dialog in its own window,
   assert.deepEqual(r.runs(), []);
 });
 
-test("foreman_script: a small fix after approval reruns with a notice whose first line has the name and both short hashes", skipWin, async (t) => {
+test("foreman_script: a small fix after approval reruns with a notice whose first line has the name and both short hashes", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   await r.propose();
   const fixed = r.text.replace("would set the key", "will set the key");
@@ -359,7 +359,7 @@ test("foreman_script: a small fix after approval reruns with a notice whose firs
   assert.equal(r.seen.titles.length, 1, "no second dialog");
 });
 
-test("foreman_script: safety.scripts.silentFixLines 0 turns the silent fix off; a larger change always needs a new dialog", skipWin, async (t) => {
+test("foreman_script: safety.scripts.silentFixLines 0 turns the silent fix off; a larger change always needs a new dialog", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve", config: { trace: { enabled: true }, safety: { scripts: { silentFixLines: 0 } } } });
   await r.propose();
   fs.writeFileSync(r.file, r.text.replace("would set", "will set"));
@@ -377,7 +377,7 @@ test("foreman_script: the dialogs counter counts surface script", async (t) => {
   assert.deepEqual(r.trace("dialog").map((x) => x.surface), ["script"]);
 });
 
-test("foreman_script: an open approval does not open the shell: a global install through bash is still stopped", skipWin, async (t) => {
+test("foreman_script: an open approval does not open the shell: a global install through bash is still stopped", { skip: posixOnly }, async (t) => {
   // presence off: an owner dialog of the gate awaits the presence probe otherwise (as _r11rig.ts)
   const r = await rig(t, { answer: () => "approve", config: { trace: { enabled: true }, presence: { enabled: false } } });
   const line = "npm install -g left-pad";
@@ -406,7 +406,7 @@ async function winRig(t: import("node:test").TestContext) {
   return { ...r, shell };
 }
 
-test("foreman_script: Pi's shellPath setting reaches the runner's shell resolution on Windows", skipWin, async (t) => {
+test("foreman_script: Pi's shellPath setting reaches the runner's shell resolution on Windows", { skip: posixOnly }, async (t) => {
   const r = await winRig(t);
   // an existing shell that is neither bash nor sh: only the setting can make the resolution refuse here
   r.shell("/bin/zsh");
@@ -421,7 +421,7 @@ test("foreman_script: Pi's shellPath setting reaches the runner's shell resoluti
   assert.deepEqual(r.runs(), ["mode:--dry-run"]);
 });
 
-test("foreman_script: a real run refused with no_posix_shell is not one of the three attempts", skipWin, async (t) => {
+test("foreman_script: a real run refused with no_posix_shell is not one of the three attempts", { skip: posixOnly }, async (t) => {
   const r = await winRig(t);
   const status = async () => JSON.parse(textOf(await r.call({ action: "status" }))) as { status: string; attempts: number; attemptsLeft: number };
   r.shell("/bin/sh");
@@ -453,7 +453,7 @@ function undoScript(r: Rig, marker = true): string {
 
 const statusOf = async (r: Rig) => JSON.parse(textOf(await r.call({ action: "status" }))) as Record<string, any>;
 
-test("foreman_script: the dialog payload lists approve, revise, reject, and the notice with the undo line last comes before it, unshortened", skipWin, async (t) => {
+test("foreman_script: the dialog payload lists approve, revise, reject, and the notice with the undo line last comes before it, unshortened", { skip: posixOnly }, async (t) => {
   let before: string[] = [];
   let r: Rig | undefined;
   r = await rig(t, { answer: () => ((before = [...r!.seen.notices]), "reject") });
@@ -465,14 +465,14 @@ test("foreman_script: the dialog payload lists approve, revise, reject, and the 
   assert.ok(r.seen.titles[0].startsWith("Run the owner script set-key.sh (sha256 "));
 });
 
-test("foreman_script: the undo line says no for a script without the marker", skipWin, async (t) => {
+test("foreman_script: the undo line says no for a script without the marker", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "reject" });
   undoScript(r, false);
   await r.propose();
   assert.ok(r.seen.notices.some((n) => n.split("\n").at(-1)!.startsWith("Undo through the tool: no")));
 });
 
-test("foreman_script: exactly one notice goes out before the select, with description, risk, undo and the undo line", skipWin, async (t) => {
+test("foreman_script: exactly one notice goes out before the select, with description, risk, undo and the undo line", { skip: posixOnly }, async (t) => {
   let atSelect: string[] = [];
   let r: Rig | undefined;
   r = await rig(t, { answer: () => ((atSelect = [...r!.seen.notices]), "reject") });
@@ -488,7 +488,7 @@ test("foreman_script: exactly one notice goes out before the select, with descri
   assert.ok(lines[6].startsWith("Undo through the tool: yes"));
 });
 
-test("foreman_script: undo is refused before any run and after only a dry run", skipWin, async (t) => {
+test("foreman_script: undo is refused before any run and after only a dry run", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   const none = await r.call({ action: "undo" });
@@ -501,7 +501,7 @@ test("foreman_script: undo is refused before any run and after only a dry run", 
   assert.equal(withPath.details?.code, "script_path");
 });
 
-test("foreman_script: undo after a real run runs the stored bytes with the argument undo, whatever the file on disk is now", skipWin, async (t) => {
+test("foreman_script: undo after a real run runs the stored bytes with the argument undo, whatever the file on disk is now", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -521,7 +521,7 @@ test("foreman_script: undo after a real run runs the stored bytes with the argum
   assert.deepEqual(rec.map((x) => [x.exit, x.attempts]), [[0, 1]]);
 });
 
-test("foreman_script: undo is refused for a script without the marker, even after a real run", skipWin, async (t) => {
+test("foreman_script: undo is refused for a script without the marker, even after a real run", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r, false);
   await r.propose();
@@ -531,7 +531,7 @@ test("foreman_script: undo is refused for a script without the marker, even afte
   assert.deepEqual(r.runs(), ["--dry-run:1", "real:none"]);
 });
 
-test("foreman_script: a failed undo is retried, three attempts in all, then refused", skipWin, async (t) => {
+test("foreman_script: a failed undo is retried, three attempts in all, then refused", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -550,7 +550,7 @@ test("foreman_script: a failed undo is retried, three attempts in all, then refu
   assert.deepEqual([st.undo.attempts, st.undo.attemptsLeft, st.undo.available], [3, 0, false]);
 });
 
-test("foreman_script: a failed undo can be followed by one that succeeds", skipWin, async (t) => {
+test("foreman_script: a failed undo can be followed by one that succeeds", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -562,7 +562,7 @@ test("foreman_script: a failed undo can be followed by one that succeeds", skipW
   assert.equal((await r.call({ action: "undo" })).details?.code, "undo_done");
 });
 
-test("foreman_script: undo expires one hour after the real run and the text says a new propose is the way", skipWin, async (t) => {
+test("foreman_script: undo expires one hour after the real run and the text says a new propose is the way", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -579,7 +579,7 @@ test("foreman_script: undo expires one hour after the real run and the text says
   assert.deepEqual(r.runs(), ["--dry-run:1", "real:none"]);
 });
 
-test("foreman_script: a new propose replaces the proposal and the old run cannot be undone", skipWin, async (t) => {
+test("foreman_script: a new propose replaces the proposal and the old run cannot be undone", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -591,7 +591,7 @@ test("foreman_script: a new propose replaces the proposal and the old run cannot
   assert.deepEqual(r.runs(), ["--dry-run:1", "real:none", "--dry-run:1"]);
 });
 
-test("foreman_script: a real run aborted before the script starts does not make undo available", skipWin, async (t) => {
+test("foreman_script: a real run aborted before the script starts does not make undo available", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -606,14 +606,14 @@ test("foreman_script: a real run aborted before the script starts does not make 
   assert.equal(u.details?.code, "undo_not_run", textOf(u));
 });
 
-test("foreman_script: undo is refused for a subagent child", skipWin, async (t) => {
+test("foreman_script: undo is refused for a subagent child", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { child: "runtime" });
   const u = await r.call({ action: "undo" });
   assert.equal(u.details?.code, "script_child", textOf(u));
   assert.deepEqual(r.runs(), []);
 });
 
-test("foreman_script: the status after a real run says the approval is used up, with the hash that ran, when, and the undo state", skipWin, async (t) => {
+test("foreman_script: the status after a real run says the approval is used up, with the hash that ran, when, and the undo state", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   const text = undoScript(r);
   await r.propose();
@@ -637,7 +637,7 @@ test("foreman_script: the status after a real run says the approval is used up, 
   assert.deepEqual([after.undo.available, after.undo.used, after.undo.attempts, after.undo.attemptsLeft], [false, true, 1, 0]);
 });
 
-test("foreman_script: log names keep .sh, count per kind (dry-1, dry-2, run-1, undo-1), name the undo kind and never reuse an existing log", skipWin, async (t) => {
+test("foreman_script: log names keep .sh, count per kind (dry-1, dry-2, run-1, undo-1), name the undo kind and never reuse an existing log", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   const text = undoScript(r);
   const h8 = sha256(Buffer.from(text)).slice(0, 8);
@@ -652,7 +652,7 @@ test("foreman_script: log names keep .sh, count per kind (dry-1, dry-2, run-1, u
   assert.equal(fs.readFileSync(path.join(scratch, `${pre}-dry-2.log`), "utf8"), "older log\n");
 });
 
-test("foreman_script: a small fix after approval that removes the marker ends undo; the script does not run again and status says so", skipWin, async (t) => {
+test("foreman_script: a small fix after approval that removes the marker ends undo; the script does not run again and status says so", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   const text = undoScript(r);
   await r.propose();
@@ -668,7 +668,7 @@ test("foreman_script: a small fix after approval that removes the marker ends un
   assert.equal(r.runs().length, 3, "the run count stays: undo did not start the script");
 });
 
-test("foreman_script: a small fix that adds the marker to a script proposed without it does not enable undo", skipWin, async (t) => {
+test("foreman_script: a small fix that adds the marker to a script proposed without it does not enable undo", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   const text = undoScript(r, false);
   await r.propose();
@@ -682,7 +682,7 @@ test("foreman_script: a small fix that adds the marker to a script proposed with
   assert.equal(r.runs().length, 3);
 });
 
-test("foreman_script: an undo aborted before the script starts does not use an attempt", skipWin, async (t) => {
+test("foreman_script: an undo aborted before the script starts does not use an attempt", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -700,7 +700,7 @@ test("foreman_script: an undo aborted before the script starts does not use an a
 
 // ---- status undo fields: only when they mean something
 
-test("foreman_script: status after a real run of a script without undo support has no availableUntil and no attemptsLeft", skipWin, async (t) => {
+test("foreman_script: status after a real run of a script without undo support has no availableUntil and no attemptsLeft", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r, false);
   await r.propose();
@@ -711,7 +711,7 @@ test("foreman_script: status after a real run of a script without undo support h
   assert.equal("attemptsLeft" in st.undo, false, JSON.stringify(st.undo));
 });
 
-test("foreman_script: status after a real run with undo support has availableUntil and attemptsLeft", skipWin, async (t) => {
+test("foreman_script: status after a real run with undo support has availableUntil and attemptsLeft", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -721,7 +721,7 @@ test("foreman_script: status after a real run with undo support has availableUnt
   assert.equal(st.undo.attemptsLeft, 3);
 });
 
-test("foreman_script: status after a successful undo has no availableUntil and attemptsLeft 0", skipWin, async (t) => {
+test("foreman_script: status after a successful undo has no availableUntil and attemptsLeft 0", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   undoScript(r);
   await r.propose();
@@ -766,7 +766,7 @@ async function detached(r: Rig, ac = new AbortController(), params: Record<strin
   return { out, pid };
 }
 
-test("foreman_script: an abort of a running real run detaches it; the script finishes, its result arrives as a message and the attempt is not aborted", skipWin, async (t) => {
+test("foreman_script: an abort of a running real run detaches it; the script finishes, its result arrives as a message and the attempt is not aborted", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   sleepScript(r, 1, true);
   const { out, pid } = await detached(r);
@@ -788,7 +788,7 @@ test("foreman_script: an abort of a running real run detaches it; the script fin
   assert.equal(st.running, undefined);
 });
 
-test("foreman_script: while a detached run lives, run, dry, undo and propose are refused; status shows it", skipWin, async (t) => {
+test("foreman_script: while a detached run lives, run, dry, undo and propose are refused; status shows it", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   sleepScript(r, 30, true);
   const { pid } = await detached(r);
@@ -805,7 +805,7 @@ test("foreman_script: while a detached run lives, run, dry, undo and propose are
   }
 });
 
-test("foreman_script: stop ends a detached run, records it as stopped and makes undo available", skipWin, async (t) => {
+test("foreman_script: stop ends a detached run, records it as stopped and makes undo available", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   sleepScript(r, 30, true);
   const { pid } = await detached(r);
@@ -823,7 +823,7 @@ test("foreman_script: stop ends a detached run, records it as stopped and makes 
   assert.match(textOf(again), /nothing to stop/);
 });
 
-test("foreman_script: the time limit still kills a detached run", skipWin, async (t) => {
+test("foreman_script: the time limit still kills a detached run", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   sleepScript(r, 30);
   const { pid } = await detached(r, new AbortController(), { timeoutSeconds: 1 });
@@ -832,7 +832,7 @@ test("foreman_script: the time limit still kills a detached run", skipWin, async
   assert.equal(alive(pid), false);
 });
 
-test("foreman_script: session shutdown kills a detached run and records it as aborted", skipWin, async (t) => {
+test("foreman_script: session shutdown kills a detached run and records it as aborted", { skip: posixOnly }, async (t) => {
   const r = await rig(t, { answer: () => "approve" });
   sleepScript(r, 30);
   const { pid } = await detached(r);

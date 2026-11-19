@@ -333,5 +333,91 @@ class WorkspaceKey(unittest.TestCase):
         self.assertEqual(run(ff.main, ["export", fid, "--to", str(self.tmp / "out"), "--repo", str(self.tmp), "--agent-dir", str(self.agent)])[0] in (0, 1), True)
 
 
+class WorkspaceKey(unittest.TestCase):
+    """Rows carry workspace, repo and branch; `list --workspace/--repo` filters; the `pr` row is tolerated by the readers."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="findings_key_"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.agent = self.tmp / "agent"
+        self.files = self.tmp / "files.txt"
+        self.files.write_text("app/client.py\n")
+
+    def record(self, session="s1", rid="r1", *extra):
+        return run(ff.main, ["record", "--session", session, "--gate", "item", "--model", "m1", "--rung", "0", "--primary", "1",
+                             "--role", "reviewer", "--run-id", rid, "--source", "live", "--head", "abc", "--verdict", "FAIL",
+                             "--files-from", str(self.files), "--agent-dir", str(self.agent)] + list(extra), REPORT)
+
+    def rows(self, session="s1"):
+        p = self.agent / "pi-foreman" / "state" / "findings" / (session + ".jsonl")
+        return [json.loads(ln) for ln in p.read_text(encoding="utf-8").splitlines()]
+
+    def listing(self, *args):
+        return json.loads(run(ff.main, ["list", "--json", "--agent-dir", str(self.agent)] + list(args))[1])
+
+    def test_record_rows_carry_the_three_fields(self):
+        self.record("s1", "r1", "--workspace", "proj-1a2b3c4d", "--repo", "acme/widgets", "--branch", "feature/x")
+        review, finding = self.rows()
+        for row in (review, finding):
+            self.assertEqual((row["workspace"], row["repo"], row["branch"]), ("proj-1a2b3c4d", "acme/widgets", "feature/x"))
+
+    def test_record_without_the_fields_writes_nulls(self):
+        self.record()
+        for row in self.rows():
+            self.assertEqual((row["workspace"], row["repo"], row["branch"]), (None, None, None))
+
+    def test_list_filters_and_old_rows_match_no_filter(self):
+        self.record("s1", "r1", "--workspace", "proj-1a2b3c4d", "--repo", "acme/widgets", "--branch", "b1")
+        self.record("s2", "r2", "--workspace", "other-99999999", "--repo", "acme/other", "--branch", "b2")
+        old = dict(fnd("old1", session="s3"))  # a row written before the fields existed
+        ff._append_lines(str(self.agent / "pi-foreman" / "state" / "findings" / "s3.jsonl"), [old])
+        self.assertEqual(len(self.listing()), 3)
+        self.assertEqual([r["session"] for r in self.listing("--workspace", "proj-1a2b3c4d")], ["s1"])
+        self.assertEqual([r["session"] for r in self.listing("--repo", "ACME/other")], ["s2"])
+        self.assertEqual(self.listing("--workspace", "nope-00000000"), [])
+        self.assertEqual(self.listing("--repo", "acme/widgets", "--workspace", "other-99999999"), [])
+        self.assertEqual(self.listing()[-1]["workspace"], None)
+
+    def test_list_workspace_here_is_the_main_checkout_also_from_a_linked_worktree(self):
+        import os
+        repo = self.tmp / "main-repo"
+        repo.mkdir()
+        git(repo, "init", "-q")
+        (repo / "f.txt").write_text("x")
+        git(repo, "add", "f.txt")
+        git(repo, "commit", "-q", "-m", "base")
+        linked = self.tmp / "linked-tree"
+        git(repo, "worktree", "add", "-q", str(linked), "-b", "side")
+        key = fb.derive_key(str(repo))
+        self.record("s1", "r1", "--workspace", key, "--repo", "acme/widgets", "--branch", "main")
+        self.record("s2", "r2", "--workspace", "other-99999999", "--branch", "main")
+        here = os.getcwd()
+        self.addCleanup(os.chdir, here)
+        sub = repo / "deep"
+        sub.mkdir()
+        for cwd in (repo, linked, sub):
+            os.chdir(cwd)
+            self.assertEqual([r["session"] for r in self.listing("--workspace", "here")], ["s1"], str(cwd))
+        outside = self.tmp / "plain"
+        outside.mkdir()
+        os.chdir(outside)
+        self.assertEqual(self.listing("--workspace", "here"), [])
+
+    def test_readers_tolerate_pr_rows_and_new_fields(self):
+        self.record("s1", "r1", "--workspace", "proj-1a2b3c4d", "--repo", "acme/widgets", "--branch", "b1")
+        pr = {"type": "pr", "session": "s1", "workspace": "proj-1a2b3c4d", "repo": "acme/widgets", "branch": "b1", "number": 7,
+              "head": "abc", "ts": "2026-01-01T00:00:20Z"}
+        ff._append_lines(str(self.agent / "pi-foreman" / "state" / "findings" / "s1.jsonl"), [pr])
+        recs = ff.load_records(str(self.agent))
+        self.assertEqual([r["type"] for r in recs], ["review", "finding", "pr"])
+        self.assertEqual(len(self.listing()), 1)
+        table = ff.models_table(recs)
+        self.assertEqual(table["rows"][0]["reviews"], 1)
+        self.assertEqual(run(fr.main, ["models", "--agent-dir", str(self.agent), "--cwd", str(self.tmp), "--json", "--no-backlog"])[0], 0)
+        fid = self.listing()[0]["id"]
+        self.assertEqual(run(ff.main, ["dismiss", fid, "not a bug", "--agent-dir", str(self.agent)])[0], 0)
+        self.assertEqual(run(ff.main, ["export", fid, "--to", str(self.tmp / "out"), "--repo", str(self.tmp), "--agent-dir", str(self.agent)])[0] in (0, 1), True)
+
+
 if __name__ == "__main__":
     unittest.main()

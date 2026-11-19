@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   assignment, deviations, equivalentCommand, installedAddons, loadFeatures, planChanges, resolveSetupPython, safetyFloorViolations, shippedState, toggleable, loadDefaults,
 } from "../profiles.mjs";
+import { posixOnly } from "./_platform.ts";
 
 const leafPaths = (r: any, id: string) => r.changes.find((c: any) => c.feature === id)?.leaves.map((l: any) => l.path) ?? [];
 
@@ -110,7 +111,7 @@ test("equivalentCommand builds the flag line", () => {
   assert.equal(equivalentCommand({ project: true }), "foreman setup --project");
 });
 
-test("resolveSetupPython: python.path wins, then PI_FOREMAN_PYTHON; the probe line is parsed", { skip: process.platform === "win32" }, () => {
+test("resolveSetupPython: python.path wins, then PI_FOREMAN_PYTHON; the probe line is parsed", { skip: posixOnly }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-profiles-py-"));
   try {
     const fake = (name: string, version: string) => {

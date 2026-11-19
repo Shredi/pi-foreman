@@ -11,10 +11,10 @@ import { literalOwnedDirs, ownedRoots } from "../owned.ts";
 import { pathDecide, type GateRoots } from "../pathrules.ts";
 import { sessionScratchRoot } from "../worktreeroot.ts";
 import type { LaunchBinding } from "../usage.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
 const base = fs.realpathSync.native(mkTestTmp("pf-d82-"));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
-const posix = process.platform !== "win32";
 const tmp = path.join(base, "tmp");
 fs.mkdirSync(tmp);
 const deps = { tmpdir: () => tmp };
@@ -92,7 +92,7 @@ test("no git top, or a root inside a git work tree: no worktree base (the temp f
   assert.equal(sessionScratchRoot(repo, path.join(inner, "<repo>")), null);
 });
 
-test("symlinked .foreman: this and every later launch use the temp folder", { skip: !posix }, () => {
+test("symlinked .foreman: this and every later launch use the temp folder", { skip: posixOnly }, () => {
   const repo = mainRepo();
   const root = sessionScratchRoot(repo, undefined)!;
   const elsewhere = path.join(base, "elsewhere");
@@ -107,7 +107,7 @@ test("symlinked .foreman: this and every later launch use the temp folder", { sk
   assert.deepEqual(fs.readdirSync(elsewhere), [], "nothing was written through the link");
 });
 
-test("an existing worktree root keeps its mode", { skip: !posix }, () => {
+test("an existing worktree root keeps its mode", { skip: posixOnly }, () => {
   const repo = mainRepo();
   const root = sessionScratchRoot(repo, undefined)!;
   fs.mkdirSync(root, { mode: 0o755 });
@@ -148,7 +148,7 @@ test("removeScratch: a lane strictly inside either base, never the base itself o
   assert.deepEqual(removeScratch(lane, [repo], d), { removed: true });
 });
 
-test("session start removes session lanes older than 7 days, not newer ones", { skip: !posix }, () => {
+test("session start removes session lanes older than 7 days, not newer ones", { skip: posixOnly }, () => {
   const repo = mainRepo();
   const root = sessionScratchRoot(repo, undefined)!;
   const wt = wtOf(root);

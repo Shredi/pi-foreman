@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import stop_intercom_broker  # noqa: E402
+from driver import stop_intercom_broker
 
 SLEEPS = "import time; time.sleep(120)"
 

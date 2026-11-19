@@ -9,6 +9,7 @@ import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { shellWriteTargets, unresolvedWriteWords } from "../defaults.ts";
 import { parseShell } from "../shellast.ts";
+import { posixOnly } from "./_platform.ts";
 
 function rig() {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r2src-")));
@@ -23,7 +24,6 @@ function rig() {
   return { root, H, S, dirs: childHandoffDirs(hand, "me") };
 }
 type Rig = ReturnType<typeof rig>;
-const posix = process.platform !== "win32";
 const run = (r: Rig, command: string, tool = "bash", cwd = r.root) => selfRulingRefusal(tool, { command }, cwd, r.dirs);
 
 type Row = [name: string, line: (r: Rig) => string];
@@ -66,7 +66,7 @@ const REFUSED: Row[] = [
 ];
 
 for (const [name, line] of REFUSED) {
-  test(`refused: ${name}`, { skip: !posix }, () => {
+  test(`refused: ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     const tool = name === "bg_run" ? "bg_run" : "bash";
     assert.equal(run(r, line(r), tool), SELF_RULING_REASON, line(r));
@@ -99,7 +99,7 @@ const NOT_REFUSED: Row[] = [
 ];
 
 for (const [name, line] of NOT_REFUSED) {
-  test(`not refused: ${name}`, { skip: !posix }, () => {
+  test(`not refused: ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, line(r)), undefined, line(r));
   });
@@ -117,7 +117,7 @@ const PS_REFUSED: Row[] = [
 ];
 
 for (const [name, line] of PS_REFUSED) {
-  test(`powershell refused: ${name}`, { skip: !posix }, () => {
+  test(`powershell refused: ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, line(r), "powershell"), SELF_RULING_REASON, line(r));
   });
@@ -132,13 +132,13 @@ const PS_NOT_REFUSED: Row[] = [
 ];
 
 for (const [name, line] of PS_NOT_REFUSED) {
-  test(`powershell not refused: ${name}`, { skip: !posix }, () => {
+  test(`powershell not refused: ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, line(r), "powershell"), undefined, line(r));
   });
 }
 
-test("a ruling in a dir where the session is the parent is no refusal for any kind", { skip: !posix }, () => {
+test("a ruling in a dir where the session is the parent is no refusal for any kind", { skip: posixOnly }, () => {
   const r = rig();
   const other = path.join(r.root, ".workflow", "handoffs", "down");
   fs.mkdirSync(other, { recursive: true });
@@ -184,7 +184,7 @@ const MODE_REFUSED: Row[] = [
 
 for (const [name, line] of MODE_REFUSED) {
   for (const cd of [false, true]) {
-    test(`refused: ${name}${cd ? " behind cd" : ""}`, { skip: !posix }, () => {
+    test(`refused: ${name}${cd ? " behind cd" : ""}`, { skip: posixOnly }, () => {
       const r = rig();
       const l = line(r);
       assert.equal(run(r, cd ? `cd ${r.H} && ${l.replaceAll(`${r.H}/`, "")}` : l), SELF_RULING_REASON, l);
@@ -192,13 +192,13 @@ for (const [name, line] of MODE_REFUSED) {
   }
 }
 
-test("refused: a copier with a target directory reads its operands too (cwd in the handoff dir); a PowerShell colon parameter names the file", { skip: !posix }, () => {
+test("refused: a copier with a target directory reads its operands too (cwd in the handoff dir); a PowerShell colon parameter names the file", { skip: posixOnly }, () => {
   const r = rig();
   assert.equal(run(r, `cp -t ${r.S} ruling.md`, "bash", r.H), SELF_RULING_REASON);
   assert.equal(run(r, `Set-Content -Path:${r.H}/ruling.md -Value x`, "powershell"), SELF_RULING_REASON);
 });
 
-test("not refused: chmod, chown and chgrp of another file", { skip: !posix }, () => {
+test("not refused: chmod, chown and chgrp of another file", { skip: posixOnly }, () => {
   const r = rig();
   for (const line of [`chmod 600 ${r.H}/notes.md`, `chown me ${r.H}/plan.md`, `chmod 600 ${r.S}/ruling.md`, `chmod --reference=${r.H}/notes.md x`]) assert.equal(run(r, line), undefined, line);
 });
@@ -206,22 +206,22 @@ test("not refused: chmod, chown and chgrp of another file", { skip: !posix }, ()
 const BRACE_LINES = ["echo x > ruling{,-1}.md", "echo x > rul{ing,e}.md", "touch ruling{,-1}.md", "chmod 444 ruling.md"];
 
 for (const line of BRACE_LINES) {
-  test(`refused with the cwd in the handoff dir: ${line}`, { skip: !posix }, () => {
+  test(`refused with the cwd in the handoff dir: ${line}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, line, "bash", r.H), SELF_RULING_REASON, line);
   });
-  test(`refused behind cd from another cwd: ${line}`, { skip: !posix }, () => {
+  test(`refused behind cd from another cwd: ${line}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, `cd ${r.H} && ${line}`), SELF_RULING_REASON, line);
   });
 }
 
-test("not refused: a brace list of other names with the cwd in the handoff dir (behind cd the line names the dir beside an unresolved word: the variable clause refuses it)", { skip: !posix }, () => {
+test("not refused: a brace list of other names with the cwd in the handoff dir (behind cd the line names the dir beside an unresolved word: the variable clause refuses it)", { skip: posixOnly }, () => {
   const r = rig();
   assert.equal(run(r, "echo x > note{,-1}.md", "bash", r.H), undefined);
 });
 
-test("a stdin-fed segment's text ends at its terminator: a read after it is no refusal, its body naming the ruling and a write after it are", { skip: !posix }, () => {
+test("a stdin-fed segment's text ends at its terminator: a read after it is no refusal, its body naming the ruling and a write after it are", { skip: posixOnly }, () => {
   const r = rig();
   assert.equal(run(r, `python3 - <<'EOF'\nprint(1)\nEOF\ncat ${r.H}/ruling.md`), undefined);
   assert.equal(run(r, `python3 - <<'EOF'\nprint(1)\nEOF\ngrep x ${r.H}/ruling.md; echo done`), undefined);
@@ -264,7 +264,7 @@ const CWD_REFUSED: Array<[string, string]> = [
 ];
 
 for (const [name, line] of CWD_REFUSED) {
-  test(`refused (cwd in the handoff dir, behind cd): ${name}`, { skip: !posix }, () => {
+  test(`refused (cwd in the handoff dir, behind cd): ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     for (const [label, got] of cwdsOf(r, line)) assert.equal(got, SELF_RULING_REASON, label);
   });
@@ -282,18 +282,18 @@ const CWD_NOT_REFUSED: Array<[string, string]> = [
 ];
 
 for (const [name, line] of CWD_NOT_REFUSED) {
-  test(`not refused with the cwd in the handoff dir: ${name}`, { skip: !posix }, () => {
+  test(`not refused with the cwd in the handoff dir: ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, line, "bash", r.H), undefined, line);
   });
 }
 
-test("not refused: inline code that only prints a ruling name from a cwd outside the handoff dir, with no handoff dir on the line", { skip: !posix }, () => {
+test("not refused: inline code that only prints a ruling name from a cwd outside the handoff dir, with no handoff dir on the line", { skip: posixOnly }, () => {
   const r = rig();
   for (const line of [`python3 -c "print('ruling.md')"`, `python3 -c "open('ruling.md').read()"`, `bash <<EOF\ncat > ruling.md\nEOF`, "echo x > brief-{a..c}.md"]) assert.equal(run(r, line, "bash", r.S), undefined, line);
 });
 
-test("D2/D3 from a subfolder of the handoff dir: ../name and a range of ../name", { skip: !posix }, () => {
+test("D2/D3 from a subfolder of the handoff dir: ../name and a range of ../name", { skip: posixOnly }, () => {
   const r = rig();
   const work = path.join(r.H, "work");
   fs.mkdirSync(work, { recursive: true });
@@ -302,14 +302,14 @@ test("D2/D3 from a subfolder of the handoff dir: ../name and a range of ../name"
   for (const line of ["echo x > ../notes.md", `sh <<EOF\ncat ../ruling.md\nEOF`, "echo x > ../note-{1..3}.md"]) assert.equal(run(r, line, "bash", work), undefined, line);
 });
 
-test("-t forms: the destination directory plus the operand's name; a source is no write word", { skip: !posix }, () => {
+test("-t forms: the destination directory plus the operand's name; a source is no write word", { skip: posixOnly }, () => {
   const r = rig();
   for (const line of [`cp -t ${r.H} /tmp/ruling.md`, `cp --target-directory=${r.H} /tmp/brief-a.md`, `mv -t ${r.H} /tmp/ruling-1.md`, `install -t ${r.H} /tmp/ruling.md`, `ln -s -t ${r.H} /tmp/ruling.md`]) assert.equal(run(r, line), SELF_RULING_REASON, line);
   for (const line of [`cp -t ${r.H} /tmp/notes.md`, `cp -t ${r.S} ${r.H}/ruling.md x`, `cp --target-directory ${r.S} ${r.H}/ruling.md /tmp/x`]) assert.equal(run(r, line), undefined, line);
   assert.equal(run(r, `cp -t ${r.S} ${r.H}/ruling.md`), SELF_RULING_REASON, "the last operand stays a target, as the old layer read it");
 });
 
-test("D4: a heredoc on a compound command owns the compound and its body, not the lines after it", { skip: !posix }, () => {
+test("D4: a heredoc on a compound command owns the compound and its body, not the lines after it", { skip: posixOnly }, () => {
   const r = rig();
   const compounds = ["{ python3 -; }", "while read l; do python3 -; done", "if true; then python3 -; fi"];
   for (const c of compounds) {
@@ -326,7 +326,7 @@ test("D4: a heredoc on a compound command owns the compound and its body, not th
 const WRAPPERS = ["env ", "env -i ", "env A=1 ", "command ", "nice ", "nice -n 5 ", "timeout 5 ", "nohup ", "xargs ", "time ", "stdbuf -o0 ", "/usr/bin/env "];
 
 for (const w of WRAPPERS) {
-  test(`E1 refused behind '${w.trim()}': a stdin-fed shell or interpreter whose text writes the ruling`, { skip: !posix }, () => {
+  test(`E1 refused behind '${w.trim()}': a stdin-fed shell or interpreter whose text writes the ruling`, { skip: posixOnly }, () => {
     const r = rig();
     for (const sh of ["sh", "bash"]) {
       assert.equal(run(r, `${w}${sh} <<EOF\necho x > ${r.H}/ruling.md\nEOF`), SELF_RULING_REASON, `${sh} heredoc, full path`);
@@ -337,7 +337,7 @@ for (const w of WRAPPERS) {
     assert.equal(run(r, `${w}python3 - <<EOF\nopen('${r.H}/ruling.md','w')\nEOF`), SELF_RULING_REASON, "python3 heredoc, full path");
     assert.equal(run(r, `${w}python3 - <<EOF\nopen('ruling.md','w')\nEOF`, "bash", r.H), SELF_RULING_REASON, "python3 heredoc, relative");
   });
-  test(`E1 not refused behind '${w.trim()}': the body reads the ruling, or writes another file`, { skip: !posix }, () => {
+  test(`E1 not refused behind '${w.trim()}': the body reads the ruling, or writes another file`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, `${w}sh <<EOF\ncat ruling.md\nEOF`, "bash", r.H), undefined, "a read");
     assert.equal(run(r, `${w}sh <<EOF\necho x > notes.md\nEOF`, "bash", r.H), undefined, "another file");
@@ -357,7 +357,7 @@ const FUNCTIONS = [
 
 for (const [i, def] of FUNCTIONS.entries()) {
   for (const call of ["", "; f", "; f <<EOF\nx\nEOF"]) {
-    test(`E2 function form ${i}${call ? " with a call" : ""}: a write of the ruling is refused, another file is not`, { skip: !posix }, () => {
+    test(`E2 function form ${i}${call ? " with a call" : ""}: a write of the ruling is refused, another file is not`, { skip: posixOnly }, () => {
       const r = rig();
       assert.equal(run(r, def(`cat > ${r.H}/ruling.md`) + call), SELF_RULING_REASON, "full path");
       assert.equal(run(r, def(`tee ${r.H}/brief-a.md`) + call), SELF_RULING_REASON, "full path, brief");
@@ -380,7 +380,7 @@ const OPAQUE_WRITES: Array<[string, (b: string) => string]> = [
 ];
 
 for (const [name, wrap] of OPAQUE_WRITES) {
-  test(`E2 opaque kind ${name}: a write of the ruling is refused (full path, relative with the cwd in the dir); a write of another file is not`, { skip: !posix }, () => {
+  test(`E2 opaque kind ${name}: a write of the ruling is refused (full path, relative with the cwd in the dir); a write of another file is not`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, wrap(`echo x > ${r.H}/ruling.md`)), SELF_RULING_REASON, "full path");
     assert.equal(run(r, wrap("echo x > ruling.md"), "bash", r.H), SELF_RULING_REASON, "relative");
@@ -390,7 +390,7 @@ for (const [name, wrap] of OPAQUE_WRITES) {
 }
 
 // F3: an opaque construct is judged by its write words only; a read of the ruling in it, by its full path or its name, is no refusal.
-test("F3 a read inside an opaque construct is no refusal; a write in it is", { skip: !posix }, () => {
+test("F3 a read inside an opaque construct is no refusal; a write in it is", { skip: posixOnly }, () => {
   const r = rig();
   const H = r.H;
   const reads = [
@@ -416,7 +416,7 @@ test("F3 a read inside an opaque construct is no refusal; a write in it is", { s
 });
 
 // F1: the literal path is judged on every heredoc and here-string text, whatever program it feeds (a program the gate's parse does not model).
-test("F1 a heredoc or here-string that names the ruling by its full path is refused whatever it feeds", { skip: !posix }, () => {
+test("F1 a heredoc or here-string that names the ruling by its full path is refused whatever it feeds", { skip: posixOnly }, () => {
   const r = rig();
   const feeds = ["busybox sh", "busybox ash", "toybox sh", "chroot / sh", "ionice -c3 sh", "unshare sh", "caffeinate sh", "script -q /dev/null sh", "ssh localhost", "git -C . sh", "tclsh"];
   for (const f of feeds) {
@@ -430,7 +430,7 @@ test("F1 a heredoc or here-string that names the ruling by its full path is refu
 });
 
 // F2: one whole-run join of the literals of inline code.
-test("F2 a name joined from a long run of literals is still read", { skip: !posix }, () => {
+test("F2 a name joined from a long run of literals is still read", { skip: posixOnly }, () => {
   const r = rig();
   const pieces = (name: string): string => [...name].map((c) => `'${c}'`).join("+");
   for (const name of ["ruling.md", "brief-a.md"]) {
@@ -440,7 +440,7 @@ test("F2 a name joined from a long run of literals is still read", { skip: !posi
 });
 
 // F4/F5: each text takes its own fed segment; a line of many fed heredocs is judged in one pass.
-test("F4 many fed heredocs on one line: the one that writes the ruling is found, the rest do not cost a cross product", { skip: !posix }, () => {
+test("F4 many fed heredocs on one line: the one that writes the ruling is found, the rest do not cost a cross product", { skip: posixOnly }, () => {
   const r = rig();
   const many = (n: number, last: string): string => Array.from({ length: n }, () => `env sh <<EOF\necho x > notes.md\nEOF`).join("\n") + `\n${last}`;
   const t0 = Date.now();
@@ -449,7 +449,7 @@ test("F4 many fed heredocs on one line: the one that writes the ruling is found,
   assert.ok(Date.now() - t0 < 5000, `took ${Date.now() - t0} ms`);
 });
 
-test("E3 nested heredocs past the nesting cap: refused when the body at the cap names the ruling, not when it names nothing", { skip: !posix }, () => {
+test("E3 nested heredocs past the nesting cap: refused when the body at the cap names the ruling, not when it names nothing", { skip: posixOnly }, () => {
   const r = rig();
   const nest = (depth: number, body: string): string => {
     let s = body;
@@ -466,7 +466,7 @@ test("E3 nested heredocs past the nesting cap: refused when the body at the cap 
 
 const LITERALS = (n: number, tail: string): string => Array.from({ length: n }, (_, i) => `'a${i}'`).join(" + ") + tail;
 
-test("E4 a text over the literal cap is refused only when it names a child dir or a ruling name literally", { skip: !posix }, () => {
+test("E4 a text over the literal cap is refused only when it names a child dir or a ruling name literally", { skip: posixOnly }, () => {
   const r = rig();
   for (const n of [300, 2000]) {
     assert.equal(run(r, `python3 -c "${LITERALS(n, "")}"`, "bash", r.H), undefined, `${n} literals, nothing named`);
@@ -477,14 +477,14 @@ test("E4 a text over the literal cap is refused only when it names a child dir o
   }
 });
 
-test("E4 under the literal cap the words still resolve; a run of eight joined literals still spells the name", { skip: !posix }, () => {
+test("E4 under the literal cap the words still resolve; a run of eight joined literals still spells the name", { skip: posixOnly }, () => {
   const r = rig();
   assert.equal(run(r, `python3 -c "${LITERALS(100, " + 'ruling.md'")}"`, "bash", r.H), SELF_RULING_REASON, "100 literals, a relative name, cwd in the dir");
   assert.equal(run(r, `python3 -c "'r'+'u'+'l'+'i'+'n'+'g'+'.m'+'d'"`, "bash", r.H), SELF_RULING_REASON, "eight joined literals");
 });
 
 // Round 2, step 2a, fifth revision: a heredoc in an arithmetic for is read whatever the parse shows; brace words are expanded within a budget, code text is not.
-test("D2 a heredoc inside an arithmetic for: the full path is refused; a read of the relative name in the loop is not", { skip: !posix }, () => {
+test("D2 a heredoc inside an arithmetic for: the full path is refused; a read of the relative name in the loop is not", { skip: posixOnly }, () => {
   const r = rig();
   for (const name of ["ruling.md", "brief-a.md"]) {
     const loop = (inner: string): string => `for ((i=0;i<1;i++)); do ${inner}\ndone`;
@@ -504,18 +504,18 @@ const BRIEF_REFUSED: Array<[string, string, "root" | "H"]> = [
 ];
 
 for (const [name, line, at] of BRIEF_REFUSED) {
-  test(`brief name, refused: ${name}`, { skip: !posix }, () => {
+  test(`brief name, refused: ${name}`, { skip: posixOnly }, () => {
     const r = rig();
     assert.equal(run(r, line.replaceAll("<H>", r.H), "bash", at === "H" ? r.H : r.root), SELF_RULING_REASON, line);
   });
 }
 
-test("brief name, not refused: a read, and a write of another file, with the cwd in the handoff dir", { skip: !posix }, () => {
+test("brief name, not refused: a read, and a write of another file, with the cwd in the handoff dir", { skip: posixOnly }, () => {
   const r = rig();
   for (const line of ["sed -n p brief-a.md", "curl -o notes.md http://example.com/x", "git log --output=notes.md"]) assert.equal(run(r, line, "bash", r.H), undefined, line);
 });
 
-test("D1 expansion cost: lines with many brace words and brace words in code text are answered", { skip: !posix }, () => {
+test("D1 expansion cost: lines with many brace words and brace words in code text are answered", { skip: posixOnly }, () => {
   const r = rig();
   const cp = `cp -t d{1..64} ${Array.from({ length: 200 }, () => "a{1..64}").join(" ")}`;
   assert.equal(run(r, cp, "bash", r.S), undefined);
@@ -526,7 +526,7 @@ test("D1 expansion cost: lines with many brace words and brace words in code tex
 });
 
 // one budget per top-level call: a brace word past it is not expanded and counts as unresolved
-test("D4 over the budget: a brace word is refused by its literal text, its cwd, or the names on the line", { skip: !posix }, () => {
+test("D4 over the budget: a brace word is refused by its literal text, its cwd, or the names on the line", { skip: posixOnly }, () => {
   const r = rig();
   const burn = (cmd: string): string => Array.from({ length: 5 }, () => cmd).join("\n");
   assert.equal(run(r, `${burn("chmod 600 a{1..64}")}\nchmod 444 ${r.H}/r{u,x}ling.md`, "bash", r.root), SELF_RULING_REASON);
@@ -541,7 +541,7 @@ const BODY = (kind: string, inner: string): string =>
 for (const kind of ["for", "select"]) {
   for (const name of ["ruling.md", "brief-a.md"]) {
     for (const [sh, at] of [["sh", "H"], ["bash", "H"], ["python3 -", "H"], ["sh", "work"]]) {
-      test(`D2b ${kind}: a relative write in a heredoc (${sh}, ${name}, cwd ${at}), refused`, { skip: !posix }, () => {
+      test(`D2b ${kind}: a relative write in a heredoc (${sh}, ${name}, cwd ${at}), refused`, { skip: posixOnly }, () => {
         const r = rig();
         const rel = at === "work" ? `../${name}` : name;
         const body = sh === "python3 -" ? `open('${rel}','w')` : `echo x > ${rel}`;
@@ -549,7 +549,7 @@ for (const kind of ["for", "select"]) {
         assert.equal(run(r, BODY(kind, `${sh} <<'EOF'\n${body}\nEOF`), "bash", cwd), SELF_RULING_REASON);
       });
     }
-    test(`D2b ${kind}: a read in a heredoc (${name}) is no refusal`, { skip: !posix }, () => {
+    test(`D2b ${kind}: a read in a heredoc (${name}) is no refusal`, { skip: posixOnly }, () => {
       const r = rig();
       assert.equal(run(r, BODY(kind, `sh <<'EOF'\ncat ${name}\nEOF`), "bash", r.H), undefined);
     });
@@ -564,7 +564,7 @@ for (const kind of ["for", "select"]) {
   for (const name of ["ruling.md", "brief-a.md"]) {
     for (const sh of ["sh", "bash"]) {
       for (const at of ["H", "work"]) {
-        test(`D2c ${kind} brace body: a relative write in a heredoc (${sh}, ${name}, cwd ${at}), refused`, { skip: !posix }, () => {
+        test(`D2c ${kind} brace body: a relative write in a heredoc (${sh}, ${name}, cwd ${at}), refused`, { skip: posixOnly }, () => {
           const r = rig();
           const rel = at === "work" ? `../${name}` : name;
           const cwd = at === "work" ? path.join(r.H, "work") : r.H;
@@ -572,7 +572,7 @@ for (const kind of ["for", "select"]) {
         });
       }
     }
-    test(`D2c ${kind} brace body: a read in a heredoc (${name}) is no refusal`, { skip: !posix }, () => {
+    test(`D2c ${kind} brace body: a read in a heredoc (${name}) is no refusal`, { skip: posixOnly }, () => {
       const r = rig();
       assert.equal(run(r, BRACE_BODY(kind, `sh <<'EOF'\ncat ${name}\nEOF`), "bash", r.H), undefined);
     });
@@ -582,7 +582,7 @@ for (const kind of ["for", "select"]) {
 // D5: past the budget, a mode-program word is resolved against the cwd of the segment and of the line
 for (const prog of ["chmod 444", "chown me", "chgrp staff"]) {
   for (const name of ["r{u,x}ling.md", "br{i,x}ef-a.md"]) {
-    test(`D5 over the budget: ${prog} ../${name} from <H>/work, refused; from scratch, not`, { skip: !posix }, () => {
+    test(`D5 over the budget: ${prog} ../${name} from <H>/work, refused; from scratch, not`, { skip: posixOnly }, () => {
       const r = rig();
       const burn = Array.from({ length: 5 }, () => "chmod 600 a{1..64}").join("\n");
       assert.equal(run(r, `${burn}\n${prog} ../${name}`, "bash", path.join(r.H, "work")), SELF_RULING_REASON);
