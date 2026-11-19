@@ -213,7 +213,8 @@ function pushFloor(call: GitCall, env: FloorEnv): FloorHit | null {
   const alt = "Push only your own branch explicitly: `git push -u origin <your-branch>`. Ask the user for force pushes, deletions, mirror pushes and pushes to a default branch.";
   if (force) return hit("git-push-force", `\`git push ${force}\` rewrites or deletes remote refs. ${alt}`);
   const refspecs = positional.slice(1).filter((r) => r !== "tag");
-  const odd = refspecs.find((r) => r.startsWith("+") || r.startsWith(":") || r.endsWith(":") || r.split(":").length > 2);
+  // a `src:dst` whose destination is a variable cannot be compared with the protected branches: refused as before the refspec relaxation
+  const odd = refspecs.find((r) => r.startsWith("+") || r.startsWith(":") || r.endsWith(":") || r.split(":").length > 2 || (r.includes(":") && /[$`]/.test(r.slice(r.indexOf(":") + 1))));
   if (odd !== undefined) return hit("git-push-force", `The refspec '${odd}' can overwrite or delete any remote ref. ${alt}`);
   const prot = [...protectedSet(env)];
   const cwd = call.cwd ?? env.cwd;
@@ -386,6 +387,8 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   if (call.sub === "remote") return remoteFloor(call);
   if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env);
+  // `-e <pattern>` reads as "keep this", and a pattern that matches nothing deletes the whole tree (the old Python delete check refused it in every mode)
+  if (call.sub === "clean" && call.rest.some((w) => w === "--exclude" || w.startsWith("--exclude=") || /^-(?!-)\S*e/.test(w))) return hit("git-clean-exclude", "`git clean` with `-e` or `--exclude` deletes everything the pattern does not match, and a pattern that matches nothing deletes the whole tree. Name the paths to clean instead; a later change moves this check to the judge.");
   return null;
 }
 
@@ -516,6 +519,22 @@ function outside(word: string, cwd: string | null, env: FloorEnv): boolean {
   return !roots.some((r) => formsOf(r, env).some((rf) => mine.some((f) => lexUnder(env.platform ?? process.platform, rf, f))));
 }
 
+/**
+ * The word a segment writes to, truncates or changes recursively that holds a variable (the checks of the old Python delete guard, refused in every mode until PR C moves them
+ * to the judge): `dd of=$X`, `chmod -R`/`chown -R` with a variable operand, `truncate -s 0 $X`, and a `>` or `&>` redirect whose whole target is a variable.
+ */
+function unknownWriteTarget(seg: ShellSegment, prog: string): string | undefined {
+  const a = seg.argv;
+  const operands = (): string[] => a.filter((w) => !w.startsWith("-") || w === "-");
+  // the old check read a `>` target that ends the command (nothing after it): the last redirect of a segment without a here-document or an input redirect
+  const last = seg.redirects[seg.redirects.length - 1];
+  if (last && !seg.heredoc && !seg.redirects.some((r) => r.op === "<" || r.op === "<>") && (last.op === ">" || last.op === ">|" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target)) return last.target;
+  if (prog === "dd") return a.find((w) => /^of=/.test(w) && /[$`]/.test(w));
+  if ((prog === "chmod" || prog === "chown") && a.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) return operands().slice(1).find((w) => /[$`]/.test(w));
+  if (prog === "truncate" && a.some((w) => w === "0" || w === "--size=0" || w === "-s0")) return operands().find((w) => /[$`]/.test(w));
+  return undefined;
+}
+
 /** The floors of one segment, with the fragment of the denial: the program word and the operand the reason names (else the first arguments). */
 export function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
   const h = segmentFloorsOf(seg, env, line);
@@ -540,6 +559,8 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
     return hit("disk", `\`${prog}\` formats or repartitions a disk. Ask the user.`);
   }
   if (prog === "dd" && seg.argv.some((w) => /^of=(\/dev\/|\\\\\.\\)/i.test(w))) return hit("disk", "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
+  const unreadable = unknownWriteTarget(seg, prog);
+  if (unreadable !== undefined) return hit("unknown-write-target", `The target '${cutFragment(unreadable)}' of this write, truncation or recursive permission change is a variable the gate cannot read, so it could be any path. Name the path literally; a later change moves this check to the judge.`);
   for (const r of seg.redirects) if (r.op !== "<" && r.op !== "dup" && /^\/dev\/(sd|nvme|hd|vd|xvd|disk|rdisk|mmcblk)/i.test(r.target)) return hit("disk", "Redirecting into a block device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
   if (REMOVERS.has(prog) || (prog === "find" && seg.argv.includes("-delete"))) {
     const ops = deleteOperands(seg, prog);
@@ -1000,6 +1021,20 @@ function psUnitFloors(line: string, env: FloorEnv): FloorHit | null {
   return null;
 }
 
+/**
+ * A literal recursive PowerShell or cmd delete outside the worktree, scratch and /tmp is a question for the owner (a deny for a child), as the old Python delete check
+ * asked in every mode; variable operands are `unknownTargetDelete`, home, root and system targets `psUnitFloors`.
+ */
+function psOutsideDelete(line: string, env: FloorEnv): FloorHit | null {
+  for (const words of psUnits(line)) {
+    const ops = psRecursiveDelete(words);
+    if (!ops) continue;
+    const out = ops.map((o) => psOperand(o, env)).find((o) => !/[$%@]/.test(o) && outside(o, env.cwd, env));
+    if (out !== undefined) return { rule: "floor-delete-outside", kind: "ask", reason: `A recursive PowerShell or cmd delete of '${cutFragment(out)}' outside the worktree, your scratch dir and /tmp needs the owner's answer until the permission modes go.`, fragment: cutFragment(words.join(" ")) };
+  }
+  return null;
+}
+
 /** A label for the judge to look at first (no floor): a delete whose target the harness cannot read. */
 export interface UnknownDelete {
   name: "danger-delete-unknown-target";
@@ -1046,6 +1081,7 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
         if (/[*?[{]/.test(w) && resolveWord(w, s.cwd ?? env.cwd, env) === null) hits.push(UNKNOWN_DELETE(`the glob '${cutFragment(w)}' has no readable directory`));
       }
     }
+    if (prog === "find" && argv.includes("-delete") && deleteOperands(s, prog).some((w) => w === "" || /[$`]/.test(w))) hits.push(UNKNOWN_DELETE("find -delete from a start path that is a variable"));
     const exec = prog === "find" ? argv.findIndex((w) => EXEC_WORDS.has(w)) : -1;
     if (exec >= 0) {
       const tail = argv.slice(exec + 1);
@@ -1322,7 +1358,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   // until the permission modes go (PR C moves this to the judge): a recursive delete the gate cannot read is refused in every mode, by the predicate of the label
   const unknown = unknownTargetDelete(text, segments, env);
   if (unknown?.floor) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${unknown.reason}). Name the path literally; a later change moves this check to the judge.`, text);
-  return pending;
+  return pending ?? (foreignSegments(segments) ? psOutsideDelete(text, env) : null);
 }
 
 /**

@@ -7,20 +7,19 @@ import { r11Rig } from "./_r11rig.ts";
 const FLOOR = "floor-delete-unknown-target";
 const MODES = ["floors-only", "full"] as const;
 
-async function refused(t: Parameters<typeof r11Rig>[0], tool: string, line: string, child = false): Promise<void> {
+async function refused(t: Parameters<typeof r11Rig>[0], tool: string, line: string, child = false, rule = "delete-unknown-target"): Promise<void> {
   for (const mode of MODES) {
     const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode } }, child });
     const res = await r.call(tool, { command: line });
     assert.equal(res?.block, true, `${mode}: ${line}`);
-    assert.match(String(res?.reason), /denied by the permission floor \(delete-unknown-target\)/, `${mode}: ${line}`);
-    assert.match(String(res?.reason), /cannot be read/, `${mode}: ${line}`);
+    assert.match(String(res?.reason), new RegExp(`denied by the permission floor \\(${rule}\\)`), `${mode}: ${line}`);
   }
 }
 
 async function runs(t: Parameters<typeof r11Rig>[0], line: string): Promise<void> {
   const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode: "floors-only" } } });
   const res = await r.call("bash", { command: line });
-  assert.ok(!(res?.block === true && /delete-unknown-target/.test(String(res?.reason))), `${line}: ${JSON.stringify(res)}`);
+  assert.ok(!(res?.block === true && /permission floor/.test(String(res?.reason))), `${line}: ${JSON.stringify(res)}`);
 }
 
 test(`${FLOOR}: variable or empty operand (rm -rf "$X", $X/, -- "$1"/*, "")`, async (t) => {
@@ -54,4 +53,66 @@ test(`${FLOOR}: a floor-eligible hit anywhere on the line fires, in either order
 test(`${FLOOR}: PowerShell -Path:$p and -LiteralPath:$p are variable operands`, async (t) => {
   for (const l of ["Remove-Item -Recurse -Path:$p", "Remove-Item -Recurse -LiteralPath:$p"]) await refused(t, "powershell", l);
   await refused(t, "bash", `pwsh -c 'Remove-Item -Recurse -Path:$p'`);
+});
+
+// ------------------------------------------------------------------ owner decision 2026-11-19: what the old Python delete check refused still is, in every mode (it ran for the foreman and for children alike)
+
+test(`${FLOOR}: git push origin HEAD:$B (a variable destination) is refused; a literal destination and a colon-less $B were never refused`, async (t) => {
+  await refused(t, "bash", "git push origin HEAD:$B", false, "git-push-force");
+  await runs(t, "git push origin HEAD:feature/x");
+  await runs(t, "git push origin $B");
+});
+test(`${FLOOR}: find $X -delete is refused (a literal start path asked before and still runs)`, async (t) => {
+  await refused(t, "bash", "find $X -delete", false, "delete-unknown-target");
+  await runs(t, "find build -delete");
+});
+test(`${FLOOR}: chmod -R and chown -R on a variable are refused`, async (t) => {
+  for (const l of ["chmod -R 755 $X", "chown -R me $X"]) await refused(t, "bash", l, false, "unknown-write-target");
+  await runs(t, "chmod -R 755 build");
+});
+test(`${FLOOR}: truncate -s 0 $X is refused`, async (t) => {
+  await refused(t, "bash", "truncate -s 0 $X", false, "unknown-write-target");
+  await runs(t, "truncate -s 0 f.log");
+});
+test(`${FLOOR}: a > redirect to a variable is refused; >> and a path below the variable were never refused`, async (t) => {
+  await refused(t, "bash", "echo hi > $X", false, "unknown-write-target");
+  await runs(t, "echo hi >> $X");
+  await runs(t, "echo hi > $X/f");
+});
+test(`${FLOOR}: dd of=$X is refused`, async (t) => {
+  await refused(t, "bash", "dd if=/dev/zero of=$X", false, "unknown-write-target");
+});
+test(`${FLOOR}: git clean with -e or --exclude is refused`, async (t) => {
+  for (const l of ["git clean -fd -e keep", "git clean -fdx --exclude=keep", "git clean -fde keep"]) await refused(t, "bash", l, false, "git-clean-exclude");
+  await runs(t, "git clean -fdx");
+});
+
+test(`${FLOOR}: the refusals of the old Python check hit a child as well as the foreman`, async (t) => {
+  for (const l of ["find $X -delete", "chmod -R 755 $X", "truncate -s 0 $X", "echo hi > $X", "dd if=/dev/zero of=$X", "git clean -fd -e keep"]) {
+    const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode: "floors-only" } }, child: true });
+    const res = await r.call("bash", { command: l });
+    assert.equal(res?.block, true, l);
+    assert.match(String(res?.reason), /permission floor/, l);
+  }
+});
+
+test(`${FLOOR}: a literal recursive PowerShell or cmd delete outside the worktree is the owner's question (a refusal for a child) in mode allow; inside it runs`, async (t) => {
+  for (const [tool, l] of [["powershell", "Remove-Item -Recurse /var/stuff"], ["bash", "pwsh -c 'Remove-Item -Recurse /var/stuff'"], ["bash", "cmd /c rd /s /q /var/stuff"]] as const) {
+    for (const child of [false, true]) {
+      const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode: "floors-only" } }, child });
+      const res = await r.call(tool, { command: l });
+      assert.equal(res?.block, true, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
+      assert.match(String(res?.reason), /delete-outside|outside the worktree|dialog was dismissed/, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
+    }
+  }
+  await runs(t, "pwsh -c 'Remove-Item -Recurse build'");
+});
+
+test(`${FLOOR}: foreman_bg gets the same refusal as bash (guard parity of rm -rf -- "$1"/*)`, async (t) => {
+  for (const mode of MODES) {
+    const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode } } });
+    const res = await r.call("foreman_bg", { command: 'rm -rf -- "$1"/*' });
+    assert.equal(res?.block, true, mode);
+    assert.match(String(res?.reason), /permission floor \(delete-unknown-target\)/, mode);
+  }
 });

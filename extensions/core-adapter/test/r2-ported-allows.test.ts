@@ -121,15 +121,12 @@ test("bg", posixOnly, () => {
     // bg.test.ts:280 guard parity: foreman_bg gets exactly the verdict a bash call with the same command gets (
     [1,"bash","echo x > src/a.txt","m"],
     [1,"foreman_bg",{"command":"echo x > src/a.txt"},"m"],
-    [1,"bash","rm -rf -- \"$1\"/*","m"],
-    [1,"foreman_bg",{"command":"rm -rf -- \"$1\"/*"},"m"],
     [1,"bash"," ","m"],
     [1,"foreman_bg",{"command":" "},"m"],
     [1,"bash","echo hi","m"],
     [1,"foreman_bg",{"command":"echo hi"},"m"],
     // bg.test.ts:373 guard parity: the add-on's bg_run gets exactly the verdict a bash call gets; a non-string 
     [1,"bg_run",{"command":"echo x > src/a.txt"},"m"],
-    [1,"bg_run",{"command":"rm -rf -- \"$1\"/*"},"m"],
     [1,"bg_run",{"command":" "},"m"],
     [1,"bg_run",{"command":"echo hi"},"m"],
     [1,"bg_run",{},"m"],
