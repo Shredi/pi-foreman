@@ -21,7 +21,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fakes"))
-from hc_install import install_fake_hc  # noqa: E402
+from hc_install import install_fake_hc
 
 ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "node_modules" / "pi-intercom" / "cli.mjs"

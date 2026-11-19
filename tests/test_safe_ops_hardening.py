@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_safe_ops import SafeOpsCase, safe_ops  # noqa: E402
+from test_safe_ops import SafeOpsCase, safe_ops
 
 
 class HardeningArgsTest(SafeOpsCase):

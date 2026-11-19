@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, notifications, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import load_fixture, notifications, tool_results
+from test_replay import REASON, ReplayCase
 
 LEDGER = "# Requirements Ledger: ck\nTier: heavy\n\n- [x] 1. synthetic item\n"
 PLAN = "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"

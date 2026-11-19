@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
-from test_replay_review_flow import usage  # noqa: E402
+from driver import PROVIDER_A, load_fixture
+from test_replay import REASON, ReplayCase
+from test_replay_review_flow import usage
 
 CONFIG = {"providers": {PROVIDER_A: {"strongAbove": 1000, "roles": {"builder": {"strong": {"model": "%s/finalizer" % PROVIDER_A}}}}}}
 

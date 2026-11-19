@@ -2,7 +2,7 @@
 
 > Covers the repo layout, test commands, the replay rig, CI, Windows notes and how the docs are kept current.
 > Read it when you change pi-foreman itself.
-> It must run on Linux, macOS and Windows: Python stdlib only (3.13+), TypeScript only for Pi extensions.
+> It must run on Linux, macOS and Windows. Python is stdlib only (3.13+) and runs the existing scripts; new harness code is TypeScript, and a new `.py` file is allowed only as a test, bench task data or vendored `core/` (the rule is in [AGENTS.md](../AGENTS.md), `extensions/core-adapter/test/python-files.test.ts` enforces it).
 
 ## Layout
 
@@ -16,6 +16,8 @@
 - `design/` architecture record; `tests/` Python tests, `tests/installer`, `tests/replay`
 - `setup.mjs` setup script (`foreman setup`); `packages.lock.json` pinned Pi and packages
 - Runtime dependencies (`package.json`, exact pins mirrored in `packages.lock.json`): pi-subagents, pi-intercom, `unbash` (the gate's shell parser), and `@inquirer/prompts` (the arrow-key setup picker, imported lazily by `setup.mjs`). `@earendil-works/pi-tui` is a Pi-provided peer (`"*"`), not a dependency, because Pi warns about host packages under `dependencies`; a checkout has it as a devDependency for `setup --preview` and the installer tests, so a package install without dev dependencies has no `--preview`
+
+Python rule: a new `.py` file is allowed only as a test (`tests/**/test_*.py`), bench task data or vendored `core/` ([AGENTS.md](../AGENTS.md); `extensions/core-adapter/test/python-files.test.ts` checks it against the frozen list `python-files.txt`). New harness code is TypeScript.
 
 Running from a checkout instead of the installed package: [install](install.md#developing).
 
@@ -104,6 +106,28 @@ A PR merges itself once its required checks are green: press GitHub's own **Enab
 ## Releases
 
 Cut a release with `gh release create <tag> --generate-notes`. The notes come from the merged PRs' titles and their `## Changelog` sections (one to three user-facing bullets each). PRs do not edit CHANGELOG.md; it is kept as history. Overlays read the GitHub release page to see what changed.
+
+## Lint
+
+Ruff checks the Python (`ruff.toml`: target py313, rules E4, E7, E9, F and RUF100, `core/` and the bench task data excluded). The version is pinned in `.github/lint-requirements.txt` (`ruff==0.17.5`); Renovate keeps the pin current. Install that version any of these ways:
+
+```sh
+pipx install ruff==0.17.5                  # or: uv tool install ruff@0.17.5
+python -m pip install -r .github/lint-requirements.txt
+ruff check .                               # from the repo root; `just lint` runs the same
+```
+
+CI runs the same check in the `test` job, on the Linux leg with Node 22 (`python lint (ruff)`: install from the pin file, print `ruff --version`, `ruff check .`). `# noqa` markers stay only where a rule needs a reason; RUF100 fails on a marker that no longer suppresses anything. Fix a finding in the code when it is one; mark it with the reason when it is deliberate.
+
+## Task runner (just)
+
+[`just`](https://just.systems) is optional: the `justfile` names the same commands as this page, and CI does not use it (CI calls the `npm` and `ruff` commands directly, so a CI failure never depends on a local `just` install). Install it once:
+
+- macOS: `brew install just`
+- Linux: the distro package (`apt install just`, `dnf install just`), `cargo install just`, or a prebuilt binary from the just releases
+- Windows: `winget install --id Casey.Just`
+
+`just` lists the recipes (`just --list`). `just ci` runs what CI runs and a local machine can: lint, typecheck, `test`, `test-node` and `ci-extra` (`npm run test:ci`). The Windows shell is PowerShell (`set windows-shell` in the `justfile`). Recipe names use `-` because `just` does not allow `:`.
 
 ## Windows notes
 

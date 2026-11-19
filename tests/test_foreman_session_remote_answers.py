@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_foreman_session_remote import PARENT, RemoteBase, fsn  # noqa: E402
+from test_foreman_session_remote import PARENT, RemoteBase, fsn
 
 
 class RemoteAskAnswerTest(RemoteBase):
