@@ -84,7 +84,7 @@ and `foreman:ready`. There is no second handshake.
 
 `foreman:lesson` is the extension point for a memory add-on. It is emitted on `pi.events` with `{id, text, group, repo, pr}`
 when a report entry is set to `done` with a lesson (`foreman_reports set` with `lesson`, see [retro](retro.md#lessons)).
-The lesson is the only text that leaves the store: no report, no finding, nothing from the trace. The text is masked and
+The lesson text and the group's name (the report's subject, or the name the steward gave it) are the only text that leaves the store: no other report text, no finding, nothing from the trace. The text is masked and
 paths are cut to file names like any report text, and it is capped at 300 characters. This repository holds no memory code and
 names no memory add-on; an overlay listens and decides what to keep. An overlay should keep the handler short and must
 not throw: a throwing listener is ignored, and the lesson counts as emitted.

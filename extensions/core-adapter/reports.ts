@@ -91,7 +91,7 @@ export function storeFor(cwd: string): Store {
 }
 
 /** Creates the store dir; the first creation writes `.gitignore` with `*`, so a repository that does not ignore `.workflow/` never commits the list. */
-function ensureDir(store: Store): void {
+export function ensureDir(store: Store): void {
   fs.mkdirSync(store.dir, { recursive: true });
   const ignore = path.join(store.dir, ".gitignore");
   try {

@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { get, type Json } from "./config.ts";
-import { foldRows, readRows, storeFor, type Entry } from "./reports.ts";
+import { ensureDir, foldRows, readRows, storeFor, type Entry } from "./reports.ts";
 import { dropLock, ownsLock, takeLock } from "./statefile.ts";
 import { realTimers, type Timers } from "./prwatch.ts";
 
@@ -59,7 +59,7 @@ export function wakeDecision(entries: readonly Entry[], settings: StewardSetting
 
 /** The wake text: counts only, no report text. */
 export function wakeText(d: WakeDecision): string {
-  return `pi-foreman steward: ${d.fresh} new open report${d.fresh === 1 ? "" : "s"} since the last pass (${d.open} open in all). Run the pass from your steward instructions.`;
+  return `pi-foreman steward: ${d.fresh} new open report${d.fresh === 1 ? "" : "s"} since the last pass (${d.open} open in all). Run the pass from your steward instructions (instructions/steward.md in the pi-foreman package; read it again if they are no longer in your context).`;
 }
 
 export interface StewardEntry {
@@ -152,6 +152,7 @@ export class StewardWatch {
     if (this.isOn) return { ok: true, text: "pi-foreman: this session already is the steward." };
     let token: string | null;
     try {
+      ensureDir(storeFor(this.d.cwd())); // the first creation writes the store's .gitignore, so the lock never shows up in git status
       token = takeLock(this.lock(), this.d.now(), staleMsOf(st.checkMinutes));
     } catch {
       return { ok: false, text: "pi-foreman: the steward lock could not be written; the steward stays off." };
@@ -163,7 +164,7 @@ export class StewardWatch {
     this.lastPass = this.startedAt;
     this.textSent = false;
     try {
-      this.d.sendText(this.d.instruction());
+      this.d.sendText(this.d.instruction().replaceAll("{maxProposals}", String(st.maxProposals)));
       this.textSent = true;
     } catch {
       this.textSent = false; // the text could not be read: the watch still runs, the owner sees the notice
@@ -259,6 +260,19 @@ export class StewardWatch {
 
   /** One check: refresh the lock, then wake the session when the thresholds say so and it waits for input (a pending question counts as busy). */
   tick(): void {
+    try {
+      this.check();
+    } catch (err) {
+      // a throw never kills the timer: the next tick tries again
+      try {
+        this.d.trace({ event: "steward", action: "tick_failed", errorKind: (err as Error)?.name ?? "Error" });
+      } catch {
+        // tracing never blocks
+      }
+    }
+  }
+
+  private check(): void {
     if (!this.isOn) return;
     if (!this.refresh()) {
       this.release();
