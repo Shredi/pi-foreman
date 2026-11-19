@@ -101,6 +101,8 @@ interface Run {
   assignOk: Set<Command>;
   env: Record<string, string>;
   platform: string;
+  /** The text of every string the parser ran as a script (`-c`, `eval` ...) behind whatever wrappers and path stood before the shell. */
+  strings: string[];
 }
 
 interface Scope {
@@ -491,6 +493,7 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
 /** Parses `src` as a nested script (bash -c, eval, watch, flock -c) and walks it. */
 function runString(label: string, src: string, c: Cmd, cwd: string | null): string | null {
   const sc: Scope = { ...c.sc, cwd, wrappers: [...c.sc.wrappers, label] };
+  sc.run.strings.push(src);
   if (sc.depth + 1 > MAX_DEPTH) {
     seg(sc, label, [], "depth", c);
     return cwd;
@@ -844,7 +847,7 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [] };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
   };
   const unreadable = (): ShellSegment[] => {
@@ -866,6 +869,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     if (e instanceof RangeError) return unreadable();
     throw e;
   }
+  Object.defineProperty(sc.run.out, "strings", { value: sc.run.strings, enumerable: false });
   return sc.run.out;
 }
 
@@ -875,20 +879,18 @@ const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
 export function opaqueBodies(cmd: string, intoStrings = false): string[] {
   const out: string[] = [];
   const walk = (n: SyntaxNode): void => {
-    // the literal script of `sh -c` or `eval` holds function bodies of its own (the floors read them as the old check read a string)
-    if (intoStrings && n.type === "Command" && n.name) {
-      const name = wordOf(n.name).value;
-      const args = n.suffix.filter((x): x is Word => x.type === "Word").map((w) => wordOf(w).value);
-      const i = name !== null && SHELLS.has(name) ? args.findIndex((v) => v !== null && /^-[a-z]*c$/.test(v)) : -1;
-      const script = name === "eval" ? (args.every((v) => v !== null) ? args.join(" ") : null) : i >= 0 ? args[i + 1] : null;
-      if (script) out.push(...opaqueBodies(script, true));
-    }
     const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
     // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
     if (b && typeof b === "object" && b.type !== "Word") out.push(n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end));
     else forEachChild(n, walk);
   };
   walk(parse(cmd));
+  // the strings run as scripts hold function bodies of their own (the floors read them as the old check read a string): the parser names them, as it resolves the shell
+  // behind env, nice, timeout, command, nohup, a path and the like, so every spelling that reaches a shell string is read the same
+  if (intoStrings) {
+    const strings = (parseShell(cmd) as ShellSegment[] & { strings?: string[] }).strings ?? [];
+    for (const str of strings) out.push(...opaqueBodies(str, false));
+  }
   return out;
 }
 

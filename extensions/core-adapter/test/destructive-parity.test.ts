@@ -1,5 +1,5 @@
 // PR B2 parity: in mode `allow` (the gate result before the mode step: nothing decided runs) every line of the fixture is refused at least as hard as the stricter of the removed
-// Python delete guard and the floors at f0d8b980, for the foreman and for a child. The five classes below are the only differences that pass; any other difference fails.
+// Python delete guard and the floors at f0d8b980, for the foreman and for a child. The classes below are the only differences that pass; any other difference fails.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -21,6 +21,7 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   4: { dir: "stricter", why: "PowerShell system-folder and disk lines stay a hard deny where the Python guard only asked" },
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
   6: { dir: "stricter", why: "the redirect target ends its command by the parser's node offsets: a trailing comment or a closing `)` no longer hides `> $F` (the Python regex let `echo hi > $F # c` and `( echo hi > $F )` run)" },
+  7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
 };
 
 const base = fs.realpathSync(mkTestTmp("pf-parity-"));

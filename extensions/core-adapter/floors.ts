@@ -1366,8 +1366,12 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     const prog = base(seg.program);
     const applet = seg !== s;
     eff.push(seg);
-    // `busybox xargs rm -rf`: the applet is a remover under xargs, as `xargs busybox rm -rf` is
-    if (applet && prog === "xargs" && wordsRemove(seg.argv)) return withFragment(hit("delete-unknown-target", "The target of this recursive delete cannot be read (a remover under xargs). Name the path literally; a later change moves this check to the judge."), seg);
+    // the applet behind `busybox` or `toybox` is checked as the plain command is (`busybox xargs sh -c ...` is `xargs sh -c ...`)
+    if (applet) {
+      const appletText = [seg.program, ...seg.argv].map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
+      const h = pythonKinds(appletText, parseShell(appletText, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks);
+      if (h) return withFragment(h, seg);
+    }
     const remote = remoteCommand(seg, prog);
     if (remote && remote.words.length > 0) {
       const inWhere: Where = where === "container" || remote.where === "container" ? "container" : "ssh";
@@ -1393,7 +1397,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       if (h) return withFragment(h, seg);
     }
     if (!top || applet) {
-      const h = localKind(seg, prog, env, rmAsks);
+      // a recursive rm the parser unwrapped out of a string run as code (`sh -c`, eval) was a deny, never the dialog of a literal command
+      const h = localKind(seg, prog, env, rmAsks && !seg.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval"));
       if (h) return h;
     }
   }
