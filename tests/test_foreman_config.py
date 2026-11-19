@@ -327,7 +327,7 @@ class ConfigTest(unittest.TestCase):
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role in ("explorer", "reviewer"), role)
         self.assertEqual(sub["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "review_verdict"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
+                         ["read", "ls", "grep", "find", "bash", "foreman_report", "review_verdict"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):

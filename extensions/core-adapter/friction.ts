@@ -1,6 +1,7 @@
 // Friction lines of subagent reports: the `Friction:` tail every role sends upward. The run-end
 // handler turns each into a `friction` trace event (allowlisted fields only, path-free, <= 120 chars).
 import { runEndOf } from "./launchwait.ts";
+import { scrubToBasenames } from "./reports.ts";
 
 export interface Friction {
   role: string;
@@ -32,20 +33,8 @@ const KINDS: Array<[string, RegExp]> = [
 
 export const kindOfNote = (note: string): string => KINDS.find(([, re]) => re.test(note))?.[0] ?? "prompt";
 
-const PATHLIKE = /^(?:~[\\/]|[A-Za-z]:[\\/])|[\\/]/;
-
-/** Path-like tokens (a separator with two or more segments, `~/x`, `C:\x`) reduced to their basename. */
-export function scrubPaths(text: string): string {
-  return text.replace(/\S+/g, (tok) => {
-    const m = /^([("'`[]*)(.*?)([)"'`\],.;:]*)$/.exec(tok);
-    if (!m) return tok;
-    const core = m[2];
-    if (!PATHLIKE.test(core)) return tok;
-    const segs = core.split(/[\\/]/).filter(Boolean);
-    if (segs.length < 2 && !/^~[\\/]/.test(core)) return tok;
-    return m[1] + (segs[segs.length - 1] ?? core) + m[3];
-  });
-}
+/** The basename scrubber moved to reports.ts; the old name stays until this parser goes. */
+export { scrubToBasenames as scrubPaths };
 
 const isNone = (s: string): boolean => s.replace(/[^A-Za-z0-9]+/g, "").toLowerCase() === "none" || s.replace(/[\s*_`.\-:;]/g, "") === "";
 
@@ -63,7 +52,7 @@ export function frictionNoteOf(text: string): string | null {
     }
     const joined = parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
     if (isNone(joined)) return null;
-    const note = scrubPaths(joined);
+    const note = scrubToBasenames(joined);
     return note.length > MAX_NOTE ? note.slice(0, MAX_NOTE) : note;
   }
   return null;

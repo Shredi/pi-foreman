@@ -20,9 +20,9 @@
   "roles": {
     "foreman": { "tools": [], "skills": [], "codemode": true },
     "session-foreman": { "tools": [], "skills": [], "codemode": false },
-    "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": [], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20, "strongAbove": 200000 },
-    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write"], "searchable": ["foreman_move", "foreman_copy"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
-    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": ["security-review"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 30 }
+    "explorer": { "tools": ["read", "ls", "grep", "find", "bash", "foreman_report"], "skills": [], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20, "strongAbove": 200000 },
+    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_report"], "searchable": ["foreman_move", "foreman_copy"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash", "foreman_report"], "skills": ["security-review"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 30 }
   },
   "providers": {},
   "fanout": { "max": 3 },
@@ -71,7 +71,7 @@
   "sync": { "repos": [], "runRetro": true },
   "knowledge": { "nudgeDays": 30 },
   "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": true, "refreshSeconds": 120, "mine": true, "authors": [], "scope": [], "hideRepos": [] } },
-  "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
+  "retro": { "proposalMinReviews": 5, "enabled": null, "report": true, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent", "remote-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },
   "footer": { "usage": true, "style": "foreman", "cacheBar": true },
@@ -103,7 +103,7 @@
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
   "skills": { "visible": [], "hidden": ["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"] },
-  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prSources": {}, "prWake": [], "prWatchSeconds": 60, "prSettleSeconds": 90, "prReturnToBase": true, "prDraft": true, "prReadyLabel": "" },
+  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_reports", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prSources": {}, "prWake": [], "prWatchSeconds": 60, "prSettleSeconds": 90, "prReturnToBase": true, "prDraft": true, "prReadyLabel": "" },
   "sidebar": { "statusSeconds": 60 },
   "shell": { "msysNoPathconv": true }
 }

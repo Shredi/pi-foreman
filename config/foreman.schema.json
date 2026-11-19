@@ -407,6 +407,7 @@
       "properties": {
         "proposalMinReviews": { "type": "integer", "minimum": 1, "description": "Reviews needed before a retro proposal. User or overlay config only." },
         "enabled": { "type": ["boolean", "null"], "description": "Run retro and record backlog findings. null means auto: on in interactive (tui, rpc) sessions, off in json and print mode." },
+        "report": { "type": "boolean", "description": "Offer the foreman_report tool to every role (default true). false: the tool is not offered and the report store is not written." },
         "workspaceKey": { "type": ["string", "null"], "description": "Backlog key of this workspace ('/' makes subdirectories). null means <basename>-<hash of the workspace root>. User or overlay config only." },
         "backlogDir": { "type": ["string", "null"], "description": "Central backlog directory. null means <agentDir>/pi-foreman/state/retro/backlog. User or overlay config only." },
         "repoBacklog": {

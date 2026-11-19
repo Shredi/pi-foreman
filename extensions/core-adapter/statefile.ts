@@ -11,10 +11,15 @@ const sleepSync = (ms: number): void => void Atomics.wait(new Int32Array(new Sha
 
 /** Writes `doc` as JSON to `file`: a tmp file, then a rename (retried 5 times, 50 ms apart, on EPERM, EBUSY or EACCES). Throws on failure. */
 export function writeAtomic(file: string, doc: unknown): void {
+  writeTextAtomic(file, JSON.stringify(doc));
+}
+
+/** Writes `text` to `file` the same way (temporary file in the same directory, then rename); the old file stays when the write or the rename fails. */
+export function writeTextAtomic(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(doc), { mode: 0o600 });
+    fs.writeFileSync(tmp, text, { mode: 0o600 });
     for (let i = 0; ; i++) {
       try {
         fs.renameSync(tmp, file);
