@@ -68,10 +68,13 @@ const tones = prTones;
 
 // One dot per PR: its colour is the PR's state, and it pulses (opacity, native loop) while a job runs or the checks are not settled.
 // A ready PR (`mark: "check"`) gets a check mark in the same box instead: a bold text glyph in its green, never pulsing.
+// A PR that waits on required checks (`hollow`) gets a still ring instead: an amber border, no fill.
 function prDot(t, st) {
   const color = tones(t)[st.fill];
   if (st.mark === "check") return h_flex().relative().flex_none().size(14).mx(1).items_center().justify_center()
     .text_size(12).font_semibold().text_color(color).child("✓");
+  if (st.hollow) return div().relative().flex_none().size(14).mx(1)
+    .child(div().absolute().top(4).left(4).size(6).rounded(3).border(1.5).border_color(color));
   return div().relative().flex_none().size(14).mx(1)
     .child(div().absolute().top(4).left(4).size(6).rounded(3).bg(color)
       .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));
@@ -509,7 +512,7 @@ export default class ForemanAgents extends View {
   // `maxH` bounds the card to the room on its side of the chip; what does not fit is clipped (gpui-kit style.rs:95 max_h, gpui `overflow_hidden`).
   cardView(t, c, maxH = 0) {
     const color = tones(t);
-    const tone = { failed: color.red, running: color.amber, passed: color.green };
+    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green };
     const shell = v_flex().w(300).p(10).gap(7).bg(t.popover).border(1).border_color(t.border).rounded(8)
       .text_size(11).text_color(t.muted)
       .when(maxH > 0, (el) => el.max_h(maxH).overflow_hidden());
