@@ -116,3 +116,19 @@ test("the default --from is the old central store of the deps; a missing store i
   assert.match(r.out, /\(not found\)/);
   assert.equal((await cli(cwd, ["migrate"])).code, 2, "without --from and without a default store: usage");
 });
+
+test("this repository's .workflow/retro-backlog.md is read, named in the output and left in place", async (t) => {
+  const { cwd } = rig(t);
+  const empty = path.join(cwd, "old", "empty");
+  fs.mkdirSync(empty, { recursive: true });
+  const repoFile = path.join(cwd, ".workflow", "retro-backlog.md");
+  fs.mkdirSync(path.dirname(repoFile), { recursive: true });
+  fs.copyFileSync(path.join(FIXTURE, "proj.md"), repoFile);
+  const before = fs.readFileSync(repoFile, "utf8");
+  const r = await cli(cwd, ["migrate", "--from", empty, "--all", "--apply"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /imported 2/);
+  assert.match(r.out, /retro-backlog\.md/);
+  assert.equal(fs.readFileSync(repoFile, "utf8"), before, "the file is left as it was");
+  assert.ok(entries(cwd).some((e) => e.key === "a1b2c3d4e5f6"));
+});

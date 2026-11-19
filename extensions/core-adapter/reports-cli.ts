@@ -15,6 +15,7 @@ export const USAGE = [
   "       foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT]",
   "       foreman reports expire [--days N] [--archive-days N]",
   "       foreman reports migrate [--from DIR] [--workspace GLOB]... [--all] [--exclude GLOB]... [--min-count 2] [--within-days 30] [--archive] [--apply]",
+  "         --archive renames the whole folder named by --from (the old store by default) with all it holds, selected or not",
 ].join("\n");
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");

@@ -79,7 +79,7 @@ foreman reports migrate [--from DIR] [--workspace GLOB]... [--all] [--exclude GL
 - The default is a dry run: it prints, per old workspace, how many entries it would keep and how many it leaves. The old keys were made per worktree path, so no rule maps them to a repository: without `--workspace` (a glob on the workspace key, repeatable) or `--all` the command only lists the workspaces and imports nothing. `--exclude` removes workspaces from the selection.
 - It keeps entries with a count of at least `--min-count` (default 2) or of kind `harness-bug`, last seen within `--within-days` (default 30). Kind `flagged-ask` becomes `permission`; `review-model` entries are left. Their text passes the same masking as a new report.
 - With `--apply` the kept entries become `report` rows with `source: "migrated"`: the old id is the key, `count` is the old count (the fold honours it), the old dates are in `firstSeen` and `lastSeen` (`show` prints them), and `ts` is the time of the migration, so the expiry clock starts at the move and an entry last seen 20 days ago survives the next expiry run. A second run imports nothing new.
-- `--archive` (with `--apply`) renames the whole old directory to `backlog-archive-<date>` beside it. Nothing is deleted.
+- `--archive` (with `--apply`) renames the whole folder that `--from` names (the old central directory by default) to `backlog-archive-<date>` beside it, with every file in it, also the workspaces you did not select. It does not check which folder that is. Nothing is deleted.
 
 ## Sources
 

@@ -320,7 +320,7 @@ class LayerRulesTest(unittest.TestCase):
             res = self.load(**layers)
             self.assertEqual(res["errors"], [])
             self.assertFalse(res["safetyFallback"])
-            self.assertEqual(res["config"]["retro"]["expireDays"] if "l2" in layers else 14, 5 if "l2" in layers else 14)
+            self.assertEqual(res["config"]["retro"]["expireDays"], 5)
 
     def test_removed_retro_keys_are_gone_and_start_note_is_in_defaults_and_schema(self):
         root = Path(__file__).resolve().parent.parent / "config"

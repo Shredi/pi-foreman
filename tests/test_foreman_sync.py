@@ -423,6 +423,13 @@ class SyncTest(unittest.TestCase):
         self.assertFalse([a for a in seen["cmd"] if a.startswith("--backlog") or a in ("--workspace-key", "--no-backlog")])
         self.assertEqual(seen["cmd"][6:10], ["--trace", "T1", "--trace", "T2"])  # every trace file is forwarded
 
+    def test_retired_backlog_flags_of_an_old_adapter_parse_and_run(self):
+        # the value shapes of retroInputs at 5f55a015: workspace root, key, a bare --no-backlog
+        for flags in (["--backlog-workspace", str(self.work)], ["--workspace-key", "proj"], ["--backlog-session", "s1"],
+                      ["--no-backlog"], ["--backlog-workspace", str(self.work), "--workspace-key", "proj", "--no-backlog"]):
+            code, _rep = self.run_sync(*flags)
+            self.assertIn(code, (0, 1), flags)  # a repo status, never argparse exit 2
+
     def test_banned_argv_shapes_absent(self):
         src = (SCRIPTS / "foreman_sync.py").read_text(encoding="utf-8")
         for shape in (r"""["']--hard["']""", r"""["']--force""", r"""["']reset["']""", r"""["']rebase["']""", r"""["']--no-verify["']"""):

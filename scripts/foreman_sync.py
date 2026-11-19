@@ -545,6 +545,11 @@ def build_parser():
     p.add_argument("--usage")
     p.add_argument("--review-log")
     p.add_argument("--rates")
+    # the four flags below are accepted and ignored so that an adapter loaded before an update does not fail
+    p.add_argument("--backlog-workspace", help="accepted and ignored")
+    p.add_argument("--workspace-key", help="accepted and ignored")
+    p.add_argument("--backlog-session", help="accepted and ignored")
+    p.add_argument("--no-backlog", action="store_true", help="accepted and ignored")
     return p
 
 

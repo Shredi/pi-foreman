@@ -70,8 +70,25 @@ test("start note: the triage hint of the other handler is still delivered in the
   seed(r, "guard x", 2);
   const ms = await messages(r, "please check this CI failure of the build, it is flaky");
   assert.equal(notes(ms).length, 1);
+  assert.equal(ms.filter((m) => m.customType === "foreman_triage_hint").length, 1, "the triage message arrives beside the note");
   // the handler count: the note's own handler is separate from every other one, so no other message is dropped
   assert.ok(r.handlersOf("before_agent_start").length >= 2);
+});
+
+test("start note: append only, its handler returns one message and leaves the event and the system options as they were", async (t) => {
+  const r = await r11Rig(t, {}, { piExtra: { appendEntry: () => undefined } });
+  seed(r, "guard x", 2);
+  let owners = 0;
+  for (const h of r.handlersOf("before_agent_start")) {
+    const event = { prompt: "go", type: "before_agent_start", systemPrompt: "SYS", systemPromptOptions: { sections: { a: "A" } } };
+    const before = JSON.stringify(event);
+    const res = (await h(event, r.ctx)) as Record<string, unknown> | undefined;
+    if ((res?.message as Msg | undefined)?.customType !== START_NOTE_TYPE) continue;
+    owners++;
+    assert.equal(JSON.stringify(event), before, "the note's handler edits neither the system prompt nor its options");
+    assert.deepEqual(Object.keys(res!), ["message"], "only a message is returned, never system text");
+  }
+  assert.equal(owners, 1);
 });
 
 test("start note: absent when nothing qualifies", async (t) => {
