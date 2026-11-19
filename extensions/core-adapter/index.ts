@@ -242,7 +242,9 @@ import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitMod
 import type { RegistryLike } from "./modelcheck.ts";
 import { countsForItems, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, OCCASIONS, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
-import { diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
+import { closeLines } from "./reviewrounds.ts";
+import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
+import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
@@ -3089,6 +3091,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
+  /** Workspace key, remote repository and branch of a checkout for the findings store; each null when it cannot be told. */
+  async function repoIdentity(s: Session, cwd: string): Promise<{ workspace: string | null; repo: string | null; branch: string | null }> {
+    let workspace: string | null = null;
+    try {
+      workspace = workspaceKeyOf(cwd, get(s.config.config, "retro.workspaceKey"));
+    } catch {
+      // a key that does not sanitise: the row stays unkeyed
+    }
+    return { workspace, repo: await repoOf(cwd).catch(() => null), branch: currentBranch(cwd) };
+  }
+
   /**
    * Run-end findings (findings.ts): each review result is recorded through foreman_findings.py
    * (awaited, 10 s, fail-soft), its findings traced. A completed gate primary of a panel opens a
@@ -3101,11 +3114,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const work = (async (): Promise<RunEndFindings> => {
       const cwd = results.find((r) => r.cwd)?.cwd ?? s.cwd;
       const head = await headOf(cwd);
+      const where = await repoIdentity(s, cwd);
       const out = await onReviewRunEnd(
         {
           results,
           launch,
-          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, live: s.ladder.live.get("reviewer") ?? null, now: Date.now() },
+          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, live: s.ladder.live.get("reviewer") ?? null, now: Date.now(), ...where },
           tmpDir: s.markerDir,
         },
         (args, input) => runScript(s, "foreman_findings.py", args, RECORD_TIMEOUT_MS, input),
@@ -6176,6 +6190,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       trackedHost: (repo, n, hosts) => trackedHostOf(s.agentDir, repo, n, hosts),
       githubHosts: () => resolveGithubHosts(s.config.config),
       draftFlow: () => draftFlowOn(s),
+      recordPr: async (o) => {
+        const where = await repoIdentity(s, o.cwd);
+        appendPrRow(s.agentDir, { session: s.usage.line.foremanSession, workspace: where.workspace, repo: o.repo, branch: o.branch, number: o.number, head: o.head, ts: new Date().toISOString() });
+      },
     };
   };
   registerPrFollow(pi, { isChild: process.env.PI_SUBAGENT_CHILD === "1", session: prSession });
@@ -6228,7 +6246,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), mergedPr: () => (process.env[HANDOFF_DIR_ENV]?.trim() ? s.prWatches.mergedPrs().at(-1)?.n ?? null : null), selfFinish: async (c, req) => {
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, reviewRounds: () => closeLines(s.agentDir, s.usage.line.foremanSession), config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), mergedPr: () => (process.env[HANDOFF_DIR_ENV]?.trim() ? s.prWatches.mergedPrs().at(-1)?.n ?? null : null), selfFinish: async (c, req) => {
         const handoff = process.env[HANDOFF_DIR_ENV]?.trim() ?? "";
         const py = pyPath(s);
         const script = path.join(PKG_ROOT, "scripts", "foreman_close.py");

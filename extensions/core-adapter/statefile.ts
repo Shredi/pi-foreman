@@ -65,3 +65,26 @@ export function dropLock(lock: string, token: string): void {
     if (ownsLock(lock, token)) fs.unlinkSync(lock);
   } catch { /* already gone */ }
 }
+
+export const LOCK_WAIT_MS = 5000;
+export const LOCK_STALE_MS = 60_000;
+const LOCK_POLL_MS = 50;
+
+/**
+ * Runs `fn` while holding `lockPath` (the lock file of the Python stores: `<file>.lock`, exclusive create, so a Python writer and this one exclude each other).
+ * Waits up to `waitMs` (5 s), breaks a lock older than `staleMs` (60 s), releases on a thrown error. Throws when the lock stays held.
+ */
+export function withFileLock<T>(lockPath: string, fn: () => T, waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS): T {
+  const start = Date.now();
+  let token = takeLock(lockPath, Date.now(), staleMs);
+  while (token === null) {
+    if (Date.now() - start >= waitMs) throw new Error(`locked: ${path.basename(lockPath)}`);
+    sleepSync(LOCK_POLL_MS);
+    token = takeLock(lockPath, Date.now(), staleMs);
+  }
+  try {
+    return fn();
+  } finally {
+    dropLock(lockPath, token);
+  }
+}

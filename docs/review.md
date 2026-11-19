@@ -382,13 +382,18 @@ finding several models located (same file and class, lines within 3) is listed o
 
 Every completed reviewer run ends in `scripts/foreman_findings.py record` (fail-soft: a failure counts as zero findings
 and traces nothing). The adapter hands it the run's verdict record as JSON on stdin; it appends the record's `defect` findings (checked against the changed files) to
-`<agentDir>/pi-foreman/state/findings/<session>.jsonl`, repo-relative paths only. Three record types:
+`<agentDir>/pi-foreman/state/findings/<session>.jsonl`, repo-relative paths only. Four record types:
 
-| `type` | Fields (`review` and `finding` also carry `session, gate, model, rung, primary, role, runId, head, ts, source`) |
+| `type` | Fields (`review` and `finding` also carry `session, gate, model, rung, primary, role, runId, head, ts, source, workspace, repo, branch`) |
 |---|---|
 | `review` | `base, items, verdict, secs, startedTs, findings` |
 | `finding` | `id, file, line, class, note` (note cut to 120 characters) |
 | `dismiss` | `id, reason, session, ts` |
+| `pr` | `session, workspace, repo, branch, number, head, ts` |
+
+`workspace` is the key of the repository's main checkout (a linked worktree resolves to its main checkout): the folder's name and the first 8 hex characters of a SHA-1 over its real path, or the `retro.workspaceKey` override. `repo` is `owner/name` of the `origin` remote, else of the first remote by name, else `null`. `branch` is the branch checked out where the review ran (`null` when detached). A row written before these fields existed has none of them and matches no `--workspace` or `--repo` filter; without a filter it is listed as before.
+
+The adapter writes a `pr` row when a PR watch is armed (`pr_create`, and `pr_watch` for a PR it did not open), once per PR number and repository, to the session's findings file under the same `<file>.lock` the Python writer takes (the two exclude each other; a writer waits 5 s and breaks a lock older than 60 s). Its `branch` is the `head` argument of `pr_create` (default the checkout's branch), the checkout's branch for a `pr_watch` without a number, and `null` for a `pr_watch` with a number (a watch does not know that PR's branch when it is armed; such a row joins no change). The write is best effort and happens after the watch is armed: a lock timeout or write error never releases the watch and never fails the tool (trace `pr_watch` with outcome `pr_row_failed`).
 
 `source` is `live` for the primary, `panel` for a shadow, `bench` for bench runs. `rung` is `1` when the reviewer was raised to the strong rung by the repeat-fail rule or the security rung, else `0`.
 A finding `id` is 12 hex characters of
@@ -399,7 +404,8 @@ a SHA-1 over file, `line // 5` and class, so a re-report of the same spot by the
 
 | Command | What it does |
 |---|---|
-| `foreman findings list [--since 7d\|ISO] [--only-model SUBSTR] [--unique] [--session S] [--json]` | Located findings; `--unique` keeps those only one model found. Dismissed ones are tagged. |
+| `foreman findings list [--since 7d\|ISO] [--only-model SUBSTR] [--unique] [--session S] [--workspace KEY\|here] [--repo OWNER/NAME] [--json]` | Located findings; `--unique` keeps those only one model found. Dismissed ones are tagged. `--workspace here` is the key of the main checkout of the current directory (also from a linked worktree); `--repo` is compared case-insensitively. Rows without the key never match either filter. |
+| `foreman rounds [--workspace here\|KEY] [--branch B] [--pr N] [--since 7d\|ISO] [--json]` | Review rounds per change (see [Review rounds](#review-rounds)). |
 | `foreman findings dismiss <id> <reason>` | Marks a finding rejected (a `dismiss` record). |
 | `foreman findings export <id> --to DIR [--repo PATH]` | Turns a finding into a review-bench task. `--to` is required and never inside the package tree or the finding's repo. |
 
@@ -408,6 +414,19 @@ finding's head), `prompt.md` (the ledger items the review covered, else a generi
 bench's format, one defect) and `harvest.json` (`"confirmed": false`). `foreman bench review` skips a task whose
 `harvest.json` is unconfirmed; set `"confirmed": true` after you have checked the planted truth, then it joins the suite.
 See [bench](bench.md).
+
+## Review rounds
+
+The harness counts the review rounds of a change from the findings store (`extensions/core-adapter/reviewrounds.ts`). It is shown as one line in the result at close and by `foreman rounds`; the sidebar and GitHub do not show it.
+
+- A change is a workspace plus a branch. A row without a workspace or branch (an old row, a detached HEAD) belongs to no change.
+- One round is one reviewer run (`runId`) with at least one `review` row that is `primary` and has the gate `item`, `pre-pr` or `high-stakes`. Panel shadow rows (not primary) and the gate `second-opinion` never count. A run with several primary rows is one round, and it fails when one of its rows is a FAIL; every other round counts as a pass. A round that held a high-stakes review is counted in the total and named (`foreman rounds --json` lists the run ids in `highStakesRuns`).
+- Plan reviews (gate `plan-review`) are counted apart by the same run rule. A change with plan reviews only has no entry.
+- The PR number comes from the `pr` rows of the same workspace and branch, joined by time: a round that began before the row of a later PR with another number belongs to the earlier PR. A branch with two PRs therefore shows two entries. A row with a null branch joins nothing.
+
+The line: `Review rounds: 4 (2 fail, 2 pass; 1 high-stakes), plan reviews 2, PR #301`. The high-stakes part, the plan-review part and the PR part are left out when zero or unknown. `foreman rounds` prints `<workspace> <branch>: <line>` per change and PR, or a JSON array of `{workspace, branch, pr, rounds, fail, pass, highStakes, highStakesRuns, planReviews, sessions, line}` with `--json`; `--workspace here` takes the key of the current directory's main checkout, `--since` keeps the rounds that began after the cutoff.
+
+Known limits: reviews that ran in another worktree on another branch (a builder's own branch) are counted under that branch and do not join the PR; a PR watch armed with a number records no branch, so its line shows no PR; rows written before the key existed are not counted.
 
 ## Outcomes
 

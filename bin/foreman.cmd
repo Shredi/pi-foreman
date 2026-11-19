@@ -1,10 +1,11 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|perms|pane-resume|features|knowledge [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|rounds|perms|pane-resume|features|knowledge [args]` for cmd.
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
 if /i "%~1"=="dialogs" goto dialogs
 if /i "%~1"=="prs" goto prs
+if /i "%~1"=="rounds" goto rounds
 if /i "%~1"=="perms" goto perms
 if /i "%~1"=="pane-resume" goto paneresume
 if /i "%~1"=="features" goto features
@@ -26,7 +27,7 @@ if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
 set "PF_FIRST="
 if /i "%~1"=="machine" (set "PF_SCRIPT=foreman_session.py" & set "PF_FIRST= machine")
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|machine^|dialogs^|prs^|perms^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|machine^|dialogs^|prs^|rounds^|perms^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS=%PF_FIRST%"
 :collect
@@ -75,6 +76,19 @@ shift
 goto collectr
 :runprs
 node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\prs-cli.ts" %PF_ARGS%
+exit /b %ERRORLEVEL%
+:rounds
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
+if errorlevel 1 (echo foreman rounds needs Node ^>= 22.6 ^(--experimental-strip-types^) 1>&2 & exit /b 1)
+shift
+set "PF_ARGS="
+:collectro
+if "%~1"=="" goto runrounds
+set PF_ARGS=%PF_ARGS% %1
+shift
+goto collectro
+:runrounds
+node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\rounds-cli.ts" %PF_ARGS%
 exit /b %ERRORLEVEL%
 :paneresume
 rem for hand use (the PowerShell hook runs node itself); a too-old Node is silent, no node exits 127, as bin/foreman
