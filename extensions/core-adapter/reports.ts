@@ -16,7 +16,9 @@ export const STATES = ["open", "planned", "done", "dropped", "expired"] as const
 export const SETTABLE = ["open", "planned", "done", "dropped"] as const;
 export type State = (typeof STATES)[number];
 
-export const CAPS = { subject: 40, what: 300, suggest: 200, label: 60, reason: 200 } as const;
+export const CAPS = { subject: 40, what: 300, suggest: 200, label: 60, reason: 200, lesson: 300 } as const;
+/** The event a lesson leaves on `pi.events` (docs/overlays.md): the extension point for a memory add-on; nothing in this repository reads it. */
+export const LESSON_EVENT = "foreman:lesson";
 export const LIMIT_PER_RUN = 5;
 export const LIMIT_PER_SESSION = 20;
 export const DEFAULT_EXPIRE_DAYS = 14;
@@ -78,12 +80,14 @@ export interface Store {
   archive: string;
   lock: string;
   stamp: string;
+  /** The lessons of finished rounds, one line each; kept next to the list, never committed (the store dir ignores itself). */
+  lessons: string;
 }
 
 /** The store of the repository `cwd` belongs to: in its main checkout (a linked worktree resolves to it); outside git, in a submodule or a bare layout in the workspace root. */
 export function storeFor(cwd: string): Store {
   const dir = path.join(mainCheckout(cwd), ".workflow", "reports");
-  return { dir, file: path.join(dir, "reports.jsonl"), archive: path.join(dir, "reports-archive.jsonl"), lock: path.join(dir, "reports.jsonl.lock"), stamp: path.join(dir, ".expired") };
+  return { dir, file: path.join(dir, "reports.jsonl"), archive: path.join(dir, "reports-archive.jsonl"), lock: path.join(dir, "reports.jsonl.lock"), stamp: path.join(dir, ".expired"), lessons: path.join(dir, "lessons.md") };
 }
 
 /** Creates the store dir; the first creation writes `.gitignore` with `*`, so a repository that does not ignore `.workflow/` never commits the list. */
@@ -305,21 +309,62 @@ const textOf = (v: unknown, cap: number): string | null => (typeof v === "string
 
 export interface StateChange {
   state: unknown;
+  /** `done` only: a lesson that stays true beyond this case. Masked and scrubbed like report text. */
+  lesson?: unknown;
+  /** The repository (`owner/name`) named in the lesson event. */
+  repo?: string | null;
   label?: unknown;
   pr?: unknown;
   reason?: unknown;
 }
 
 /** Appends a `state` row for the entry named by `q`. Returns the entry key or an error line. */
-export function setState(store: Store, q: string, change: StateChange, by: string, now = Date.now()): { ok: true; key: string; state: State } | { ok: false; error: string } {
+export function setState(store: Store, q: string, change: StateChange, by: string, now = Date.now()): { ok: true; key: string; state: State; lesson?: Lesson } | { ok: false; error: string } {
   if (!oneOf(SETTABLE, change.state)) return { ok: false, error: `state must be one of: ${SETTABLE.join(", ")}` };
+  const hasLesson = change.lesson !== undefined && change.lesson !== null && change.lesson !== "";
+  if (hasLesson && change.state !== "done") return { ok: false, error: "a lesson goes with state done" };
+  if (hasLesson && typeof change.lesson !== "string") return { ok: false, error: "lesson must be text" };
+  const lessonText = hasLesson ? cleanText(change.lesson as string, CAPS.lesson) : "";
+  if (hasLesson && !lessonText) return { ok: false, error: "lesson must not be empty" };
   if (change.pr !== undefined && change.pr !== null && !(Number.isInteger(change.pr) && (change.pr as number) >= 1)) return { ok: false, error: "pr must be a positive integer" };
   return withFileLock(store.lock, () => {
     const e = findEntry(foldRows(readRows(store.file)), q);
     if (!e) return { ok: false as const, error: `no entry for key ${q.slice(0, 40)}` };
     const row = { row: "state", key: e.key, state: change.state, label: textOf(change.label, CAPS.label), pr: typeof change.pr === "number" ? change.pr : null, reason: textOf(change.reason, CAPS.reason), by, ts: new Date(now).toISOString() };
     fs.appendFileSync(store.file, `${JSON.stringify(row)}\n`);
-    return { ok: true as const, key: e.key, state: change.state as State };
+    if (!lessonText) return { ok: true as const, key: e.key, state: change.state as State };
+    const pr = typeof change.pr === "number" ? change.pr : e.pr;
+    const lesson: Lesson = { id: crypto.randomBytes(5).toString("hex"), text: lessonText, group: cleanText(e.name ?? e.subject, CAPS.subject), repo: change.repo ?? null, pr };
+    fs.appendFileSync(store.file, `${JSON.stringify({ row: "lesson", ...lesson, key: e.key, by, ts: row.ts })}\n`);
+    fs.appendFileSync(store.lessons, `- ${row.ts.slice(0, 10)} [${lesson.group}] ${lesson.text}${pr ? ` (PR #${pr})` : ""}\n`);
+    return { ok: true as const, key: e.key, state: change.state as State, lesson };
+  });
+}
+
+/** What the lesson event carries: the lesson and where it is from, never a report. */
+export interface Lesson {
+  id: string;
+  text: string;
+  group: string;
+  repo: string | null;
+  pr: number | null;
+}
+
+/**
+ * The lessons that have no `emitted` row (all, or only `ids`): under the lock an `emitted` row is appended for each, the lock is released, and the caller emits.
+ * Two sessions therefore emit a lesson once and a slow listener never holds the lock. A crash after the claim and before the emit loses that emit: the lesson
+ * stays in lessons.md (a documented limit). Returns the payloads in the order they were written.
+ */
+export function claimLessons(store: Store, now = Date.now(), ids?: readonly string[]): Lesson[] {
+  if (!fs.existsSync(store.file)) return [];
+  return withFileLock(store.lock, () => {
+    const rows = readRows(store.file);
+    const done = new Set(rows.filter((r) => r.row === "emitted").map((r) => str(r.id)));
+    const fresh = rows.filter((r) => r.row === "lesson" && str(r.id) && !done.has(str(r.id)) && (!ids || ids.includes(r.id as string)) && typeof r.text === "string");
+    if (!fresh.length) return [];
+    const ts = new Date(now).toISOString();
+    fs.appendFileSync(store.file, fresh.map((r) => `${JSON.stringify({ row: "emitted", id: r.id, ts })}\n`).join(""));
+    return fresh.map((r) => ({ id: r.id as string, text: r.text as string, group: str(r.group) ?? "", repo: str(r.repo), pr: typeof r.pr === "number" ? r.pr : null }));
   });
 }
 

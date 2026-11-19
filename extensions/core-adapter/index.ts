@@ -149,7 +149,7 @@ import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
-import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, runReport, runReports, type ReportSession } from "./reportstool.ts";
+import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, emitPendingLessons, runReport, runReports, type ReportSession } from "./reportstool.ts";
 import { recordReport, reportContext } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
@@ -2095,6 +2095,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
+    if (!s.isChild) emitPendingLessons(reportSession(s)); // lessons the CLI appended or an earlier crash left: after foreman:ready, once (reports.ts claimLessons)
     if (!s.isChild) {
       idleBind = { s, ctx };
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
@@ -6486,6 +6487,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       enabled: get(s.config.config, "retro.report") !== false,
       expireDays: typeof expire === "number" && expire >= 1 ? expire : undefined,
       workspaceOverride: get(s.config.config, "retro.workspaceKey"),
+      emit: (event, payload) => pi.events?.emit(event, payload),
     };
   };
   /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
@@ -6518,7 +6520,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     description: REPORTS_DESCRIPTION,
     parameters: REPORTS_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      const r = runReports(reportSession(await ensureSession(ctx)), params);
+      const s = await ensureSession(ctx);
+      const r = runReports({ ...reportSession(s), repo: params.action === "set" && params.lesson !== undefined ? (await reportContext(s.cwd)).repo : null }, params);
       return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
     },
   } as never);
