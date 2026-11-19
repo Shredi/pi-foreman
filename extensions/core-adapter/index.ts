@@ -3825,6 +3825,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const a = launchReadAllowance(s.config.config, flagRole, { reads: launchFlags.reads, files: sized.entries.get(input)?.size?.files.length });
           if (a.clamped) mcpNotes.push(`pi-foreman: reads ${launchFlags.reads} is above the maximum; the read allowance is ${a.allowance}.`);
           launchFlags = { ...launchFlags, reads: a.allowance };
+          const rl = childReadLimits(s.config.config, flagRole, a.allowance);
+          if (rl) mcpNotes.push(`pi-foreman: reads: ${rl.deny} (warn at ${rl.warn})`);
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
