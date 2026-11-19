@@ -149,7 +149,7 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 | Line | Content |
 |---|---|
 | `fm_a1` agents | `◆ builder sonnet-5.5 ×2 · reviewer opus-5.5`: running child runs by role and model, and child sessions without a pane row of their own while they are live; a finished run shows `✓ role` for `radar.recentRunSeconds` |
-| `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`), `foreman_bg` commands and the `bg_run` add-on's tasks of this session |
+| `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`) and the `bg_run` add-on's tasks of this session |
 | `fm_a3` waits | `? ask 1: topic` for an open ask, then `◷ child r32b 4m`: timer, file, child and pid waits |
 | `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of external items (see Dots) |
 | `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix and ` · owner present|away|grace|unknown` (the owner's presence as the cache warms see it) |
@@ -161,7 +161,7 @@ or idle one, a stale registry entry) is listed on `fm_a1` only while it is live:
 `waiting`, `done`, `lost`, `closed` or `closing` leaves the line and the hidden `+n` count, one that works (starting and
 pending included), waits on something external or waits for you stays. The same test decides the agent reason of
 the parent (its detail line). A live, self-publishing working session shows a spinner frame in the state cell (see Spinner);
-waiting is working: while a `foreman_wait` or `foreman_bg` is pending the state stays `working`
+waiting is working: while a `foreman_wait` is pending the state stays `working`
 and Herdr's status stays working, and the wait shows on its activity line.
 
 #### Dots
@@ -190,7 +190,6 @@ are additive: older readers ignore them, and each is present only when there is 
 | Field | Where | Content |
 |---|---|---|
 | `started` | radar session node | start time, used for sibling order (oldest first within a rank) |
-| `bg` | a wait | `true` for a `foreman_bg` command |
 | `prs` | the `pr_watch` wait | the watched PR numbers |
 | `prRefs` | the `pr_watch` wait | `[{n, repo, host}]`, one per watched PR (additive, beside `prs`, which stays); the herdr-app mod attaches the feed PR with that number and repository to the session whatever repository its working directory is in. Absent in a file from an older writer: the session then keeps the same-repository rule for `prs`. The radar copies it only when present and well-formed |
 | `unreviewed` | the `pr_watch` wait | `[{n, repo, host}]`, present only for watched PRs whose head moved past the session's last reviewer PASS (see [tools](tools.md#watch)); the herdr-app mod matches it to the PR chip by number, repository and host and shows `unreviewed head` on the chip and its hover card; the sidebar's `fm_a2` item reads `pr #<n> unreviewed head`. A PR the session only follows has no entry; a PASS on the head or the end of the PR removes it |
@@ -229,7 +228,7 @@ State and cell:
 |---|---|---|
 | `needs-you` (an own dialog or ask, an own `ask.md` that no answer file or typed input has closed, or a remote child's ask) | ❓ (`?` in `ascii`) | no: beats the spinner |
 | `working` (a turn or run; registry `starting` and `pending` too) | spinner frame | yes |
-| `waiting-external` or `idle` while the session has work of its own: a child run or live child session, a `bg_run` or `foreman_bg` task, a running `pr_watch` or `foreman_wait` | spinner frame | yes |
+| `waiting-external` or `idle` while the session has work of its own: a child run or live child session, a `bg_run` task, a running `pr_watch` or `foreman_wait` | spinner frame | yes |
 | `waiting-external` with no local work | ↻ | no |
 | `waiting-owner`, `blocked` (legacy: the turn ended and it is your move) | ✋ | no |
 | `waiting`, `idle` with nothing active | ⏸ | no |
@@ -287,7 +286,7 @@ rule; `presence` and `away` are unchanged. The radar JSON carries `owner` when t
 | `working` | ⏳ / `\uf252` | the foreman turn runs, or a child run is live, with nothing for you to do |
 | `needs-you` | ❓ / `\uf128` (`?` in `ascii`) | an own permission dialog, `ask_user_question`, guard or drift ask or checkpoint, an own `ask.md` that no answer file or typed input has closed, or a remote child's ask waits for you |
 | `waiting-owner` | ✋ / `\uf256` | older files only: an open ask or dialog (now `needs-you`) |
-| `waiting-external` | ↻ / `\uf017` | only external waits are pending: `foreman_wait`, `foreman_bg` pid waits, `pr_watch` |
+| `waiting-external` | ↻ / `\uf017` | only external waits are pending: `foreman_wait`, `pr_watch` |
 | `idle` | ⏸ / `\uf04c` | none of the above |
 | `done` | ✓ / `\uf00c` | the session ended |
 
@@ -509,16 +508,12 @@ The dots row shows items from a program you run yourself, for example a deployme
 The items fill the dots row in this order (see Dots). Overlay authors: see
 [overlays](overlays.md#external-sidebar-status).
 
-## Optional add-on: background tasks
+## Bundled add-on: background tasks
 
-Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). It is a default add-on in `config/addons.json` (exact pin); a plain `foreman setup` installs it and writes the variable below into your shell profile (skip with `--skip-addon background-tasks` or `--no-env`). By hand: `pi install npm:pi-background-tasks@2.6.10`, then set the variable in your shell profile:
-
-    export PI_BG_FEATURES=process
-
-On Windows pi-foreman also sets `PI_BG_SHELL=bash` and `PI_BG_SHELL_PATH=<Git Bash>` when its extension loads, unless you set either yourself, so `bg_run` runs under Git Bash instead of `cmd.exe`; `foreman setup` keeps pi-foreman ahead of the add-on in `packages` for that. The add-on reads `PI_BG_FEATURES` when Pi starts, not at install, so a prefix on `pi install` does nothing. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
+`pi-background-tasks` ships with pi-foreman (exact pin in `package.json`, loaded from its `pi.extensions` list right after the core adapter), so there is nothing to install. It runs shell commands in the background with status, logs and kill (`bg_run`). When pi-foreman's extension loads it sets `PI_BG_FEATURES=process` and `PI_BG_DISABLE_UPDATE_CHECK=1` for the add-on, each only when you have not set it yourself; set `PI_BG_FEATURES` in your shell profile to change the features. On Windows it also sets `PI_BG_SHELL=bash` and `PI_BG_SHELL_PATH=<Git Bash>` unless you set either yourself, so `bg_run` runs under Git Bash instead of `cmd.exe`. The add-on reads these variables once when it loads, so the shell-policy section of its prompt guidance is fixed for the process. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
 named `anthropic` and decides by provider name (`model.provider === 'anthropic'`). A `claude-bridge` provider serving `claude-*` ids is not
 treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
-`foreman setup` reports what it wrote or leaves a hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).
+See [Profiles, features and add-ons](install.md#profiles-features-and-add-ons) for the other add-ons.
 
 The add-on reads `PI_BG_FEATURES` when Pi starts, so `foreman session open` passes every `PI_BG_*` variable of the opener
 (`PI_BG_FEATURES` first; names and values checked, one that fails is skipped with a note) into the child's launch line, and
@@ -528,11 +523,11 @@ it while the `anthropic` credential is not OAuth (an api-key entry in the agent 
 Pi then fails Anthropic turns with "Anthropic attribution refuses non-OAuth Anthropic credential; subscription OAuth token
 is required". The doctor reads only the credential's type, never its value.
 
-What pi-foreman does when the add-on is present (detected by its `bg_run` tool or its package directory; `/foreman doctor` prints
-`INFO background-tasks: present` or `absent`; with the package installed it adds an info line comparing the add-on's declared
+What pi-foreman does with the add-on (detected by its `bg_run` tool or its package directory, the bundled copy included; `/foreman doctor` prints
+`INFO background-tasks: present` or `absent`, and an info line comparing the add-on's declared
 peer range for `@earendil-works/pi-coding-agent` with the running Pi version, never a failure):
 
-- `foreman_bg` is not offered (it is dropped from the active tools at session start and the tool floor does not add it back; a call would refuse with a pointer to `bg_run`), so detached tasks have one owner. Without the add-on `foreman_bg` is offered;
+- `bg_run` is the one tool for detached tasks; the former `foreman_bg` tool is gone;
 - `/foreman waits` also lists the add-on's running tasks (read from `.pi/tasks/*/*.json`, with the last 5 lines of each output);
 - `bg_run` passes the same bash guards as `bash` (overlay rules, the gate's floors and the shell-write guard), reading the command from its
   `command` field; a missing or non-string `command` is denied.
@@ -600,7 +595,7 @@ session shows. The mod is the only PR and run display: Pi itself draws no PR or 
 and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
 only (through `gh`, one search per host of `tools.prGithubHosts`), so GitLab users get no PR display.
 
-Background tasks post hc records too: `foreman_bg` runs and, with the pi-background-tasks add-on, `bg_run` tasks write the same OSC 7501 escape pi-subagents writes (key `background-tasks/<id>`, app `pi-foreman`, state working while the task runs, done or error when it ended; no `hc` call, so it works locally, remotely and on Windows). A `bg_run` task marked as agent (`isAgent: true`) keys its record `background-agents/<id>` instead and gets an agent row (🤖). A shell task keeps `background-tasks/<id>`: the mod shows it only as the ⚙ status line of its session, never as an agent row. The reverse holds too: the status line names and counts shell tasks only, so a task with a `background-agents/<id>` record (matched by its id, in the record key's form) is its agent row alone. Only under herdr or hc (`HERDR_PANE_ID` or `HC_TERMINAL_ID`) in a TUI session on a terminal, and `PI_PROGRAM_STATUS=0` turns it off. Every record is cleared on session shutdown; after a reload the add-on's running tasks are posted again: the status request goes out at session start and, when the add-on is not ready yet (package load order) or does not answer, repeated after 2 seconds and on the first agent turn until one succeeds. A `foreman_bg` wait that hits its time limit while the process still runs leaves its record working; one cancelled by a session close ends as done "Killed"; one the agent cancels with `foreman_wait` removes its record (pi-foreman no longer watches that process). Trace event `bgrecord`.
+Background tasks post hc records too: the pi-background-tasks add-on's `bg_run` tasks write the same OSC 7501 escape pi-subagents writes (key `background-tasks/<id>`, app `pi-foreman`, state working while the task runs, done or error when it ended; no `hc` call, so it works locally, remotely and on Windows). A `bg_run` task marked as agent (`isAgent: true`) keys its record `background-agents/<id>` instead and gets an agent row (🤖). A shell task keeps `background-tasks/<id>`: the mod shows it only as the ⚙ status line of its session, never as an agent row. The reverse holds too: the status line names and counts shell tasks only, so a task with a `background-agents/<id>` record (matched by its id, in the record key's form) is its agent row alone. Only under herdr or hc (`HERDR_PANE_ID` or `HC_TERMINAL_ID`) in a TUI session on a terminal, and `PI_PROGRAM_STATUS=0` turns it off. Every record is cleared on session shutdown; after a reload the add-on's running tasks are posted again: the status request goes out at session start and, when the add-on is not ready yet (package load order) or does not answer, repeated after 2 seconds and on the first agent turn until one succeeds. Trace event `bgrecord`.
 
 The mod reads `foreman radar --json` (every 3 s locally, 15 s per remote space) and, per agent terminal, `hc get <terminal> --json`
 (prop `hc` names the binary like `foreman`, default `hc`; failures are ignored) for the `pi-subagents` child records and the `pi-foreman` records in state working or
@@ -683,17 +678,14 @@ A row is labelled with its tab name. When two or more agents of a space share a 
 
 What outlives a closed tab, and what does not:
 
-- `foreman_bg` runs are detached with their own process group and survive a tab close. `/foreman close` (and an intercom
-  `foreman:close`) now sends SIGTERM to the group of each still-running run of that session (Windows: best-effort `taskkill /T`).
-  `session_shutdown`, a reload and a cancelled wait do not kill them. Runs started before a `/reload` are not killed by a later
-  close either: waits are not restored after a reload, so the session no longer knows them.
+- `bg_run` tasks belong to the add-on: pi-foreman neither starts nor kills them, so `/foreman close` leaves them to the add-on.
 
 - A selfclean helper (`selffinish`) outlives pi on purpose.
 - A local `hc run --keep --outlive-parent` session survives by design; `prune` only marks it.
 - The mod's own `hc run` attach is not killed on tab close (the mod has no `close()`); the remote `hc events` ends with pi.
 - Presence and status probes are killed when they time out.
 - The sidebar daemon is started in its own session; `stop` sends SIGTERM and it exits itself when its socket is lost.
-- Gap: `worktree sweep` protects a tree only while a live session file uses it, so a `foreman_bg` run inside a removed tree is not protected.
+- Gap: `worktree sweep` protects a tree only while a live session file uses it, so a `bg_run` task inside a removed tree is not protected.
 
 ### Legend of the sidebar markers
 

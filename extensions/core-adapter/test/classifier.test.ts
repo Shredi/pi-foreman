@@ -60,7 +60,7 @@ test("different tools with the same payload do not share a cached verdict", asyn
   const k = new Classifier();
   const { c, reg } = ctx([V("allow", "A1")]);
   await k.classify(CALL, c);
-  await k.classify({ ...CALL, tool: "foreman_bg" }, c);
+  await k.classify({ ...CALL, tool: "bg_run" }, c);
   assert.equal(reg.calls.length, 2);
 });
 

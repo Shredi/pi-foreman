@@ -54,6 +54,7 @@ licence file there. The copyright lines and licence texts are taken from those f
 - @inquirer/prompts 8.8.0, MIT License, Copyright (c) 2025 Simon Boudrias
 - beautiful-mermaid 1.1.3 (optional), MIT License, Copyright (c) 2026 Craft Docs
 - unbash 6.0.4, ISC License, Copyright (c) Lars Kappert
+- pi-background-tasks 2.6.10, ISC License, Copyright (c) 2026
 
 MIT License (pi-subagents, pi-intercom, beautiful-mermaid; the copyright line is the one named above):
 
@@ -98,7 +99,7 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
-ISC License (unbash, Copyright (c) Lars Kappert):
+ISC License (unbash, Copyright (c) Lars Kappert; pi-background-tasks, the copyright line named above):
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted, provided that the above

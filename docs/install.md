@@ -47,7 +47,7 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 
 `npm:pi-foreman` is planned once v0.1.0 is published. Pi clones the repository to
 `<agentDir>/git/github.com/Shredi/pi-foreman` (`<agentDir>` is `$PI_CODING_AGENT_DIR`, default `~/.pi/agent`) and runs
-`npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-intercom` and
+`npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-intercom`, `pi-background-tasks` (the `bg_run` tool) and
 `@juicesharp/rpiv-ask-user-question` (the `ask_user_question` tool with notes), pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
 meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
 `skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. pi-foreman has no lifecycle scripts, and the `.npmrc` in the clone turns off those of its dependencies (see [What an install runs on your machine](safety.md#what-an-install-runs-on-your-machine)). Project packages
@@ -80,6 +80,16 @@ bin/foreman setup          # from a checkout (or: node setup.mjs)
 Setup removes a user-level `npm:` copy of any bundled package (also `@juicesharp/rpiv-ask-user-question`), so one copy
 remains; a git or path install of the same package is not detected and would register the tool twice (known gap, remove
 it by hand).
+
+**Upgrading from the separate `pi-background-tasks` add-on.** The add-on now ships with pi-foreman, so a second copy would stop
+Pi at start with a tool conflict. Run `foreman setup` from the pi-foreman clone (or `/foreman setup` in a Pi that still starts);
+a plain run removes the user `npm:pi-background-tasks` entry (pinned or not) with `pi remove`. A project copy stays: run
+`foreman setup --project` in that project, or `pi remove -l npm:pi-background-tasks`. Heads-ups:
+
+- Pi stops at start while the separate copy is still listed, so run the setup command from a shell, not from inside Pi.
+- A git or path install of the add-on is not detected: remove it by hand with `pi remove <source>`.
+- A `PI_BG_FEATURES` line an earlier setup wrote into your shell profile stays where it is; it is harmless (pi-foreman only sets
+  the variable when it is unset) and you may delete it.
 
 Upgrading from a setup that installed `pi-subagents` or `pi-intercom` as top-level `npm:`
 packages: Pi stops at start with a tool conflict until setup has removed them, so `/foreman setup` cannot run yet. Run
@@ -192,7 +202,10 @@ version, setup says "already installed" and runs nothing, because a second copy 
 recorded in `managed.addonsOffered`: an add-on added to the list in a later release is offered once on the next run, and one you
 declined (answered no, `--skip-addon`, `--no-addons`) is not offered again; offer it again with `--addon <id>`.
 
-When an add-on needs an environment variable (`env` in `addons.json`), setup writes it persistently: into a marked block
+`pi-background-tasks` is not in this list: it ships with pi-foreman. `--addon background-tasks` and `--skip-addon background-tasks`
+are accepted and print "background-tasks ships with pi-foreman; nothing to install or skip".
+
+When an add-on needs an environment variable (`env` in `addons.json`; none does today), setup writes it persistently: into a marked block
 (`# >>> pi-foreman env >>>` ... `# <<< pi-foreman env <<<`) in `~/.zshrc` (zsh), `~/.bash_profile` (bash on macOS) or `~/.bashrc`
 (bash elsewhere), `~/.config/fish/conf.d/pi-foreman.fish` (fish) or `~/.profile`, and with `setx` on Windows. It is idempotent: an unchanged block
 is not rewritten. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
@@ -201,10 +214,6 @@ alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 When the Node test runner starts setup (`NODE_TEST_CONTEXT` is set), setup refuses to write or remove the real startup files, PowerShell profile folders, agent dir and herdr-app home, says why and exits 2; `PI_FOREMAN_ALLOW_REAL_HOME=1` allows it. With `--dry-run` it prints `real-home guard: would refuse <path>`. A person who runs setup by hand never sees this.
 
 - `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
-- `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
-  starts**: setup writes it into your shell profile (see above). Without `process`, its attribution hook
-  takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.5.x;
-  the doctor reports that. See [herdr](herdr.md#optional-add-on-background-tasks).
 - `quiver` (`pi-quiver`): `fetch` and `doc_to_md` tools. Session naming, header, fast mode and the stall watchdog are opt-in in its own
   settings and stay off. No name clash with pi-foreman.
 - `memory` (`pi-memory`): persistent memory tools (`memory_write`, `memory_read`, ..., `scratchpad`). It injects its memory files into
@@ -541,7 +550,7 @@ Python 3.13+ from python.org (or `winget install Python.Python.3.13`) with the p
 
 ### A fresh Windows machine, from zero
 
-Pi's `bash` tool and `foreman_bg` run commands in Git Bash, so Git for Windows is a prerequisite, not an extra. In a new PowerShell window:
+Pi's `bash` tool and the add-on's `bg_run` run commands in Git Bash, so Git for Windows is a prerequisite, not an extra. In a new PowerShell window:
 
 1. **Git for Windows**: `winget install Git.Git` (or the installer from git-scm.com). Keep the default location (`C:\Program Files\Git`); setup also finds `bash.exe` on `PATH`, but never the WSL launcher in `C:\Windows\System32`.
 2. **Node 22.19 or newer**: `winget install OpenJS.NodeJS.LTS`. Check with `node --version`.
@@ -558,7 +567,7 @@ On Windows setup also finds Git Bash (`%ProgramFiles%\Git\bin\bash.exe`, then `%
 
 `--dry-run` prints `shell: would write shellPath ...` and writes nothing; `--remove` and `--preview` do not touch the setting. Off Windows setup prints nothing about the shell.
 
-First check: start `pi` in a project, then ask the foreman to run a background command (`foreman_bg`, offered only without the background-tasks add-on; with it, `bg_run`) with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
+First check: start `pi` in a project, then ask the foreman to run a background command (`bg_run`) with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
 
 ## Claude bridge: log in once
 

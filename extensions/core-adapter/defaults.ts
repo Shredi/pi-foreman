@@ -523,7 +523,7 @@ function positionals(argv: string[], valued: ReadonlySet<string> = new Set()): s
 }
 
 const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
-const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "bg_run", "powershell"]);
 
 /** An operand that names another machine: `host:path`, `user@host:path`, `ssh://`, `rsync://`. */
 const remoteOperand = (w: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(w) || (!w.startsWith("-") && !/^[A-Za-z]:[\\/]/.test(w) && /^(?:[^@\s/:]+@)?[^\s/:@]+:/.test(w));
@@ -1457,7 +1457,7 @@ function webNotRead(c: DangerCall, env: DangerEnv): boolean {
   return v.candidate && !v.ok;
 }
 
-const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && c.tool !== "foreman_bg" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
+const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
 export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "writes files outside the worktree, the session's scratch dir and the OS temp dir", test: (c, e) => pathWriteOutside(c, e) || shellWriteOutside(c, e) },
@@ -1467,7 +1467,7 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-net-write", reason: "sends data over the network (a method other than GET or HEAD, a body, an upload, a raw socket, or a download with credentials or an unsafe target)", test: (c, e) => segs(netWriteSeg)(c, e) || webNotRead(c, e) },
   { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: (c, e) => segs(installSeg)(c, e) || (c.segments ?? []).some((s) => s.opaque === "assignment" && s.program !== "" && installSeg(s)) },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, push to a URL, rebase, amend of published work, stash drop, worktree removal, history rewrite)", test: segs(gitSeg) },
-  { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
+  { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && segs(detachSeg)(c, e)) || detached(c) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
   { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable, an unparsed form or an interpreter one-liner such as python -c or node -e)", test: (c, e) => (c.segments ?? []).some((s) => s.opaque !== null) || segs(inlineCode)(c, e) },
   // the judge-first label of the old Python delete check (floors.ts unknownTargetDelete); until the judge-first list replaces this one it takes this path, after the opaque class (an opaque line is asked as that)

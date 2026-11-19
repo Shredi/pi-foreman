@@ -1,6 +1,7 @@
-// win32: point the optional pi-background-tasks add-on at Git Bash. The add-on reads PI_BG_SHELL / PI_BG_SHELL_PATH in its own
-// extension factory; without them it falls back to cmd.exe. pi-foreman loads first (setup.mjs orders `packages`), so setting
-// them synchronously in our factory reaches it. Never overrides a value the user set; nothing happens off win32.
+// The bundled pi-background-tasks add-on reads PI_BG_FEATURES, PI_BG_DISABLE_UPDATE_CHECK and (win32) PI_BG_SHELL / PI_BG_SHELL_PATH in its
+// own extension factory; without the shell pair it falls back to cmd.exe. pi-foreman's core adapter is the first entry of `pi.extensions`
+// in package.json, so setting them synchronously in our factory reaches the add-on. Never overrides a value the user set; the shell pair is
+// set on win32 only.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ShellConfigFn } from "./bg.ts";
@@ -19,6 +20,20 @@ export interface BgShellResult {
   set: boolean;
   /** win32, neither variable set by the user, and no usable bash was found (the add-on falls back to cmd.exe). */
   noBash: boolean;
+}
+
+/** The add-on's start defaults, each set only when unset: the plain `process` feature and no npm update check at every start (its `/bg-update` advice would reinstall a second copy). Returns the names it set. */
+export function applyBgAddonDefaults(env: NodeJS.ProcessEnv): string[] {
+  const set: string[] = [];
+  if (env.PI_BG_FEATURES === undefined) {
+    env.PI_BG_FEATURES = "process";
+    set.push("PI_BG_FEATURES");
+  }
+  if (env.PI_BG_DISABLE_UPDATE_CHECK === undefined) {
+    env.PI_BG_DISABLE_UPDATE_CHECK = "1";
+    set.push("PI_BG_DISABLE_UPDATE_CHECK");
+  }
+  return set;
 }
 
 /** Like `applyBgShellEnv`, and also says whether the lookup found no bash, so the session can tell the user once. */

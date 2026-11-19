@@ -62,8 +62,8 @@ const foremanFile = (env) => path.join(env.agentDir, "foreman.json");
 const lines = (...l) => `${l.join("\n")}\n`;
 
 // Prompt order: profile; "Adjust features?"; one flip prompt per area group (tools, models, review, ceremony, retro, ops, ui and the
-// safety relaxations; a flip is followed by a second prompt for the same group); one y/N per add-on (polish, background-tasks); apply.
-const SESSION = lines("1", "y", "1", "", "", "", "", "", "", "", "", "n", "y", "n", "n", "y");
+// safety relaxations; a flip is followed by a second prompt for the same group); one y/N per add-on (polish, quiver, memory); apply.
+const SESSION = lines("1", "y", "1", "", "", "", "", "", "", "", "", "y", "n", "n", "y");
 
 test("the picker takes a profile, a flipped toggle and an add-on, then applies on confirm", () => {
   const env = fresh();
@@ -73,16 +73,14 @@ test("the picker takes a profile, a flipped toggle and an add-on, then applies o
   assert.match(r.out, /\[x\] 1\) codemode|1\) \[x\] codemode/);
   assert.match(r.out, /safety relaxations:\n {2}WARNING/);
   assert.match(r.out, /Add-on polish: Compact Claude Code-style/);
-  assert.match(r.out, /note: PI_BG_FEATURES=process is read when Pi starts/);
   assert.match(r.out, /^--- \/dev\/null/m);
-  assert.match(r.out, /would run: pi install npm:pi-background-tasks@2\.6\.10/);
-  assert.match(r.out, /equivalent: foreman setup --profile orchestration --disable codemode --addon background-tasks/);
+  assert.match(r.out, /would run: pi install npm:pi-polish@0\.1\.2/);
+  assert.match(r.out, /equivalent: foreman setup --profile orchestration --disable codemode --addon polish/);
   const cfg = JSON.parse(fs.readFileSync(foremanFile(env), "utf8"));
   assert.equal(cfg.profile, "orchestration");
   assert.equal(cfg.roles.foreman.codemode, false);
   assert.equal(cfg.tools.pr, false);
-  assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
-  assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself/);
+  assert.deepEqual(installs(env), [["install", "npm:pi-polish@0.1.2"]]);
 });
 
 test("the printed equivalent flag line reproduces the same foreman.json", () => {

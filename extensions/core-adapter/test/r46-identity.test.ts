@@ -76,7 +76,7 @@ function rig(t: TestContext) {
       getSessionName: () => names.value,
       setSessionName: (v: string) => void (names.value = v),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
+    coreAdapter(pi as never, { env: {}, pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
     const ctx = {
       sessionManager: { getSessionId: () => id, getSessionFile: () => path.join(agentDir, "sessions", "--project--", `${id}.jsonl`), getEntries: () => entries, getBranch: () => entries },
       cwd: project,

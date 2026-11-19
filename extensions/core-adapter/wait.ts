@@ -13,13 +13,12 @@
 // sit inside the workspace (its .workflow/ included) or `<agentDir>/pi-foreman/state/wait/`;
 // inside the workspace the gate's write protection (floors, self-modification, protected folders) refuses it too. Owned dirs (owned.ts readWrite:
 // the handoff dirs, subagent-artifacts, the round worktree dir) are accepted when the caller passes them.
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { rulingFresh } from "./ruling.ts";
-import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, freshBgLogPath, shellPathSetting, spawnWithFreshLog } from "./bg.ts";
 import { get } from "./config.ts";
 import { underOwned } from "./owned.ts";
 import { baseFloorEnv } from "./gate.ts";
@@ -71,7 +70,7 @@ export function waitLimits(read: (key: keyof WaitLimits) => unknown): WaitLimits
 export type ValidSpec =
   | { kind: "timer"; seconds: number; note: string }
   | { kind: "file"; path: string; note: string }
-  | { kind: "pid"; pid: number; note: string; log?: string; bg?: true }
+  | { kind: "pid"; pid: number; note: string; log?: string }
   | { kind: "ci"; runId: string; note: string; log?: string }
   | { kind: "child"; label: string; note: string }
   /** Adapter-started: critical = wake when the level drops below critical (or after `boundSeconds`); queue = wake when no run is active. */
@@ -143,7 +142,7 @@ export function checkWaitPath(raw: unknown, o: PathBoundOpts): { path: string } 
 
 /**
  * The optional `log` of a pid or ci wait (shown by `/foreman waits`, its last lines): a path the file wait bound accepts,
- * or one under `<agentDir>/pi-foreman/state/scratch/` (where foreman_bg writes). Absent or empty = none.
+ * or one under `<agentDir>/pi-foreman/state/scratch/`. Absent or empty = none.
  */
 export function checkLogPath(raw: unknown, o: PathBoundOpts): { log?: string } | { error: string } {
   if (raw === undefined || raw === null || raw === "") return {};
@@ -292,8 +291,6 @@ export interface RuntimeDeps {
   changed?: () => void;
   /** Modification time (ms) of a file, else null; lets a ruling wait ignore a ruling older than its ask.md. */
   mtime?: (p: string) => number | null;
-  /** A foreman_bg wait ended: `exited` (the process is gone), `timeout` (the wait hit maxSeconds, the process is still alive) or `cancelled` (the session closed and the process was sent SIGTERM) or `dropped` (the agent cancelled the wait; the process is left alone). */
-  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
   /** True while a run is in progress (the adapter's own record, agent_start .. agent_end). Absent = never. */
   inRun?: () => boolean;
   /** A carried child notice ended a wait inside a run: the wait ends with this one quiet line, not a wake. */
@@ -310,8 +307,6 @@ interface Entry {
   log?: string;
   /** pid waits: the watched process (a second wait on it dedupes). */
   pid?: number;
-  /** pid waits of foreman_bg (bg.ts): the live file lists them as bg waits (the herdr-app mod shows them). */
-  bg?: true;
   started: number;
   deadline: number;
   handles: unknown[];
@@ -338,11 +333,6 @@ export class WaitRuntime {
 
   get active(): number {
     return this.waits.size;
-  }
-
-  /** The id the next `start` will use (foreman_bg names its log with it before it spawns). */
-  nextId(): string {
-    return `w${this.seq + 1}`;
   }
 
   /** Why a wait cannot start now (wait.maxActive), else null. */
@@ -377,7 +367,6 @@ export class WaitRuntime {
     if (spec.kind === "child") e.label = spec.label;
     else if ((spec.kind === "pid" || spec.kind === "ci") && spec.log) e.log = spec.log;
     if (spec.kind === "pid") e.pid = spec.pid;
-    if (spec.kind === "pid" && spec.bg) e.bg = true;
     if (spec.kind === "pressure") e.press = { mode: spec.mode, args: spec.args };
     this.waits.set(id, e);
     if (spec.kind === "pressure") {
@@ -462,7 +451,6 @@ export class WaitRuntime {
     const e = this.drop(id);
     if (!e) return;
     this.d.trace({ event: "wait", decision: "resolved", toolFamily: e.kind });
-    if (e.bg) this.d.onBgEnd?.(e.id, e.note, outcome === "timeout" && e.pid !== undefined && this.d.alive(e.pid) ? "timeout" : "exited");
     this.governor.resolved({ id: e.id, kind: e.kind, note: e.note, outcome: e.log ? `${outcome}; log ${e.log}` : outcome });
   }
 
@@ -484,7 +472,6 @@ export class WaitRuntime {
     const e = this.drop(id);
     if (!e) return false;
     this.d.trace({ event: "wait", decision: "cancelled", toolFamily: e.kind });
-    if (e.bg) this.d.onBgEnd?.(e.id, e.note, how);
     this.governor.check();
     return true;
   }
@@ -515,14 +502,9 @@ export class WaitRuntime {
     return [...this.waits.keys()].filter((id) => this.cancelWith(id, "cancelled"));
   }
 
-  /** Pids of the foreman_bg runs of this session that are still waited on. */
-  bgPids(): number[] {
-    return [...this.waits.values()].flatMap((e) => (e.bg && e.pid ? [e.pid] : []));
-  }
-
-  list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number; log?: string; bg?: true }[] {
+  list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number; log?: string }[] {
     const now = this.d.now();
-    return [...this.waits.values()].map((e) => ({ id: e.id, kind: e.kind, note: e.note, ageSeconds: Math.round((now - e.started) / 1000), leftSeconds: Math.max(0, Math.round((e.deadline - now) / 1000)), ...(e.log ? { log: e.log } : {}), ...(e.bg ? { bg: true as const } : {}) }));
+    return [...this.waits.values()].map((e) => ({ id: e.id, kind: e.kind, note: e.note, ageSeconds: Math.round((now - e.started) / 1000), leftSeconds: Math.max(0, Math.round((e.deadline - now) / 1000)), ...(e.log ? { log: e.log } : {}) }));
   }
 
   private sendWake(outcomes: Outcome[]): void {
@@ -563,21 +545,6 @@ export function ghRunView(runId: string, cwd: string): Promise<CiStatus> {
       }
     });
   });
-}
-
-/**
- * SIGTERM the process group of a foreman_bg run (detached on POSIX, so `-pid` is its group). win32: the run is not detached;
- * a best-effort `taskkill /T` (no /F) ends its tree. Already gone or not ours to signal: nothing to do.
- */
-export function terminateBg(pid: number, platform: string = process.platform): boolean {
-  if (!processAlive(pid)) return false;
-  try {
-    if (platform === "win32") spawn("taskkill", ["/pid", String(pid), "/T"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
-    else process.kill(-pid, "SIGTERM");
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function processAlive(pid: number): boolean {
@@ -623,8 +590,6 @@ export interface WaitSession {
   onStart?: (spec: ValidSpec, id: string) => void;
   /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
   onCancel?: (id: string) => void;
-  /** A foreman_bg wait ended (bgrecords.ts posts or clears the task's hc record). */
-  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
   /** Appends a pending steer.md (steer.ts) to a wake message text. */
   steer?: (text: string) => string;
   /** The current pressure level and reasons (pressure waits). */
@@ -669,11 +634,9 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     },
     active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
     childNotice: (sessionId: string, label: string, kind: string, notePath: string, carried?: boolean) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath, carried) ?? false,
-    // Called by the close sequence only (session_shutdown and a reload just dispose the runtime): a closed foreman takes its still-running
-    // foreman_bg runs with it; they would otherwise outlive the tab, detached.
+    // Called by the close sequence only (session_shutdown and a reload just dispose the runtime).
     cancelAll: (sessionId: string) => {
       const rt = runtimes.get(sessionId)?.rt;
-      for (const pid of rt?.bgPids() ?? []) terminateBg(pid, deps.platform);
       return rt?.cancelAll() ?? [];
     },
     startPressure: async (_ctx: ExtensionContext, _spec: Extract<ValidSpec, { kind: "pressure" }>): Promise<{ id: string } | { error: string }> => ({ error: "pressure waits are for the foreman only" }),
@@ -717,7 +680,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
   };
   const limitsOf = (s: WaitSession) => () => waitLimits((k) => get(s.config(), `wait.${k}`));
-  /** The session's runtime, created with its first wait; foreman_wait and foreman_bg share it. */
+  /** The session's runtime, created with its first wait; foreman_wait uses it. */
   const ensureRuntime = (s: WaitSession, ctx: ExtensionContext): WaitRuntime => {
     const have = runtimes.get(s.id);
     if (have) {
@@ -740,7 +703,6 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       limits: limitsOf(s),
       stat: fileSize,
       mtime: fileMtime,
-      onBgEnd: (id, note, how) => s.onBgEnd?.(id, note, how),
       alive: processAlive,
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
       ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
@@ -839,54 +801,6 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
     },
   } as never;
-  // foreman_bg (bg.ts): the tool_call hook has already run every bash guard on `command` (index.ts); this only spawns.
-  pi.registerTool({
-    name: BG_TOOL,
-    label: "Background run",
-    description:
-      "Run one shell command in the background (detached on POSIX, not detached on win32; runs in bash on POSIX and in the bash tool's shell, Git Bash, on win32; stdout and stderr go to a log file under the pi-foreman state scratch dir) and wait for it without model turns: registers a pid wait, returns the wait id and the log path at once, and you are woken when the process has exited. The command is guarded exactly like a bash call. Parameters: command, note (shown in the sidebar and `/foreman waits`).",
-    parameters: BG_PARAMS as never,
-    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      const s = await deps.session(ctx);
-      const text = (t: string, details: Record<string, unknown>, isError = false) => ({ content: [{ type: "text" as const, text: t }], details, ...(isError ? { isError: true } : {}) });
-      const refuse = (t: string) => {
-        s.trace({ event: "wait", decision: "refused", toolFamily: "pid" });
-        return text(t, { decision: "refused" }, true);
-      };
-      if (s.isChild) return refuse(`${BG_TOOL} is for the foreman only.`);
-      if (ctx.mode === "print" || ctx.mode === "json") return refuse(`${BG_TOOL}: a long wait needs a TUI or RPC session.`);
-      const command = typeof params.command === "string" ? params.command : "";
-      if (!command.trim()) return refuse(`${BG_TOOL}: command must be a non-empty string.`);
-      let tools: string[] = [];
-      try {
-        tools = pi.getAllTools().map((t) => t.name);
-      } catch {
-        // no tool list: fall back to the package directory check
-      }
-      if (addonPresent(tools, { agentDir: s.agentDir, cwd: ctx.cwd })) return refuse(ADDON_REFUSAL);
-      const rt = ensureRuntime(s, ctx);
-      const full = rt.capacityError();
-      if (full) return refuse(full);
-      const id = rt.nextId();
-      const note = oneLine(params.note, NOTE_MAX) || oneLine(command, 60);
-      const run = spawnWithFreshLog(command, ctx.cwd, () => freshBgLogPath(path.join(s.agentDir, "pi-foreman", "state"), s.id, id), deps.platform, { shellPath: shellPathSetting(s.agentDir, ctx.cwd), config: s.config() });
-      if ("error" in run) return refuse(run.error);
-      const log = run.log;
-      const spec: ValidSpec = { kind: "pid", pid: run.pid, note, log, bg: true };
-      const r = rt.start(spec);
-      if ("error" in r) {
-        try {
-          process.kill(deps.platform === "win32" ? run.pid : -run.pid, "SIGKILL");
-        } catch {
-          // already gone
-        }
-        return text(r.error, { decision: "refused" }, true);
-      }
-      s.onStart?.(spec, r.id);
-      return text(`Background run ${r.id} (pid ${run.pid}) started; log ${log}. End your turn: you will be woken by one message when it has exited (exit code not knowable; read the log).`, { decision: "start", id: r.id, kind: "pid", pid: run.pid, log });
-    },
-  } as never);
-  // foreman_wait stays the last tool this module registers (a host that keeps only the last one keeps the long-standing tool).
   pi.registerTool(waitTool);
   return handle;
 }

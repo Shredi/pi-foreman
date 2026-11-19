@@ -10,7 +10,6 @@ export interface WaitDescriptor {
   id: string;
   kind: string;
   note: string;
-  bg?: true;
 }
 export interface WaitsEntry {
   v: 1;
@@ -21,8 +20,8 @@ export type WaitsRestore = { status: "none" } | { status: "other_session" } | { 
 
 const str = (v: unknown): v is string => typeof v === "string";
 
-export function waitsEntry(piSessionId: string, active: { id: string; kind: string; note: string; bg?: true }[]): WaitsEntry {
-  return { v: 1, piSessionId, waits: active.filter((w) => w.kind !== "pressure").map((w) => ({ id: w.id, kind: w.kind, note: w.note, ...(w.bg ? { bg: true as const } : {}) })) };
+export function waitsEntry(piSessionId: string, active: { id: string; kind: string; note: string }[]): WaitsEntry {
+  return { v: 1, piSessionId, waits: active.filter((w) => w.kind !== "pressure").map((w) => ({ id: w.id, kind: w.kind, note: w.note })) };
 }
 
 /** The latest `pi-foreman-waits` entry of the branch for this Pi session id. Pure. */
@@ -37,7 +36,7 @@ export function latestWaits(entries: unknown[], piSessionId: string): WaitsResto
     const waits: WaitDescriptor[] = [];
     for (const w of d.waits as Record<string, unknown>[]) {
       if (!w || !str(w.id) || !str(w.kind)) return { status: "malformed" };
-      waits.push({ id: w.id, kind: w.kind, note: str(w.note) ? w.note : "", ...(w.bg === true ? { bg: true as const } : {}) });
+      waits.push({ id: w.id, kind: w.kind, note: str(w.note) ? w.note : "" });
     }
     return { status: "ok", waits };
   }
@@ -49,6 +48,6 @@ export function lostWaitsMessage(r: WaitsRestore): { customType: string; content
   if (r.status === "none" || r.status === "other_session") return null;
   if (r.status === "malformed") return { customType: WAKE_MESSAGE_TYPE, content: "foreman_wait lost on restart: the stored wait state is unreadable; start any wait you still need again.", display: true, details: { lost: [] } };
   if (r.waits.length === 0) return null;
-  const lines = r.waits.map((w) => `- ${w.id} (${w.bg ? "bg " : ""}${w.kind})${w.note ? ` "${w.note.replace(/\s+/g, " ").slice(0, 120)}"` : ""}`);
-  return { customType: WAKE_MESSAGE_TYPE, content: [`foreman_wait lost on restart: ${r.waits.length} wait${r.waits.length === 1 ? "" : "s"} died with the old process and will not wake you; start again what you still need (foreman_wait / foreman_bg).`, ...lines].join("\n"), display: true, details: { lost: r.waits.map((w) => w.id) } };
+  const lines = r.waits.map((w) => `- ${w.id} (${w.kind})${w.note ? ` "${w.note.replace(/\s+/g, " ").slice(0, 120)}"` : ""}`);
+  return { customType: WAKE_MESSAGE_TYPE, content: [`foreman_wait lost on restart: ${r.waits.length} wait${r.waits.length === 1 ? "" : "s"} died with the old process and will not wake you; start again what you still need (foreman_wait / bg_run).`, ...lines].join("\n"), display: true, details: { lost: r.waits.map((w) => w.id) } };
 }

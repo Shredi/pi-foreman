@@ -621,7 +621,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 | 3 | A per-launch thinking change restates the full `provider/model:level`, not a bare `:level` | A bare level fails for native children in pi-subagents 0.75.0 |
 | 4 | pi-foreman's `providers.*` is the source, and the pi-subagents block is generated from it | The foreman entry, codemode switch, fallback and fan-out need one file. pi-subagents' mechanism is still used. |
 | 5 | Model review is an own chain link, `foreman-review`; ai-guard is not installed (supersedes the first plan: pinned ai-guard with the own link as fallback) | ai-guard cannot switch the reviewing model with the provider without a restart |
-| 6 | `pi-background-tasks` add-on, installed by default and skippable (was: dropped, then consent only) | Client impersonation by default, and the peer range excludes Pi 1.0 |
+| 6 | `pi-background-tasks` add-on, bundled with pi-foreman like pi-subagents, not installed by setup (was: installed by default and skippable, before that dropped, then consent only) | Client impersonation by default, and the peer range excludes Pi 1.0 |
 | 7 | MCP decided: Pi built-in, adapter as opt-in only | Per-tool gating, no settings mutation, native to Pi 1.0 |
 | 8 | The foreman is a main-session role with its own provider-map entry, applied via `setModel`/`setThinkingLevel` | It is not a subagent, but it must follow the provider switch |
 | 9 | Python core everywhere, including Windows | Measured Windows warm p95 is 65–71 ms, under the 150 ms threshold |

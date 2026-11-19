@@ -124,7 +124,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setThinkingLevel: () => undefined,
       sendMessage: (message: { customType: string; content: string }, options?: unknown) => void o.sent?.push({ message, options }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
+    coreAdapter(pi as never, { env: {}, pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
       cwd: project,

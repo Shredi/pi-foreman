@@ -711,7 +711,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "msysNoPathconv": { "type": "boolean", "description": "Windows only: set MSYS_NO_PATHCONV=1 and MSYS2_ARG_CONV_EXCL=* in the bash tool and foreman_bg env, so Git Bash passes POSIX-looking arguments (/switch words) to native exes unconverted. Write C:/x/y.py, not /c/x/y.py. Default true." }
+        "msysNoPathconv": { "type": "boolean", "description": "Windows only: set MSYS_NO_PATHCONV=1 and MSYS2_ARG_CONV_EXCL=* in the bash tool env, so Git Bash passes POSIX-looking arguments (/switch words) to native exes unconverted. Write C:/x/y.py, not /c/x/y.py. Default true." }
       }
     }
   }

@@ -171,7 +171,7 @@ export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulin
 export const SELF_RULING_REASON = "a session cannot write its own parent's ruling";
 
 const realDir = (d: string): string => path.dirname(realKey(path.join(d, "x")));
-const SHELL_TOOLS = new Set(["bash", "powershell", "foreman_bg", "bg_run"]);
+const SHELL_TOOLS = new Set(["bash", "powershell", "bg_run"]);
 const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 const shellOf = (toolName: string): "posix" | "powershell" => (toolName === "powershell" ? "powershell" : "posix");
 

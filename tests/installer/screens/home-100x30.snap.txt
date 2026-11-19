@@ -8,7 +8,7 @@
   @inquirer/prompts               8.7.4      8.7.4      8.7.4    npm:@inquirer/prompts       yes
   unbash                          6.0.1      6.0.1      6.0.1    npm:unbash                  yes
   pi-polish                       –          0.1.2      0.1.2    npm:pi-polish               yes
-  pi-background-tasks             2.6.9      2.6.10     2.6.9    npm:pi-background-tasks     yes
+  pi-quiver                       6.14.1     6.14.2     6.14.1   npm:pi-quiver               yes
   pi-notes                        0.3.0      0.2.4      0.2.4    npm:pi-notes                yes
   herdr                           0.5.1      –          –        official installer          no
   herdr-app                       –          –          –        official installer          no
