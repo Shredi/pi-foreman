@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import shell_write_guard as swg  # noqa: E402
+import shell_write_guard as swg
 
 
 class EarlierCallVariable(unittest.TestCase):

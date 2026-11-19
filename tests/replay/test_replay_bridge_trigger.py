@@ -16,8 +16,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import notifications, shape  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import notifications, shape
+from test_replay import REASON, ReplayCase
 
 BRIDGE = "claude-bridge"
 SCRIPT = {"*": {"p1": [{"text": "fake: typed reply"}], "t1": [{"text": "fake: triggered reply"}]}}

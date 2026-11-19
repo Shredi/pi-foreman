@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_safe_ops_pr import PrCase, GH_URL  # noqa: E402
+from test_safe_ops_pr import PrCase, GH_URL
 
 
 class PrCreateHeadTest(PrCase):

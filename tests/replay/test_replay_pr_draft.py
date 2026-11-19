@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
-from pr_host_shims import make_bin  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from pr_host_shims import make_bin
+from test_replay import REASON, ReplayCase
 
 SAFE_OPS = Path(__file__).resolve().parents[2] / "scripts" / "safe_ops.py"
 

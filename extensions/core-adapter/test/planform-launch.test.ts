@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import { world } from "./_r46world.ts";
 import { planFormIssues } from "../ownertext.ts";
 
-const OWNER = "## For the owner\n\nGoal: ship the widget.\nSteps: one small change.\n\n";
+const OWNER = "## For the owner\n\n**Goal:** ship the widget.\n\n1. Make one small change.\n\n";
 const REST = "## Goal\nShip it.\n";
 const HEADINGS = "## Decisions and assumptions\n1. none.\n\n## Open questions\n1. none.\n";
 const clean = `# Widget\n\n${OWNER}${REST}`;

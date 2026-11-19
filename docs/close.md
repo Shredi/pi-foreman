@@ -73,6 +73,8 @@ A record call that fails (a time-out, a non-zero exit or a throw) is not retried
 Ready means nothing is uncommitted, unmerged, open, pending or an untaken child handover. The session's own
 handovers block only a top session (no parent); with a parent they are passed up and do not block.
 
+After the `## Close` section the adapter appends the review rounds of the session's changes to the result file, one line per branch the session's reviews ran on (`Review rounds: 4 (2 fail, 2 pass; 1 high-stakes), plan reviews 2, PR #301`; with more than one branch each line starts with `<branch>: `). The counts cover every session's reviews of that change; see [review](review.md#review-rounds). Nothing is appended when the session ran no counted review; an unreadable store or result file appends nothing and never fails the close.
+
 `close.json` next to the manifest holds `{v, session, parent, ts, dryRun, uncommitted, unmerged, openItems,
 pendingChildren, removed, wouldRemove, kept, handovers, childHandovers, ready, lines}`; `--dry-run` writes
 nothing. `--result PATH` appends `## Close` with the lines to that file. Exit 0 ready, 3 open, 1 lock timeout

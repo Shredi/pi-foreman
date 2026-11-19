@@ -103,7 +103,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
 import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
@@ -159,7 +159,7 @@ import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
-import { ownerFactsLines, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
+import { ownerFactsLines, ownerFormHints, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
@@ -243,7 +243,9 @@ import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitMod
 import type { RegistryLike } from "./modelcheck.ts";
 import { countsForItems, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, OCCASIONS, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
-import { diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
+import { closeLines } from "./reviewrounds.ts";
+import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
+import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
@@ -3090,6 +3092,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
+  /** Workspace key, remote repository and branch of a checkout for the findings store; each null when it cannot be told. */
+  async function repoIdentity(s: Session, cwd: string): Promise<{ workspace: string | null; repo: string | null; branch: string | null }> {
+    let workspace: string | null = null;
+    try {
+      workspace = workspaceKeyOf(cwd, get(s.config.config, "retro.workspaceKey"));
+    } catch {
+      // a key that does not sanitise: the row stays unkeyed
+    }
+    return { workspace, repo: await repoOf(cwd).catch(() => null), branch: currentBranch(cwd) };
+  }
+
   /**
    * Run-end findings (findings.ts): each review result is recorded through foreman_findings.py
    * (awaited, 10 s, fail-soft), its findings traced. A completed gate primary of a panel opens a
@@ -3102,11 +3115,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const work = (async (): Promise<RunEndFindings> => {
       const cwd = results.find((r) => r.cwd)?.cwd ?? s.cwd;
       const head = await headOf(cwd);
+      const where = await repoIdentity(s, cwd);
       const out = await onReviewRunEnd(
         {
           results,
           launch,
-          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, live: s.ladder.live.get("reviewer") ?? null, now: Date.now() },
+          context: { session: s.usage.line.foremanSession, agentDir: s.agentDir, runId, cwd, head, live: s.ladder.live.get("reviewer") ?? null, now: Date.now(), ...where },
           tmpDir: s.markerDir,
         },
         (args, input) => runScript(s, "foreman_findings.py", args, RECORD_TIMEOUT_MS, input),
@@ -3971,6 +3985,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       /** The `[high-stakes]` entries of this launch (highstakes.ts) and the checkout they review. */
       const hsEntries = new Set<Json>();
       let hsLaunch: { root: string; gateKey: string; base: string | null } | null = null;
+      // The items of a review entry, computed once (verdict.ts): the re-review line, the items line of the task and the review_verdict tool read this set.
+      const launchItemsCache = new Map<Record<string, unknown>, { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null }>();
+      const launchItemsFor = (e: Record<string, unknown>): { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null } => {
+        const known = launchItemsCache.get(e);
+        if (known) return known;
+        const given = takenItems.has(e) ? parseItemsField(takenItems.get(e)) : undefined;
+        let r: ReturnType<typeof launchItemsOf> | null = null;
+        if (!(given && "error" in given)) {
+          const lf = boundLedger(s.markerDir, s.id);
+          const read = (f: string | null): string | null => { try { return f ? fs.readFileSync(f, "utf8") : null; } catch { return null; } };
+          const named = typeof e.task === "string" ? taskLedger(e.task, ctx.cwd, lf, [s.cwd, ctx.cwd]).path : lf;
+          r = launchItemsOf((named === lf ? null : read(named)) ?? read(lf), given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.failItems });
+        }
+        const c = { given, r };
+        launchItemsCache.set(e, c);
+        return c;
+      };
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -4287,9 +4318,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: (process.env.PI_FOREMAN_HANDOFF_DIR?.trim() && process.env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") {
-            // with an `items` launch field the line names only the failed items inside it (the allowed set is the given one, verdict.ts launchItemsOf)
-            const given = takenItems.has(e) ? parseItemsField(takenItems.get(e)) : undefined;
-            e.task = given && "items" in given ? prependReReviewScoped(e.task, s.failItems, given.items) : given ? e.task : prependReReview(e.task, s.failItems);
+            // the line names only the failed items inside the launch's set (verdict.ts launchItemsOf: the given items, else the failed items still open); with an `items` field it also asks for a result on each
+            const { given, r } = launchItemsFor(e);
+            const take = r && "items" in r ? allowedItems(r.items, hsLaunch !== null) : [];
+            e.task = given && "items" in given ? prependReReviewScoped(e.task, s.failItems, take) : prependReReview(e.task, s.failItems.filter((f) => take.map(String).includes(f)));
           }
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
           if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
@@ -4631,11 +4663,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const givenItems = new Map<Json, ItemId[]>();
         if (actionOf(input) === null) for (const e of agentEntries) {
           if (!REVIEW_ROLES.includes(e.agent as string)) continue;
-          const given = takenItems.has(e) ? parseItemsField(takenItems.get(e)) : undefined;
+          const { given, r } = launchItemsFor(e);
           if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
           if (given && "items" in given) givenItems.set(e, given.items);
-          const pick = typeof e.task === "string" ? pickLedger(e.task) : null;
-          const r = launchItemsOf(pick?.text ?? lg, given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.failItems });
+          if (!r) continue;
           if ("unknown" in r) {
             s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
@@ -4652,6 +4683,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: `pi-foreman: launch refused [review_record_dir]: the reviewer's record folder cannot be made (${(err as Error).message}). Fix the folder or its permissions under the agent dir (pi-foreman/state/review-records), then launch again.` };
           }
         }
+        // every review task of a single launch ends with the ids review_verdict takes (the set the tool and the binding use), after the facts the plan review added
+        if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
@@ -5615,6 +5648,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // jargon in the Summary is advice on its own line, never a form fault and never a refusal
         const jargon = ownerSectionIssues(written.plan.markdown).find((i) => i.startsWith("jargon: "));
         if (jargon) planFormNote += `${planFormNote ? "\n" : ""}pi-foreman: advice: the Summary section reads like jargon (${jargon.slice("jargon: ".length)}); the owner reads it cold, write it in plain words. This never blocks a review.`;
+        // a Summary that misses a part of its form is advice on its own line too, never a refusal
+        const hints = ownerFormHints(written.plan.markdown);
+        if (hints.length) planFormNote += `${planFormNote ? "\n" : ""}pi-foreman: advice: the Summary section misses parts of its form (${hints.join("; ")}): a **Goal:** paragraph, numbered steps, boxes at the end. This never blocks a review.`;
       }
     } else if (owner && wroteFile) {
       // `rulings-<topic>.md` is the rulings sidecar of an HTML plan: the copy is derived again, with or without a plan page open
@@ -6191,6 +6227,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       trackedHost: (repo, n, hosts) => trackedHostOf(s.agentDir, repo, n, hosts),
       githubHosts: () => resolveGithubHosts(s.config.config),
       draftFlow: () => draftFlowOn(s),
+      recordPr: async (o) => {
+        const where = await repoIdentity(s, o.cwd);
+        appendPrRow(s.agentDir, { session: s.usage.line.foremanSession, workspace: where.workspace, repo: o.repo, branch: o.branch, number: o.number, head: o.head, ts: new Date().toISOString() });
+      },
     };
   };
   registerPrFollow(pi, { isChild: process.env.PI_SUBAGENT_CHILD === "1", session: prSession });
@@ -6243,7 +6283,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), mergedPr: () => (process.env[HANDOFF_DIR_ENV]?.trim() ? s.prWatches.mergedPrs().at(-1)?.n ?? null : null), selfFinish: async (c, req) => {
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, reviewRounds: () => closeLines(s.agentDir, s.usage.line.foremanSession), config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), mergedPr: () => (process.env[HANDOFF_DIR_ENV]?.trim() ? s.prWatches.mergedPrs().at(-1)?.n ?? null : null), selfFinish: async (c, req) => {
         const handoff = process.env[HANDOFF_DIR_ENV]?.trim() ?? "";
         const py = pyPath(s);
         const script = path.join(PKG_ROOT, "scripts", "foreman_close.py");
@@ -6413,7 +6453,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       };
       const b = launchBinding;
       if (!s.isChild || !b || !REVIEW_ROLES.includes(b.role) || !b.verdictDir || !fs.existsSync(b.verdictDir)) return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman); give the verdict in your report.`, "no_channel");
-      const allowed = b.highStakes ? [] : b.items ?? [];
+      const allowed = allowedItems(b.items, b.highStakes === true);
       const c = checkVerdictCall(params, allowed);
       if ("error" in c) return refuse(c.error, "invalid");
       let replaced = false;

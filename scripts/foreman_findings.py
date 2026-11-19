@@ -205,7 +205,7 @@ def _write_records(args, found, items):
     ts = _now_iso()
     common = {"session": args.session, "gate": args.gate, "model": args.model, "rung": args.rung,
               "primary": bool(args.primary), "role": args.role, "runId": args.run_id, "head": head, "ts": ts,
-              "source": args.source}
+              "source": args.source, "workspace": args.workspace, "repo": args.repo, "branch": args.branch}
     nums = sorted(set(args.item or items))
     v = (args.verdict or "").upper() or None
     lines = [dict(common, type="review", base=args.base, items=nums, verdict=v, secs=args.secs,
@@ -270,8 +270,33 @@ def _finding_rows(recs):
     return ids, dismissed
 
 
+def main_checkout(cwd):
+    """The main checkout of the repository at `cwd`: the parent of the git common dir when that dir is named `.git` (a linked
+    worktree resolves to its main checkout), else the top level, else `cwd` outside git."""
+    rc, out, _err = _git(cwd, "rev-parse", "--git-common-dir", "--show-toplevel")
+    lines = out.decode("utf-8", "replace").splitlines() if rc == 0 else []
+    if len(lines) < 2:
+        return os.path.abspath(cwd)
+    common = os.path.abspath(os.path.join(str(cwd), lines[0]))
+    return os.path.dirname(common) if os.path.basename(common) == ".git" else os.path.abspath(lines[1])
+
+
+def _here_key(args):
+    import foreman_backlog as bl
+    import foreman_config as fc
+    root = main_checkout(os.getcwd())
+    try:
+        cfg = fc.load_config(args.agent_dir, root)["config"]
+    except Exception:  # noqa: BLE001 - a config that does not load only loses the override
+        cfg = {}
+    return bl.workspace_key(root, cfg)
+
+
 def cmd_list(args):
     recs = load_records(args.agent_dir)
+    want_ws = None
+    if args.workspace:
+        want_ws = _here_key(args) if args.workspace == "here" else args.workspace
     models_of, dismissed = _finding_rows(recs)
     cutoff = parse_since(args.since) if args.since else None
     rows = []
@@ -280,12 +305,16 @@ def cmd_list(args):
             continue
         if cutoff is not None and (parse_ts(r.get("ts")) or 0) < cutoff:
             continue
+        if want_ws is not None and r.get("workspace") != want_ws:
+            continue
+        if args.repo and str(r.get("repo") or "").lower() != args.repo.lower():
+            continue
         if args.only_model and args.only_model.lower() not in str(r.get("model", "")).lower():
             continue
         if args.unique and len(models_of[r.get("id")]) != 1:
             continue
         row = {k: r.get(k) for k in ("id", "session", "gate", "model", "rung", "primary", "file", "line", "class",
-                                     "note", "head", "ts", "source")}
+                                     "note", "head", "ts", "source", "workspace", "repo", "branch")}
         row["dismissed"] = r.get("id") in dismissed
         rows.append(row)
     if args.json:
@@ -674,6 +703,9 @@ def build_parser():
     rc.add_argument("--verdict", choices=("PASS", "FAIL"))
     rc.add_argument("--secs", type=float)
     rc.add_argument("--started-ts")
+    rc.add_argument("--workspace", help="workspace key of the main checkout")
+    rc.add_argument("--repo", help="owner/name of the origin remote")
+    rc.add_argument("--branch")
     rc.add_argument("--cwd")
     rc.add_argument("--agent-dir")
     g = rc.add_mutually_exclusive_group()
@@ -684,6 +716,8 @@ def build_parser():
     ls.add_argument("--only-model")
     ls.add_argument("--unique", action="store_true", help="only findings found by exactly one model")
     ls.add_argument("--session")
+    ls.add_argument("--workspace", help="only findings of this workspace key; `here`: the current main checkout (rows without a key never match)")
+    ls.add_argument("--repo", help="only findings of this owner/name repository (rows without one never match)")
     ls.add_argument("--json", action="store_true")
     ls.add_argument("--agent-dir")
     ds = sub.add_parser("dismiss", help="mark a finding as rejected")

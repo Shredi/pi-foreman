@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_replay import REASON, ReplayCase  # noqa: E402
+from test_replay import REASON, ReplayCase
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
