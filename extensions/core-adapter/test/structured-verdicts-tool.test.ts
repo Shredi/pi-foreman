@@ -247,5 +247,5 @@ test("T12: after the binding is read, the child's env lacks the pi-foreman key a
   delete (globalThis as unknown as Record<symbol, unknown>)[CACHE];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { ...BASE, verdictDir: only } });
   await r11Rig(t, {}, { child: true, piExtra: { registerTool: () => undefined, registerCommand: () => undefined, getActiveTools: () => ["review_verdict"] } });
-  assert.equal(process.env[BINDINGS_ENV], undefined, "nothing else in it: the variable goes");
+  assert.match(String(process.env[BINDINGS_ENV]), /^consumed:[0-9a-f]+$/, "nothing else in it: the variable carries the consumed marker, no role");
 });

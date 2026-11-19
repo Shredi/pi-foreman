@@ -246,23 +246,6 @@ const itemId = (v: unknown): number | "V" | null => (typeof v === "number" && Nu
 
 const BINDING_CACHE = Symbol.for("pi-foreman.launch-binding");
 
-/**
- * The child's launch binding, read once and its own key removed from the env right after (verdict.ts, T12): processes the child starts
- * (test runs, a nested pi) no longer inherit its identity, so they cannot write its verdict record. Other packages' keys stay. A reload of the
- * extension in the same process finds the env without the key and takes the parsed binding kept on the process; only a child keeps one.
- */
-export function takeBinding(env: Env): LaunchBinding | null {
-  const g = globalThis as unknown as Record<symbol, LaunchBinding | null | undefined>;
-  const b = readBinding(env);
-  if (env.PI_SUBAGENT_CHILD !== "1") return b;
-  if (b) {
-    scrubBinding(env);
-    g[BINDING_CACHE] = b;
-    return b;
-  }
-  return g[BINDING_CACHE] ?? null;
-}
-
 /** Remove this package's key from the bindings env var, keeping every other key; the var goes when nothing is left. */
 export function scrubBinding(env: Env): void {
   const raw = env[BINDINGS_ENV];
@@ -328,18 +311,24 @@ function slot(): Map<string, LaunchBinding> {
  * A binding written by hand into the env of such a pi is read as a real value; this is not stopped (docs/safety.md).
  */
 export function takeBinding(env: Env): LaunchBinding | null {
+  const g = globalThis as unknown as Record<symbol, LaunchBinding | undefined>;
   const key = Object.keys(env).find((k) => k.toUpperCase() === BINDINGS_ENV);
   const raw = key === undefined ? undefined : env[key];
   if (!raw) return null;
   if (raw.startsWith(CONSUMED)) return slot().get(raw.slice(CONSUMED.length)) ?? null;
   const b = readBinding(env);
   if (!b) {
+    // a reload after the key strip below: other packages' keys remain, this child's binding stays on the process
+    if (g[BINDING_CACHE]) return g[BINDING_CACHE] ?? null;
     stripChildBindingEnv(env);
     return null;
   }
   const token = randomBytes(16).toString("hex");
   slot().set(token, b);
-  stripChildBindingEnv(env, `${CONSUMED}${token}`);
+  g[BINDING_CACHE] = b;
+  // own key out (verdict.ts, T12): other packages' keys stay; when none is left the variable carries the consumed marker
+  scrubBinding(env);
+  if (!env[BINDINGS_ENV]) stripChildBindingEnv(env, `${CONSUMED}${token}`);
   return b;
 }
 

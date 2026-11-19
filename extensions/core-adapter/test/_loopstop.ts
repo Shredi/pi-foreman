@@ -17,7 +17,9 @@ export const loopRefused = (r: Res | string): boolean => /\[review_loop\]/.test(
  * carries one located defect (`legacy/item-1`): the same key in every round.
  */
 export async function codeReview(a: Adapter, report: string | RecSpec, n = 1): Promise<string | null> {
-  const r = await a.reviewLaunch(`review items ${n} of the diff`);
+  // a record that gives item results needs the launch to name those items (the record file is checked against them)
+  const ids = typeof report === "string" ? [] : (report.items ?? []).map((i) => i.id);
+  const r = await a.reviewLaunch(`review items ${n} of the diff`, ids.length > 0 ? { items: ids } : {});
   if (r.blocked) return r.blocked;
   const before = await a.recordedReviews();
   if (typeof report === "string") a.endRun(r.id, report);
