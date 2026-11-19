@@ -1393,8 +1393,21 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         if (inWhere === "ssh") continue;
         return withFragment(remoteHit("a recursive rm", inWhere), seg);
       }
-      const h = pythonKinds(rtext, inner, env, inWhere, depth + 1, false, rmAsks);
-      if (h) return withFragment(h, seg);
+      // a container takes its words as argv, the target (container, pod, options) first: the joined text is read as before, and again from each program that runs a string, with a word that
+      // holds spaces kept as one word (a `-c` string), all by the same recursive normaliser; ssh joins them into one remote string
+      const texts: [string, ShellSegment[]][] = [[rtext, inner]];
+      if (remote.where === "container") {
+        const quote = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`);
+        for (let i = 1; i < remote.words.length; i++) {
+          if (!RUNNERS.has(base(remote.words[i])) || !remote.words.slice(i).some((w) => /\s/.test(w))) continue;
+          const qtext = remote.words.slice(i).map(quote).join(" ");
+          if (qtext !== rtext) texts.push([qtext, parseShell(qtext, { cwd: seg.cwd, platform: env.platform })]);
+        }
+      }
+      for (const [t, parsed] of texts) {
+        const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, rmAsks);
+        if (h) return withFragment(h, seg);
+      }
       const ps = psRemoteKind(rtext);
       if (ps) return withFragment(remoteHit(ps, inWhere), seg);
     }
