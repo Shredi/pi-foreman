@@ -3,7 +3,6 @@ bench/wait_session.py
 design/probes/guard_latency.py
 design/probes/remote_hc_probe.py
 integrations/herdr/pi-foreman-sidebar/sidebar.py
-scripts/foreman_backlog.py
 scripts/foreman_bench.py
 scripts/foreman_close.py
 scripts/foreman_config.py
