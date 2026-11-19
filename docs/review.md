@@ -453,8 +453,7 @@ Every finding gets an outcome, read from later reviews of the session and the gi
 | `med s`, `p90 s` | Median and nearest-rank 90th percentile review seconds. |
 
 A last line gives the time to clean: per ledger item, first primary review to its first clean PASS (median, p90).
-A shadow model whose unique accepted findings reach `retro.panelThreshold` (default 3, user or overlay only) files a
-backlog candidate of kind `review-model` ("consider it as primary or rung"); see [retro](retro.md).
+The table is a print only: no report entry is filed from it; see [retro](retro.md).
 
 ## Privacy
 

@@ -79,7 +79,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/close.md`: session manifest, CLOSE report, cleanup preconditions, take/drop, `foreman worktree sweep`.
 - `docs/sessions.md`: `/sync`, `/retro`, `/foreman close`, footer, `bin/foreman`, intercom, Herdr.
 - `docs/cache.md`: idle prompt-cache policy per provider, keep-alive, warm compaction, cost and privacy, trace events.
-- `docs/retro.md`: retro sources, friction classes, `Friction:` line and trace event, backlog store and CLI, lessons brief.
+- `docs/retro.md`: reporting at the source (`foreman_report`, the report store, states, expiry, `foreman reports`, the start note, migrating the old backlog), what retro reads and prints.
 - `docs/herdr.md`: Herdr sidebar plugin `pi-foreman.sidebar`, rows snippet, tokens, Agents view, symbols.
 - `docs/bench.md`: `foreman bench`, columns, price tiers.
 - `docs/tools.md`: optional git tool pack (`tools.git`), PR tools (`tools.pr`, `tools.prHost`), read tools, caps, guards, child inheritance, trace.
