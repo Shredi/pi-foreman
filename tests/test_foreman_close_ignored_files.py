@@ -110,7 +110,7 @@ class IgnoredFilesRound(unittest.TestCase):
         reason, chk = fcl.check_entry({"path": str(self.wt), "kind": "worktree"}, str(self.state), "s", safe_ops.ops_config({}))
         self.assertEqual((reason, chk), ("ignored_files (a.env)", None))
 
-    def test_nested_and_symlinked_pi_tasks_are_refused(self):
+    def test_nested_pi_tasks_file_is_refused_and_symlinked_pi_tasks_is_removed_not_followed(self):
         put(self.wt, "pkg/.pi/tasks/t1/x.output")
         _, out = self.selfclean()
         self.assertEqual(out["files"], ["pkg/.pi/tasks/t1/x.output"])
@@ -120,11 +120,13 @@ class IgnoredFilesRound(unittest.TestCase):
             os.symlink(str(self.outside), str(self.wt / ".pi" / "tasks"), target_is_directory=True)
         except (OSError, NotImplementedError):
             self.skipTest("symlinks not available")
-        _, out = self.selfclean()
-        self.assertEqual(out["files"], [".pi/tasks"])
-        self.assertIn("skipped: %s — ignored_files (.pi/tasks)" % self.wt, self.sweep())
+        code, out = self.selfclean()
+        self.assertEqual((code, out["ok"]), (0, True))
+        lines = self.sweep()
+        self.assertIn("removed: %s" % self.wt, lines)
+        self.assertFalse(any("ignored_files" in ln for ln in lines))
+        self.assertFalse(self.wt.exists())
         self.assertEqual((self.outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
-        self.assertTrue(self.wt.is_dir())
 
     def test_os_litter_and_pycache_folder_are_cleaned(self):
         put(self.wt, ".DS_Store")

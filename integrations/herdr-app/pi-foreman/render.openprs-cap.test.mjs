@@ -42,62 +42,44 @@ const walk = (el, out = []) => {
   return out;
 };
 const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard");
-const repoRows = (root) => walk(root).filter((e) => /^op-example-org\//.test(String(e.props?.id ?? "")) && !String(e.props.id).startsWith("op-more-"));
-const moreOf = (row) => walk(row).find((e) => String(e.props?.id ?? "").startsWith("op-more-"));
+const repoRows = (root) => walk(root).filter((e) => /^op-example-org\//.test(String(e.props?.id ?? "")));
+const unfoldAll = (m, repos) => { m.unfolded = new Set(Array.from({ length: repos }, (_, r) => `opg:example-org/repo-${r}`)); return m; };
+const noMore = (root) => !walk(root).some((e) => /^op-more-/.test(String(e.props?.id ?? "")) || texts(e).some((s) => /\+\d+ more/.test(s)));
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 
-test("30 PRs in 30 repositories: every repository row and every chip is drawn, nothing is folded into +k", () => {
+test("30 PRs in 30 repositories: every repository group is drawn, folded (more than 15 PRs), no +k more", () => {
   const root = mod(feed(30)).render({});
   assert.equal(repoRows(root).length, 30);
-  assert.equal(cards(root).length, 30);
-  assert.ok(!walk(root).some((e) => String(e.props?.id ?? "").startsWith("op-more-")));
+  assert.equal(cards(root).length, 0);
+  assert.ok(noMore(root));
 });
 
-test("300 PRs in 300 repositories: the section finishes and draws all 300 rows", () => {
+test("30 PRs in 30 repositories, all opened: every PR is a line", () => {
+  const root = unfoldAll(mod(feed(30)), 30).render({});
+  assert.equal(repoRows(root).length, 30);
+  assert.equal(cards(root).length, 30);
+  assert.ok(noMore(root));
+});
+
+test("300 PRs in 300 repositories: the section finishes and draws all 300 groups", () => {
   const root = mod(feed(300)).render({});
   assert.equal(repoRows(root).length, 300);
-  assert.equal(cards(root).length, 300);
 });
 
-test("300 PRs in 20 repositories: each row shows 5 chips and one +10 more", () => {
-  const root = mod(feed(300, 20)).render({});
+test("300 PRs in 20 repositories, all opened: each group has its 15 lines, no cap and no +k more", () => {
+  const root = unfoldAll(mod(feed(300, 20)), 20).render({});
   const rows = repoRows(root);
   assert.equal(rows.length, 20);
-  for (const row of rows) {
-    assert.equal(cards(row).length, 5, row.props.id);
-    assert.ok(texts(moreOf(row)).includes("+10 more"), row.props.id);
-  }
+  for (const row of rows) assert.equal(cards(row).length, 15, row.props.id);
+  assert.ok(noMore(root));
 });
 
-test("a row past the cap: the first 5 PRs of the group are chips; +k more lists the rest in its tooltip", () => {
+test("12 PRs in one repository (15 or fewer): the group is open and every PR is a line, in the group's order", () => {
   const openPrs = feed(12, 1);
   const [group] = openPrGroups(openPrs, [], new Set());
   const row = repoRows(mod(openPrs).render({}))[0];
-  assert.deepEqual(cards(row).map((c) => c.props.trigger.props.id), group.prs.slice(0, 5).map((p) => `pr-op-example-org/repo-0-${p.number}`));
-  const more = moreOf(row);
-  assert.deepEqual(texts(more), ["+7 more"]);
-  assert.equal(more.props.tooltip, group.prs.slice(5).map((p) => `#${p.number}`).join(", "));
-});
-
-test("+k more opens the repository's pull list on the host of a hidden PR's page", () => {
-  const m = mod(feed(6, 1));
-  const opened = [];
-  m.openUrl = (url) => opened.push(url);
-  const more = moreOf(repoRows(m.render({}))[0]);
-  more.props.on_click({}, { stop_propagation() {}, notify() {} });
-  assert.deepEqual(opened, ["https://example.test/example-org/repo-0/pulls"]);
-});
-
-test("+k more with no page address for any hidden PR says so, and opens nothing", () => {
-  const m = mod(feed(6, 1, false));
-  const opened = [];
-  m.openUrl = (url) => opened.push(url);
-  const more = moreOf(repoRows(m.render({}))[0]);
-  more.props.on_click({}, { stop_propagation() {}, notify() {} });
-  assert.deepEqual(opened, []);
-  assert.equal(stubs.world.notices.length, 1);
-  assert.equal(stubs.world.notices[0].title, "No link for these pull requests");
-  assert.match(stubs.world.notices[0].body, /^#\d+ have no page address yet\.$/);
+  assert.deepEqual(cards(row).map((c) => c.props.trigger.props.id), group.prs.map((p) => `pr-op-example-org/repo-0-${p.number}`));
+  assert.ok(noMore(row));
 });
 
 test("a repository row that fails to build falls back to its name and count; the other rows still draw", () => {

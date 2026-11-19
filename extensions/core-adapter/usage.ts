@@ -3,9 +3,10 @@
 // `<agentDir>/pi-foreman/state/usage/<foreman-session>.jsonl`. Parallel children write the same
 // file, so a line is one appendFileSync call and nothing is ever read back and rewritten.
 //
-// How a child learns who it is: pi-subagents 0.75.0 forwards the launch parameter
+// How a child learns who it is: pi-subagents 0.89.0 forwards the launch parameter
 // `extensionBindings` ({"<package>/<n>": JSON}) to the child as the env var
-// PI_SUBAGENT_EXTENSION_BINDINGS (runs/shared/child-launch.js childProcessEnv), applied in the
+// PI_SUBAGENT_EXTENSION_BINDINGS (runs/shared/child-launch.js, childProcessEnv; runs/shared/extension-bindings.js
+// drops it for an unbound launch), applied in the
 // runner per child before its extensions load, one launch at a time (runs/shared/child-session.js
 // applyProcessEnv / `loading`). The foreman's adapter writes its binding into the launch input in
 // the tool_call hook; the child's adapter reads it when its instance is created. pi-subagents
@@ -15,6 +16,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Env } from "./env.ts";
+import { stripChildBindingEnv } from "./childenv.ts";
 import { PR_MESSAGE_TYPE } from "./prwatch.ts";
 import { priceRecord } from "./cost.ts";
 import type { PriceTable, Rate } from "./cost.ts";
@@ -77,6 +79,8 @@ export interface LadderLimits {
   /** Context limit, bottom rung only. */
   strongAbove?: number;
   maxTurns?: number;
+  /** Absolute context tokens of one call at which the child hands off (ladder.contextCap), any rung. */
+  contextCap?: number;
   /** On the bottom rung of a role that has a strong rung. */
   bottom?: boolean;
 }
@@ -289,7 +293,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     if (!foremanSession || !role || !launchId) return null;
     const pos = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
     const l = isObj(b.ladder) ? b.ladder : null;
-    const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
+    const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), contextCap: pos(l.contextCap), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
     const out = str(b.out);
     const askDir = str(b.askDir);
@@ -304,6 +308,39 @@ export function readBinding(env: Env): LaunchBinding | null {
   } catch {
     return null;
   }
+}
+
+const CONSUMED = "consumed:";
+const SLOT = Symbol.for("pi-foreman.childBindings");
+
+/** token -> binding of the children this process already read. `globalThis`: pi rebuilds extensions on reload without a module cache. */
+function slot(): Map<string, LaunchBinding> {
+  const g = globalThis as unknown as Record<symbol, Map<string, LaunchBinding> | undefined>;
+  return (g[SLOT] ??= new Map());
+}
+
+/**
+ * A child's launch binding (child side), read once per load, and removed from `env` so nothing the child starts inherits it.
+ * Invariant: only a single launch carries a binding, and pi-subagents deletes the variable for an unbound launch, so a child
+ * never sees a binding that is not its own. A real value is read and replaced by `consumed:<token>`; the binding stays in this
+ * process's slot, so a reload or session replacement of this child (a later load that finds its marker) keeps its role. A pi the
+ * child starts is a new process: empty slot, so its marker (or missing variable) is no binding and its role is `child`.
+ * A binding written by hand into the env of such a pi is read as a real value; this is not stopped (docs/safety.md).
+ */
+export function takeBinding(env: Env): LaunchBinding | null {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === BINDINGS_ENV);
+  const raw = key === undefined ? undefined : env[key];
+  if (!raw) return null;
+  if (raw.startsWith(CONSUMED)) return slot().get(raw.slice(CONSUMED.length)) ?? null;
+  const b = readBinding(env);
+  if (!b) {
+    stripChildBindingEnv(env);
+    return null;
+  }
+  const token = randomBytes(16).toString("hex");
+  slot().set(token, b);
+  stripChildBindingEnv(env, `${CONSUMED}${token}`);
+  return b;
 }
 
 export interface LineContext {

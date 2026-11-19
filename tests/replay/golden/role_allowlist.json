@@ -77,6 +77,9 @@
    "role": "builder"
   },
   {
+   "event": "child_scratch_root"
+  },
+  {
    "event": "role_launched",
    "role": "builder",
    "model": "foreman-fake/builder",

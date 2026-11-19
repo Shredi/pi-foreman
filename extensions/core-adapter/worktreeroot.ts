@@ -455,6 +455,26 @@ export function sessionRootInputs(cwd: string, rawSetting: unknown, opts: Resolv
   }
 }
 
+/**
+ * The real spelling of the worktree root that holds the session's child scratch (`<root>/.foreman/scratch`, childscratch.ts), computed without a disk write:
+ * `close.worktreeDir` of the session's repo (main checkout or linked worktree); a refused value or a collision falls back to the default root as the
+ * session layout does. Null (the temp folder is used) without a git top or when the root lies inside a git work tree. Never throws.
+ */
+export function sessionScratchRoot(cwd: string, rawSetting: unknown, opts: ResolveOptions = {}): string | null {
+  try {
+    const top = workspaceTop(cwd);
+    const main = top ? mainCheckoutOf(top) : null;
+    if (!main) return null;
+    let r = resolveWorktreeRoot(main, rawSetting, opts);
+    if (!r.error && rootCollision(main, r.spelled)) r = resolveWorktreeRoot(main, undefined, opts);
+    const near = nearestExisting(r.real);
+    if (!near || workspaceTop(near)) return null;
+    return r.real;
+  } catch {
+    return null;
+  }
+}
+
 function probeWritable(dir: string): boolean {
   const probe = path.join(dir, `.pi-foreman-probe-${process.pid}`);
   try {
@@ -487,7 +507,7 @@ export function worktreeRootDoctor(config: unknown, cwd: string, platform: strin
     if (r.error) out.push(`FAIL close.worktreeDir refused: ${r.error.message} — fix: correct close.worktreeDir; the default layout is in use.`);
     const exists = fs.existsSync(r.spelled);
     const base = exists ? r.spelled : nearestExisting(r.spelled);
-    out.push(exists ? `OK   worktree root exists` : `INFO worktree root does not exist yet; it is created with the first worktree (nearest existing parent: ${base ?? "none"})`);
+    out.push(exists ? `OK   worktree root exists` : `INFO worktree root does not exist yet; it is created with the first worktree or the first child scratch (nearest existing parent: ${base ?? "none"})`);
     if (base) {
       if (probeWritable(base)) out.push(`OK   worktree root is writable`);
       else out.push(`FAIL worktree root ${exists ? "is" : "cannot be created: its parent is"} not writable (${base}) — fix: choose a writable close.worktreeDir.`);

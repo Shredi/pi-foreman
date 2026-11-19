@@ -112,7 +112,7 @@ class CheckWorktreeTest(unittest.TestCase):
         exc = self.refused()
         self.assertEqual(exc.files, ["x/.pi/tasks/t1/x.output"])
 
-    def test_symlinked_pi_tasks_is_refused_and_not_followed(self):
+    def test_symlinked_pi_tasks_is_removed_and_not_followed(self):
         outside = self.tmp / "outside"
         put(outside, "keep.txt", "keep\n")
         (self.wt / ".pi").mkdir()
@@ -120,8 +120,8 @@ class CheckWorktreeTest(unittest.TestCase):
             os.symlink(str(outside), str(self.wt / ".pi" / "tasks"), target_is_directory=True)
         except (OSError, NotImplementedError):
             self.skipTest("symlinks not available")
-        exc = self.refused()
-        self.assertEqual(exc.files, [".pi/tasks"])
+        safe_ops.remove_worktree(self.check())
+        self.assertFalse(self.wt.exists())
         self.assertEqual((outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
 
     def test_symlink_inside_a_walked_folder_is_a_leaf(self):

@@ -39,6 +39,20 @@ stronger model would start from the same context. Raise or lower it per role, pr
 `childMaxTurns` (default 60), which stays the fallback. A child past its limit is steered once; the trace records
 `child_turn_limit {role, turns, limit}` next to `child_turn_cap`.
 
+## Context cap
+
+`ladder.contextCap.<role>` is an absolute limit on the context of one call (input + cacheRead + cacheWrite), default
+`{builder: 250000}`, `0` = off, roles without an entry have none. It applies to single launches on any rung, like the
+turn limit; grouped (`tasks`, `chain`) and resumed runs get none, and a model whose window is below the cap meets Pi's
+compaction first. A child at or above the cap is steered once to stop and return a handoff report starting
+`RUNG_UP: context` (trace `rung_up_steer` with `reason: "context_cap"`); the check comes after the growth check and before
+the turn limit. On the bottom rung the run is climb-eligible as for the growth limit. A top-rung run has no rung above, so
+its handoff is kept apart (`topHandoffs`): the next single launch of that role with a `model: "strong"` the foreman wrote
+(not one sizing chose) takes it, needs no `reason`, stays on the strong rung (when none is mapped the keyword is dropped)
+and gets the report and ledger items prepended (trace `rung_top`, reason `context`); the launch result of the stopped run
+says so. A `tasks` entry, a launch without `strong` and a sizing-written `strong` leave it pending. A builder read budget is
+off by default; `ceremony.childReads.builder` adds one, whose texts tell the builder to write the code, not to return the report.
+
 ## Failure climb
 
 A builder revision launched while the latest reviewer verdict is FAIL goes to the builder's strong rung when

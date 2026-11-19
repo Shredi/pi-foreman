@@ -33,6 +33,22 @@ export function stripChildCdEnv(env: Env): void {
   }
 }
 
+/**
+ * The launch binding (usage.ts) names the child's role. Every program the child starts inherits its env, a second pi
+ * included, which would load the adapter with the same role (builder flag, push). The child removes the variable after
+ * it read the binding, or replaces it with a marker that carries no role; a pi it starts then has no role.
+ */
+export const CHILD_BINDING_UNSET = ["PI_SUBAGENT_EXTENSION_BINDINGS"];
+
+/** Delete the launch binding variable from `env`, or set it to `marker` when one is given (children, after the read). */
+export function stripChildBindingEnv(env: Env, marker?: string): void {
+  for (const name of CHILD_BINDING_UNSET) {
+    const keys = Object.keys(env).filter((k) => k.toUpperCase() === name);
+    for (const k of keys) delete env[k];
+    if (marker !== undefined) env[name] = marker;
+  }
+}
+
 export const CHILD_SET: Record<string, string> = {
   GIT_TERMINAL_PROMPT: "0",
   GCM_INTERACTIVE: "never",

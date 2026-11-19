@@ -614,12 +614,21 @@ def ignored_info(exc):
     return {"files": shown, "filesMore": max(max(exc.total, len(exc.files)) - len(shown), 0)}
 
 
+def disposable_link(root, rec, patterns):
+    """True when `rec` (git-relative, no trailing `/`) is a symlink or junction under `root` (lstat, never followed)
+    whose name matches a dir-only disposable pattern as if it were a folder (`node_modules` against `node_modules/`)."""
+    if rec.endswith("/") or not is_link(os.path.join(root, *[x for x in rec.split("/") if x])):
+        return False
+    return disposable(rec + "/", patterns)
+
+
 def offending_ignored(root, rec, patterns, top_level):
     """The ignored paths below the git status record `rec` (`/`-separated, a trailing `/` = collapsed folder) that
     are not disposable. A folder is walked without following symlinks (a symlink is a leaf file); over
     IGNORED_WALK_CAP entries or on OSError the folder itself is reported."""
     def judged(p):
-        return disposable(p, patterns) or (("/" in p) and p.split("/", 1)[0] in top_level)
+        return (disposable(p, patterns) or (("/" in p) and p.split("/", 1)[0] in top_level)
+                or disposable_link(root, p, patterns))
     if judged(rec):
         return []
     if not rec.endswith("/"):
@@ -677,6 +686,35 @@ def is_default_branch(ws, branch, configured):
     return branch in names
 
 
+WORKFLOW_NESTED, WORKFLOW_TOO_LARGE, WORKFLOW_UNREADABLE = "nested", "too_large", "unreadable"
+WORKFLOW_REFUSAL = {
+    WORKFLOW_NESTED: "an untracked folder holds a nested repository: .workflow/",
+    WORKFLOW_TOO_LARGE: "untracked .workflow/ too large to check",
+    WORKFLOW_UNREADABLE: "untracked .workflow/ could not be read",
+}
+
+
+def workflow_has_git(root):
+    """None when no `.git` entry sits at any depth below `root` and the walk (no link followed) stays within
+    IGNORED_WALK_CAP entries; else WORKFLOW_NESTED, WORKFLOW_TOO_LARGE (the cap) or WORKFLOW_UNREADABLE (a read error)."""
+    seen, stack = 0, [root]
+    try:
+        while stack:
+            with os.scandir(stack.pop()) as it:
+                for ent in it:
+                    seen += 1
+                    if ent.name == ".git":
+                        return WORKFLOW_NESTED
+                    if seen > IGNORED_WALK_CAP:
+                        return WORKFLOW_TOO_LARGE
+                    link = ent.is_symlink() or getattr(ent, "is_junction", lambda: False)()
+                    if not link and ent.is_dir(follow_symlinks=False):
+                        stack.append(ent.path)
+    except OSError:
+        return WORKFLOW_UNREADABLE
+    return None
+
+
 def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     """Every worktree_remove precondition for `raw` (relative to `cwd`); raises Precondition.
 
@@ -685,7 +723,14 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     `not_merged` does not apply (a squash merge leaves the tip outside the base); every other check stays.
     `top_level`: names of ignored paths that count as disposable only at the worktree's top level (not as any component).
     """
-    workspace_root(cwd)
+    try:
+        workspace_root(cwd)
+    except Precondition as exc:
+        # a session cwd outside any git work tree: an absolute path names the repository (relative paths still refuse)
+        if exc.name != "not_a_git_repo" or not isinstance(raw, str) or not os.path.isabs(raw) or "\0" in raw:
+            raise
+        cwd = os.path.realpath(raw)
+        workspace_root(cwd)
     if not isinstance(raw, str) or not raw.strip() or "\0" in raw:
         raise Precondition("bad_request", "path must be a non-empty path")
     target = os.path.realpath(os.path.join(cwd, raw))
@@ -714,7 +759,14 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     for rec in out.split("\0"):
         if not rec:
             continue
-        if not rec.startswith("?? ") or not disposable(rec[3:], cfg.get("worktreeDisposable") or []):
+        if rec == "?? .workflow/" and ".workflow" in top_level:  # the archived notes folder (complete archive only)
+            reason = workflow_has_git(os.path.join(target, ".workflow"))
+            if reason:
+                raise Precondition("worktree_dirty", WORKFLOW_REFUSAL[reason])
+            untracked.append(".workflow/")
+            continue
+        pats = cfg.get("worktreeDisposable") or []
+        if not rec.startswith("?? ") or not (disposable(rec[3:], pats) or disposable_link(target, rec[3:], pats)):
             raise Precondition("worktree_dirty", "git status is not empty (changes or untracked files)")
         rel = rec[3:]
         if rel.endswith("/") and os.path.lexists(os.path.join(target, *rel.split("/"), ".git")):
@@ -726,6 +778,9 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     bad = []
     for rec in out.split("\0"):
         if rec.startswith("!! "):
+            if disposable_link(target, rec[3:], cfg["worktreeDisposable"]):
+                untracked.append(rec[3:])  # unlinked (never followed) before `git worktree remove`
+                continue
             bad += offending_ignored(target, rec[3:], cfg["worktreeDisposable"], top_level)
     if bad:
         files = [clean_path(p) for p in bad[:IGNORED_FILES_KEPT]]

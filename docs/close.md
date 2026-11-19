@@ -157,7 +157,9 @@ A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and 
   `workflow archive left out: <what (why)>; ...` follows (`closed/ (other rounds)`, `archive/ (earlier snapshots)`, `N links`,
   `N unreadable or special entries` (unreadable folders, files that fail `stat`, FIFOs, sockets, devices),
   `N files older than the session` (main worktree only), `N files over the 16 MiB cap: a, b, ...`). Only when nothing of the target's `.workflow/` was
-  left out does it no longer count for `ignored_files`; otherwise the refusal `ignored_files` keeps the worktree.
+  left out does it no longer count for `ignored_files`; otherwise the refusal `ignored_files` keeps the worktree. A completely archived `.workflow/` also stops
+  counting in its untracked form (a project that does not ignore `.workflow/`), as an exact top-level `?? .workflow/` record; it is refused when the folder holds a `.git` at any depth,
+  is too large to walk, or cannot be read, and an incomplete archive still refuses.
   When the adapter refuses up front (the target is the main checkout, or the head ref is the PR base branch), the session
   cwd's `.workflow/` is still snapshotted by the same rule, with the same lines; nothing is removed. Every other precondition stays: clean tree, no stash entry referencing the branch, not locked, no other live
   session with its cwd inside.
@@ -259,6 +261,13 @@ defines it for the TypeScript adapter and the Python scripts; `<repo>` is the ba
 
 An absolute or `~` value must contain `<repo>`. The root may sit on another filesystem than the repository, or behind a
 symlink; both the spelled and the real path are recognised everywhere.
+
+**Layout.** Besides the worktrees, the root holds `.foreman/scratch/<session>/<launch>`: the scratch dirs of child launches
+(`$FOREMAN_SCRATCH`, see [ceremony](ceremony.md)), created with the first one. The root is made when missing (an existing
+root keeps its mode); `.foreman`, `scratch` and the lanes are 0700 and never symlinks. The foreman's default reads and shell
+writes do not reach `.foreman/scratch` through the owned root; a child writes only its own lane. A collision or a refused
+value uses the default root for the scratch too; a root inside a git work tree, or any failure making the folders, makes the
+session use the temp folder instead.
 
 **Refusals.** A refused value falls back to the default layout; the session shows one notice and `/foreman doctor` prints a
 `FAIL` line. The codes:
