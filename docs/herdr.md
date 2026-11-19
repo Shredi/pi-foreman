@@ -534,7 +534,7 @@ peer range for `@earendil-works/pi-coding-agent` with the running Pi version, ne
 
 - `foreman_bg` is not offered (it is dropped from the active tools at session start and the tool floor does not add it back; a call would refuse with a pointer to `bg_run`), so detached tasks have one owner. Without the add-on `foreman_bg` is offered;
 - `/foreman waits` also lists the add-on's running tasks (read from `.pi/tasks/*/*.json`, with the last 5 lines of each output);
-- `bg_run` passes the same bash guards as `bash` (overlay rules, shell-write and destructive guards), reading the command from its
+- `bg_run` passes the same bash guards as `bash` (overlay rules, the gate's floors and the shell-write guard), reading the command from its
   `command` field; a missing or non-string `command` is denied.
 
 ## herdr-app and herdr-core

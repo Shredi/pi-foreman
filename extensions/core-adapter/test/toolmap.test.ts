@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mapTool } from "../toolmap.ts";
 
-test("shell tools map to Bash with the destructive guard", () => {
-  for (const t of ["bash", "powershell"]) {
-    assert.deepEqual(mapTool(t), { coreName: "Bash", pre: ["destructive_guard"], post: [] });
+test("shell tools map to Bash and run no core script", () => {
+  for (const t of ["bash", "powershell", "foreman_bg", "bg_run"]) {
+    assert.deepEqual(mapTool(t), { coreName: "Bash", pre: [], post: [] });
   }
 });
 

@@ -52,8 +52,8 @@ export const inprocSpawner: Spawner = async (command, args, options) => {
     } catch { /* no user file */ }
     return ok(JSON.stringify({ config: merge(readDefaults(PKG_ROOT), user), warnings: [], errors: [], safetyFallback: false, layers: ["L1", "L2"], basePermissions: null }));
   }
-  if (name === "shell_write_guard.py" || name === "destructive_guard.py") {
-    // A plain read pipeline is allowed by both guards (checked against the real ones for this rig's lines); anything else (a redirect, a substitution, a
+  if (name === "shell_write_guard.py") {
+    // A plain read pipeline is allowed by the guard (checked against the real one for this rig's lines); anything else (a redirect, a substitution, a
     // write or push word, a floor line) goes to the real guard, so a refusal is still the real guard's.
     if (plainRead(commandOf(options.input))) return ok("");
   }

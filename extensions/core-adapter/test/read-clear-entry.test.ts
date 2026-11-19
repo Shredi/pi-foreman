@@ -126,6 +126,7 @@ test("does not reach it: a redirect that can write, or a writing wrapper the par
 // one readable segment per dangerous-class entry next to an unreadable one; the two entries that judge no bash line are covered by the tool test above
 const OTHER_ENTRY: Record<string, string> = {
   "danger-write-outside": "cp a.txt /etc/b; grep x src/*.ts",
+  "danger-delete-unknown-target": "rm -rf $X; grep x src/*.ts",
   "danger-deploy": "kubectl apply -f x.yaml; grep x src/*.ts",
   "danger-forge": "gh pr merge 1; grep x src/*.ts",
   "danger-publish": "npm publish; grep x src/*.ts",

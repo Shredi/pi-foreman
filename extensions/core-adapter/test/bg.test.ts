@@ -395,7 +395,7 @@ test("guard parity: the add-on's bg_run gets exactly the verdict a bash call get
   for (const command of [undefined, 42, ["echo", "hi"]]) {
     const d = (await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command } }, a.ctx)) as { block?: boolean; reason?: string };
     assert.equal(d?.block, true, `command ${JSON.stringify(command)}`);
-    assert.match(d.reason!, /bg_run call has .*cannot check it/);
+    assert.match(d.reason!, /bg_run call has .*cannot read it/);
   }
   assert.equal(await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command: "echo hi" } }, a.ctx), undefined);
 });

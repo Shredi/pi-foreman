@@ -785,7 +785,7 @@ The foreman-only `foreman_bg({command, note})` runs one shell command detached (
 `<agent dir>/pi-foreman/state/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when that file already exists, e.g. after a reload) and registers a `pid` wait with your `note`. It returns the wait
 id and the log path at once; you end the turn and one message wakes you when the process has exited (the exit code is not
 known: read the log). The command passes the same guards as a bash call, with no bypass: the gate's rules, the
-shell-write guard and the destructive guard. A command that is empty or not a string is refused.
+shell-write guard. A command that is empty or not a string is refused.
 On Windows the command runs in Git Bash (the bash tool's shell), so write POSIX syntax; only when no bash is found it runs under `cmd.exe` (the session says so once, at start), see the
 [known limit](safety.md#known-limit-background-runs-on-windows).
 

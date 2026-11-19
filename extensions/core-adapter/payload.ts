@@ -1,7 +1,6 @@
 // Build the Claude-hook-shaped JSON the core scripts read on stdin.
 //
 // What each script reads (core 0.22.0):
-//   destructive_guard.py   tool_input.command, cwd, session_id
 //   ledger_guard_write.py  tool_input.file_path (realpath'd against the process cwd), session_id
 //   ledger_guard_spawn.py  tool_name ("Agent"), tool_input.prompt (length vs threshold),
 //                          tool_input.subagent_type ("fork" exempt, never sent), session_id, cwd
