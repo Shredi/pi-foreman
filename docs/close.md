@@ -260,6 +260,13 @@ defines it for the TypeScript adapter and the Python scripts; `<repo>` is the ba
 An absolute or `~` value must contain `<repo>`. The root may sit on another filesystem than the repository, or behind a
 symlink; both the spelled and the real path are recognised everywhere.
 
+**Layout.** Besides the worktrees, the root holds `.foreman/scratch/<session>/<launch>`: the scratch dirs of child launches
+(`$FOREMAN_SCRATCH`, see [ceremony](ceremony.md)), created with the first one. The root is made when missing (an existing
+root keeps its mode); `.foreman`, `scratch` and the lanes are 0700 and never symlinks. The foreman's default reads and shell
+writes do not reach `.foreman/scratch` through the owned root; a child writes only its own lane. A collision or a refused
+value uses the default root for the scratch too; a root inside a git work tree, or any failure making the folders, makes the
+session use the temp folder instead.
+
 **Refusals.** A refused value falls back to the default layout; the session shows one notice and `/foreman doctor` prints a
 `FAIL` line. The codes:
 

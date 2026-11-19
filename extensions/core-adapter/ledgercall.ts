@@ -10,11 +10,16 @@
 // single-quoted, fully double-quoted (no $ ` \ inside) or unquoted.
 
 import { GATE_DENY_PREFIXES } from "./gatedialog.ts";
+import { isLiveLedgerName } from "./marker.ts";
 
 export const LEDGER_TOOL = "foreman_ledger";
 export type LedgerHelper = "tool" | "bash" | "off";
 export const LEDGER_ACTIONS = ["status", "mark", "add", "note", "defer", "upsert"] as const;
 export type LedgerAction = (typeof LEDGER_ACTIONS)[number];
+/** The tool's action enum: the shell grammar's list plus `init` (the tool creates a ledger; `ledger init` is no shell command). */
+export const LEDGER_TOOL_ACTIONS = [...LEDGER_ACTIONS, "init"] as const;
+export const LEDGER_TOPIC_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const LEDGER_INIT_MAX_TEXTS = 32;
 export const V_REFUSAL = "V closes after a reviewer PASS with no revision since";
 export const V_ATTESTED_NOTE = "closed by the foreman after a reviewer PASS with no revision since (harness-attested)";
 
@@ -286,6 +291,25 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     }
   }
   return { error: `${LEDGER_TOOL}: unknown action.` };
+}
+
+/** `init` params: a topic whose `LEDGER-<topic>.md` is a live ledger name, and up to 32 one-line texts. */
+export function planLedgerInit(params: Record<string, unknown>): { topic: string; texts: string[] } | { error: string } {
+  const topic = params.topic;
+  if (typeof topic !== "string" || !LEDGER_TOPIC_RE.test(topic) || !isLiveLedgerName(`LEDGER-${topic}.md`)) return { error: `${LEDGER_TOOL}: init needs a topic of letters, digits, . _ - (at most 64, starting with a letter or digit, not ending in -archive or _archive).` };
+  const raw = params.texts === undefined ? [] : params.texts;
+  if (!Array.isArray(raw) || raw.length > LEDGER_INIT_MAX_TEXTS) return { error: `${LEDGER_TOOL}: texts is a list of at most ${LEDGER_INIT_MAX_TEXTS} one-line strings.` };
+  const texts: string[] = [];
+  for (const t of raw) {
+    if (typeof t !== "string" || !t.trim() || /[\r\n\x0b\x0c\x1c\x1d\x1e\x85\p{Zl}\p{Zp}]/u.test(t)) return { error: `${LEDGER_TOOL}: each text is a non-empty single line.` };
+    texts.push(t.trim());
+  }
+  return { topic, texts };
+}
+
+/** A new ledger file: header, the recorded tier, one open item per text, then item V. */
+export function ledgerInitContent(topic: string, tier: string | null, texts: string[]): string {
+  return [`# LEDGER ${topic}`, ...(tier ? [`Tier: ${tier}`] : []), "", ...texts.map((t, i) => `- [ ] ${i + 1}. ${t}`), "- [ ] V. fresh-eyes verification passed", ""].join("\n");
 }
 
 // ------------------------------------------------------------------ upsert (line rewrite)

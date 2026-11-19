@@ -11,10 +11,10 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
-import { childHandoffDirs, isSelfHost, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
+import { childHandoffDirs, isSelfHost, openedHandoffDirs, literalOwnedDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
+import { launchNeedsNestedRefusal, sessionRootInputs, sessionScratchRoot, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
 import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
@@ -94,13 +94,14 @@ import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappe
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepScratch } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepOldScratch, sweepScratch, wtScratchBase } from "./childscratch.ts";
+import type { ScratchWt } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, marksVerifierCommand, mentionsLedger, planLedgerCall, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
+import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -233,7 +234,7 @@ import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, tri
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
-import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
+import { ChildLadder, childMaxTurns, climbHint, contextCap, topClimbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, countsForItems, keptIndices, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
@@ -529,6 +530,10 @@ interface Session {
   childReads: ChildReads;
   /** Child scratch dirs of this session's launches (childscratch.ts). */
   scratch: ChildScratch;
+  /** The worktree-side scratch location (`<root>/.foreman/scratch`) once the npm root resolved; null: the temp folder. Set together with `owned.childScratchRoot`. */
+  scratchWt: ScratchWt | null;
+  /** `child_scratch_root` was traced (at the first launch that created a lane). */
+  scratchRootTraced?: boolean;
   /** Foreman only: the usage sync of stray Pi warm entries (keepalive.ts), the latest event context and assistant message time. */
   keepalive: KeepaliveLog;
   /** The warm owner (budget, cache touch, the idle warms of every cache; selfwarm.ts) and the presence gate (the presence probe runs in the foreman only). */
@@ -899,11 +904,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rootInputsOf = (npmRoot: string | null) => sessionRootInputs(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
     // unresolved until the npm root is known (or failed): no owned custom root, so a root under the npm root is never briefly owned
     let rootInputs: ReturnType<typeof rootInputsOf> = {};
+    // the child scratch base: the temp folder (null) until the npm root is known, then `<worktree root>/.foreman/scratch` when the session has a usable root
+    let scratchWtNow: ScratchWt | null = null;
     const computeOwned = (npmRoot: string | null, resolved = true): OwnedRoots => {
-      if (resolved) rootInputs = rootInputsOf(npmRoot);
+      if (resolved) {
+        rootInputs = rootInputsOf(npmRoot);
+        const root = sessionScratchRoot(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
+        scratchWtNow = root ? { root, base: wtScratchBase(root), failed: false } : null;
+      }
       // while pending: block globs are always safe to add early; only the owned root waits
       const globs = resolved ? rootInputs.worktreeGlobs : rootInputsOf(null).worktreeGlobs;
-      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
+      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, ...(scratchWtNow ? { scratchBase: scratchWtNow.base } : {}), npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
     };
     const owned = computeOwned(null, false);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
@@ -1123,6 +1134,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       brief: new ExplorerBrief(),
       childReads: new ChildReads(),
       scratch: new ChildScratch(),
+      scratchWt: null,
       keepalive: new KeepaliveLog(),
       selfWarm: warm.selfWarm,
       presence: warm.presence,
@@ -1138,15 +1150,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pressureQ: null,
     };
     sessions.set(id, s);
+    // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman removes worktree-side lanes older than 7 days
+    const applyScratchBase = (): void => {
+      s.scratchWt = scratchWtNow;
+      if (isChild) return;
+      try {
+        sweepOldScratch(s);
+      } catch {
+        // a failed sweep never stops the session
+      }
+    };
     // `npm root -g` once per process, never awaited on the hot path; the owned roots take the root when it resolves.
     void npmRootOnce({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
       .then((npmRoot) => {
         s.owned = computeOwned(npmRoot);
+        applyScratchBase();
         s.npmRootPending = false;
         if (rootInputs.notice && !isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
       })
       .catch(() => {
         s.owned = computeOwned(null);
+        applyScratchBase();
         s.npmRootPending = false;
       });
     if (!isChild) {
@@ -1837,7 +1861,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -2654,7 +2678,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function childReadCheck(s: Session | undefined, toolName: string, callId: string, input: unknown) {
     if (!s || !s.isChild) return undefined;
     const role = s.usage.line.role;
-    const limits = childReadLimits(s.config.config, role, launchBinding?.reads);
+    const found = childReadLimits(s.config.config, role, launchBinding?.reads);
+    const limits = found ? { ...found, role } : null;
     const d = s.childReads.check(toolName, callId, input, limits);
     if (d.kind === "warn") {
       s.readNotices.set(callId, d.text);
@@ -2871,7 +2896,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
               const top = await rootOf(cwd);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd, true))) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
@@ -2932,16 +2957,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Loop guard (reviewloop.ts): the kind, state and finding set of a counting review round, for its ReviewRecord. */
-  async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig">> {
+  async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig" | "work">> {
     const fail = r?.verdict === "fail";
     const found = r && fail ? await (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []) : [];
-    return { kind, state: (await state) ?? "", sig: r && fail ? sigOf(r.text, found) : [] };
+    return { kind, state: (await state) ?? "", sig: r && fail ? sigOf(r.text, found) : [], work: s.work.builders + s.work.edits };
   }
 
   /** Loop guard: the round just recorded (last of its kind in `s.reviews`) against `prev`, the last round of that kind before the run; a trip sets the stop. One round per run. */
   function loopCheck(s: Session, runId: string, prev: ReviewRecord | undefined, cur: ReviewRecord): void {
     if (!cur.kind) return;
-    const rule = loopVerdictOf(cur.kind, prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [] } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [] });
+    const rule = loopVerdictOf(cur.kind, prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [], ...(prev.work !== undefined ? { work: prev.work } : {}) } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [], ...(cur.work !== undefined ? { work: cur.work } : {}) });
     if (!rule) return;
     s.loopStop = { rule, kind: cur.kind, sig: cur.sig ?? [] };
     s.trace?.emit({ event: "review_loop", rule, kind: cur.kind, runId });
@@ -3103,6 +3128,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(s.isChild && launchBinding?.scratch && launchBinding.out ? { out: launchBinding.out } : {}),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
+      scratchBases: [s.owned.tmpScratchRoot],
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
       install: [pi.installRoot, pi.npmRoot, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
@@ -4410,7 +4436,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const bottom = onBottomRung(ladderRoles, single, input.model);
         const p = s.configProvider ?? ctx.model?.provider;
         s.ladder.onLaunch(event.toolCallId, single, bottom);
-        limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
+        const cap = contextCap(s.config.config, single);
+        limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(cap > 0 ? { contextCap: cap } : {}), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent" && !s.isChild && hsModel(s)) {
         // High stakes: a builder's repository is seen (its first HEAD is the base fallback); a risk tag of the builder entries (read with the ladder or sizing off too) and a heavy task fire the review;
@@ -4538,7 +4565,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "child_turn_cap", role: s.usage.line.role, turns: steer.count, rung: steer.rung });
         s.trace?.emit({ event: "child_turn_limit", role: s.usage.line.role, turns: steer.count, limit: steer.limit ?? null });
       }
-      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, baseline: steer.baseline ?? null, rung: steer.rung, reason: "context" });
+      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, baseline: steer.baseline ?? null, rung: steer.rung, reason: steer.cap !== undefined ? "context_cap" : "context" });
       pi.sendUserMessage(steer.text, { deliverAs: "steer" });
     }
     const usageRecord = usageLine(s.usage.line, event.message);
@@ -4926,26 +4953,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { block: true, reason: boundRefusal(toolName, targets[0].raw, next, bound) };
   }
 
-  /** The owned read-write roots as literal dirs: the `*` segment (one dir per session) is expanded from disk. */
-  function literalOwnedDirs(roots: string[]): string[] {
-    const out: string[] = [];
-    for (const r of roots) {
-      const i = r.split(path.sep).indexOf("*");
-      if (i < 0) {
-        out.push(r);
-        continue;
-      }
-      const parts = r.split(path.sep);
-      const parent = parts.slice(0, i).join(path.sep) || path.sep;
-      try {
-        for (const e of fs.readdirSync(parent, { withFileTypes: true })) if (e.isDirectory()) out.push(path.join(parent, e.name, ...parts.slice(i + 1)));
-      } catch {
-        // the parent does not exist yet: nothing to allow
-      }
-    }
-    return out;
-  }
-
   /** The roots a foreman session owns, for the permission reviewer's prompt (roundsurface.ts sessionOwnedSplit: read-write and read only); none for a child session. */
   const sessionOwnedRoots = (s: Session): { write: string[]; read: string[] } => {
     if (s.isChild) return { write: [], read: [] };
@@ -5116,7 +5123,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
       const { mode, scratchDir } = editModeOfSession(s);
       const ownHandoff = ownChildHandoff(s);
-      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite), { ...(ownHandoff ? { handoffDir: ownHandoff } : {}) });
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite, s.owned.childScratchRoot), { ...(ownHandoff ? { handoffDir: ownHandoff } : {}) });
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
@@ -5562,8 +5569,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const asyncDir = typeof raw === "string" ? raw : null;
     const text = launchWaitText({ outcome: r.outcome, runId, role: run.role, ms, maxSeconds: cap.seconds, capBy: cap.by, by: r.by, end: r.end, asyncDir });
     const climb = s.ladder.eligible.get(run.role);
+    const topClimb = s.ladder.topHandoffs.get(run.role);
     // a steer taken as the run ended is delivered only if it is shown here; otherwise it stays pending
-    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : text, !ctx.signal?.aborted);
+    const shown = foldSteer(watch, steerText, climb && climb.runId === runId && !r.end?.policyBlock && !r.end?.repeatRefusal ? `${text}\n${climbHint(climb)}` : topClimb && topClimb.runId === runId ? `${text}\n${topClimbHint(topClimb)}` : text, !ctx.signal?.aborted);
     return { text: steerFor(s).append(shown), path: r.end?.resultPath ?? asyncDir };
   }
 
@@ -6055,8 +6063,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6077,6 +6085,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text: [r.text, st.text].filter(Boolean).join("\n") }], details: { decision: r.ok ? "done" : "failed" }, ...(r.ok ? {} : { isError: true }) };
       }
       if (mode === "off") return refuse(`${LEDGER_TOOL} is off (ceremony.ledgerHelper); use the shell command ledger.`);
+      if (kind === "init") {
+        const r = await initLedger(s, ctx, params);
+        s.trace?.emit({ event: "ledger_call", kind, allowed: r.ok });
+        return r.ok ? { content: [{ type: "text" as const, text: r.text }], details: { decision: "done" } } : refuse(r.text);
+      }
       const plan = planLedgerCall(params, { child: false, gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
@@ -6216,6 +6229,50 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
   } as never);
+
+  /**
+   * `foreman_ledger` init: a new ledger file is created exclusively and bound like a `write` of it (the binding is replaced, the diff base resets);
+   * an existing file binds under the `edit` rule (no live binding, or this path) and takes no texts.
+   */
+  async function initLedger(s: Session, ctx: ExtensionContext, params: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
+    const plan = planLedgerInit(params);
+    if ("error" in plan) return { ok: false, text: plan.error };
+    const file = path.join(s.cwd, ".workflow", `LEDGER-${plan.topic}.md`);
+    if (!ownWorkPath(s, file)) return { ok: false, text: `${LEDGER_TOOL}: ${file} is outside this session's workspace.` };
+    let created = false;
+    if (fs.existsSync(file)) {
+      if (plan.texts.length > 0) return { ok: false, text: `ledger_exists: ${file} exists; init with texts creates a new file only. Call init without texts to bind it, or add items with action add.` };
+      const live = boundLedger(s.markerDir, s.id);
+      const real = (p: string): string => {
+        try {
+          return fs.realpathSync.native(p);
+        } catch {
+          return path.resolve(p);
+        }
+      };
+      if (live && real(live) !== real(file)) return { ok: false, text: `ledger_bound_elsewhere: this session is bound to ${live}; ${file} is left unbound.` };
+    } else {
+      try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const t = s.ceremony;
+        fs.writeFileSync(file, ledgerInitContent(plan.topic, t.triaged || t.source !== "default" ? t.tier : null, plan.texts), { encoding: "utf8", flag: "wx" });
+        created = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") return { ok: false, text: `ledger_exists: ${file} exists; call init again without texts to bind it.` };
+        return { ok: false, text: `${LEDGER_TOOL}: ${(err as Error).message}` };
+      }
+    }
+    // The write post path: ledger_bind, a new diff base for a ledger written, the tier from the header.
+    const outcome = await run(s, ctx, "ledger_bind", postToolPayload("write", { path: file, file_path: file }, payloadCtx(s, ctx), false), mapTool("write").coreName);
+    if (outcome.kind === "failure") return { ok: false, text: `${LEDGER_TOOL}: the ledger ${created ? "was created but " : ""}could not be bound: ${outcome.message}` };
+    if (created) reviewFacts.reset();
+    refreshLedgerTier(s);
+    const bound = boundLedger(s.markerDir, s.id);
+    // A new ledger is a subject change like a direct write of it (#264: ledger changes reopen review); binding an existing file changes nothing.
+    if (created && bound) bumpLedgerRev(s);
+    const st = await runLedger(s, ["status"], null);
+    return { ok: !!bound && st.ok, text: [`${created ? "created" : "bound"} ${file}`, bound ? "" : "not bound: the ledger bind did not take effect.", st.text].filter(Boolean).join("\n") };
+  }
 
   /** One core ledger.py run, bound like the bin/ledger shim (session id + marker dir); `file` adds -f. */
   async function runLedger(s: Session, args: string[], file: string | null): Promise<{ ok: boolean; text: string }> {

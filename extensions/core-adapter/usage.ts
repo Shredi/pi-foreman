@@ -73,6 +73,8 @@ export interface LadderLimits {
   /** Context limit, bottom rung only. */
   strongAbove?: number;
   maxTurns?: number;
+  /** Absolute context tokens of one call at which the child hands off (ladder.contextCap), any rung. */
+  contextCap?: number;
   /** On the bottom rung of a role that has a strong rung. */
   bottom?: boolean;
 }
@@ -249,7 +251,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     if (!foremanSession || !role || !launchId) return null;
     const pos = (v: unknown): number | undefined => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : undefined);
     const l = isObj(b.ladder) ? b.ladder : null;
-    const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
+    const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), contextCap: pos(l.contextCap), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
     const out = str(b.out);
     const askDir = str(b.askDir);

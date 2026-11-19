@@ -27,6 +27,8 @@ which relaunches it with `model: "strong"`:
 - **Turns**: past the role's turn limit (`ladder.maxTurns.<role>`: builder 100; otherwise `childMaxTurns`, default 60)
   a bottom-rung child hands off (`RUNG_UP: turns`); a top-rung child is told to stop and report. Trace events:
   `child_turn_cap` and `child_turn_limit {role, turns, limit}`.
+- **Context cap**: a single-launch child on any rung whose call context reaches `ladder.contextCap.<role>` (builder 250000, 0 = off)
+  is steered once to hand off (`RUNG_UP: context`; trace `rung_up_steer` with `reason: "context_cap"`). See [ladder](ladder.md#context-cap).
 - **Stuck**: a report with `STATUS: stuck` or "own checks failed".
 - **Foreman**: `model: "strong"` plus a `reason` passed as an extra top-level field of the `subagent` call (the
   published tool schema does not list it; the adapter reads and removes it). A strong launch with no reason and no
@@ -123,6 +125,7 @@ Design record for the ladder: `design/architecture.md`
 | `ladder.idleDownshift.enabled`, `ladder.idleDownshift.causes` | The idle downshift on or off (default true) and the turn causes that may use it (default `child`, `wake`, `intercom`, `other`); a project or session can only set false or remove causes. |
 | `providers.<p>.childMaxTurns` | `childMaxTurns` for every role of this provider. User or overlay config only. |
 | `ladder.maxTurns` | Per-role turn limit, `{role: turns}` (default `{builder: 100}`); wins over `childMaxTurns`, which stays the fallback. User or overlay config only. |
+| `ladder.contextCap` | Per-role absolute context cap in tokens of one call, `{role: tokens}` (default `{builder: 250000}`, 0 = off). User or overlay config only. |
 | `ladder.rolePolicy` | Per-role rank policy, `{role: below\|at-or-below\|any}`, overriding `ladder.childPolicy`. User or overlay config only. |
 | `ladder.strongOnRevision` | A builder revision after a reviewer FAIL launches on the strong rung (`rung_up` reason `review_fail`; default true); project/session can only set false. |
 | `roles.<role>.strongOnRevision` | Per-role override of `ladder.strongOnRevision`, wins over the provider key; project/session can only set false. |

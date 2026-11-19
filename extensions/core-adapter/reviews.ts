@@ -27,6 +27,8 @@ export interface ReviewRecord {
   state?: string;
   /** The finding set of the round's report (reviewloop.ts sigOf). */
   sig?: string[];
+  /** Foreman work (builder launches and run ends plus project edits, `s.work`) when the round was recorded; the loop guard reads growth between two code rounds as progress (reviewloop.ts). Absent in a record from before it. */
+  work?: number;
   /** The review's occasion when the verdict was recorded (`pre-pr` or `item`); absent in a record from before it: such a record is not a `[pre-pr]` PASS (prready.ts). */
   occasion?: "item" | "pre-pr";
 }
@@ -309,6 +311,7 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(r.kind === "plan" || r.kind === "code" ? { kind: r.kind } : {}),
       ...(typeof r.state === "string" ? { state: r.state } : {}),
       ...(sig ? { sig } : {}),
+      ...(typeof r.work === "number" && Number.isInteger(r.work) && r.work >= 0 ? { work: r.work } : {}),
       ...(r.occasion === "item" || r.occasion === "pre-pr" ? { occasion: r.occasion } : {}),
     });
   }
