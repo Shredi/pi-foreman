@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { world } from "./_r46world.ts";
 import { ownerFactsLines, ownerSection, ownerSectionIssues, ownerSummary, planFormIssues } from "../ownertext.ts";
-import { renderMarkdown } from "../pages.ts";
+import { foldPlanSection, renderMarkdown, renderPage } from "../pages.ts";
 
 const REST = "## Goal\nShip it.\n";
 const refused = (r: { blocked: string | null }): boolean => /\[plan_form\]/.test(r.blocked ?? "");
@@ -105,4 +105,93 @@ test("alert markers: dialog and page agree on malformed input", () => {
 
 test("alert markers: the issue strings are unchanged", () => {
   assert.deepEqual(ownerSectionIssues("# P\n\n## Goal\nx\n"), ["missing"]);
+});
+
+// ---------------------------------------------------------------- the plan page: the owner layout and the fold
+
+const planPage = (md: string): string => renderPage({ title: "P", kicker: "k", markdown: md, fold: foldPlanSection, source: "p.md" });
+const count = (s: string, re: RegExp): number => (s.match(re) ?? []).length;
+
+for (const h of ["Summary", "For the owner"]) {
+  test(`plan page: a \`## ${h}\` section alone gets the owner layout and stays unfolded`, () => {
+    const html = planPage(`# P\n\n## ${h}\nGoal: ship.\n\n## Goal\nShip it.\n`);
+    assert.equal(count(html, /<section class="owner">/g), 1);
+    assert.match(html, new RegExp(`<section class="owner">\\n<div class="o-main">\\n<h2>${h}</h2>\\n<p class="goal">Goal: ship\\.</p>`));
+    assert.doesNotMatch(html, /<details class="fold" id="(summary|for-the-owner)"/);
+    assert.match(html, /<details class="fold" id="goal">/);
+  });
+}
+
+test("plan page, both headings, Summary first: the first wraps, the later For the owner is an ordinary unfolded section", () => {
+  const html = planPage("# P\n\n## Summary\nFirst words.\n\n## Work\nx\n\n## For the owner\nSecond words.\n");
+  assert.equal(count(html, /<section class="owner">/g), 1);
+  const owner = html.slice(html.indexOf('<section class="owner">'), html.indexOf("</section>"));
+  assert.match(owner, /<h2>Summary<\/h2>/);
+  assert.match(owner, /First words\./);
+  assert.doesNotMatch(owner, /Second words|For the owner/);
+  assert.match(html, /<h2>For the owner<\/h2>\n<p>Second words\.<\/p>/);
+  assert.doesNotMatch(html, /<details class="fold" id="for-the-owner"/);
+  assert.match(html, /<nav class="index"><span>In the details<\/span><a href="#work">Work<\/a><\/nav>/);
+});
+
+test("plan page, both headings, For the owner first: the first wraps, the later Summary is an ordinary unfolded section", () => {
+  const html = planPage("# P\n\n## For the owner\nFirst words.\n\n## Work\nx\n\n## Summary\nSecond words.\n");
+  assert.equal(count(html, /<section class="owner">/g), 1);
+  const owner = html.slice(html.indexOf('<section class="owner">'), html.indexOf("</section>"));
+  assert.match(owner, /<h2>For the owner<\/h2>/);
+  assert.match(owner, /First words\./);
+  assert.doesNotMatch(owner, /Second words|Summary/);
+  assert.match(html, /<h2>Summary<\/h2>\n<p>Second words\.<\/p>/);
+  assert.doesNotMatch(html, /<details class="fold" id="summary"/);
+  assert.match(html, /<nav class="index"><span>In the details<\/span><a href="#work">Work<\/a><\/nav>/);
+});
+
+test("fold: Summary and For the owner stay unfolded whatever the case or blanks; other names fold", () => {
+  for (const h of ["Summary", "  SUMMARY ", "For the owner", "  for the OWNER "]) assert.equal(foldPlanSection(h), false, h);
+  assert.equal(foldPlanSection("Summaries"), true);
+});
+
+// ---------------------------------------------------------------- both headings: the reader, the facts line and the launch
+
+test("both headings: planFormIssues judges the first owner-named section only", () => {
+  assert.deepEqual(planFormIssues(`# P\n\n## Summary\nPlain.\n\n## For the owner\n\n${REST}`, {}), []);
+  assert.deepEqual(planFormIssues(`# P\n\n## For the owner\nPlain.\n\n## Summary\n\n${REST}`, {}), []);
+});
+
+test("both headings: ownerSummary shows the first section's body only, labelled Summary", () => {
+  assert.equal(ownerSummary("# P\n\n## Summary\nFirst words.\n\n## Work\nx\n\n## For the owner\nSecond words.\n"), "Summary\n  First words.");
+  assert.equal(ownerSummary("# P\n\n## For the owner\nFirst words.\n\n## Summary\nSecond words.\n"), "Summary\n  First words.");
+});
+
+test("both headings: the facts line says present", () => {
+  const dir = fs.mkdtempSync("/tmp/sumhead-");
+  try {
+    fs.writeFileSync(`${dir}/both.md`, "# P\n\n## Summary\nPlain.\n\n## For the owner\nMore.\n\n## Goal\nx\n");
+    assert.match(ownerFactsLines(["both.md"], dir)[0], /^Summary section \(both\.md\): present \(checked by the harness\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test("both headings: a [plan-review] launch passes when the first owner-named section is filled, in either order", async (t) => {
+  for (const text of [
+    `# W\n\n## Summary\nGoal: ship.\n\n${REST}`,
+    `# W\n\n## For the owner\nGoal: ship.\n\n${REST}`,
+    `# W\n\n## Summary\nGoal: ship.\n\n${REST}\n## For the owner\nMore.\n`,
+    `# W\n\n## For the owner\nGoal: ship.\n\n${REST}\n## Summary\n\n`,
+  ]) {
+    const w = world(t);
+    fs.writeFileSync(w.planFile, text);
+    assert.equal((await (await w.adapter("startup")).reviewLaunch()).blocked, null, text);
+  }
+});
+
+test("both headings: an empty first owner-named section is refused even with a filled later one", async (t) => {
+  for (const text of [`# W\n\n## Summary\n\n${REST}\n## For the owner\nGoal: ship.\n`, `# W\n\n## For the owner\n\n${REST}\n## Summary\nGoal: ship.\n`]) {
+    const w = world(t);
+    fs.writeFileSync(w.planFile, text);
+    const r = await (await w.adapter("startup")).reviewLaunch();
+    assert.ok(refused(r), text);
+    assert.match(r.blocked ?? "", /empty/, text);
+  }
 });
