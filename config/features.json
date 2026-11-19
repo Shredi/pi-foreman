@@ -233,10 +233,10 @@
       "id": "findings",
       "area": "review",
       "title": "Findings store and reviewer model stats",
-      "purpose": "Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models.",
+      "purpose": "Records every reviewer run's located findings locally, keyed by workspace, repository and branch, with `foreman findings` to list, dismiss or export them, `foreman rounds` to count the review rounds of a change and `foreman retro models` to compare reviewer models.",
       "doc": "docs/review.md#findings-store",
       "keys": ["retro.panelThreshold"],
-      "commands": ["foreman findings", "foreman retro models"],
+      "commands": ["foreman findings", "foreman rounds", "foreman retro models"],
       "switch": null,
       "state": "on",
       "enable": ""
