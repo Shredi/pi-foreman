@@ -193,12 +193,12 @@ export interface MarkdownOpts {
   mermaid?: (text: string) => string | null;
   /** When set, a level-2 section whose heading text this returns true for renders folded (`<details class="fold" id="…">`, the heading as an `h2` inside its summary). */
   fold?: (heading: string) => boolean;
-  /** The plan layout, by position only: the `For the owner` section is wrapped (goal, numbered path, trailing alerts in a side column) and `Open questions` is a highlighted section. Independent of `fold`. */
+  /** The plan layout, by position only: the first `Summary` (or `For the owner`) section is wrapped (goal, numbered path, trailing alerts in a side column) and `Open questions` is a highlighted section. Independent of `fold`. */
   ownerLayout?: boolean;
 }
 
-/** The plan page's fold: every `##` section except `For the owner` and `Open questions` (case-insensitive, trimmed). */
-export const foldPlanSection = (heading: string): boolean => !["for the owner", "open questions"].includes(heading.trim().toLowerCase());
+/** The plan page's fold: every `##` section except `Summary`, `For the owner` and `Open questions` (case-insensitive, trimmed). */
+export const foldPlanSection = (heading: string): boolean => !["summary", "for the owner", "open questions"].includes(heading.trim().toLowerCase());
 
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^ {0,3}([`~]+)[ \t]*$/;
@@ -257,7 +257,7 @@ const slugOf = (heading: string): string => heading.toLowerCase().replace(/[^a-z
 
 interface RenderedPart {
   html: string;
-  /** The part is the wrapped `For the owner` section. */
+  /** The part is the wrapped `Summary` section. */
   owner?: boolean;
 }
 
@@ -287,6 +287,7 @@ function renderParts(markdown: string, opts: MarkdownOpts = {}): { parts: Render
   const ids = new Set<string>();
   let start = 0; // the first line of the part being collected
   let heading: string | null = null; // the heading text of the part when it is a level-2 section
+  let ownerSeen = false; // only the first `Summary` / `For the owner` section gets the owner layout
   const flush = (end: number): void => {
     if (end <= start) return;
     const key = heading === null ? "" : sectionKey(heading);
@@ -297,8 +298,10 @@ function renderParts(markdown: string, opts: MarkdownOpts = {}): { parts: Render
       ids.add(id);
       folds.push({ id, heading });
       parts.push({ html: `<details class="fold" id="${id}"><summary><h2>${inline(heading)}</h2></summary>\n${blocks(lines.slice(start + 1, end), opts, false, 0)}\n</details>` });
-    } else if (heading !== null && ownerLayout && key === "for the owner") parts.push({ html: ownerSection(heading, lines.slice(start + 1, end), opts), owner: true });
-    else if (heading !== null && ownerLayout && key === "open questions") parts.push({ html: `<section class="questions">\n${blocks(lines.slice(start, end), opts, false, 0)}\n</section>` });
+    } else if (heading !== null && ownerLayout && !ownerSeen && (key === "summary" || key === "for the owner")) {
+      ownerSeen = true;
+      parts.push({ html: ownerSection(heading, lines.slice(start + 1, end), opts), owner: true });
+    } else if (heading !== null && ownerLayout && key === "open questions") parts.push({ html: `<section class="questions">\n${blocks(lines.slice(start, end), opts, false, 0)}\n</section>` });
     else parts.push({ html: blocks(lines.slice(start, end), opts, false, 0) });
   };
   for (let i = 0; i < lines.length; i++) {
@@ -326,9 +329,17 @@ export const renderMarkdown = (markdown: string, opts: MarkdownOpts = {}): strin
 const ALERT_MARK = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i;
 
 /** The alert type (lower case) of a quote whose first line is exactly a marker and that has a body; null for any other quote. */
-function alertOf(quote: readonly string[]): string | null {
+export function alertOf(quote: readonly string[]): string | null {
   const m = ALERT_MARK.exec(quote[0] ?? "");
   return m && quote.slice(1).some((l) => l.trim()) ? m[1].toLowerCase() : null;
+}
+
+/** The quote block that starts at `lines[i]` (null when that line does not open one): its lines without the `>` prefix, with lazy continuation lines, and the next line index. */
+export function quoteBlockAt(lines: readonly string[], i: number): { body: string[]; next: number } | null {
+  if (!/^ {0,3}>/.test(lines[i] ?? "")) return null;
+  const body: string[] = [];
+  while (i < lines.length && (/^ {0,3}>/.test(lines[i]) || (lines[i].trim() && body.length && !startsBlock(lines[i])))) body.push(lines[i++].replace(/^ {0,3}> ?/, ""));
+  return { body, next: i };
 }
 
 const startsBlock = (l: string): boolean => FENCE_OPEN.test(l) || headingOf(l) !== null || RULE.test(l) || /^ {0,3}>/.test(l) || /^ {0,3}(?:[-*+]|1[.)])[ \t]+\S/.test(l);
@@ -378,8 +389,9 @@ function blockList(lines: string[], opts: MarkdownOpts, tight: boolean, depth: n
       continue;
     }
     if (/^ {0,3}>/.test(line)) {
-      const q: string[] = [];
-      while (i < lines.length && (/^ {0,3}>/.test(lines[i]) || (lines[i].trim() && q.length && !startsBlock(lines[i])))) q.push(lines[i++].replace(/^ {0,3}> ?/, ""));
+      const qb = quoteBlockAt(lines, i)!;
+      const q = qb.body;
+      i = qb.next;
       const alert = depth < 8 ? alertOf(q) : null;
       if (alert) add(`<blockquote class="callout callout-${alert}" data-alert="${alert}">${blocks(q.slice(1), opts, false, depth + 1)}</blockquote>`, "alert");
       else add(`<blockquote>${depth < 8 ? blocks(q, opts, false, depth + 1) : escapeHtml(q.join("\n"))}</blockquote>`);

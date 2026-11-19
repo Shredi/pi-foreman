@@ -41,8 +41,8 @@ test("ownerFactsLines resolves relative paths and names a missing section", () =
     fs.writeFileSync(path.join(dir, "a.md"), GOOD);
     fs.writeFileSync(path.join(dir, "b.md"), "# P\n\n## Goal\nx\n");
     const lines = ownerFactsLines(["a.md", "b.md", "c.md"], dir);
-    assert.match(lines[0], /Owner section \(a\.md\): present/);
-    assert.match(lines[1], /Owner section \(b\.md\): missing/);
+    assert.match(lines[0], /Summary section \(a\.md\): present/);
+    assert.match(lines[1], /Summary section \(b\.md\): missing/);
     assert.match(lines[2], /not readable/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -51,9 +51,9 @@ test("ownerFactsLines resolves relative paths and names a missing section", () =
 
 test("ownerSummary: the section, cleaned, or the warning line", () => {
   const s = ownerSummary(GOOD.replace("faster.", "faster.\u001b[31m"));
-  assert.match(s, /^For the owner\n {2}We make the report page faster\./);
+  assert.match(s, /^Summary\n {2}We make the report page faster\./);
   assert.ok(!s.includes("\u001b"));
-  assert.match(ownerSummary("# P\n\n## Goal\nx\n"), /^⚠ No "For the owner" summary/);
+  assert.match(ownerSummary("# P\n\n## Goal\nx\n"), /^⚠ No "Summary" section/);
 });
 
 test("question prefix: idempotent, session label only for an opened session", () => {
@@ -76,5 +76,5 @@ test("question hint: jargon in the question or an option description, plain text
 test("ownerSummary returns a long owner section whole", () => {
   const lines = Array.from({ length: 25 }, (_, i) => `Line ${i + 1} in plain words.`);
   const s = ownerSummary(`# P\n\n## For the owner\n${lines.join("\n")}\n\n## Goal\nx\n`);
-  assert.equal(s, ["For the owner", ...lines.map((l) => `  ${l}`)].join("\n"));
+  assert.equal(s, ["Summary", ...lines.map((l) => `  ${l}`)].join("\n"));
 });

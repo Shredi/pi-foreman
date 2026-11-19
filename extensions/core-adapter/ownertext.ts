@@ -1,4 +1,4 @@
-// Owner-readable text (docs/ceremony.md "Owner summary"): the `## For the owner` section every plan opens with, the
+// Owner-readable text (docs/ceremony.md "Owner summary"): the `## Summary` section every plan opens with (the older `## For the owner` is still accepted), the
 // deterministic jargon rule shared by the plan-review facts and the question hint, and the context prefix of
 // ask_user_question questions. Jargon is advice only; the plan form (planFormIssues: presence, position) is what a
 // `[plan-review]` launch is refused for (index.ts).
@@ -7,10 +7,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { clean, planBody, readPlan } from "./checkpoint.ts";
 import type { PlanOpts } from "./checkpoint.ts";
-import { scanFence } from "./pages.ts";
+import { alertOf, quoteBlockAt, scanFence } from "./pages.ts";
 import { workspaceOf } from "./python.ts";
 
-const OWNER_HEADING = /^##[ \t]+for the owner[ \t]*$/i;
+const OWNER_HEADING = /^##[ \t]+(?:summary|for the owner)[ \t]*$/i;
 const LEVEL2 = /^##[ \t]+\S/;
 const LEVEL12 = /^#{1,2}[ \t]+\S/;
 
@@ -37,7 +37,7 @@ export interface OwnerSection {
   first: boolean;
 }
 
-/** The first `## For the owner` section of the plan body above any appendix (planBody), or null. */
+/** The first `## Summary` or `## For the owner` section of the plan body above any appendix (planBody), or null; a later heading of either name is an ordinary section. */
 export function ownerSection(text: string): OwnerSection | null {
   const all = planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/);
   const fenced = fencedMask(all);
@@ -142,38 +142,40 @@ function ownerFactLine(p: string, cwd: string, opts?: PlanOpts): string {
     const r = opts ? readPlan(abs, opts) : null;
     // a markdown file readPlan refuses (outside the scratch dir) and with no page beside it: the direct read, as without opts
     const lone = abs.endsWith(".md") && !fs.existsSync(abs.replace(/\.md$/, ".html"));
-    if (r && "error" in r && !lone) return `Owner section (${p}): plan not readable`;
+    if (r && "error" in r && !lone) return `Summary section (${p}): plan not readable`;
     text = r && "plan" in r ? r.plan.markdown : fs.readFileSync(path.resolve(cwd, p), "utf8");
   } catch {
-    return `Owner section (${p}): plan not readable`;
+    return `Summary section (${p}): plan not readable`;
   }
   const sec = ownerSection(text);
   const issues = ownerSectionIssues(text);
-  return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
+  return `Summary section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
 }
 
-const ALERT_MARKER = /^ {0,3}>[ \t]?\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i;
-const QUOTED = /^ {0,3}>[ \t]?/;
-
-/** The whole owner section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
+/** The whole Summary section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
 export function ownerSummary(text: string): string {
   const sec = ownerSection(text);
-  if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "For the owner" summary in this plan.';
+  if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "Summary" section in this plan.';
   const spans = diagramSpans(sec.lines);
-  let alert = false; // inside a GitHub alert quote: its marker line is dropped and the quote prefix of its lines stripped
-  const shown = sec.lines.flatMap((l, i) => {
+  const fenced = fencedMask(sec.lines);
+  const shown: string[] = [];
+  for (let i = 0; i < sec.lines.length; i++) {
     const span = spans.find(([a, b]) => i >= a && i <= b);
-    if (span) return i === span[0] ? ["(diagram: see the plan page)"] : [];
-    if (ALERT_MARKER.test(l)) {
-      alert = true;
-      return [];
+    if (span) {
+      if (i === span[0]) shown.push("(diagram: see the plan page)");
+      continue;
     }
-    if (alert && QUOTED.test(l)) return [l.replace(QUOTED, "")];
-    alert = false;
-    return [l];
-  });
+    // a quote block as the page renders it: an alert's marker line is dropped and the quote prefix stripped from its lines
+    const q = fenced[i] ? null : quoteBlockAt(sec.lines, i);
+    if (q) {
+      shown.push(...(alertOf(q.body) ? q.body.slice(1) : sec.lines.slice(i, q.next)));
+      i = q.next - 1;
+      continue;
+    }
+    shown.push(sec.lines[i]);
+  }
   const lines = shown.filter((l) => l.trim());
-  return ["For the owner", ...lines.map((l) => `  ${clean(l)}`)].join("\n");
+  return ["Summary", ...lines.map((l) => `  ${clean(l)}`)].join("\n");
 }
 
 /** The project name for question prefixes: the folder above the git common dir (so a worktree shows the repository), else the workspace folder. */

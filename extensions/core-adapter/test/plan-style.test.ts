@@ -22,7 +22,7 @@ test("skeleton: its style is the harness plan stylesheet", () => {
 
 test("skeleton: the callouts, goal and numbered steps convert to the plan text", () => {
   const md = htmlToMarkdown(skeleton).markdown;
-  assert.match(md, /^# Plan title\n\n## For the owner\n\n\*\*Goal:\*\* one sentence/);
+  assert.match(md, /^# Plan title\n\n## Summary\n\n\*\*Goal:\*\* one sentence/);
   assert.match(md, /\n1\. The first step, short\.\n2\. The next step, short\.\n/);
   assert.match(md, /\n> \[!WARNING\]\n> \*\*Heads-up\*\*\n>\n> - What could surprise the owner\.\n/);
   assert.match(md, /\n> \[!NOTE\]\n> \*\*Decided for you\*\*\n/);

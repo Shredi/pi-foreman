@@ -35,10 +35,10 @@ picture{display:block;margin:1em 0;overflow:auto}img{max-width:100%;height:auto}
 <main>
 <h1>Plan title</h1>
 
-<!-- The owner section comes first: the owner reads it cold and approves from it. Layout: a goal paragraph, the steps as a numbered list, a diagram or a small table where a flow or a before/after exists, then the boxes at the end, one blockquote each, each with a bold label. One fact per sentence, no paths or ids. data-alert is one of note, tip, important, warning, caution: warning = heads-up, note = decided for you, tip = decided by you, important = open question for the owner, caution = serious risk. -->
+<!-- The Summary section comes first (the older name `For the owner` is still accepted): the owner reads it cold and approves from it. Layout: a goal paragraph, the steps as a numbered list, a diagram or a small table where a flow or a before/after exists, then the boxes at the end, one blockquote each, each with a bold label. One fact per sentence, no paths or ids. data-alert is one of note, tip, important, warning, caution: warning = heads-up, note = decided for you, tip = decided by you, important = open question for the owner, caution = serious risk. -->
 <section class="owner">
 <div class="o-main">
-<h2>For the owner</h2>
+<h2>Summary</h2>
 <p class="goal"><strong>Goal:</strong> one sentence on what changes and why.</p>
 <ol class="path">
 <li>The first step, short.</li>
@@ -77,7 +77,7 @@ flowchart LR
 <h2>Work</h2>
 <p>Items in order. Name each ledger item it covers.</p>
 
-<!-- Reviewer detail goes in details blocks, so the owner section stays the first read. -->
+<!-- Reviewer detail goes in details blocks, so the Summary stays the first read. -->
 <details class="fold" id="reviewer-detail">
 <summary><h2>Reviewer detail: files, callers, tests</h2></summary>
 <p>Claims about the code, each checked against the code.</p>

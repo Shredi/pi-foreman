@@ -76,7 +76,7 @@ test("foreman_checkpoint: the dialog links the plan page, the answer sets its st
   const r = await rig(t, ["approve"]);
   const first = await r.call();
   assert.equal(first.details?.decision, "approve", first.content[0]?.text);
-  const dialog = r.notes.find((n) => n.includes("For the owner"))!;
+  const dialog = r.notes.find((n) => n.includes("Summary"))!;
   assert.match(dialog, new RegExp(`Plan page: ${pathToFileURL(path.join(r.pages(), "plan.html")).href.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(a path on this session's machine\\)`));
   assert.match(dialog, /\(diagram: see the plan page\)/);
   assert.doesNotMatch(dialog, /graph TD/);
