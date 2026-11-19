@@ -255,7 +255,14 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
   for (const s of subs) {
     if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth");
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
+    else {
+      subDepth++;
+      try {
+        walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
+      } finally {
+        subDepth--;
+      }
+    }
   }
 }
 
@@ -387,7 +394,9 @@ function doCommand(cmd: Command, sc: Scope): string | null {
   }
   const own = c.redirs.length - sc.redirects.length;
   const tail = cmd.suffix[cmd.suffix.length - 1];
-  c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" : !cmd.name);
+  // the redirect's target is followed by the end of the text or `;`, `&`, `|`, a newline: a comment, `)` or `}` after it is none (as the old check read it)
+  const closes = tail && "end" in tail && typeof tail.end === "number" ? (subDepth > 0 ? REDIRECT_END_SUB : REDIRECT_END).test(walkedSource.slice(tail.end)) : true;
+  c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" && closes : !cmd.name);
   if (!cmd.name) {
     // standalone assignments (and bare redirects): harmless names, or the closed grammar's own assignment
     const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && harmless(a.assign));
@@ -801,9 +810,22 @@ function prepare(script: Script, src: string, sc: Scope): void {
   });
 }
 
+/** The source text being walked (`walkScript` sets it, nested scripts restore it): what follows a redirect decides whether it ends its command (`redirectEnd`). */
+let walkedSource = "";
+/** Inside a command substitution: its closing `)` or backtick ends the command text as the end of the text does. */
+let subDepth = 0;
+const REDIRECT_END = /^[ \t]*(?:$|[;&|\n])/;
+const REDIRECT_END_SUB = /^[ \t]*(?:$|[;&|\n)`])/;
+
 function walkScript(script: Script, src: string, sc: Scope): void {
-  prepare(script, src, sc);
-  walkList(script.commands, sc);
+  const outer = walkedSource;
+  walkedSource = src;
+  try {
+    prepare(script, src, sc);
+    walkList(script.commands, sc);
+  } finally {
+    walkedSource = outer;
+  }
 }
 
 /**

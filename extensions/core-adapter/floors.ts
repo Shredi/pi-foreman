@@ -538,7 +538,7 @@ function unknownWriteTarget(seg: ShellSegment, prog: string): string | undefined
   const operands = (): string[] => a.filter((w) => !w.startsWith("-") || w === "-");
   // the old check read a `>` target that ends the command, nothing after it (`echo > $F arg` is none; the walker sets `redirectEnd`), quoted or not
   const last = seg.redirects[seg.redirects.length - 1];
-  if (last && (seg.redirectEnd ?? true) && (last.op === ">" || last.op === ">|" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target.replace(/^(["'])(.*)\1$/, "$2"))) return last.target;
+  if (last && (seg.redirectEnd ?? true) && (last.op === ">" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target.replace(/^(["'])(.*)\1$/, "$2"))) return last.target;
   if (prog === "dd") return a.find((w) => /^of=/.test(w) && /[$`]/.test(w));
   if ((prog === "chmod" || prog === "chown") && a.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) return operands().slice(1).find((w) => /[$`]/.test(w));
   if (prog === "truncate" && a.some((w) => w === "0" || w === "--size=0" || w === "-s0")) return operands().find((w) => /[$`]/.test(w));
@@ -1195,11 +1195,13 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
         if (/[$`]/.test(w) && !/^\$\{?HOME\}?(?:[\\/]|$)/.test(w)) hits.push(UNKNOWN_DELETE(`'${cutFragment(w)}' holds a variable`));
         const abs = px_(win).isAbsolute(w) || /^(?:~|\$HOME|\$\{HOME\})(?:[\\/]|$)/.test(w);
         if (s.cwd === null && !abs) hits.push(UNKNOWN_DELETE(`'${cutFragment(w)}' is relative to a directory changed through a variable`));
-        if (/[*?[{]/.test(w) && resolveWord(w, s.cwd ?? env.cwd, env) === null) hits.push(UNKNOWN_DELETE(`the glob '${cutFragment(w)}' has no readable directory`));
+        // a bare glob (`*`) names the working directory: known and inside the roots here (an unknown cwd is the hit above, one outside the roots stays refused)
+        if (/[*?[{]/.test(w) && !(!abs && s.cwd !== null && /^[*?[{]/.test(w) && !outside(".", s.cwd, env)) && resolveWord(w, s.cwd ?? env.cwd, env) === null) hits.push(UNKNOWN_DELETE(`the glob '${cutFragment(w)}' has no readable directory`));
       }
     }
     if (prog === "find" && argv.includes("-delete") && deleteOperands(s, prog).some((w) => w === "" || /[$`]/.test(w))) hits.push(UNKNOWN_DELETE("find -delete from a start path that is a variable"));
     if (prog === "find" && argv.includes("-delete") && s.cwd === null && deleteOperands(s, prog).every((w) => !px_(win).isAbsolute(w) && !w.startsWith("~"))) hits.push(UNKNOWN_DELETE("find -delete from a directory changed through a variable"));
+    if (prog === "shred" && s.wrappers.some((w) => base(w) === "xargs")) hits.push(UNKNOWN_DELETE("a remover under xargs"));
     if (prog === "shred" && deleteOperands(s, prog).some((w) => w === "" || /[$`]/.test(w))) hits.push(UNKNOWN_DELETE("shred of a variable or empty operand"));
     if (prog === "find" && findExecRemoves(argv)) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
     // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so its words are scanned as a runner's string under find -exec is
@@ -1221,6 +1223,7 @@ function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
   const recursiveElsewhere = units.some((w) => w.slice(1).some(psRecurses));
   // the old check took any `cd` (`Set-Location`, `Push-Location` ...) as the end of a known directory: a relative target after one names a directory nobody can point at
   let moved = false;
+  const literalBodies = new Set(units.filter((w) => /^(?:iex|invoke-expression)$/.test(base(w[0]))).map(iexBody).filter((b): b is string => b !== null));
   for (const words of units) {
     const p = base(words[0]);
     const ops = psRecursiveDelete(words);
@@ -1238,7 +1241,7 @@ function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
     if (PS_REMOVERS.has(p)) {
       const rest = words.slice(1);
       if (/^(?:remove-item|ri)$/i.test(p) && rest.some((x) => /^@\w+$/.test(x))) hits.push({ ...UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false), ask: true });
-      if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
+      if (p !== "rm" && recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
     }
     if ((p === "pwsh" || p === "powershell") && words.slice(1, ((i) => (i < 0 ? words.length : i))(words.findIndex((w) => /^-c(?:ommand)?$/i.test(w)))).some((w) => PS_ENCODED.test(w))) hits.push({ ...UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false), ask: true });
     if ((p === "pwsh" || p === "powershell") && depth < MAX_DEPTH) {
@@ -1247,6 +1250,8 @@ function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
     }
     if (p === "iex" || p === "invoke-expression") {
       const body = iexBody(words);
+      // the lexer also yields the unit with its quotes taken off: that is the literal string above, not a computed one
+      if (body === null && literalBodies.has(iexArgs(words).join(" "))) continue;
       if (body !== null) {
         if (depth < MAX_DEPTH) hits.push(...psUnknownDeletes(body, depth + 1));
       } else if (iexArgs(words).length > 0 && !PS_DOWNLOAD.test(words.join(" "))) hits.push({ ...UNKNOWN_DELETE("iex of a computed string cannot be read", false), ask: true });
@@ -1261,34 +1266,20 @@ function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
 /** Where a nested command runs: this machine, another one over `ssh` (a recursive `rm` there runs: the owner's exception), or in a container (every kind refused). */
 type Where = "local" | "ssh" | "container";
 
-/** Options of `ssh`, `docker`/`podman` `exec`/`run` and `kubectl exec` that take a value in the next word. */
-const REMOTE_VALUE_OPTS = new Set(["-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-e", "-E", "-I", "-m", "-O", "-Q", "-S", "-w", "-B", "-W", "-u", "-v", "-n", "-f", "-l", "-p", "--user", "--env", "--workdir", "--env-file", "--volume", "--name", "--publish", "--entrypoint", "--network", "--label", "--mount", "--namespace", "--container", "--filename", "--context", "--kubeconfig", "--image"]);
-
-/** The words of the command an `ssh`, `docker`/`podman` `exec`/`run` or `kubectl exec` segment runs elsewhere, else null: after the options and the operand that names the target (host, container, pod, image); `kubectl` takes it after `--`. */
+/**
+ * The words the old check read as the command of an `ssh`, `docker`/`podman` `exec`/`run` or `kubectl exec` segment: everything after the program (and the verb), the
+ * target host, container or pod and the options included, as it joined them (`_check_remote`). So the first command of the joined text is named by the target, and
+ * only a later command (`ssh host 'ls; shred /x'`) was read: the bare `ssh host shred /x` was never refused, and stays running.
+ */
 function remoteCommand(seg: ShellSegment, prog: string): { words: string[]; where: Where } | null {
   const a = seg.argv;
-  let i = 0;
-  if (prog !== "ssh") {
-    if (!["docker", "podman", "kubectl"].includes(prog) || (a[0] !== "exec" && a[0] !== "run")) return null;
-    i = 1;
-    const dd = prog === "kubectl" ? a.indexOf("--", i) : -1;
-    if (dd >= 0) return { words: a.slice(dd + 1), where: "container" };
-  }
-  for (; i < a.length; i++) {
-    if (a[i] === "--") {
-      i++;
-      break;
-    }
-    if (a[i].startsWith("-") && a[i].length > 1) {
-      if (REMOTE_VALUE_OPTS.has(a[i])) i++;
-      continue;
-    }
-    break;
-  }
-  return { words: a.slice(i + 1), where: prog === "ssh" ? "ssh" : "container" };
+  if (prog === "ssh") return { words: a, where: "ssh" };
+  if (["docker", "podman", "kubectl"].includes(prog) && a.length > 1 && (a[0] === "exec" || a[0] === "run")) return { words: a.slice(1), where: "container" };
+  return null;
 }
 
-const quoteWord = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
+/** A recursive `rm` anywhere among the words of a segment (`_has_recursive_rm`): behind a wrapper, after the target word. */
+const wordsRemove = (words: string[]): boolean => words.some((w, i) => base(w) === "rm" && words.slice(i + 1).some((x) => RM_RECURSIVE.test(x)));
 
 /** The find tail (`-exec`, `-execdir`, `-ok`, `-okdir` up to its terminator) is a recursive remover, run directly or through a runner's string. */
 function findExecRemoves(argv: string[]): boolean {
@@ -1303,8 +1294,7 @@ function findExecRemoves(argv: string[]): boolean {
 /** What a nested command does that the old check refused on another machine or in a container, else null; `rmOk` leaves a recursive rm out (ssh). */
 function remoteKind(seg: ShellSegment, prog: string, env: FloorEnv, rmOk: boolean): string | null {
   const a = seg.argv;
-  const removes = (prog === "rm" && a.some((w) => RM_RECURSIVE.test(w))) || (prog === "find" && findExecRemoves(a)) || (seg.opaque === "nonliteral_script" && removerInString([seg.program, ...a].join(" ")));
-  if (removes && !rmOk) return "a recursive rm";
+  if (wordsRemove([seg.program, ...a]) || (prog === "find" && findExecRemoves(a)) || (seg.opaque === "nonliteral_script" && removerInString([seg.program, ...a].join(" ")))) return rmOk ? null : "a recursive rm";
   if (/[$`]/.test(seg.program) && !/[=\s]/.test(seg.program) && a.some((w) => VAR_CMD_RECURSIVE.test(w))) return "a command word that is a variable with a recursive flag";
   if (prog === "shred") return "shred";
   if (prog === "find" && a.includes("-delete")) return "find -delete";
@@ -1331,9 +1321,11 @@ function psRemoteKind(text: string): string | null {
 const withFragment = (h: FloorHit, seg: ShellSegment): FloorHit => (h.fragment ? h : { ...h, fragment: cutFragment([seg.program, ...seg.argv].join(" ")) });
 
 /** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, an applet's words). */
-function localKind(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
+function localKind(seg: ShellSegment, prog: string, env: FloorEnv, rmAsks: boolean): FloorHit | null {
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
-  if (d) return withFragment(d, seg);
+  // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) where the rm stood as a command; the home, root and system
+  // targets, shred, and an rm inside a string run as code (`-c`, eval) were denies
+  if (d) return withFragment(d.rule === "floor-delete-outside" && rmAsks && prog === "rm" ? { ...d, kind: "ask" } : d, seg);
   if (pythonDisk(seg, prog)) return withFragment(hit("disk", `\`${prog}\` formats, erases or overwrites a disk. Ask the user.`), seg);
   const unreadable = unknownWriteTarget(seg, prog);
   if (unreadable !== undefined) return withFragment(unknownWriteHit(unreadable), seg);
@@ -1366,7 +1358,7 @@ function appletOf(seg: ShellSegment): ShellSegment {
  * the runner's `unsupported`) stays as it was, so mode `auto` and the other floors see these lines as before; only the old check's decisions are added.
  * Until PR C moves them to the judge. `top` is the line itself: its own segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean): FloorHit | null {
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true): FloorHit | null {
   if (depth > MAX_DEPTH) return null;
   const eff: ShellSegment[] = [];
   for (const s of segs) {
@@ -1377,10 +1369,14 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     const remote = remoteCommand(seg, prog);
     if (remote && remote.words.length > 0) {
       const inWhere: Where = where === "container" || remote.where === "container" ? "container" : "ssh";
-      // ssh joins its words into one string for the remote shell; a quoted string after a container name is read as the script it is
-      const rtext = remote.where === "ssh" || remote.words.length === 1 ? remote.words.join(" ") : remote.words.map(quoteWord).join(" ");
+      const rtext = remote.words.join(" ");
       const inner = parseShell(rtext, { cwd: seg.cwd, platform: env.platform });
-      const h = pythonKinds(rtext, inner, env, inWhere, depth + 1, false);
+      // the old check refused a recursive rm anywhere in the text first; over ssh that is the owner's exception, and the text is not read further
+      if (inner.some((x) => wordsRemove([x.program, ...x.argv]))) {
+        if (inWhere === "ssh") continue;
+        return withFragment(remoteHit("a recursive rm", inWhere), seg);
+      }
+      const h = pythonKinds(rtext, inner, env, inWhere, depth + 1, false, rmAsks);
       if (h) return withFragment(h, seg);
       const ps = psRemoteKind(rtext);
       if (ps) return withFragment(remoteHit(ps, inWhere), seg);
@@ -1391,11 +1387,11 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       continue;
     }
     for (const script of scriptsOf(seg, prog)) {
-      const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false);
+      const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && (prog === "pwsh" || prog === "powershell" || prog === "cmd"));
       if (h) return withFragment(h, seg);
     }
     if (!top || applet) {
-      const h = localKind(seg, prog, env);
+      const h = localKind(seg, prog, env, rmAsks);
       if (h) return h;
     }
   }
@@ -1405,7 +1401,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   }
   if (segs.some((s) => s.opaque === "function_def")) {
     for (const body of opaqueBodies(text)) {
-      const h = pythonKinds(body, parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) }), env, where, depth + 1, false);
+      const h = pythonKinds(body, parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) }), env, where, depth + 1, false, rmAsks);
       if (h) return h;
     }
   }
@@ -1646,7 +1642,9 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
     if (h) return h;
   }
   // PR B2: the old check's decisions on the paths that nest a command (function bodies, busybox and toybox applets, ssh and containers)
-  const nested = pythonKinds(text, segments, env, "local", 0, true);
+  // the powershell tool's line is one opaque segment: the old check read its text as a shell line too
+  const psTool = segments.length === 1 && segments[0].program === "powershell" && segments[0].argv.length === 0 && segments[0].opaque === "foreign_shell";
+  const nested = psTool ? pythonKinds(text, parseShell(text, { cwd: segments[0].cwd, platform: env.platform }), env, "local", 0, false) : pythonKinds(text, segments, env, "local", 0, true);
   if (nested?.kind === "deny") return nested;
   // until the permission modes go (PR C moves this to the judge): a recursive delete the gate cannot read is refused in every mode, by the predicate of the label
   const unknown = unknownFloor(text, segments, env);
