@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, secretPath } from "./floors.ts";
+import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, secretPath, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
@@ -1470,6 +1470,8 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
   { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable, an unparsed form or an interpreter one-liner such as python -c or node -e)", test: (c, e) => (c.segments ?? []).some((s) => s.opaque !== null) || segs(inlineCode)(c, e) },
+  // the judge-first label of the old Python delete check (floors.ts unknownTargetDelete); until the judge-first list replaces this one it takes this path, after the opaque class (an opaque line is asked as that)
+  { name: "danger-delete-unknown-target", reason: "a delete whose target the harness cannot read (a variable, a glob without a readable directory, a changed directory, input from another command, a PowerShell or cmd recursive delete)", test: (c, e) => !!c.segments && BASH_TOOL_NAMES.has(c.tool) && unknownTargetDelete(c.text ?? "", c.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null },
   { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
   { name: "danger-git-secret", reason: "shows a secret or key file through a git revision (git show HEAD:<path>)", test: segs(gitSecretSeg) },

@@ -355,5 +355,5 @@ export function repeatSignals(mark: PassMark, now: Omit<PassMark, "at">): string
 /** The refusal of a reviewer launch on unchanged, passed work; names what was compared and when. */
 export function dupRefusalText(at?: number): string {
   const when = at === undefined ? "" : ` at ${new Date(at).toTimeString().slice(0, 8)}`;
-  return `pi-foreman: the last review passed${when} and nothing changed since (no builder run, HEAD, worktree or ledger change) — finish, or revise first. Ask for a second review only when warranted: set occasion: "${SECOND_OPINION}" on the reviewer launch (or put "[${SECOND_OPINION}]" first in its task).`;
+  return `pi-foreman: the last review passed${when} and nothing changed since (no builder run, new commit, changed file in the checkout, or ledger item added or rewritten) — finish, or revise first. Ask for a second review only when warranted: set occasion: "${SECOND_OPINION}" on the reviewer launch (or put "[${SECOND_OPINION}]" first in its task).`;
 }

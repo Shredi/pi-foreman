@@ -28,14 +28,7 @@
    "role": "foreman",
    "toolFamily": "bash",
    "guard": "gate",
-   "decision": "allowed"
-  },
-  {
-   "event": "guard",
-   "role": "foreman",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "deny"
+   "decision": "blocked"
   },
   {
    "event": "llm",
@@ -53,14 +46,7 @@
    "role": "foreman",
    "toolFamily": "bash",
    "guard": "gate",
-   "decision": "allowed"
-  },
-  {
-   "event": "guard",
-   "role": "foreman",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "deny"
+   "decision": "blocked"
   },
   {
    "event": "tool_error"
@@ -75,12 +61,6 @@
    "toolFamily": "bash",
    "guard": "gate",
    "decision": "allowed"
-  },
-  {
-   "event": "guard",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "none"
   },
   {
    "event": "llm",

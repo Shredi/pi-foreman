@@ -7,7 +7,7 @@ const cwd = path.resolve("/work/repo");
 const home = path.resolve("/hd/u");
 const pc = { sessionId: "sess-1", cwd, home, transcriptPath: "/s/x.jsonl" };
 
-test("destructive guard payload carries command, cwd and session id", () => {
+test("shell payload carries command, cwd and session id", () => {
   const p = preToolPayload("bash", { command: "rm -rf build", timeout: 5 }, pc);
   assert.equal(p.session_id, "sess-1");
   assert.equal(p.cwd, cwd);

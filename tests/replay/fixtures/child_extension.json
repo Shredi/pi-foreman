@@ -8,7 +8,7 @@
  },
  "explorer": {
   "guarded": [
-   {"tools": [{"name": "bash", "arguments": {"command": "shred --version"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "rm -rf /"}}]},
    {"text": "child: the guard refused"}
   ]
  }

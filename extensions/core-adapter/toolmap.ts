@@ -1,7 +1,6 @@
 // Pi tool name -> core tool name and the core scripts that fire for it (design §7).
 
 export type GuardName =
-  | "destructive_guard"
   | "ledger_guard_write"
   | "ledger_guard_spawn"
   | "ledger_bind"
@@ -28,10 +27,11 @@ const NONE: ToolMapping = Object.freeze({ coreName: null, pre: [], post: [] }) a
 // tool_name, so it would deny the Edit that the core documents as THE way to bind an
 // existing ledger (core hooks.json runs it for `^Write$` only).
 const TABLE: Record<string, ToolMapping> = {
-  bash: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
-  powershell: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
-  [FOREMAN_BG_TOOL]: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
-  [ADDON_BG_TOOL]: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
+  // Shell tools run no core script: the dangerous list is the gate's floors (floors.ts).
+  bash: { coreName: "Bash", pre: [], post: [] },
+  powershell: { coreName: "Bash", pre: [], post: [] },
+  [FOREMAN_BG_TOOL]: { coreName: "Bash", pre: [], post: [] },
+  [ADDON_BG_TOOL]: { coreName: "Bash", pre: [], post: [] },
   write: { coreName: "Write", pre: ["ledger_guard_write"], post: ["ledger_bind"] },
   edit: { coreName: "Edit", pre: [], post: ["ledger_bind"] },
   subagent: { coreName: "Agent", pre: ["ledger_guard_spawn"], post: [] },

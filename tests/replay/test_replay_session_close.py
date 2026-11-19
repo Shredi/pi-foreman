@@ -20,6 +20,8 @@ from driver import load_fixture, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 CHILD = "fm-demo-abc123"
+# Polls return early; the cap only bounds a hung run on slow CI.
+SLOW_RUNNER_CAP = 120
 
 
 def drain_until(pi, needle, seconds):
@@ -60,7 +62,7 @@ class TestSessionClose(ReplayCase):
         # Wrong sender: the parent file names someone else; the child refuses and replies.
         sent = tool_results(parent.prompt("[[replay:p2]] send", timeout=90))
         self.assertEqual([(n, e) for n, e, _ in sent], [("intercom", False)], sent)
-        seen = drain_until(parent, "close refused", 30)
+        seen = drain_until(parent, "close refused", SLOW_RUNNER_CAP)
         self.assertIn("pi-foreman: close refused: the sender is not the parent recorded at spawn", json.dumps(seen))
         child.drain(5)  # the child's wake turn after the refused message
         self.assertIsNone(child.proc.poll())
@@ -74,18 +76,18 @@ class TestSessionClose(ReplayCase):
             child.drain(30)
         except EOFError:
             pass
-        deadline = time.time() + 30
+        deadline = time.time() + SLOW_RUNNER_CAP
         while child.proc.poll() is None and time.time() < deadline:
             time.sleep(0.2)
         self.assertEqual(child.proc.poll(), 0, "\n".join(child.stderr[-15:]))
         result = (rig.project / ".workflow" / "result-close.md").resolve()
         self.assertIn("replay close", result.read_text(encoding="utf-8"))
-        seen = drain_until(parent, "foreman:closed", 30)
+        seen = drain_until(parent, "foreman:closed", SLOW_RUNNER_CAP)
         self.assertIn("foreman:closed %s" % result, json.dumps(seen).replace("\\\\", "\\"))
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
         self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["refused", "accepted", "turn", "synced", "report", "shutdown"])
-        deadline = time.time() + 15
+        deadline = time.time() + SLOW_RUNNER_CAP
         while time.time() < deadline:
             entry = json.loads((rig.state_dir / "sessions.json").read_text("utf-8"))["sessions"][0]
             if entry.get("status") == "closed":

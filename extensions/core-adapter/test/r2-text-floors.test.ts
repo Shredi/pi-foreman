@@ -116,12 +116,12 @@ test("(E) a cleanly parsed read of a config file beside key words is no config-k
   const writes = [
     `git diff -- ${F} && echo gate > ${F}`,
     `echo gate > ${F} && grep gate $X`,
-    `git add ${F} && grep gate $X`,
-    `cat ${F} > out.json && grep gate $X`,
-    `git diff -- ${F} > out.json && grep gate $X`,
-    `git diff -- ${F} --output=out.json && grep gate $X`,
+    `git add ${F} && grep gate.mode $X`,
+    `cat ${F} > out.json && grep gate.mode $X`,
+    `git diff -- ${F} > out.json && grep gate.mode $X`,
+    `git diff -- ${F} --output=out.json && grep gate.mode $X`,
     `cat ${F} && $CMD gate > ${F}`,
-    `git diff -- config/foreman.json $(echo gate)`,
+    `git diff -- config/foreman.json $(echo gate.mode)`,
   ];
   for (const l of writes) for (const child of [false, true]) assert.equal(floorOf(l, child)?.rule, "floor-config-keys", `${child ? "child" : "main"}: ${l}`);
 });
@@ -129,8 +129,9 @@ test("(E) a cleanly parsed read of a config file beside key words is no config-k
 test("(F) a plain push and a chain of rev-parse and status are no force push; every force spelling stays one", () => {
   const plain = ["git push -u origin feat/x", "cd /w/repo && git push -u origin feat/x 2>&1 | tail -5", "cd /w/repo && git push -u origin worktree-agent-a1b2 2>&1 | tail -5", "cd C:/w/repo && git push -u origin feat/c++-x 2>&1|tail -5", "git -C /w/repo push --set-upstream origin HEAD", "git rev-parse --abbrev-ref HEAD && git status --short", "git rev-parse HEAD@{u} && git status -sb", 'git push -u origin "$(git rev-parse --abbrev-ref HEAD)" 2>&1 | tail -5'];
   for (const l of plain) assert.notEqual(floorOf(l)?.rule, "floor-git-push-force", l);
-  const forced = ["git push -f origin x", "git push --force origin x", "git push --force-with-lease origin x", "git push --force-if-includes origin x", "git push origin +x", "git push origin HEAD:refs/heads/x", "git push --mirror origin", "git push --delete origin x", "git push -d origin x", "git push origin :x", "cd /w/repo && git push -u origin +feat/x 2>&1 | tail -5", "cd /w/repo && git push origin feat/x:feat/y"];
+  const forced = ["git push -f origin x", "git push --force origin x", "git push --force-with-lease origin x", "git push --force-if-includes origin x", "git push origin +x", "git push --mirror origin", "git push --delete origin x", "git push -d origin x", "git push origin :x", "cd /w/repo && git push -u origin +feat/x 2>&1 | tail -5"];
   for (const l of forced) assert.equal(floorOf(l)?.rule, "floor-git-push-force", l);
+  for (const l of ["git push origin x:y", "git push origin HEAD:refs/heads/x", "cd /w/repo && git push origin feat/x:feat/y"]) assert.notEqual(floorOf(l)?.rule, "floor-git-push-force", l);
 });
 
 // ---- revision: a field is floored for what the same text is floored for as a shell line (when it is a real command), and never for more

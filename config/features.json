@@ -894,7 +894,7 @@
       "id": "resources",
       "area": "ops",
       "title": "Host pressure gate",
-      "purpose": "Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most). `/foreman doctor` prints the current level and `/foreman status` the last sample.",
+      "purpose": "Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most); for a load-only critical one new launch can start anyway when the owner says Yes in a dialog (one Yes, one launch). `/foreman doctor` prints the current level and `/foreman status` the last sample.",
       "doc": "docs/resources.md",
       "keys": ["resources.maxLoadPerCore", "resources.minFreeMemMB", "resources.minFreeDiskGB", "resources.sampleSeconds"],
       "commands": ["/foreman status"],

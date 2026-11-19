@@ -3,7 +3,7 @@
 // `foreman_bg {command, note}` runs one shell command detached (own process group on POSIX, see bgSpawnFlags for win32; stdout and stderr to
 // `<stateDir>/scratch/<session>/wait-<id>.log`, created exclusively: when that name already exists, e.g. after a reload, the run gets `wait-<id>-<token>.log`, and an existing log is never truncated or appended to) and registers a `pid` wait for it, so the foreman ends its turn and is
 // woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
-// index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard, destructive guard and the config-change check)
+// index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard and the config-change check)
 // and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
 // This file only spawns; it never decides.
 //

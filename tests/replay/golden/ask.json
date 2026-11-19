@@ -28,12 +28,6 @@
    "role": "foreman",
    "toolFamily": "bash",
    "guard": "gate",
-   "decision": "allowed"
-  },
-  {
-   "event": "guard",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
    "decision": "ask"
   },
   {
@@ -43,10 +37,18 @@
    "event": "blocked_closed"
   },
   {
-   "event": "ask",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "approved"
+   "event": "dialog",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allow-once"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "llm",
@@ -73,12 +75,6 @@
    "role": "foreman",
    "toolFamily": "bash",
    "guard": "gate",
-   "decision": "allowed"
-  },
-  {
-   "event": "guard",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
    "decision": "ask"
   },
   {
@@ -88,10 +84,18 @@
    "event": "blocked_closed"
   },
   {
-   "event": "ask",
-   "toolFamily": "Bash",
-   "guard": "destructive_guard",
-   "decision": "denied"
+   "event": "dialog",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "stop"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "blocked"
   },
   {
    "event": "llm",
@@ -137,19 +141,21 @@
     "role": "foreman",
     "toolFamily": "bash",
     "guard": "gate",
-    "decision": "allowed"
-   },
-   {
-    "event": "guard",
-    "toolFamily": "Bash",
-    "guard": "destructive_guard",
     "decision": "ask"
    },
    {
-    "event": "ask",
-    "toolFamily": "Bash",
-    "guard": "destructive_guard",
+    "event": "dialog",
+    "role": "foreman",
+    "toolFamily": "bash",
+    "guard": "gate",
     "decision": "no-ui"
+   },
+   {
+    "event": "guard",
+    "role": "foreman",
+    "toolFamily": "bash",
+    "guard": "gate",
+    "decision": "blocked"
    },
    {
     "event": "llm",
@@ -194,19 +200,21 @@
     "role": "foreman",
     "toolFamily": "bash",
     "guard": "gate",
-    "decision": "allowed"
-   },
-   {
-    "event": "guard",
-    "toolFamily": "Bash",
-    "guard": "destructive_guard",
     "decision": "ask"
    },
    {
-    "event": "ask",
-    "toolFamily": "Bash",
-    "guard": "destructive_guard",
+    "event": "dialog",
+    "role": "foreman",
+    "toolFamily": "bash",
+    "guard": "gate",
     "decision": "no-ui"
+   },
+   {
+    "event": "guard",
+    "role": "foreman",
+    "toolFamily": "bash",
+    "guard": "gate",
+    "decision": "blocked"
    },
    {
     "event": "llm",
