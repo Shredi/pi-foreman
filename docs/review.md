@@ -485,8 +485,7 @@ higher thinking level for the pre-PR review:
   "ceremony": {
     "reviewModel": "<provider>/<strong-model>",
     "reviewByOccasion": { "pre-pr": { "thinking": "high" } }
-  },
-  "retro": { "panelThreshold": 3 }
+  }
 }
 ```
 
