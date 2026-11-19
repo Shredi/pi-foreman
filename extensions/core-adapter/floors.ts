@@ -1306,6 +1306,11 @@ function remoteKind(seg: ShellSegment, prog: string, env: FloorEnv, rmOk: boolea
   return null;
 }
 
+/** Whether a word that holds whitespace, read as a command line, runs a recursive rm anywhere, in a word with spaces inside it too (`_has_recursive_rm` on the string). */
+function spacedRemove(word: string, seg: ShellSegment, env: FloorEnv): boolean {
+  return parseShell(word, { cwd: seg.cwd, platform: env.platform }).some((x) => wordsRemove([x.program, ...x.argv]) || [x.program, ...x.argv].some((w) => /\s/.test(w) && w !== word && spacedRemove(w, seg, env)));
+}
+
 /** A PowerShell or cmd delete or disk command among the units of `text`: the old check read them in a remote command too. */
 function psRemoteKind(text: string): string | null {
   if (psUnknownDeletes(text, 0).some((h) => h.floor || h.ask)) return "a PowerShell command that cannot be read";
@@ -1393,17 +1398,10 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         if (inWhere === "ssh") continue;
         return withFragment(remoteHit("a recursive rm", inWhere), seg);
       }
-      // a container takes its words as argv, the target (container, pod, options) first: the joined text is read as before, and again from each program that runs a string, with a word that
-      // holds spaces kept as one word (a `-c` string), all by the same recursive normaliser; ssh joins them into one remote string
+      // a container takes its words as argv: a word that holds whitespace is a string some program may run (`zsh -c "sh -c 'rm -rf /'"`, `su -c ...`), whatever precedes it; it is parsed
+      // and read the same way, in the words with spaces inside it too. Only a recursive rm found there is refused; every other kind in such a word is ignored
+      if (remote.where === "container" && remote.words.some((w) => /\s/.test(w) && spacedRemove(w, seg, env))) return withFragment(remoteHit("a recursive rm", inWhere), seg);
       const texts: [string, ShellSegment[]][] = [[rtext, inner]];
-      if (remote.where === "container") {
-        const quote = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`);
-        for (let i = 1; i < remote.words.length; i++) {
-          if (!RUNNERS.has(base(remote.words[i])) || !remote.words.slice(i).some((w) => /\s/.test(w))) continue;
-          const qtext = remote.words.slice(i).map(quote).join(" ");
-          if (qtext !== rtext) texts.push([qtext, parseShell(qtext, { cwd: seg.cwd, platform: env.platform })]);
-        }
-      }
       for (const [t, parsed] of texts) {
         const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, rmAsks);
         if (h) return withFragment(h, seg);
