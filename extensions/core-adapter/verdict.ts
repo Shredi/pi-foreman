@@ -334,6 +334,16 @@ export function launchItemsOf(ledger: string | null, given: readonly ItemId[] | 
   return { items: [...open.nums] };
 }
 
+/** The ids `review_verdict` takes for a launch: the launch's items, none for a `[high-stakes]` launch. The tool and the items line of the task both read this. */
+export const allowedItems = (items: readonly ItemId[] | undefined, highStakes: boolean): ItemId[] => (highStakes ? [] : [...(items ?? [])]);
+
+/** The line a review task ends with: the ids `review_verdict` takes for this launch (the tool refuses any other, V included unless listed). No `items <n>` phrase, so no ledger citation reads it. */
+export function launchItemsLine(allowed: readonly ItemId[]): string {
+  return allowed.length > 0
+    ? `[pi-foreman verdict items] review_verdict takes results for these items only: ${list(allowed.map(idText))}. Give no result for any other id (V included unless listed).`
+    : "[pi-foreman verdict items] this launch takes no items: give review_verdict no items.";
+}
+
 /** The numbers of the items a record marks `fail` (V is not a numbered item), in order, without repeats, as strings (the ledger's item numbers). */
 export const failedItemIds = (items: readonly VerdictItem[]): string[] => [...new Set(items.filter((i) => i.result === "fail" && typeof i.id === "number").map((i) => String(i.id)))];
 

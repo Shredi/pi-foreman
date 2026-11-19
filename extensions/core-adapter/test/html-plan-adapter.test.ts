@@ -13,7 +13,7 @@ import type { Block } from "./_r46world.ts";
 import { readPlan, sha256 } from "../checkpoint.ts";
 import { posix } from "./_platform.ts";
 
-const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p>Goal: ship the widget.</p></section><h2>Work</h2><p>x</p></body></html>";
+const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p><strong>Goal:</strong> ship the widget.</p><ol><li>Ship it.</li></ol></section><h2>Work</h2><p>x</p></body></html>";
 const BAD = "<html><body><h1>Widget</h1><h2>Work</h2><p>x</p></body></html>";
 const HTML_TASK = "[plan-review] review .workflow/scratch/plan-widget.html";
 const BOTH = "[plan-review] review .workflow/scratch/plan-widget.html and .workflow/scratch/plan-widget.md";

@@ -19,6 +19,7 @@ import { scratchRoot } from "./editmode.ts";
 import { htmlToMarkdown } from "./htmlmd.ts";
 import type { HiddenFact } from "./htmlmd.ts";
 import { resolveToolPath } from "./payload.ts";
+import { goalParagraph, ownerSectionOf, topHeading } from "./plansection.ts";
 import type { Verdict } from "./rounds.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
@@ -88,11 +89,18 @@ export function sha256(bytes: Buffer): string {
 /**
  * Whether a line starts the appendix of a plan file (rulings, not the reviewed plan): a level 2 or 3 heading, case-insensitive,
  * whose text starts with Addendum, Addenda, Ruling, Rulings, Parent ruling or Decision log as a whole word (followed by the end of the
- * line, `:`, ` -`, ` (` or ` <digit>`), or the line `<!-- plan-appendix -->`. Trailing whitespace is ignored.
+ * line, `:`, ` -`, ` –`, ` —`, ` (` or ` <digit>`), or the line `<!-- plan-appendix -->`. Trailing whitespace is ignored. The en and em dash also match as the
+ * three latin1 chars of their UTF-8 bytes (E2 80 93/94; a real U+0080 control character is the bytes C2 80 and does not match), because planBody scans the bytes as latin1.
  */
 export function isAppendixLine(line: string): boolean {
   const l = line.replace(/\s+$/, "");
-  return l === "<!-- plan-appendix -->" || /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)(?=$|:|[ \t]-|[ \t]\(|[ \t]\d)/i.test(l);
+  return l === "<!-- plan-appendix -->" || /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)(?=$|:|[ \t](?:-|[\u2013\u2014])|[ \t]\(|[ \t]\d)/i.test(l) || bytesDash(l);
+}
+
+/** The keyword part matches case-insensitively, the latin1 dash bytes (E2 80 93/94) case-sensitively: C2 80 94 is no dash. */
+function bytesDash(l: string): boolean {
+  const m = /^#{2,3}[ \t]+(?:addendum|addenda|rulings?|parent ruling|decision log)[ \t]/i.exec(l);
+  return m !== null && /^\u00e2\u0080[\u0093\u0094]/.test(l.slice(m[0].length));
 }
 
 /** Start offset of the first appendix line in `text`, or -1 (no appendix). `text` must keep one char per byte (latin1) when used for offsets. */
@@ -495,28 +503,35 @@ export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null 
 
 export const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 200);
 
-/** What the owner sees before the dialog: title, Goal's first lines, section headings, path, hash prefix (at most 12 lines). */
+/** The title of a plan: its first column-0 `#` heading, else its topic (the `<topic>` of `plan-<topic>.md`), else null (callers pick their own fallback). */
+export function planTitle(lines: readonly string[], topic: string | null): string | null {
+  const h = lines.map((l) => topHeading(l)).find((x) => x?.level === 1 && x.text);
+  return h?.text ?? topic ?? null;
+}
+
+/** What the owner sees before the dialog: title, goal lines, section headings, path, hash prefix (at most 12 lines). */
 export function planSummary(text: string, rel: string, hash: string): string {
   const all = text.split(/\r?\n/);
   const cut = all.findIndex(isAppendixLine);
   const lines = cut < 0 ? all : all.slice(0, cut);
-  const heading = /^(#{1,6})\s+(.*)$/;
-  const title = lines.map((l) => heading.exec(l)).find((h) => h && h[1] === "#")?.[2] ?? lines.find((l) => l.trim() && !l.startsWith("<!--")) ?? "(untitled)";
-  const sections = lines.map((l) => heading.exec(l)).filter((h): h is RegExpExecArray => !!h && h[1].length > 1).map((h) => clean(h[2]));
-  const goalAt = lines.findIndex((l) => { const h = heading.exec(l); return !!h && /^goal\b/i.test(h[2].trim()); });
-  const goal: string[] = [];
+  const heads = lines.map((l) => topHeading(l));
+  const topic = PLAN_NAME.exec(path.basename(rel))?.[1] ?? null;
+  const title = planTitle(lines, topic) ?? lines.find((l) => l.trim() && !l.startsWith("<!--") && !topHeading(l)) ?? "(untitled)";
+  const sections = heads.filter((h): h is { level: number; text: string } => !!h && h.level > 1).map((h) => clean(h.text));
+  const goal: string[] = (goalParagraph(ownerSectionOf(lines)?.lines ?? []) ?? []).map(clean);
+  const goalAt = goal.length ? -1 : heads.findIndex((h) => !!h && /^goal\b/i.test(h.text));
   if (goalAt >= 0) {
     for (const l of lines.slice(goalAt + 1)) {
-      if (heading.test(l)) break;
+      if (topHeading(l)) break;
       if (l.trim()) goal.push(clean(l));
       if (goal.length === 4) break;
     }
   }
-  const openAt = lines.findIndex((l) => { const h = heading.exec(l); return !!h && /^open questions\b/i.test(h[2].trim()); });
+  const openAt = heads.findIndex((h) => !!h && /^open questions\b/i.test(h.text));
   let open = 0;
   if (openAt >= 0) {
     for (const l of lines.slice(openAt + 1)) {
-      if (heading.test(l)) break;
+      if (topHeading(l)) break;
       if (l.trim()) open++;
     }
   }

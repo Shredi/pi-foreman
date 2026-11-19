@@ -221,7 +221,7 @@ const HEADING_OPEN = /^ {0,3}(#{1,6})(?=[ \t])/;
 const isBlank = (c: string): boolean => c === " " || c === "\t";
 
 /** An ATX heading line: its level and text (closing `#` run and outer blanks dropped), or null. Scans once, no backtracking. */
-function headingOf(line: string): { level: number; text: string } | null {
+export function headingOf(line: string): { level: number; text: string } | null {
   const m = HEADING_OPEN.exec(line);
   if (!m) return null;
   const tail = line.slice(m[0].length); // starts with a blank
@@ -311,10 +311,11 @@ function renderParts(markdown: string, opts: MarkdownOpts = {}): { parts: Render
       continue;
     }
     const h = headingOf(lines[i]);
-    if (h?.level !== 2 || !lines[i].startsWith("##")) continue; // only a heading at column 0 is a top-level section
+    if (!h || h.level > 2 || !lines[i].startsWith("#")) continue; // only a heading at column 0 is a top-level section
     flush(i);
     start = i;
-    heading = h.text;
+    // a level-1 heading ends the part before it and starts an ordinary part (unfolded, no owner layout)
+    heading = h.level === 2 ? h.text : null;
   }
   flush(lines.length);
   return { parts: parts.filter((p) => p.html !== ""), folds };
