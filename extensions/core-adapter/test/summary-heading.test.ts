@@ -3,8 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { world } from "./_r46world.ts";
 import { ownerFactsLines, ownerSection, ownerSectionIssues, ownerSummary, planFormIssues } from "../ownertext.ts";
+import { readPlan } from "../checkpoint.ts";
 import { foldPlanSection, renderMarkdown, renderPage } from "../pages.ts";
 
 const REST = "## Goal\nShip it.\n";
@@ -194,4 +196,34 @@ test("both headings: an empty first owner-named section is refused even with a f
     assert.ok(refused(r), text);
     assert.match(r.blocked ?? "", /empty/, text);
   }
+});
+
+// ---------------------------------------------------------------- both headings in an HTML plan: the page's copy, through the launch
+
+const HTML_TASK = "[plan-review] review .workflow/scratch/plan-widget.html";
+
+/** The launch result of a page with `page` as its text: the copy is generated from it as the harness does, then a review is launched. */
+async function htmlLaunch(t: { after(fn: () => void | Promise<void>): void }, page: string): Promise<{ blocked: string | null }> {
+  const w = world(t);
+  fs.rmSync(w.planFile); // the markdown fixture would be a hand-written copy beside the page
+  fs.writeFileSync(path.join(w.project, ".workflow", "scratch", "plan-widget.html"), page);
+  readPlan(".workflow/scratch/plan-widget.html", { cwd: w.project, home: path.dirname(w.project), platform: process.platform, scratchDir: ".workflow/scratch" });
+  const a = await w.adapter("startup");
+  return a.reviewLaunch(HTML_TASK);
+}
+
+test("both headings, HTML plan: a filled Summary first, a later For the owner: the launch is not refused", async (t) => {
+  const r = await htmlLaunch(t, "<html><body><h1>Widget</h1><h2>Summary</h2><p>Goal: ship the widget.</p><h2>Goal</h2><p>Ship it.</p><h2>For the owner</h2><p>More.</p></body></html>");
+  assert.equal(r.blocked, null, String(r.blocked));
+});
+
+test("both headings, HTML plan: a filled For the owner first, a later empty Summary: the launch is not refused", async (t) => {
+  const r = await htmlLaunch(t, "<html><body><h1>Widget</h1><h2>For the owner</h2><p>Goal: ship the widget.</p><h2>Goal</h2><p>Ship it.</p><h2>Summary</h2></body></html>");
+  assert.equal(r.blocked, null, String(r.blocked));
+});
+
+test("both headings, HTML plan: an empty Summary first, a filled For the owner later: the launch is refused as empty", async (t) => {
+  const r = await htmlLaunch(t, "<html><body><h1>Widget</h1><h2>Summary</h2><h2>Goal</h2><p>Ship it.</p><h2>For the owner</h2><p>Goal: ship the widget.</p></body></html>");
+  assert.ok(refused(r), String(r.blocked));
+  assert.match(r.blocked ?? "", /empty/);
 });
