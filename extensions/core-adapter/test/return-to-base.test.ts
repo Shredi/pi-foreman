@@ -52,7 +52,7 @@ function build(merge: Merge) {
 
 type F = ReturnType<typeof build>;
 
-// one repository set per merge kind, copied for each test (few git starts: the suite has a child-process budget)
+// one repository set per merge kind, copied for each test (few git starts: each git start costs test time)
 const templates = new Map<Merge, F>();
 after(() => {
   for (const t of templates.values()) rmTestTmp(t.root);
