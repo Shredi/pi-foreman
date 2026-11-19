@@ -96,19 +96,6 @@ test("a notice naming an id this session never launched reads no record", { skip
   assert.equal(w.a.events("review_record_invalid").length, 0);
 });
 
-test("a notice before the run end reads nothing; the run end then decides", { skip }, async (t) => {
-  const w = await world(t);
-  const r = await w.review();
-  assert.ok(w.a.record(r.runId, { verdict: "pass", items: [{ id: 1, result: "pass" }] }));
-  await w.a.notice(grouped([r.runId, "reviewer"]));
-  await settle(300);
-  assert.equal(fs.existsSync(path.join(r.dir, "verdict.json")), true, "the live file is left for the run end");
-  assert.ok(!done(w.text(), 1));
-  w.end(r.runId, "reviewer", "failed");
-  await settle();
-  assert.ok(!done(w.text(), 1), "the run that did not complete marks nothing");
-});
-
 const LEDGER = "# Ledger: x\nTier: standard\n\n- [ ] 1. first\n- [ ] 2. second\n- [ ] V. verify\n";
 const failedEnd = (runId: string) => ({ runId, agent: "reviewer", success: false, status: "failed", results: [{ agent: "reviewer", status: "failed", success: false, output: "died" }] });
 const noticeOf = (runId: string): string => `Background tasks completed (2): **reviewer**, **reviewer**\n\nx\n\n${dirLine(runId)}\n`;

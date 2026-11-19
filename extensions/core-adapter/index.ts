@@ -4798,7 +4798,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
     // panel shadows only (panel.ts): no marks, rounds or review_done
-    // only review runs this session launched (launch bookkeeping, or the route entry after a reload) are read; a run still going waits for its run end, which decides completion (T7)
+    // only review runs this session launched (launch bookkeeping, or the route entry after a reload) are read; the notice comes after the run end (pi-subagents order), which has already cached no record or set the route's `failed` flag for a run that did not complete (T7), so such a run is never read here
     const ids = (noticeRuns(text)?.ids ?? []).filter((id) => (s.launchedRoles.get(id) ?? []).some((r) => REVIEW_ROLES.includes(r)) || s.ledgerByRun.get(id)?.review);
     if (ids.length > 0 && ids.every((id) => shadowRun(s.reviewRuns.byRun.get(id)))) return;
     // a high-stakes run (its id is kept in the state, or its launch said so) marks no item and opens no round
@@ -4806,7 +4806,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // the record of each run (read once, or the renamed file after a reload) and its occasion from the route entry, else the launch bookkeeping
     const verdicts: (Verdict | null)[] = [];
     for (const id of ids) {
-      if (s.activeRuns.has(id) && !s.reviewRecords.has(id)) continue;
       const record = s.ledgerByRun.get(id)?.review?.failed ? null : verdictRecordOf(s, id);
       if (!record) continue;
       verdicts.push(record && record.verdict !== "incomplete" ? record.verdict : null);
