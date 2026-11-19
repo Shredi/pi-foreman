@@ -11,6 +11,7 @@ import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, SelfRulings, parentApproval, selfRulingRefusal, toolWriteRuling } from "../ruling.ts";
+import { posixOnly } from "./_platform.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r2glob-")));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -22,7 +23,6 @@ fs.mkdirSync(path.join(wt, "src"), { recursive: true });
 fs.writeFileSync(path.join(H, "parent"), "other\n");
 fs.writeFileSync(path.join(H, "child"), "me\n");
 fs.writeFileSync(path.join(H, "ruling.md"), "APPROVED\n");
-const posix = process.platform !== "win32";
 const GT = ">";
 
 // the sub-session and the builder are children of the parent session (the dirs where they are the child); the parent and a top-level session have none
@@ -54,7 +54,7 @@ const REFUSED = [
   `echo x ${GT} $D/ru*.md`,
 ];
 
-test("a sub-session and a builder: the glob and unresolved-cwd writes onto a ruling name are refused", { skip: !posix }, () => {
+test("a sub-session and a builder: the glob and unresolved-cwd writes onto a ruling name are refused", { skip: posixOnly }, () => {
   for (const line of REFUSED) assert.equal(refusal(line, childDirs), SELF_RULING_REASON, line);
 });
 
@@ -77,11 +77,11 @@ const FREE = [
   `echo x ${GT} ${wt}/src/*/ruling.md`,
 ];
 
-test("a sub-session and a builder: reads, other names, other dirs and text mentions are no refusal", { skip: !posix }, () => {
+test("a sub-session and a builder: reads, other names, other dirs and text mentions are no refusal", { skip: posixOnly }, () => {
   for (const line of FREE) assert.equal(refusal(line, childDirs), undefined, line);
 });
 
-test("the parent session and a top-level session: none of the refusals fire", { skip: !posix }, () => {
+test("the parent session and a top-level session: none of the refusals fire", { skip: posixOnly }, () => {
   for (const line of [...REFUSED, ...FREE, `echo x ${GT} ${H}/ruling.md`, `cp a ${H}/ruling*.md`]) assert.equal(refusal(line, parentDirs), undefined, line);
 });
 
@@ -92,7 +92,7 @@ function show(tool: string, input: Record<string, unknown>): string {
   return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 }
 
-test("the parent writes the child's ruling by redirect, cp and the write tool: the gate allows, the refusal stays silent", { skip: !posix }, () => {
+test("the parent writes the child's ruling by redirect, cp and the write tool: the gate allows, the refusal stays silent", { skip: posixOnly }, () => {
   const cases: Array<[string, Record<string, unknown>, string]> = [
     ["bash", { command: `echo x ${GT} ${H}/ruling.md` }, "allow default-write-handoff-ruling []"],
     ["bash", { command: `cp a ${H}/ruling.md` }, "allow default-write-handoff-ruling []"],
@@ -104,7 +104,7 @@ test("the parent writes the child's ruling by redirect, cp and the write tool: t
   }
 });
 
-test("the parent writes the child's ruling by a glob: no self-ruling refusal (the gate gives no allow)", { skip: !posix }, () => {
+test("the parent writes the child's ruling by a glob: no self-ruling refusal (the gate gives no allow)", { skip: posixOnly }, () => {
   const input = { command: `cp a ${H}/ruling*.md` };
   assert.equal(show("bash", input), 'undecided  ["danger-opaque"]');
   assert.equal(selfRulingRefusal("bash", input, wt, parentDirs), undefined);
@@ -112,7 +112,7 @@ test("the parent writes the child's ruling by a glob: no self-ruling refusal (th
 
 // gap 3: the refusal compares the literal name of the target (real path of its directory only), so a write through a link named otherwise is not refused. The
 // existing r11-ruling-no-effect test pins that outcome. The write is recorded as self-written by the tool_call result hook (toolWriteRuling, tests below), so it is ignored.
-test("a write through a link onto the ruling is not refused (known, pinned as it is)", { skip: !posix }, () => {
+test("a write through a link onto the ruling is not refused (known, pinned as it is)", { skip: posixOnly }, () => {
   const dir = fs.mkdtempSync(path.join(root, "lnk-"));
   fs.symlinkSync(path.join(H, "ruling.md"), path.join(dir, "link"));
   for (const [tool, input] of [
@@ -129,7 +129,7 @@ test("a write through a link onto the ruling is not refused (known, pinned as it
 });
 
 // the second branch of the glob-directory check and the not-existing-`cd` check (found needed by removing each: see the report)
-test("a glob write after a cd elsewhere is refused by the directory the line started in; a name below a cd that does not exist too", { skip: !posix }, () => {
+test("a glob write after a cd elsewhere is refused by the directory the line started in; a name below a cd that does not exist too", { skip: posixOnly }, () => {
   const elsewhere = path.join(wt, "src");
   assert.equal(selfRulingRefusal("bash", { command: `cd ${elsewhere} && echo x ${GT} ru*.md` }, H, childDirs), SELF_RULING_REASON);
   assert.equal(selfRulingRefusal("bash", { command: `cd ${elsewhere} && echo x ${GT} ru*.md` }, root, childDirs), undefined);
@@ -151,7 +151,7 @@ function afterToolWrite(self: SelfRulings, abs: string): void {
 }
 
 for (const tool of ["write", "edit"]) {
-  test(`${tool} tool onto a link to the ruling: recorded as self-written, no parent ruling (#227: no file approves a plan; the finish note still reads it)`, { skip: !posix }, () => {
+  test(`${tool} tool onto a link to the ruling: recorded as self-written, no parent ruling (#227: no file approves a plan; the finish note still reads it)`, { skip: posixOnly }, () => {
     const { d } = rig();
     const link = path.join(d, "notes.md");
     fs.symlinkSync(path.join(d, "ruling.md"), link, "file");
@@ -164,14 +164,14 @@ for (const tool of ["write", "edit"]) {
   });
 }
 
-test("control: the parent writes the child's ruling directly: nothing recorded for the child, the child reads the ruling", { skip: !posix }, () => {
+test("control: the parent writes the child's ruling directly: nothing recorded for the child, the child reads the ruling", { skip: posixOnly }, () => {
   const { d } = rig();
   fs.writeFileSync(path.join(d, "ruling.md"), "APPROVED\n");
   const self = new SelfRulings();
   assert.equal(parentApproval([d], 0, self), path.join(d, "ruling.md"));
 });
 
-test("control: a tool write onto a link to a file with no ruling name records nothing", { skip: !posix }, () => {
+test("control: a tool write onto a link to a file with no ruling name records nothing", { skip: posixOnly }, () => {
   const { d } = rig();
   fs.writeFileSync(path.join(d, "other.md"), "APPROVED\n");
   const link = path.join(d, "notes.md");
@@ -181,7 +181,7 @@ test("control: a tool write onto a link to a file with no ruling name records no
   assert.equal(parentApproval([d], 0, new SelfRulings()), null);
 });
 
-test("a ruling name typed as such is still recorded", { skip: !posix }, () => {
+test("a ruling name typed as such is still recorded", { skip: posixOnly }, () => {
   const { d } = rig();
   assert.equal(toolWriteRuling(path.join(d, "ruling.md")), path.join(d, "ruling.md"));
 });

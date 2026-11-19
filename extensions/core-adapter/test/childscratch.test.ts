@@ -10,6 +10,7 @@ import type { ScratchHost } from "../childscratch.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
 import { readBinding } from "../usage.ts";
 import type { LaunchBinding } from "../usage.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
 const base = fs.realpathSync.native(mkTestTmp("pf-scratch-"));
 const tmp = path.join(base, "tmp");
@@ -17,7 +18,6 @@ const repo = path.join(base, "repo");
 fs.mkdirSync(tmp);
 fs.mkdirSync(repo);
 const deps = { tmpdir: () => tmp };
-const posix = process.platform !== "win32";
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 function host(keep = false): ScratchHost & { events: Record<string, unknown>[] } {
@@ -98,7 +98,7 @@ test("removal is refused outside the root, for the repo and for a symlink leadin
   assert.ok(fs.existsSync(path.join(outside, "keep.txt")));
 });
 
-test("guards: cd, cp, mkdir and rm inside a live scratch dir only (deterministicAllow, insideScratch, scratchCommandAllowed)", { skip: !posix }, () => {
+test("guards: cd, cp, mkdir and rm inside a live scratch dir only (deterministicAllow, insideScratch, scratchCommandAllowed)", { skip: posixOnly }, () => {
   const dir = createScratch("sess-3", "L-g", deps)!;
   const other = path.join(base, "repo");
   const rules = { allow: ["ls *", "cd *"], ask: [], deny: ["sudo *"] };

@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { nodeOptionsWithWatch, nodeRunEnv, readSpawnCounts, titledFiles } from "../../../scripts/foreman_test_run.mjs";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WATCH = path.join(HERE, "_proc-watch.cjs");
@@ -80,7 +81,7 @@ test("without FOREMAN_SPAWN_COUNT_DIR the watch is inactive", () => {
   }
 });
 
-test("a titled process killed by SIGTERM after its first second is still recorded, naming the file", { skip: process.platform === "win32" }, async () => {
+test("a titled process killed by SIGTERM after its first second is still recorded, naming the file", { skip: posixOnly }, async () => {
   const dir = mkTestTmp("pf-proc-watch-sigterm-");
   try {
     const env = cleanEnv({ FOREMAN_SPAWN_COUNT_DIR: dir, FOREMAN_TEST_FILE: "killed.test.ts", NODE_OPTIONS: nodeOptionsWithWatch(undefined, WATCH) });
@@ -135,7 +136,7 @@ test("nodeOptionsWithWatch keeps an existing value and appends --require; an exi
   assert.equal(nodeOptionsWithWatch(undefined, WATCH), `--require=${JSON.stringify(path.resolve(WATCH))}`);
 });
 
-test("nodeOptionsWithWatch round-trips a preload path with a backslash and a space", { skip: process.platform === "win32" }, () => {
+test("nodeOptionsWithWatch round-trips a preload path with a backslash and a space", { skip: posixOnly }, () => {
   const dir = mkTestTmp("pf-proc-watch-path-");
   try {
     const odd = path.join(dir, "a b\\c");
@@ -178,7 +179,7 @@ function alive(pid: number): boolean {
   }
 }
 
-test("parent watch: after the wrapper is SIGKILLed, the runner and the file processes stop and at most two files start", { skip: process.platform === "win32" }, async () => {
+test("parent watch: after the wrapper is SIGKILLed, the runner and the file processes stop and at most two files start", { skip: posixOnly }, async () => {
   const dir = mkTestTmp("pf-parent-watch-");
   const pids = new Set<number>();
   try {

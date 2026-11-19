@@ -7,8 +7,7 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import { childHandoffWrite, pathDecide, type GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
-
-const posix = process.platform !== "win32";
+import { posixOnly } from "./_platform.ts";
 
 test("posix: a .git segment below work/ is refused in any case; .gitignore and a name containing .git are fine", () => {
   const real = (p: string): string | null => p;
@@ -48,7 +47,7 @@ test("write tool, S and C: work/.git and work/.GIT are no default; work/x is", (
   }
 });
 
-test("shell, S: redirect, cp and mv into work/.git or work/.GIT are blocked", { skip: !posix }, () => {
+test("shell, S: redirect, cp and mv into work/.git or work/.GIT are blocked", { skip: posixOnly }, () => {
   const seen = (command: string): string | undefined => {
     const r = gateEvaluate("bash", { command }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: true }), roots: () => roots("S") }).result as { block?: boolean; rule?: string } | undefined;
     return r?.block ? r.rule : undefined;
@@ -59,7 +58,7 @@ test("shell, S: redirect, cp and mv into work/.git or work/.GIT are blocked", { 
   assert.equal(seen(`cp ${wt}/a ${H}/work/x.txt`), undefined);
 });
 
-test("shell, C: redirect, cp and mv into work/.git are write-outside, work/x carries no danger", { skip: !posix }, () => {
+test("shell, C: redirect, cp and mv into work/.git are write-outside, work/x carries no danger", { skip: posixOnly }, () => {
   const danger = (command: string): string | null => gateEvaluate("bash", { command }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: false }), roots: () => roots("C") }).danger?.name ?? null;
   for (const n of ["work/.git/HEAD", "work/.GIT/HEAD"]) {
     for (const l of [`echo x > ${H}/${n}`, `cp ${wt}/a ${H}/${n}`, `mv ${wt}/a ${H}/${n}`]) assert.equal(danger(l), "danger-write-outside", l);

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { freshScriptLogPath, runScript, runScriptDetachable, scriptArgv, scriptEnv, scriptLogPath, scriptLogTail, scriptShell, scriptTimeoutSeconds } from "../scriptrun.ts";
 import type { ScriptRunResult } from "../scriptrun.ts";
+import { posixOnly } from "./_platform.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const HASH = "0123456789abcdef".repeat(4);
@@ -105,7 +106,7 @@ test("script run: an abort kills the run", async (t) => {
   assert.deepEqual(fs.readdirSync(d.tmp), []);
 });
 
-test("script run: a background child is gone after a normal exit", { skip: process.platform === "win32" }, async (t) => {
+test("script run: a background child is gone after a normal exit", { skip: posixOnly }, async (t) => {
   const d = dirs(t);
   const r = ran(await runScript({ bytes: Buffer.from("sleep 60 >/dev/null 2>&1 &\necho \"bg:$!\"\nexit 0\n"), kind: "run", cwd: d.ws, logPath: d.log("bg.log"), tmpDir: d.tmp }));
   assert.equal(r.exitCode, 0);
@@ -237,7 +238,7 @@ const isAlive = (pid: number): boolean => {
   }
 };
 
-test("script run: detachOnAbort returns a detached run on abort, the process survives and finished has the real exit; the run dir goes after the exit", { skip: process.platform === "win32" }, async (t) => {
+test("script run: detachOnAbort returns a detached run on abort, the process survives and finished has the real exit; the run dir goes after the exit", { skip: posixOnly }, async (t) => {
   const d = dirs(t);
   const ac = new AbortController();
   setTimeout(() => ac.abort(), 300);
@@ -253,7 +254,7 @@ test("script run: detachOnAbort returns a detached run on abort, the process sur
   assert.deepEqual(fs.readdirSync(d.tmp), []);
 });
 
-test("script run: stop on a detached run kills it and says stopped; the time limit kills a detached run too", { skip: process.platform === "win32" }, async (t) => {
+test("script run: stop on a detached run kills it and says stopped; the time limit kills a detached run too", { skip: posixOnly }, async (t) => {
   const d = dirs(t);
   const ac = new AbortController();
   setTimeout(() => ac.abort(), 200);

@@ -6,8 +6,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-installenv-"));
 const wt = path.join(base, "wt");
 fs.mkdirSync(wt, { recursive: true });
@@ -37,7 +37,7 @@ const ROWS: [string, string[]][] = [
 ];
 
 for (const [line, labels] of ROWS) {
-  test(`labels of ${JSON.stringify(line)}`, { skip: !posix }, () => {
+  test(`labels of ${JSON.stringify(line)}`, { skip: posixOnly }, () => {
     for (const [role, ro] of ROLES) {
       const o = run(line, role, ro);
       assert.deepEqual(o.result ?? {}, {}, `${role}`);

@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-scratchmiss-"));
 const wt = path.join(base, "wt");
 const realTmp = path.join(base, "real");
@@ -80,7 +80,7 @@ test("missing own scratch dir does not widen the fence", () => {
   }
 });
 
-test("a link inside the scratch dir that points outside stays outside", { skip: !posix }, () => {
+test("a link inside the scratch dir that points outside stays outside", { skip: posixOnly }, () => {
   const root = path.join(linkTmp, "pi-foreman-scratch", "other");
   assert.equal(outside(root, `echo x > ${root}/out/f.txt`), true);
   assert.equal(outside(root, `echo x > ${path.join(realTmp, "pi-foreman-scratch", "other")}/out/new.txt`), true);

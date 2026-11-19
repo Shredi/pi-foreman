@@ -10,6 +10,7 @@ import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { dialogFields, dialogsJson } from "../dialogs.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { posix } from "./_platform.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const STATE_USAGE = ["cat ~/.pi/agent/pi-foreman/state/session-1.json", "cat ~/.pi/agent/pi-foreman/usage/usage-2026.jsonl", "tail -n 5 ~/.pi/agent/pi-foreman/state/usage-s1.jsonl"];
@@ -92,7 +93,6 @@ test("foreman dialogs <trace> CLI prints the dialogsJson text of a 3-dialog stat
   const file = path.join(dir, "trace-fixture.jsonl");
   fs.writeFileSync(file, `${STATE_USAGE.map(askLine).join("\n")}\n`);
   // the sh wrapper is POSIX only; on win32 the entry the .cmd/.ps1 wrappers run is spawned directly
-  const posix = process.platform !== "win32";
   const r = posix
     ? spawnSync(path.join(pkgRoot, "bin", "foreman"), ["dialogs", file], { encoding: "utf8" })
     : spawnSync(process.execPath, ["--no-warnings", "--experimental-strip-types", path.join(pkgRoot, "extensions", "core-adapter", "dialogs-cli.ts"), file], { encoding: "utf8" });

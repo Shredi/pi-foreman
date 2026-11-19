@@ -12,11 +12,11 @@ import { applyLedgerItems, reviewLedgerBlock } from "../ledgerblock.ts";
 import { readBaseline } from "../baseline.ts";
 import { isolationDir, roundRoots, roundWorktreeAdd, roundWorktrees } from "../roundsurface.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(pkgRoot)!;
 const rules = bashRules(baseline, {});
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-round-")));
 after(async () => {
   await waitQuiet(path.join(base, "state"));
@@ -49,7 +49,7 @@ test("roundWorktrees: only the session's own unremoved worktree entries of the m
   if (posix) assert.equal(isolationDir("/repo.worktrees/round"), "/repo.worktrees/worktrees/round");
 });
 
-test("roundWorktreeAdd: the foreman's add of <repo>.worktrees/<round>, nothing else", { skip: !posix }, () => {
+test("roundWorktreeAdd: the foreman's add of <repo>.worktrees/<round>, nothing else", { skip: posixOnly }, () => {
   const top = (d: string): string | null => (d.startsWith("/repo") ? "/repo" : null);
   const add = (cmd: string, cwd = "/repo"): string | null => roundWorktreeAdd(cmd, cwd, "linux", top);
   assert.equal(add("git worktree add ../repo.worktrees/round -b round main"), "/repo.worktrees/round");
@@ -68,14 +68,14 @@ test("roundWorktreeAdd: the foreman's add of <repo>.worktrees/<round>, nothing e
   ]) assert.equal(add(no), null, no);
 });
 
-test("7e line: mkdir -p <round wt>/.workflow/scratch && cp .workflow/scratch/plan-x.md <round wt>/.workflow/scratch/ by the foreman", { skip: !posix }, () => {
+test("7e line: mkdir -p <round wt>/.workflow/scratch && cp .workflow/scratch/plan-x.md <round wt>/.workflow/scratch/ by the foreman", { skip: posixOnly }, () => {
   const line = `mkdir -p ${rt}/.workflow/scratch && cp .workflow/scratch/plan-x.md ${rt}/.workflow/scratch/`;
   const allow = (own: string[]): string | null => deterministicAllow(rules, line, { effects: effectCtx(main), ownDirs: own });
   assert.equal(allow([handoff, rt]), "own-handoff");
   assert.notEqual(allow([handoff]), "own-handoff");
 });
 
-test("7c lines: a child in the round worktree reads the bound ledger by path and by glob, nothing else of main", { skip: !posix }, () => {
+test("7c lines: a child in the round worktree reads the bound ledger by path and by glob, nothing else of main", { skip: posixOnly }, () => {
   const allow = (cmd: string, led: string | null = ledger): string | null => {
     const effects = effectCtx(rt, [], process.platform, led ? [led] : []);
     return deterministicAllow(rules, cmd, { effects, ownDirs: [handoff, rt], ...(led ? { ledger: led } : {}) });
@@ -93,13 +93,13 @@ test("7c lines: a child in the round worktree reads the bound ledger by path and
   assert.equal(allow(`mkdir -p ${rt}/.workflow/scratch/t && cp ${ledger} ${rt}/.workflow/scratch/t/l.md`), "own-handoff");
 });
 
-test("roundRoots: the round worktree a child sits in, or its own isolation worktree, is its root", { skip: !posix }, () => {
+test("roundRoots: the round worktree a child sits in, or its own isolation worktree, is its root", { skip: posixOnly }, () => {
   const top = (d: string): string | null => (d.startsWith(iso) ? iso : null);
   assert.deepEqual(roundRoots([rt], rt, process.platform, top), [rt]);
   assert.deepEqual(roundRoots([rt], iso, process.platform, top), [iso]);
 });
 
-test("7c security: roundRoots of a child's own isolation worktree; the isolation dir and an outside dir give none", { skip: !posix }, () => {
+test("7c security: roundRoots of a child's own isolation worktree; the isolation dir and an outside dir give none", { skip: posixOnly }, () => {
   const top = (d: string): string | null => (d.startsWith(iso) ? iso : null);
   const isoDir = path.dirname(iso);
   assert.deepEqual(roundRoots([rt], iso, process.platform, top), [iso]);

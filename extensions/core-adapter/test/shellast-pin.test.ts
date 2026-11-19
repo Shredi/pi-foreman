@@ -13,10 +13,10 @@ import { gateEvaluate, baseFloorEnv } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix } from "./_platform.ts";
 
 const PIN_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "shellast-pin.json");
 const hasGit = spawnSync("git", ["--version"]).status === 0;
-const posix = process.platform !== "win32";
 
 type Decision = [verdict: string, rule: string];
 type Fixture = "empty" | "plain" | "alias" | "foreman" | "subok" | "subdiff";

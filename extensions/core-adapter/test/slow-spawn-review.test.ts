@@ -7,10 +7,11 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { build, commitIn, end, git, hsRun, launch, setup, worktree } from "./_hsrig.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 const sized = (risk: string[]) => ({ size: { files: ["src/a/x.ts"] }, risk });
 
-test("a slow git does not make a reviewer launched right after a high-stakes FAIL a repeat of the PASS in main", { skip: process.platform === "win32" }, async (t) => {
+test("a slow git does not make a reviewer launched right after a high-stakes FAIL a repeat of the PASS in main", { skip: posixOnly }, async (t) => {
   const real = (await import("node:child_process")).execFileSync("which", ["git"], { encoding: "utf8" }).trim();
   const shim = fs.mkdtempSync(path.join(os.tmpdir(), "pf-slow-git-"));
   t.after(() => rmTestTmp(shim));

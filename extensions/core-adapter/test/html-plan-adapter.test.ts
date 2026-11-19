@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { world, tick } from "./_r46world.ts";
 import type { Block } from "./_r46world.ts";
 import { readPlan, sha256 } from "../checkpoint.ts";
+import { posix } from "./_platform.ts";
 
 const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p>Goal: ship the widget.</p></section><h2>Work</h2><p>x</p></body></html>";
 const BAD = "<html><body><h1>Widget</h1><h2>Work</h2><p>x</p></body></html>";
@@ -74,7 +75,7 @@ test("a task naming plan-widget.html and plan-widget.md: one form check; then on
   assert.equal((await a.reviewLaunch(BOTH)).blocked, null, "the next review is launched, no loop stop");
 });
 
-test("html plan: plan_copy_stale refuses a review launch when the copy cannot be written", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+test("html plan: plan_copy_stale refuses a review launch when the copy cannot be written", { skip: !posix || process.getuid?.() === 0 }, async () => {
   const { w, a, scratch, pagePath, setPage } = await shared();
   setPage(PAGE);
   assert.equal((await a.reviewLaunch(HTML_TASK)).blocked, null);

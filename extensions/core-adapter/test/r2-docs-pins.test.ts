@@ -7,8 +7,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(mkTestTmp("pf-r2-docs-pins-"));
 after(() => rmTestTmp(base));
 const home = path.join(base, "home");
@@ -34,7 +34,7 @@ function show(line: string, role: Role, cwd = wt): string {
   return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 }
 
-test("find <harness folder> is labelled danger-harness-folder for every role", { skip: !posix }, () => {
+test("find <harness folder> is labelled danger-harness-folder for every role", { skip: posixOnly }, () => {
   const line = `find ${HF}`;
   assert.equal(show(line, "main"), 'undecided  ["danger-harness-folder"]');
   assert.equal(show(line, "builder"), 'undecided  ["danger-harness-folder"]');
@@ -42,7 +42,7 @@ test("find <harness folder> is labelled danger-harness-folder for every role", {
   assert.equal(show(line, "explorer"), 'undecided  ["danger-harness-folder"]');
 });
 
-test("a child reads another session's subagent-artifacts and the agent-dir foreman.json: no rule refuses the read for any role", { skip: !posix }, () => {
+test("a child reads another session's subagent-artifacts and the agent-dir foreman.json: no rule refuses the read for any role", { skip: posixOnly }, () => {
   const cfg = path.join(agent, "foreman.json");
   const sub = path.join(agent, "sessions", "x", "subagent-artifacts");
   const file = path.join(sub, "a.md");
@@ -63,7 +63,7 @@ test("a child reads another session's subagent-artifacts and the agent-dir forem
   }
 });
 
-test("git log|diff --output=<f> and --output <f>: refused when f lands in the worktree, or with the cwd in the worktree; free from a scratch clone into scratch", { skip: !posix }, () => {
+test("git log|diff --output=<f> and --output <f>: refused when f lands in the worktree, or with the cwd in the worktree; free from a scratch clone into scratch", { skip: posixOnly }, () => {
   const REFUSED = "block child-readonly-write []";
   const FREE = "undecided  []";
   for (const role of ["reviewer", "explorer"] as const) {

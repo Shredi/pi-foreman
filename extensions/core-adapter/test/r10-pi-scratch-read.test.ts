@@ -9,9 +9,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { piScratchReadable } from "../roundsurface.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const posix = process.platform !== "win32";
 
 const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r10-pis-")));
 after(() => fs.rmSync(w, { recursive: true, force: true }));
@@ -23,7 +23,7 @@ for (const d of [scratch, path.join(ws, ".pi", "other"), path.join(ws, ".git"), 
 fs.writeFileSync(path.join(scratch, "ci.log"), "error\n");
 fs.writeFileSync(path.join(ws, ".pi", "settings.json"), "{}\n");
 
-test("piScratchReadable: the dir and its subtree for each absolute root, nothing for a relative one", { skip: !posix }, () => {
+test("piScratchReadable: the dir and its subtree for each absolute root, nothing for a relative one", { skip: posixOnly }, () => {
   assert.deepEqual(piScratchReadable([ws, ws, "rel"], "linux"), [scratch, `${scratch}/*`]);
 });
 

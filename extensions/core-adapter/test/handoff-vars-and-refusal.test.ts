@@ -6,8 +6,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hvr-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
@@ -26,7 +26,7 @@ const run = (command: string, r: GateRoots): { allow?: string; block?: string; d
   return { ...(res?.allow ? { allow: res.rule } : {}), ...(res?.block ? { block: res.rule, reason: res.reason } : {}), danger: out.danger?.name ?? null };
 };
 
-test("a same-line variable that resolves to an opened dir: the ruling write is an allow", { skip: !posix }, () => {
+test("a same-line variable that resolves to an opened dir: the ruling write is an allow", { skip: posixOnly }, () => {
   for (const l of [`D=${O}; echo x > "$D/ruling.md"`, `D=${O} && cp ${wt}/f "$D/ruling.md"`]) {
     const s = run(l, parent());
     assert.ok(s.allow?.endsWith("default-write-handoff-ruling"), l);
@@ -34,7 +34,7 @@ test("a same-line variable that resolves to an opened dir: the ruling write is a
   }
 });
 
-test("a same-line variable that resolves to the session's own child dir (also opened-and-child): no allow, danger mark kept", { skip: !posix }, () => {
+test("a same-line variable that resolves to the session's own child dir (also opened-and-child): no allow, danger mark kept", { skip: posixOnly }, () => {
   const cases: Array<Partial<GateRoots>> = [{ openedHandoffs: [O], ownHandoff: MINE }, { openedHandoffs: [O, MINE], childHandoffs: [MINE], ownHandoff: MINE }];
   for (const o of cases) {
     for (const l of [`D=${MINE}; echo x > "$D/ruling.md"`, `D=${MINE} && cp ${wt}/f "$D/ruling.md"`]) {
@@ -45,7 +45,7 @@ test("a same-line variable that resolves to the session's own child dir (also op
   }
 });
 
-test("a refused subagent cp names the destination, not the worktree root", { skip: !posix }, () => {
+test("a refused subagent cp names the destination, not the worktree root", { skip: posixOnly }, () => {
   const r: GateRoots = { worktree: wt, scratch: [scr], tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false, childHandoff: H };
   const dest = `${H}/ruling.md`;
   const s = run(`cp ${wt}/a ${dest}`, r);
