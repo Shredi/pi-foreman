@@ -24,9 +24,6 @@ export const SESSION_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 /** Copies of `BG_NAME_RE` / `BG_VALUE_RE` in scripts/foreman_session.py (a test pins them equal). */
 export const BG_NAME_RE = /^PI_BG_[A-Z0-9_]{1,60}$/;
 export const BG_VALUE_RE = /^[A-Za-z0-9._:/@,=+ -]{0,200}$/;
-/** Copy of `VALUE_RE` for a profile name in scripts/foreman_session.py. */
-const PROFILE_RE = /^[A-Za-z0-9._:/@-]{1,200}$/;
-const BUILTIN_PROFILES = ["steward"];
 
 type Env = Record<string, string | undefined>;
 
@@ -177,7 +174,6 @@ export function readLiveStartedMs(agentDir: string, sessionId: string): number |
 
 /** The launch keys the identity entry carries beyond the opened-session ones (identity.ts), validated. */
 export interface LaunchKeys {
-  permsProfile?: string;
   planPhase?: "1";
   bgEnv?: Record<string, string>;
 }
@@ -186,18 +182,6 @@ export interface SessionRead {
   name: string | null;
   identity: LaunchKeys | null;
   dropped: string[];
-}
-
-/** Whether a profile name is built in or a key of `profiles` in the user's permissions.json (the check of `foreman session open --profile`). */
-function profileKnown(agentDir: string, name: string): boolean {
-  if (!PROFILE_RE.test(name)) return false;
-  if (BUILTIN_PROFILES.includes(name)) return true;
-  try {
-    const d = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), "utf8")) as { profiles?: unknown };
-    return !!d.profiles && typeof d.profiles === "object" && Object.prototype.hasOwnProperty.call(d.profiles, name);
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -230,10 +214,7 @@ export function readSessionFile(file: string, sessionId: string, agentDir: strin
   if (!entry) return { name, identity: null, dropped: [] };
   const identity: LaunchKeys = {};
   const dropped: string[] = [];
-  if (entry.permsProfile !== undefined) {
-    if (typeof entry.permsProfile === "string" && profileKnown(agentDir, entry.permsProfile)) identity.permsProfile = entry.permsProfile;
-    else dropped.push("permsProfile");
-  }
+  // an older entry may carry a `permsProfile`: profiles are gone, the key is ignored
   if (entry.planPhase !== undefined) {
     if (entry.planPhase === "1") identity.planPhase = "1";
     else dropped.push("planPhase");
@@ -258,7 +239,7 @@ const OPENED_KEYS = ["PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_REMOTE_PARENT", "PI_F
 const OPENED_PREFIXES = ["PI_INTERCOM_", "PI_FOREMAN_PARENT_"];
 
 /**
- * The env of the restarted Pi: the shell's env without the opened-session keys, then the identity entry's plan phase, and its profile and
+ * The env of the restarted Pi: the shell's env without the opened-session keys, then the identity entry's plan phase, and its
  * `PI_BG_*` only when it supplies them (a plain session keeps the shell's). `PI_FOREMAN_RESUMED` is the last heartbeat in ms.
  * On win32 the shell's own `PI_BG_SHELL` and `PI_BG_SHELL_PATH` stay when `PI_BG_*` is replaced (the identity never carries them there).
  */
@@ -269,7 +250,6 @@ export function buildSpawnEnv(base: Env, launch: LaunchKeys | null, heartbeatMs:
     env[k] = v;
   }
   if (launch?.planPhase) env.PI_FOREMAN_PLAN_PHASE = launch.planPhase;
-  if (launch?.permsProfile) env.PI_FOREMAN_PERMS_PROFILE = launch.permsProfile;
   if (launch?.bgEnv) {
     for (const k of Object.keys(env)) if (k.startsWith("PI_BG_") && !(platform === "win32" && (k === "PI_BG_SHELL" || k === "PI_BG_SHELL_PATH"))) delete env[k];
     Object.assign(env, launch.bgEnv);

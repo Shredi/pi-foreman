@@ -171,9 +171,8 @@ test("a spawn that throws, or fails with an error event, keeps the note and prin
   assert.equal(r2.out.at(-1), `pi-foreman: resume by hand: pi --session ${SID}`);
 });
 
-test("launch keys: opened-session keys are dropped, the identity entry's plan phase, profile and bg keys are set, invalid ones dropped", async (t) => {
+test("launch keys: opened-session keys are dropped, the identity entry's plan phase and bg keys are set, an old permsProfile is ignored, invalid ones dropped", async (t) => {
   const r = rig(t);
-  fs.writeFileSync(path.join(r.agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ profiles: { mine: {} } }));
   const idn = (data: Record<string, unknown>): string => `${JSON.stringify({ type: "custom", customType: "pi-foreman-identity", data: { v: 1, piSessionId: SID, child: "c1", handoff: "/h", ...data } })}\n`;
   fs.appendFileSync(r.sessionFile, idn({ permsProfile: "mine", planPhase: "1", bgEnv: { PI_BG_FEATURES: "process", PI_BG_BAD: "a;b" } }));
   const env = { HC_TERMINAL_ID: "t1", HC_TERMINAL_SOCKET: "/s/sock", PATH: process.env.PATH, PI_FOREMAN_HANDOFF_DIR: "/stale", PI_INTERCOM_STABLE_ID: "x", PI_INTERCOM_SESSION_ID: "y", PI_FOREMAN_PARENT_INTERCOM: "p", PI_FOREMAN_PARENT_LABEL: "l", PI_FOREMAN_REMOTE_PARENT: "r", PI_FOREMAN_SESSION_MODEL: "m", PI_FOREMAN_PLAN_PHASE: "1", PI_BG_FEATURES: "shell-bg", PI_BG_OTHER: "keep?", PI_FOREMAN_PERMS_PROFILE: "shellprofile" };
@@ -182,12 +181,12 @@ test("launch keys: opened-session keys are dropped, the identity entry's plan ph
   const e = r.spawns[0].env;
   for (const k of ["PI_FOREMAN_HANDOFF_DIR", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_PARENT_INTERCOM", "PI_FOREMAN_PARENT_LABEL", "PI_FOREMAN_REMOTE_PARENT", "PI_FOREMAN_SESSION_MODEL"]) assert.equal(e[k], undefined, k);
   assert.equal(e.PI_FOREMAN_PLAN_PHASE, "1", "from the identity entry");
-  assert.equal(e.PI_FOREMAN_PERMS_PROFILE, "mine");
+  assert.equal(e.PI_FOREMAN_PERMS_PROFILE, "shellprofile", "the identity's old permsProfile is ignored; the shell's variable is left as it is");
   assert.equal(e.PI_BG_FEATURES, "process");
   assert.equal(e.PI_BG_BAD, undefined, "an invalid value is dropped");
   exitPi(r, 0);
   await done;
-  // a plain session (no identity entry): the shell's profile and PI_BG_* stay, the shell's plan phase goes
+  // a plain session (no identity entry): the shell's PI_BG_* stay, the shell's plan phase goes
   const p = rig(t);
   const d2 = runPaneResume(p.argv, p.deps({ env, countdownMs: 5 }));
   await until(() => p.spawns.length > 0);
@@ -347,14 +346,14 @@ test("a live record done by a signal with Pi still alive exits 75 (check again a
 
 test("an invalid launch key is named (key only, no value) before the countdown", async (t) => {
   const r = rig(t);
-  const entry = { type: "custom", customType: "pi-foreman-identity", data: { v: 1, piSessionId: SID, child: "c1", handoff: "/h", permsProfile: "gone-secret-value", planPhase: "2" } };
+  const entry = { type: "custom", customType: "pi-foreman-identity", data: { v: 1, piSessionId: SID, child: "c1", handoff: "/h", permsProfile: "gone-secret-value", planPhase: "2", bgEnv: { PI_BG_BAD: "gone-secret-value;" } } };
   fs.appendFileSync(r.sessionFile, `${JSON.stringify(entry)}\n`);
   const done = runPaneResume(r.argv, r.deps({ countdownMs: 5 }));
   await until(() => r.spawns.length > 0);
   const lines = r.out.filter((l) => l.includes("launch key"));
-  assert.equal(lines.length, 2);
-  assert.match(lines[0], /launch key permsProfile /);
-  assert.match(lines[1], /launch key planPhase /);
+  assert.equal(lines.length, 2, "an old permsProfile is ignored, not named");
+  assert.match(lines[0], /launch key planPhase /);
+  assert.match(lines[1], /launch key bgEnv\.PI_BG_BAD /);
   assert.equal(r.out.join("\n").includes("gone-secret-value"), false);
   assert.match(r.out[2], /ran here before a crash/, "the lines come before the countdown line");
   exitPi(r, 0);

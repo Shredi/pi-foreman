@@ -49,10 +49,6 @@ async function rig(t: Parameters<typeof r11Rig>[0], replies: Reply[], o: RigOpts
     setWidget: () => undefined,
   };
   const r = await r11Rig(t, {}, { ctx: { modelRegistry: reg.registry, ui, hasUI: o.hasUI ?? true }, config, child: o.child });
-  if (o.perms) {
-    fs.mkdirSync(path.join(r.agentDir, "pi-foreman"), { recursive: true });
-    fs.writeFileSync(path.join(r.agentDir, "pi-foreman", "permissions.json"), JSON.stringify(o.perms));
-  }
   const log = (): Record<string, unknown>[] => {
     const f = gateLogFile(r.agentDir);
     return fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : [];
