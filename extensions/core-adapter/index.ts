@@ -149,7 +149,7 @@ import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
-import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, emitPendingLessons, runReport, runReports, type ReportSession } from "./reportstool.ts";
+import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, emitPendingLessons, retroCounters, runReport, runReports, type ReportSession } from "./reportstool.ts";
 import { recordReport, reportContext } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
@@ -6536,6 +6536,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     parameters: REPORTS_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
+      if (params.action === "retro") {
+        // The steward pass reads the retro counters of this session; the inputs are the ones `/retro` uses (retroInputs), so the model never has to name them.
+        if (s.isChild) return { content: [{ type: "text" as const, text: `${REPORTS_TOOL} is for the foreman session only.` }], details: { decision: "refused" }, isError: true };
+        const out = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session"), "--json"]);
+        return { content: [{ type: "text" as const, text: out.ok ? retroCounters(out.text) : `${REPORTS_TOOL}: retro failed: ${out.text.slice(0, 300)}` }], details: { decision: "retro" }, ...(out.ok ? {} : { isError: true }) };
+      }
       const r = runReports({ ...reportSession(s), repo: params.action === "set" && params.lesson !== undefined ? (await reportContext(s.cwd)).repo : null }, params);
       return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
     },
