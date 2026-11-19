@@ -48,9 +48,12 @@ export function scrubToBasenames(text: string): string {
   });
 }
 
-/** One stored text: Unicode format characters (category Cf: bidi overrides, zero-width marks) removed, secrets masked, paths cut to basenames, whitespace collapsed, cut to `cap` characters. */
+/** Bidirectional controls and tag characters: removed from every stored text (they reorder or hide what a reader sees). Other format characters (zero-width joiner, soft hyphen) stay. */
+export const HIDDEN_CHARS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u{E0000}-\u{E007F}]/gu;
+
+/** One stored text: bidi controls and tag characters removed, secrets masked, paths cut to basenames, whitespace collapsed, cut to `cap` characters. */
 export function cleanText(text: string, cap: number): string {
-  return scrubToBasenames(redactCommand(text.replace(/\p{Cf}/gu, ""))).replace(/\s+/g, " ").trim().slice(0, cap).trim();
+  return scrubToBasenames(redactCommand(text.replace(HIDDEN_CHARS, ""))).replace(/\s+/g, " ").trim().slice(0, cap).trim();
 }
 
 /** The dedupe key: sha1(kind, stored subject trimmed and lowercased), first 12 hex. Taken from the stored (masked, scrubbed) subject. */
@@ -258,9 +261,6 @@ export interface ReportInput {
   suggest?: unknown;
 }
 
-/** The role ids a report row may carry: the four roles, the owner, and the `child` of a launch without a binding. */
-export const REPORT_ROLES: readonly string[] = ["foreman", "explorer", "builder", "reviewer", "owner", "child"];
-
 export type RecordResult = { status: "recorded" | "seen"; id: string; key: string; kind: string; subject: string; effect: string; /** The stored row of a `recorded` result (the handoff copy appends it). */ row?: Json } | { status: "limit" } | { status: "invalid"; error: string };
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === "string" && (list as readonly string[]).includes(v);
@@ -269,7 +269,6 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => type
 export function recordReport(w: Writer, input: ReportInput, store: Store = storeFor(w.cwd)): RecordResult {
   if (!oneOf(KINDS, input.kind)) return { status: "invalid", error: `kind must be one of: ${KINDS.join(", ")}` };
   if (!oneOf(EFFECTS, input.effect)) return { status: "invalid", error: `effect must be one of: ${EFFECTS.join(", ")}` };
-  if (!REPORT_ROLES.includes(w.role)) return { status: "invalid", error: "role is not a known role id" };
   if (typeof input.subject !== "string" || typeof input.what !== "string") return { status: "invalid", error: "subject and what are required text" };
   if (input.suggest !== undefined && input.suggest !== null && typeof input.suggest !== "string") return { status: "invalid", error: "suggest must be text" };
   const subject = cleanText(input.subject, CAPS.subject);

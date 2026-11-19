@@ -1,12 +1,12 @@
 // Import and trace hardening (reportsimport.ts, trace.ts, reports.ts cleanText, reports-cli.ts show): the written trace record carries the counts,
-// an unknown role or an ancient ts is skipped as invalid, format characters never reach the store, `show` prints no `undefined`.
+// an odd role shape or an ancient ts is skipped as invalid, bidi controls never reach the store, `show` prints no `undefined`.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { main, type ReportsDeps } from "../reports-cli.ts";
-import { cleanText, readRows, recordReport, storeFor } from "../reports.ts";
+import { cleanText, keyOf, readRows, recordReport, storeFor } from "../reports.ts";
 import { checkRow, importEvent, importText } from "../reportsimport.ts";
 import { sanitizeTrace } from "../trace.ts";
 
@@ -32,17 +32,17 @@ test("the trace record written for an import (after sanitizeTrace) has every cou
   assert.deepEqual(sanitizeTrace({ event: "reports_import", from: "remote", failed: true }), { event: "reports_import", from: "remote", failed: true });
 });
 
-test("an unknown or odd role is refused as invalid at import; the known ids and a missing role come in", () => {
-  for (const role of ["builder", "reviewer", "explorer", "foreman", "owner", "child", null]) assert.equal("row" in checkRow(row({ role }), REPO, NOW), true, String(role));
-  for (const role of ["admin", "builder\nx", "Builder"]) assert.deepEqual(checkRow(row({ role }), REPO, NOW), { skip: "invalid" }, JSON.stringify(role));
-  assert.equal((checkRow(row({ role: "‮builder" }), REPO, NOW) as { row: { role: string } }).row.role, "builder", "a format character is stripped, the id then matches");
+test("the import checks the role's shape: plain ids (overlay roles too) and a missing role come in, odd shapes are skipped as invalid", () => {
+  for (const role of ["builder", "planner", "Builder", "my.role_2-x", "a".repeat(40), null]) assert.equal("row" in checkRow(row({ role }), REPO, NOW), true, String(role));
+  assert.equal((checkRow(row({ role: "planner" }), REPO, NOW) as { row: { role: string } }).row.role, "planner");
+  for (const role of ["builder\nx", "builder token=abc", "", "a".repeat(41), "‮builder", "bui lder", 7]) assert.deepEqual(checkRow(row({ role }), REPO, NOW), { skip: "invalid" }, JSON.stringify(role));
 });
 
-test("the tool path refuses an unknown role", (t) => {
+test("the tool path records a role outside the four built-in ids", (t) => {
   const dir = tmp(t);
-  const r = recordReport({ cwd: dir, role: "admin", session: "s", runId: null, source: "agent", repo: REPO, workspace: null, branch: null }, { kind: "rule", subject: "a", what: "b", effect: "note" });
-  assert.equal(r.status, "invalid");
-  assert.equal(fs.existsSync(storeFor(dir).file), false);
+  const r = recordReport({ cwd: dir, role: "planner", session: "s", runId: null, source: "agent", repo: REPO, workspace: null, branch: null }, { kind: "rule", subject: "a", what: "b", effect: "note" });
+  assert.equal(r.status, "recorded");
+  assert.equal(readRows(storeFor(dir).file)[0].role, "planner");
 });
 
 test("a ts older than the archive age (90 days) is skipped as invalid and counted; 89 days is kept", (t) => {
@@ -54,13 +54,18 @@ test("a ts older than the archive age (90 days) is skipped as invalid and counte
 });
 
 test("Unicode format characters (U+202E and the like) are stripped from stored text, local and imported", (t) => {
-  assert.equal(cleanText("a‮b​c⁦d", 40), "abcd");
+  assert.equal(cleanText("a‮b⁦c\u{E0041}d\u061Ce\u200Ff", 40), "abcdef");
   const dir = tmp(t);
   const w = { cwd: dir, role: "builder", session: "s", runId: null, source: "agent", repo: REPO, workspace: null, branch: null };
   recordReport(w, { kind: "rule", subject: "gu‮ard", what: "wh‮at", effect: "note", suggest: "su‮g" });
   importText(storeFor(dir), REPO, lines(row({ subject: "imp‮orted", what: "w‮hat", session: "s‮2", branch: "b‮x" })), NOW);
   assert.ok(!/‮/.test(fs.readFileSync(storeFor(dir).file, "utf8")), "no U+202E in the store file");
   assert.equal(readRows(storeFor(dir).file).length, 2);
+});
+
+test("only bidi controls and tag characters are stripped: ZWJ emoji and soft hyphen stay, a plain subject keeps its key", () => {
+  assert.equal(cleanText("👨‍👩‍👧 co\u00ADop a\u200Bb", 40), "👨‍👩‍👧 co\u00ADop a\u200Bb");
+  assert.equal(keyOf("rule", cleanText("The guard blocked a read", 80)), "3de027156d92", "sha1 of the old key input, computed on d9cac4a0");
 });
 
 test("show prints no undefined for an imported row and quotes the role", async (t) => {

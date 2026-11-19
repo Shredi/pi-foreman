@@ -4,7 +4,7 @@
 // never copied; nothing reads meaning from report text.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ARCHIVE_DAYS, CAPS, EFFECTS, KINDS, REPORT_ROLES, cleanText, importRows, keyOf, type Store } from "./reports.ts";
+import { ARCHIVE_DAYS, CAPS, EFFECTS, HIDDEN_CHARS, KINDS, cleanText, importRows, keyOf, type Store } from "./reports.ts";
 import { withFileLock } from "./statefile.ts";
 import { redactCommand } from "./trace.ts";
 
@@ -41,9 +41,12 @@ const emptyCounts = (): ImportCounts => ({ lines: 0, added: 0, known: 0, malform
 /** A short field (role, branch, session, …): control characters turned into spaces, secrets masked, cut to 200; null when empty or not text. */
 const field = (v: unknown): string | null => {
   if (typeof v !== "string") return null;
-  const t = redactCommand(v.replace(/\p{Cf}/gu, "").replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")).trim().slice(0, 200);
+  const t = redactCommand(v.replace(HIDDEN_CHARS, "").replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")).trim().slice(0, 200);
   return t || null;
 };
+
+/** A role id as the import accepts it: letters, digits, `.`, `_`, `-`, at most 40 characters (overlay roles are ids too). Checked on the raw text. */
+const ROLE_SHAPE = /^[A-Za-z0-9._-]{1,40}$/;
 
 /** Text with a cap: null when it is not text or longer than `cap` (a row this long was not written by the tool). */
 function capped(v: unknown, cap: number): string | null {
@@ -63,10 +66,11 @@ export function checkRow(raw: Json, repo: string | null, now: number): { row: Js
   const what = capped(raw.what, CAPS.what);
   const session = field(raw.session);
   const ts = typeof raw.ts === "string" ? Date.parse(raw.ts) : NaN;
-  const role = field(raw.role);
+  const roleOk = raw.role === undefined || raw.role === null || (typeof raw.role === "string" && ROLE_SHAPE.test(raw.role));
+  const role = roleOk ? field(raw.role) : null;
   const suggest = raw.suggest === undefined || raw.suggest === null ? null : capped(raw.suggest, CAPS.suggest);
   const bad = raw.suggest !== undefined && raw.suggest !== null && (typeof raw.suggest !== "string" || raw.suggest.length > CAPS.suggest);
-  if (!id || !kind || !effect || !subject || !what || !session || Number.isNaN(ts) || ts > now + FUTURE_MS || ts < now - PAST_MS || (role !== null && !REPORT_ROLES.includes(role)) || bad) return { skip: "invalid" };
+  if (!id || !kind || !effect || !subject || !what || !session || Number.isNaN(ts) || ts > now + FUTURE_MS || ts < now - PAST_MS || !roleOk || bad) return { skip: "invalid" };
   return {
     row: {
       row: "report", id, key: keyOf(kind, subject), kind, subject, what, effect, suggest, repo,
