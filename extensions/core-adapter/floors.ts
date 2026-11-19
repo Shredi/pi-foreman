@@ -11,6 +11,7 @@ import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
 import { nonPathArgs } from "./patternargs.ts";
+import { SSH_ARG } from "./protected.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { psUnitTexts } from "./psunits.ts";
 import { redactCommand } from "./trace.ts";
@@ -1361,17 +1362,18 @@ function scriptsOf(seg: ShellSegment, prog: string): string[] {
   return rest.length ? [unquote(prog === "cmd" || prog === "pwsh" || prog === "powershell" ? rest.join(" ") : rest[0])] : [];
 }
 
-/** Under `xargs` the stdin text becomes arguments of the command, never its program. */
+/** Under `xargs` the stdin text becomes arguments of the command: a shell with no `-c` never reads it as its program, one with `-c` takes the words as its script. */
 const underXargs = (seg: ShellSegment): boolean => seg.wrappers.some((w) => base(w) === "xargs");
 
 /** A shell that reads its program from stdin (no `-c` string, no script file; `-s` and the values of `-o`/`-O` read as the parser reads them) runs the here-document or here-string on it as code: the texts, else none. */
 function heredocScripts(seg: ShellSegment, prog: string): string[] {
-  if (!(SHELLS.has(prog) || prog === "ash") || !seg.heredocs?.length || underXargs(seg)) return [];
+  if (!seg.heredocs?.length) return [];
+  // the walker keeps `xargs bash -c …` as the wrappers xargs, bash and the script's words as the program
+  if (underXargs(seg)) return seg.wrappers.some((w) => SHELLS.has(base(w))) || (SHELLS.has(prog) && seg.argv.some((w) => /^-[a-z]*c$/i.test(w))) ? seg.heredocs : [];
+  if (!(SHELLS.has(prog) || prog === "ash")) return [];
   if (scriptsOf(seg, prog).length > 0 || !shellReadsStdin(seg.argv)) return [];
   return seg.heredocs;
 }
-
-const SSH_VALUED = new Set("bcDEeFIiJLlmOopQRSWw");
 
 /** Whether an `ssh` call names a remote command after the host (the options that take a value are stepped over); without one the remote shell reads stdin as its program. */
 function sshHasCommand(words: string[]): boolean {
@@ -1380,7 +1382,7 @@ function sshHasCommand(words: string[]): boolean {
     const w = words[i];
     if (w === "--") return words.length - i - 1 + operands > 1;
     if (w.length > 1 && w.startsWith("-")) {
-      const at = [...w.slice(1)].findIndex((ch) => SSH_VALUED.has(ch));
+      const at = [...w.slice(1)].findIndex((ch) => SSH_ARG.has(ch));
       if (at >= 0 && at === w.length - 2) i++;
     } else operands++;
   }
