@@ -13,7 +13,7 @@ import { GATE_DENY_PREFIXES } from "../gatedialog.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 // rows that build a bash line from a fixture path (the shell parser drops unquoted backslashes) or need the host's real case behaviour are posix-only; the win32 rows that set the platform run everywhere
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 const base = fs.realpathSync.native(mkTestTmp("pf-r2-moved-"));
 test.after(() => rmTestTmp(base));
 const home = path.join(base, "home");
@@ -39,7 +39,7 @@ const run = (role: string, command: string): GateResult => decide(role, "bash", 
 const parent = path.dirname(work);
 const SCANS = (root: string): string[] => [`find ${root} -name x`, `grep -rn x ${root}`, `grep -R x ${root}`, `rg x ${root}`, `fd x ${root}`, `du -sh ${root}`, `ls -R ${root}`, `tree ${root}`];
 
-test("every scan program is refused on /, ~, the home dir and an ancestor of the workspace, for every role", posixOnly, () => {
+test("every scan program is refused on /, ~, the home dir and an ancestor of the workspace, for every role", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     for (const root of ["/", "~", home, parent]) {
       for (const l of SCANS(root)) assert.equal(rule(run(role, l)), "floor-fs-scan", `${role}: ${l}`);
@@ -71,7 +71,7 @@ test("a scan with no search root in the home dir is a scan of the home dir", () 
   assert.equal(f("grep -r x"), "floor-fs-scan");
 });
 
-test("a scan of the workspace itself or a subfolder is not refused", posixOnly, () => {
+test("a scan of the workspace itself or a subfolder is not refused", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     for (const l of ["find . -name x", `find ${work} -name x`, `grep -rn x ${sub}`, "rg x src", "fd x", `du -sh ${work}`, "ls -R", "tree src", `find ${scr} -name x`, `bash -c 'find ${sub} -name x'`]) {
       assert.notEqual(rule(run(role, l)), "floor-fs-scan", `${role}: ${l}`);
@@ -79,7 +79,7 @@ test("a scan of the workspace itself or a subfolder is not refused", posixOnly, 
   }
 });
 
-test("grep without -r on a file under home is not refused by this floor", posixOnly, () => {
+test("grep without -r on a file under home is not refused by this floor", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     assert.notEqual(rule(run(role, `grep x ${path.join(home, "notes.txt")}`)), "floor-fs-scan", role);
     assert.notEqual(rule(run(role, `grep -n x ~/notes.txt`)), "floor-fs-scan", role);
@@ -88,7 +88,7 @@ test("grep without -r on a file under home is not refused by this floor", posixO
 
 // ------------------------------------------------------------------ row 21: a child's write to /tmp
 
-test("a child's write to /tmp is refused with the scratch hint; a write into its scratch dir is not", posixOnly, () => {
+test("a child's write to /tmp is refused with the scratch hint; a write into its scratch dir is not", { skip: posixOnly }, () => {
   for (const role of ["builder", "reviewer"]) {
     for (const [tool, input] of [["write", { path: "/tmp/x.txt", content: "x" }], ["bash", { command: "echo x > /tmp/x.txt" }]] as const) {
       const r = decide(role, tool, { ...input }, {}, roleRoots(role));
@@ -111,7 +111,7 @@ test("a refusal outside /tmp carries no scratch hint", () => {
 
 // ------------------------------------------------------------------ row 6: .git internals
 
-test("a child's write into .git/hooks or .git/config is refused by the gate", posixOnly, () => {
+test("a child's write into .git/hooks or .git/config is refused by the gate", { skip: posixOnly }, () => {
   for (const role of ["builder", "reviewer"]) {
     for (const p of [path.join(work, ".git", "hooks", "pre-commit"), path.join(work, ".git", "config")]) {
       for (const [tool, input] of [["write", { path: p, content: "x" }], ["edit", { path: p, edits: [] }], ["bash", { command: `echo x > ${p}` }]] as const) {
@@ -122,7 +122,7 @@ test("a child's write into .git/hooks or .git/config is refused by the gate", po
   }
 });
 
-test("main: a write into .git/hooks is left to the judge, into .git/config it meets floor-secret-path (the gate's answers today)", posixOnly, () => {
+test("main: a write into .git/hooks is left to the judge, into .git/config it meets floor-secret-path (the gate's answers today)", { skip: posixOnly }, () => {
   for (const p of [path.join(work, ".git", "hooks", "pre-commit"), path.join(work, ".git", "config")]) {
     // no temp root: the fixture lives below the OS temp dir, whose writes are a built-in allow
     const w = decide("foreman", "write", { path: p, content: "x" }, {}, { tmp: [], tmpAccess: false });
@@ -167,7 +167,7 @@ test("the find and grep tools: a default path in the home dir is a scan of the h
   }
 });
 
-test("a glob root is expanded against the file system and every match is judged; a glob matching nothing risky gives no decision", posixOnly, () => {
+test("a glob root is expanded against the file system and every match is judged; a glob matching nothing risky gives no decision", { skip: posixOnly }, () => {
   const deep = path.join(home, "Documents", "git", "proj");
   fs.mkdirSync(path.join(deep, ".git"), { recursive: true });
   const inDeep = envOf(false, { cwd: deep, writeRoots: [deep, scr] });
@@ -197,7 +197,7 @@ test("a glob root is expanded against the file system and every match is judged;
   assert.equal(f(`find ${path.dirname(home)}/* -name x`, envOf(false)), "floor-fs-scan");
 });
 
-test("case: on darwin a differently cased home dir or ancestor is a scan of it; on linux it names another folder", posixOnly, () => {
+test("case: on darwin a differently cased home dir or ancestor is a scan of it; on linux it names another folder", { skip: posixOnly }, () => {
   const up = (s: string): string => s.toUpperCase();
   const f = (l: string, platform: string) => lineFloors(l, parseShell(l, { cwd: work, platform }), envOf(false, { platform }))?.rule ?? null;
   for (const l of [`find ${up(home)} -name x`, `grep -r x ${up(path.dirname(home))}`, `find ${home.slice(0, -4)}${up(home.slice(-4))} -name x`]) {

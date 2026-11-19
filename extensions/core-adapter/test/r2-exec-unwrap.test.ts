@@ -24,7 +24,7 @@ const run = (role: string, command: string): GateResult => gateDecide("bash", { 
 const rule = (r: GateResult): string | null => (r && "block" in r && r.block ? (r.rule ?? null) : null);
 const answer = (r: GateResult): string => (r === null || r === undefined ? "none" : "block" in r && r.block ? `block:${r.rule}` : `allow:${(r as { rule?: string }).rule}`);
 const ROLES = ["foreman", "builder"];
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 
 test("a command behind exec meets its floor", () => {
   for (const role of ROLES) {
@@ -44,7 +44,7 @@ test("exec in a pipeline answers as the line without exec", () => {
   }
 });
 
-test("a write target behind exec is seen", posixOnly, () => {
+test("a write target behind exec is seen", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     assert.equal(answer(run(role, "exec cp a /etc/x")), answer(run(role, "cp a /etc/x")), role);
     assert.equal(answer(run(role, "exec rm -rf /var/xx")), answer(run(role, "rm -rf /var/xx")), role);
