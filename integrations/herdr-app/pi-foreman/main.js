@@ -88,6 +88,12 @@ const prConflict = (pr) => prDotState(pr).conflict === true;
 const conflictMark = (t) => h_flex().flex_none().size(11).rounded(6).bg(t.blocked).items_center().justify_center()
   .text_size(8).font_semibold().text_color(t.chrome).child("!");
 
+// A section heading ("Open PRs", the space groups): one look for all of them. `rule` draws a 1px line above it, with more space above the
+// line than a repository group gets (its own rule is 5 px down), so the section start does not look like one more repository divider.
+const sectionHead = (t, id, label, { rule = false } = {}) => h_flex().id(id).px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(12).font_semibold()
+  .when(rule, (el) => el.mt(10).border_t(1).border_color(t.border))
+  .child(div().truncate().text_color(t.muted).child(label));
+
 // A failed or garbled radar read (the binary busy, a half-written file) keeps the last good data for a few rounds, so costs,
 // waits and PR chips do not vanish from every row at once; after MISS_MAX misses the machine shows as having no radar.
 const MISS_MAX = 5;
@@ -726,8 +732,7 @@ export default class ForemanAgents extends View {
     if (!groups.length) return [];
     this.folded ??= new Set();
     this.unfolded ??= new Set();
-    const rows = [h_flex().id("op-head").px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
-      .child(div().text_color(t.dim).child("Open PRs"))
+    const rows = [sectionHead(t, "op-head", "Open PRs", { rule: true })
       .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
     const info = groups.map((g) => guard(() => openPrInfo(g), { g, prs: null, failing: 0, conflicts: 0 }));
     const total = info.reduce((n, i) => n + (i.prs?.length ?? 0), 0);
@@ -858,11 +863,10 @@ export default class ForemanAgents extends View {
       }
     }
     const machineOf = (g) => spaceList.find((s) => s.id === g.space)?.machine ?? null;
-    const header = (g) => {
+    const header = (g, rule) => {
       const machine = machineOf(g);
       const rec = this.radar.get(machine ?? "local");
-      const out = [h_flex().id(g.id).px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
-        .child(div().truncate().text_color(t.dim).child(g.label))];
+      const out = [sectionHead(t, g.id, g.label, { rule })];
       if (rec && !rec.ok && !(machine && knownMachines.has(machine))) out.push(div().px(8).h(18).flex_none().text_size(10.5).text_color(t.dim).child(`No foreman radar on ${machine ?? "this computer"} (set props.foreman)`));
       return out;
     };
@@ -894,7 +898,7 @@ export default class ForemanAgents extends View {
     const drawnRemote = drawnRemoteTargets(drawnItems);
     const kept = candidates.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
     for (const a of kept) if (!blocks.has(a.address)) blocks.set(a.address, withRows(a));
-    const rows = spaceGroups(kept).flatMap((g) => [...header(g), ...g.members.flatMap((a) => blocks.get(a.address))]);
+    const rows = spaceGroups(kept).flatMap((g, i) => [...header(g, i > 0), ...g.members.flatMap((a) => blocks.get(a.address))]);
     // A child node counts as shown only where it is drawn (drawnItems): an ended one with nothing live below leaves the tree, and its PRs stay in Open PRs.
     const orphanGroups = this.prGuard(() => openPrGroups(this.feed, tops, shownSet([...joined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
