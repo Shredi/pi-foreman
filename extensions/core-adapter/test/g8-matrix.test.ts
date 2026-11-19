@@ -22,7 +22,7 @@ const OPAQUE_PIN: Record<string, [string, string, string]> = {
   "[[ $( ) ]]": [NOT, "refused (word)", "refused (word)"],
   "variable as command word": [NOT, NOT, NOT],
   "unquoted pipe into sh": [NOT, NOT, NOT],
-  "python -e": [NOT, "refused (word)", "refused (word)"],
+  "python -e": [NOT, NOT, NOT], // PR C: inline interpreter code is data for the floors, no shell runs it
 };
 
 /** Forms no judge refused before: pinned as gaps, not as protection. `here-string into sh` is a gap of the position matrix. */

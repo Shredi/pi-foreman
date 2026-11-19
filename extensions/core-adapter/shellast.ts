@@ -747,14 +747,20 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
 }
 
-/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). */
-function runsCode(node: SyntaxNode): boolean {
+/** The wrappers the walker unwraps to the command they wrap (`wrap(...)` above): they run no text of their own, the wrapped command is its own segment. A failed unwrap leaves the wrapper as the (opaque) program. */
+export const PASS_THROUGH: ReadonlySet<string> = new Set(["env", "nohup", "nice", "timeout", "command", "stdbuf", "setsid"]);
+
+/** A pass-through wrapper whose words name a runner (`env sh`, `nohup bash`): the wrapped command runs text. */
+const wrapsRunner = (x: any): boolean => (x.suffix ?? []).some((w: any) => typeof (w.value ?? w.text) === "string" && (RUNNERS.has(baseName(w.value ?? w.text)) || /[$`]/.test(w.text ?? "")));
+
+/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `walkerWrappers`: the pass-through wrappers do not count (the constant `$FOREMAN_SCRATCH` only). */
+function runsCode(node: SyntaxNode, walkerWrappers = false): boolean {
   let found = false;
   const visit = (n: SyntaxNode): void => {
     if (found) return;
     const x = n as any;
     if (x.type === "Function") found = true;
-    else if (x.type === "Command" && x.name && (/[$`]/.test(x.name.text) || RUNNERS.has(baseName(x.name.value ?? x.name.text)))) found = true;
+    else if (x.type === "Command" && x.name && (/[$`]/.test(x.name.text) || (RUNNERS.has(baseName(x.name.value ?? x.name.text)) && !(walkerWrappers && PASS_THROUGH.has(baseName(x.name.value ?? x.name.text)) && !wrapsRunner(x))))) found = true;
     else forEachChild(n, visit);
   };
   visit(node);
@@ -849,7 +855,7 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const child = childAssigns(script, src, rn);
   for (const [, , cmd] of child.values()) rn.assignOk.add(cmd);
   // the harness constant `$FOREMAN_SCRATCH` of a child resolves on any line that never rebinds it (a heredoc or pipe leaves the closed grammar)
-  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !runsCode(script) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
+  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !runsCode(script, true) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {

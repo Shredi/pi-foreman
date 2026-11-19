@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, PASS_THROUGH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
@@ -1545,12 +1545,10 @@ const CMD = "(?:^|[;&|(\\n`]|\\$\\()\\s*(?:\\w+=\\S*\\s+)*";
 // `-C <dir>`, `-c k=v`, `--git-dir`, `--work-tree` and friends may sit between `git` and its verb (captured).
 const GIT_WRAPPERS = "env|nohup|xargs|timeout|nice|command|exec|time|sudo|doas|stdbuf|ionice|setsid";
 const GIT_VERB = `(?:[\\w.~/-]*/)?git(?:[ \\t]+(?:-[Cc][ \\t]+\\S+|--(?:git-dir|work-tree|namespace|exec-path)(?:=\\S*|[ \\t]+\\S+)|-[pP]|--(?:no-pager|paginate|bare|no-replace-objects|literal-pathspecs|no-optional-locks)))*[ \\t]+([a-z][\\w-]*)`;
-const GIT_CALL = new RegExp(
+const CALL_PREFIX =
   `(?:^|[;&|(\\n\`{!]|\\$\\()[ \\t]*(?:\\w+=\\S*[ \\t]+)*(?:(?:do|then|else|elif|if|while|until|coproc|time)[ \\t]+|[!{(][ \\t]*)*` +
-    `(?:(?:${GIT_WRAPPERS})(?:[ \\t]+(?:-{1,2}[\\w-]+(?:=\\S+)?|\\d+[smhd]?|\\w+=\\S*|\\{\\}))*[ \\t]+)*` +
-    GIT_VERB,
-  "g",
-);
+  `(?:(?:${GIT_WRAPPERS})(?:[ \\t]+(?:-{1,2}[\\w-]+(?:=\\S+)?|\\d+[smhd]?|\\w+=\\S*|\\{\\}))*[ \\t]+)*`;
+const GIT_CALL = new RegExp(CALL_PREFIX + GIT_VERB, "g");
 /** The command position is unknown (a runner or a program built by substitution reads the text as code): git anywhere. The verb is a word of its own, not a piece of a path or a name (`guard-false-blocks-2-push`, `src/push.ts`). */
 const GIT_ANY = /(?<![\w./-])(push|remote)(?![\w./-])/g;
 /** `cmd`: the entry is a command-position word match for a program the segment checks name too; a clean line skips it (`cleanLine`). */
@@ -1622,8 +1620,10 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
     const prot = push ? [...protectedSet(env)].find((b) => new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(push.tailText) || (/[*?[]/.test(b) && tokens.some((t) => protectedMatch([b], t, { ignoreCase: true }) !== undefined))) : undefined;
     if (prot !== undefined) return flag("git-push-protected", `The unparsed line pushes '${prot}', a default or protected branch.`);
   }
-  const pub = /\b(?:npm|pnpm|yarn|bun|cargo|twine|gem|poetry)\s+(?:\S+\s+)*(?:publish|upload|push)\b/.exec(lower);
-  if (pub) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.", text.slice(pub.index, pub.index + pub[0].length));
+  // the package program stands at a command position (anywhere: a runner reads the text as code) and the verb follows within the same statement
+  const pubWords = "(?:npm|pnpm|yarn|bun|cargo|twine|gem|poetry)[ \\t]+[^\\n;&|]*?\\b(?:publish|upload|push)\\b";
+  const pub = new RegExp(anywhere ? `\\b${pubWords}` : `${CALL_PREFIX}${pubWords}`).exec(lower);
+  if (pub) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.", text.slice(pub.index, pub.index + pub[0].length).replace(/^[\s;&|(`$]+/, ""));
   const rmRoot = new RegExp(`${CMD}rm\\s+(?:-\\S+\\s+)*(?:--\\s+)?(?:/|~|\\$HOME|\\$\\{HOME\\})/?\\*?(?:\\s|$)`).exec(text);
   if (rmRoot) return hit("rm-system", "Removing the file system root or the home directory is never allowed.", rmRoot[0].replace(/^[\s;&|(`$]+/, "").trim());
   return soft;
@@ -1631,7 +1631,7 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
 
 /**
  * `text` with the content of its quoted strings blanked: single quotes and `$'..'` always (nothing expands there), double quotes unless the
- * string holds a `$(`, `${` or backtick (those run). Runs on every line without a runner, where a quoted argument is text for the program,
+ * string holds a `$(` or backtick (those run; `${NAME}` only expands to text). Runs on every line without a runner, where a quoted argument is text for the program,
  * not a command line.
  */
 export function maskQuoted(text: string): string {
@@ -1652,7 +1652,7 @@ export function maskQuoted(text: string): string {
       while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
       if (j >= text.length) return out + text.slice(i);
       const inner = text.slice(i + 1, j);
-      out += /\$\(|\$\{|`/.test(inner) ? text.slice(i, j + 1) : '""';
+      out += /\$\(|`/.test(inner) ? text.slice(i, j + 1) : '""';
       i = j;
     } else out += c;
   }
@@ -1670,6 +1670,16 @@ function runsText(s: ShellSegment): boolean {
   const p = names[0];
   if (p === "deno" && s.argv.some((a) => a === "eval" || a === "run")) return true;
   if (INTERP_E.has(p) && s.argv.some((a) => /^-[A-Za-z]*[ec]/.test(a) || a === "--eval" || a === "--command")) return true;
+  return s.argv.some((a) => a === "-exec" || a === "-execdir" || a === "-ok" || a === "-okdir");
+}
+
+/**
+ * Whether a segment hands text to a shell: `runsText` without the interpreters' inline code (`python3 -c`, `node -e` run that code in the interpreter, not in a shell) and
+ * without the pass-through wrappers the walker unwrapped (`env`, `nohup`, `timeout`...: the wrapped command is its own segment). A failed unwrap keeps the wrapper as the program.
+ */
+function runsShellText(s: ShellSegment): boolean {
+  const names = [base(s.program), ...s.wrappers.map(base).filter((w) => !PASS_THROUGH.has(w))];
+  if (names.some((n) => RUNNERS.has(n) || EXTRA_RUNNERS.has(n) || SHELLS.has(n))) return true;
   return s.argv.some((a) => a === "-exec" || a === "-execdir" || a === "-ok" || a === "-okdir");
 }
 
@@ -1692,11 +1702,18 @@ function maskHeredocs(text: string): string {
   return out.join("\n");
 }
 
-/** The line has a here-document or here-string and every one feeds `cat`/`tee` or a bare redirect: `maskLine` blanks the bodies. */
+/** A segment that may read its stdin as shell code: it hands text to a shell, or a shell is among its words (`docker exec -i c sh`). */
+const shellConsumer = (s: ShellSegment): boolean => runsShellText(s) || s.argv.some((a) => SHELLS.has(base(a)) || base(a) === "ash");
+
+/**
+ * The line has a here-document or here-string and each body is data: `cat`, `tee`, a bare redirect, or an interpreter the walker reads as stdin-fed (`python3 -`, `node -`:
+ * its code is not shell text). A body fed to a shell, a runner, a program with a shell among its words or a program the walker does not know (`at now <<EOF`) stays visible,
+ * and so does every body of a line where a pipe feeds such a consumer. `maskLine` blanks the bodies.
+ */
 export function dataBodies(segments: ShellSegment[]): boolean {
   const bodies = segments.filter((s) => s.heredoc);
-  const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
-  return bodies.length > 0 && data && !segments.some((s) => s.opaque === "stdin_fed");
+  const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program)) || s.opaque === "stdin_fed") && !shellConsumer(s));
+  return bodies.length > 0 && data && !segments.some((s) => s.stdinFed && shellConsumer(s));
 }
 
 /**
@@ -1706,7 +1723,7 @@ export function dataBodies(segments: ShellSegment[]): boolean {
  */
 export function maskLine(text: string, segments: ShellSegment[]): string {
   const t = dataBodies(segments) ? maskHeredocs(text) : text;
-  return segments.some(runsText) ? t : maskQuoted(t);
+  return segments.some(runsShellText) ? t : maskQuoted(t);
 }
 
 const LOOP_WORDS = new Set(["for", "while", "until", "if", "select", "case"]);
@@ -1764,7 +1781,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   // an ask or a judge-first hit waits behind every deny of the line; `$( )` nested past the walker's depth cap was never read, so the line goes to the judge
   let pending: FloorHit | null = segments.some((s) => s.tooDeep) ? strongerHit(raw, tooDeepHit(text)) : raw;
   if (segments.some((s) => s.opaque !== null)) {
-    const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
+    const anywhere = segments.some((s) => runsShellText(s) || /^[$`]/.test(s.program));
     const t = opaqueTextFloorsAt(scan, env, anywhere);
     // a judge-first hit of the text scan does not hide the protected-folder floors
     const prot = t && t.kind !== "judge" ? null : readLooking(segments) ? null : opaqueProtected(text, env, env.child === true, segments);
@@ -1814,7 +1831,7 @@ export function fieldLineFloors(line: string, segments: ShellSegment[], env: Flo
   if (ps) return ps;
   let ask: FloorHit | null = whole;
   if (segments.some((s) => s.opaque !== null)) {
-    const o = opaqueTextFloorsAt(scan, env, segments.some((s) => runsText(s) || /^[$`]/.test(s.program)));
+    const o = opaqueTextFloorsAt(scan, env, segments.some((s) => runsShellText(s) || /^[$`]/.test(s.program)));
     if (o?.kind === "deny") return o;
     ask = strongerHit(ask, o);
   }
