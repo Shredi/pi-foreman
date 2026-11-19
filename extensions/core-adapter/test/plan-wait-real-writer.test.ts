@@ -10,6 +10,7 @@ import { probeSpawner } from "./_probe-memo.ts";
 import { ROUND_STATE_FILE, planWait } from "../roundstate.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { KEYS } from "./_r46world.ts";
+import { writeFromReport } from "./_verdict-rig.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Fn = (...a: unknown[]) => Promise<unknown>;
@@ -103,6 +104,7 @@ async function world(t: { after(fn: () => void | Promise<void>): void }, tier: s
       const blocked = (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as { reason?: string } | undefined;
       assert.equal(blocked, undefined, `plan review launch: ${blocked?.reason}`);
       await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
+      assert.ok(writeFromReport(input, `Overall verdict: ${verdict}`), "the launch binding names a record folder"); // the verdict is the reviewer's review_verdict record, not report text (#291)
       channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output: `Overall verdict: ${verdict}` }] });
       await tick();
     },
