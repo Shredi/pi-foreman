@@ -13,6 +13,8 @@ import coreAdapter from "../index.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { SUBAGENTS_PKG } from "./_subagents-handlers.ts";
 
+process.env.PI_OFFLINE = "1"; // pi-subagents looks up the npm root on first skill use; offline returns early (no npm spawn)
+
 type Json = Record<string, unknown>;
 
 test("real session: the request declares the launch fields on subagent, and a call with only declared keys reaches tool_call intact", async (t) => {

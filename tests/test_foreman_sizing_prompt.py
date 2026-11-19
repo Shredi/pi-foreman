@@ -139,7 +139,7 @@ class SizingPromptTest(unittest.TestCase):
                 want = want.replace(old_text, new_text)
             # launch fields: a numbered item beyond the failed ones is reviewed against the whole change
             old_items = "a review did not cover, and only after you have checked the evidence on disk."
-            new_items = old_items + " A numbered item in `items` that no earlier FAIL named is reviewed against the whole change."
+            new_items = old_items + " A numbered item in `items` outside the current failed items is reviewed against the whole change."
             self.assertIn(old_items, want)
             want = want.replace(old_items, new_items)
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
