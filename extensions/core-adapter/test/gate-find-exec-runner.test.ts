@@ -18,7 +18,11 @@ after(() => fs.rmSync(base, { recursive: true, force: true }));
 const roots: GateRoots = { worktree: wt, scratch: [scr], tmp: [path.join(base, "tmp")], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true };
 const facts: GitFacts = { currentBranch: () => "feature/x", protectedBranches: () => ["main"], pushConfigured: () => false, hasUpstream: () => false };
 const env = baseFloorEnv(wt, { home: path.join(base, "home") });
-const dangers = (line: string): string[] => gateEvaluate("bash", { command: line }, wt, { env: () => env, roots: () => roots, facts }).dangers ?? [];
+// the label is also a floor until the permission modes go (floor-delete-unknown-target); either way the line is read as an unknown-target delete
+const dangers = (line: string): string[] => {
+  const o = gateEvaluate("bash", { command: line }, wt, { env: () => env, roots: () => roots, facts });
+  return (o.result as { rule?: string } | undefined)?.rule === "floor-delete-unknown-target" ? ["danger-delete-unknown-target"] : o.dangers ?? [];
+};
 
 test("find -exec sh -c with a remover after a paren, $(, a backtick or a quote is danger-delete-unknown-target", () => {
   for (const line of [`find . -exec sh -c '(rm -rf x)' \\;`, `find . -exec sh -c 'x=$(rm -rf y)' \\;`, "find . -exec sh -c 'x=`rm -rf y`' \\;", `find . -exec sh -c '"rm" -rf y' \\;`]) {

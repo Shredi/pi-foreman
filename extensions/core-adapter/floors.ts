@@ -1004,9 +1004,11 @@ function psUnitFloors(line: string, env: FloorEnv): FloorHit | null {
 export interface UnknownDelete {
   name: "danger-delete-unknown-target";
   reason: string;
+  /** Also a floor until the permission modes go (`lineFloors`): the forms the owner decided to refuse in every mode; the other forms keep the label only. */
+  floor: boolean;
 }
 
-const UNKNOWN_DELETE = (why: string): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})` });
+const UNKNOWN_DELETE = (why: string, floor = true): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})`, floor });
 const RM_RECURSIVE = /^-[A-Za-z]*[rR]|^--recursive$/;
 /** A recursive flag behind a command word that is itself a variable: short clusters only (`-rf`, `-R`), so a PowerShell parameter like `-Force` is none. */
 const VAR_CMD_RECURSIVE = /^-(?=[A-Za-z]{1,4}$)[A-Za-z]*[rR]|^--recursive$/;
@@ -1048,25 +1050,32 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
       const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && at >= 0 && inner.slice(at + 1).some((w) => RM_RECURSIVE.test(w));
       if (removes || viaRunner) return UNKNOWN_DELETE("a remover under find -exec");
     }
+    if (s.opaque === "nonliteral_script") {
+      // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so the words of it are scanned as find -exec scans a runner's string
+      const words = [s.program, ...argv].join(" ").split(/[\s;&|()$"'`{}]+/);
+      const at = words.findIndex((w) => REMOVERS.has(base(w)));
+      if (at >= 0 && words.slice(at + 1).some((w) => RM_RECURSIVE.test(w))) return UNKNOWN_DELETE("a remover inside a script string built at run time");
+    }
     if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) return UNKNOWN_DELETE("the command word is a variable with a recursive flag");
     if (prog === "git" && argv.some((w) => /[$`]/.test(w))) {
       const call = gitCall(s, env);
-      if (call?.sub === "clean") return UNKNOWN_DELETE("git clean with a variable operand");
+      if (call?.sub === "clean") return UNKNOWN_DELETE("git clean with a variable operand", false);
     }
   }
   if (foreignSegments(segments)) {
     const units = psUnits(text);
     const recursiveElsewhere = units.some((w) => w.slice(1).some((x) => PS_RECURSE.test(x)));
     for (const words of units) {
-      if (psRecursiveDelete(words)) return UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes");
+      // a floor only where a word of the delete is a variable (`-Recurse:$true` and `/s/q` are switches); a literal PowerShell delete keeps the label
+      if (psRecursiveDelete(words)) return UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", words.slice(1).some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x) && /[$%]/.test(x)));
       if (PS_REMOVERS.has(base(words[0]))) {
         const rest = words.slice(1);
-        if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) return UNKNOWN_DELETE("Remove-Item takes a splatted argument list");
-        if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) return UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes");
+        if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) return UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false);
+        if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) return UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false);
       }
       const p = base(words[0]);
-      if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) return UNKNOWN_DELETE("an encoded PowerShell command cannot be read");
-      if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) return UNKNOWN_DELETE("iex of a computed string cannot be read");
+      if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) return UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false);
+      if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) return UNKNOWN_DELETE("iex of a computed string cannot be read", false);
     }
   }
   return null;
@@ -1303,6 +1312,9 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
     const h = segmentFloors(s, env, segments);
     if (h) return h;
   }
+  // until the permission modes go (PR C moves this to the judge): a recursive delete the gate cannot read is refused in every mode, by the predicate of the label
+  const unknown = unknownTargetDelete(text, segments, env);
+  if (unknown?.floor) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${unknown.reason}). Name the path literally; a later change moves this check to the judge.`, text);
   return pending;
 }
 
