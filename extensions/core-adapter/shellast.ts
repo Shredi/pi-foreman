@@ -53,6 +53,8 @@ export interface ShellSegment {
   heredoc: boolean;
   /** Set (true) only when stdin is fed by a pipe, a heredoc, a here-string, `<` or `<>`; an fd dup onto stdin (`<&3`) is not counted. */
   stdinFed?: boolean;
+  /** Set (not enumerable) by the walker: the command text ends in its last redirect, nothing follows its target (`echo > $F` yes, `echo > $F arg` no). Read as true when unset. */
+  redirectEnd?: boolean;
   cwd: string | null;
   /** The wrappers this segment was unwrapped from, outermost first (`env`, `bash`, `$(`, backtick ...). */
   wrappers: string[];
@@ -120,6 +122,8 @@ interface Cmd {
   heredoc: boolean;
   feeds: boolean;
   reason: OpaqueReason | null;
+  /** The command text ends in its last redirect (nothing follows the redirect target); true for redirects inherited from a compound command. */
+  redirectEnd?: boolean;
 }
 
 interface Assign {
@@ -242,6 +246,8 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   // not enumerable: a segment's own keys (and so its serialised form and the pinned digests) stay as they were
   // always set (true or false): a clone that lost the property reads as undefined, which protected.ts treats as fed
   Object.defineProperty(out, "stdinFed", { value: Boolean(c ? c.feeds : sc.stdin), enumerable: false });
+  // not enumerable either: the old delete check read a `> $X` only when the target ended the command (`echo > $F arg` is none)
+  Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
   sc.run.out.push(out);
 }
 
@@ -379,6 +385,9 @@ function doCommand(cmd: Command, sc: Scope): string | null {
     else if (s.type === "Word") words.push(wordOf(s, vars));
     else redirectsOf([s], c, vars);
   }
+  const own = c.redirs.length - sc.redirects.length;
+  const tail = cmd.suffix[cmd.suffix.length - 1];
+  c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" : !cmd.name);
   if (!cmd.name) {
     // standalone assignments (and bare redirects): harmless names, or the closed grammar's own assignment
     const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && harmless(a.assign));
@@ -856,6 +865,21 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     throw e;
   }
   return sc.run.out;
+}
+
+const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
+
+/** The source text of the body of every function, select, coproc and arithmetic for in `cmd` (outermost only) that parses as a script. */
+export function opaqueBodies(cmd: string): string[] {
+  const out: string[] = [];
+  const walk = (n: SyntaxNode): void => {
+    const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
+    // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
+    if (b && typeof b === "object" && b.type !== "Word") out.push(n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end));
+    else forEachChild(n, walk);
+  };
+  walk(parse(cmd));
+  return out;
 }
 
 /** The names a line binds: `names` are the assigned ones, `any` is set when a construct may bind any name (`read`, `for`, `eval`, a parse failure ...). */

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseShell, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, opaqueBodies, parseShell, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
@@ -392,8 +392,13 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env);
   // `-e <pattern>` reads as "keep this", and a pattern that matches nothing deletes the whole tree (the old Python delete check refused it in every mode)
-  if (call.sub === "clean" && call.rest.some((w) => w === "--exclude" || w.startsWith("--exclude=") || /^-(?!-)\S*e/.test(w))) return hit("git-clean-exclude", "`git clean` with `-e` or `--exclude` deletes everything the pattern does not match, and a pattern that matches nothing deletes the whole tree. Name the paths to clean instead; a later change moves this check to the judge.");
-  return null;
+  return call.sub === "clean" ? gitCleanExclude(call) : null;
+}
+
+/** `git clean` with `-e` or `--exclude`: it reads as "keep this", and a pattern that matches nothing deletes the whole tree (the old delete check refused it in every mode). */
+function gitCleanExclude(call: GitCall): FloorHit | null {
+  if (!call.rest.some((w) => w === "--exclude" || w.startsWith("--exclude=") || /^-(?!-)\S*e/.test(w))) return null;
+  return hit("git-clean-exclude", "`git clean` with `-e` or `--exclude` deletes everything the pattern does not match, and a pattern that matches nothing deletes the whole tree. Name the paths to clean instead; a later change moves this check to the judge.");
 }
 
 // ------------------------------------------------------------------ other programs
@@ -458,7 +463,8 @@ function systemRemoval(word: string, env: FloorEnv): boolean {
   if (home && (fold(w.replace(/\/$/, "")) === fold(home) || fold(w.replace(/\/$/, "")) === fold(path.posix.dirname(home)))) return true;
   const lower = w.replace(/\/$/, "").toLowerCase();
   if (SYSTEM_DIRS.some((d) => lower === `/${d}`)) return true;
-  return /^[a-z]:\/?$/.test(lower) || /^[a-z]:\/(windows|users|program files( \(x86\))?|programdata)$/.test(lower);
+  // another user's home folder (`/Users/bob`, `C:\Users\bob`): the old delete check protected the folders one level below these parents
+  return /^[a-z]:\/?$/.test(lower) || /^[a-z]:\/(windows|users|program files( \(x86\))?|programdata)$/.test(lower) || /^[a-z]:\/users\/[^/]+$/.test(lower) || /^\/(users|home|volumes|mnt)\/[^/]+$/.test(lower);
 }
 
 function deleteOperands(seg: ShellSegment, prog: string): string[] {
@@ -530,14 +536,40 @@ function outside(word: string, cwd: string | null, env: FloorEnv): boolean {
 function unknownWriteTarget(seg: ShellSegment, prog: string): string | undefined {
   const a = seg.argv;
   const operands = (): string[] => a.filter((w) => !w.startsWith("-") || w === "-");
-  // the old check read a `>` target that ends the command (nothing after it): the last redirect of a segment without a here-document or an input redirect
+  // the old check read a `>` target that ends the command, nothing after it (`echo > $F arg` is none; the walker sets `redirectEnd`), quoted or not
   const last = seg.redirects[seg.redirects.length - 1];
-  if (last && !seg.heredoc && !seg.redirects.some((r) => r.op === "<" || r.op === "<>") && (last.op === ">" || last.op === ">|" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target)) return last.target;
+  if (last && (seg.redirectEnd ?? true) && (last.op === ">" || last.op === ">|" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target.replace(/^(["'])(.*)\1$/, "$2"))) return last.target;
   if (prog === "dd") return a.find((w) => /^of=/.test(w) && /[$`]/.test(w));
   if ((prog === "chmod" || prog === "chown") && a.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) return operands().slice(1).find((w) => /[$`]/.test(w));
   if (prog === "truncate" && a.some((w) => w === "0" || w === "--size=0" || w === "-s0")) return operands().find((w) => /[$`]/.test(w));
   return undefined;
 }
+
+/** A remover or `find -delete` whose operand is the root, the home directory or a system directory (`rm-system`) or outside the write area (`delete-outside`). */
+function deleteFloor(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
+  if (!(REMOVERS.has(prog) || (prog === "find" && seg.argv.includes("-delete")))) return null;
+  const ops = deleteOperands(seg, prog);
+  const sys = ops.find((w) => systemRemoval(w, env));
+  if (sys !== undefined) return hit("rm-system", `Removing '${sys}' (the file system root, the home directory or a system directory) is never allowed. Remove specific files inside the worktree, scratch or /tmp.`);
+  const out = ops.find((w) => outside(w, seg.cwd ?? env.cwd, env));
+  if (out !== undefined) return hit("delete-outside", `Deleting '${out}' outside the worktree, your scratch dir and /tmp is not allowed. Delete only inside those, or report the path to the user.`);
+  return null;
+}
+
+/** A recursive `chmod`/`chown` on the root, the home directory or a system directory. */
+function chmodFloor(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
+  if (!(OWNERS.has(prog) && seg.argv.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w)))) return null;
+  const sys = seg.argv.filter((w) => !w.startsWith("-")).find((w) => systemRemoval(w, env));
+  if (sys !== undefined) return hit("chmod-system", `A recursive \`${prog}\` on '${sys}' (the file system root, the home directory or a system directory) is never allowed. Change specific files inside the worktree, scratch or /tmp.`);
+  return null;
+}
+
+/** The disk decisions of the old delete check: a `mkfs*` program, `dd of=<device>`, the `diskutil` erase, zero, secure-erase and partition verbs. */
+function pythonDisk(seg: ShellSegment, prog: string): boolean {
+  return prog.startsWith("mkfs") || (prog === "dd" && seg.argv.some((w) => /^of=(\/dev\/|\\\\\.\\)/i.test(w))) || (prog === "diskutil" && seg.argv.some((w) => /^(erase|partition|reformat|zero|secure|apfs)/i.test(w)));
+}
+
+const unknownWriteHit = (target: string): FloorHit => hit("unknown-write-target", `The target '${cutFragment(target)}' of this write, truncation or recursive permission change is a variable the gate cannot read, so it could be any path. Name the path literally; a later change moves this check to the judge.`);
 
 /** The floors of one segment, with the fragment of the denial: the program word and the operand the reason names (else the first arguments). */
 export function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
@@ -564,19 +596,10 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
   }
   if (prog === "dd" && seg.argv.some((w) => /^of=(\/dev\/|\\\\\.\\)/i.test(w))) return hit("disk", "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
   const unreadable = unknownWriteTarget(seg, prog);
-  if (unreadable !== undefined) return hit("unknown-write-target", `The target '${cutFragment(unreadable)}' of this write, truncation or recursive permission change is a variable the gate cannot read, so it could be any path. Name the path literally; a later change moves this check to the judge.`);
+  if (unreadable !== undefined) return unknownWriteHit(unreadable);
   for (const r of seg.redirects) if (r.op !== "<" && r.op !== "dup" && /^\/dev\/(sd|nvme|hd|vd|xvd|disk|rdisk|mmcblk)/i.test(r.target)) return hit("disk", "Redirecting into a block device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
-  if (REMOVERS.has(prog) || (prog === "find" && seg.argv.includes("-delete"))) {
-    const ops = deleteOperands(seg, prog);
-    const sys = ops.find((w) => systemRemoval(w, env));
-    if (sys !== undefined) return hit("rm-system", `Removing '${sys}' (the file system root, the home directory or a system directory) is never allowed. Remove specific files inside the worktree, scratch or /tmp.`);
-    const out = ops.find((w) => outside(w, seg.cwd ?? env.cwd, env));
-    if (out !== undefined) return hit("delete-outside", `Deleting '${out}' outside the worktree, your scratch dir and /tmp is not allowed. Delete only inside those, or report the path to the user.`);
-  }
-  if (OWNERS.has(prog) && seg.argv.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) {
-    const sys = seg.argv.filter((w) => !w.startsWith("-")).find((w) => systemRemoval(w, env));
-    if (sys !== undefined) return hit("chmod-system", `A recursive \`${prog}\` on '${sys}' (the file system root, the home directory or a system directory) is never allowed. Change specific files inside the worktree, scratch or /tmp.`);
-  }
+  const del = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
+  if (del) return del;
   const dests = overwriteDests(seg, prog);
   const dout = dests.find((w) => w !== "" && outside(w, seg.cwd ?? env.cwd, env));
   if (dout !== undefined) return hit("overwrite-outside", `A recursive copy or extract into '${dout}' overwrites files outside the worktree, your scratch dir and /tmp. Extract into your scratch dir or /tmp first.`);
@@ -1005,6 +1028,8 @@ const PS_REMOVERS = new Set(["remove-item", "ri", "rm", "rmdir", "rd", "del", "e
 /** `-Recurse` (any prefix of it, also `-Recurse:$true`), a cmd switch cluster holding `s` (`/s`, `/s/q`, `/q/s`), and the `rm`-style `-r`, `-rf`, `-fr`. */
 const PS_RECURSE = /^(?:-r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?(?::\S*)?|\/(?:[a-z]\/)*s(?:\/[a-z])*|-rf|-fr)$/i;
 const CMD_SWITCHES = /^\/[a-z](?:\/[a-z])*(?::\S*)?$/i;
+const PS_CD = new Set(["cd", "chdir", "sl", "set-location", "pushd", "push-location"]);
+const PS_DOWNLOAD = /\b(?:iwr|irm|curl|wget|invoke-webrequest|invoke-restmethod|downloadstring|downloadfile|start-bitstransfer|webclient)\b/i;
 const PS_ENCODED = /^-e(?:c|nc(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)?)?)?)?)?)?$/i;
 
 /**
@@ -1021,29 +1046,69 @@ const foreignSegments = (segments: ShellSegment[]): boolean => segments.some((s)
 
 /** An operand with the environment words a PowerShell or cmd unit uses replaced by fixed text: the floor env's home and `C:\Windows`; reads no environment, same on every OS. */
 function psOperand(word: string, env: FloorEnv): string {
-  const w = word.replace(/^(["'])(.*)\1$/, "$2");
+  // `FileSystem::C:\x` and `\\?\C:\x` name the same path as `C:\x`
+  const w = word.replace(/^(["'])(.*)\1$/, "$2").replace(/^(?:[\w.]+\\)?filesystem::/i, "").replace(/^\\\\\?\\/, "");
   const home = env.home ? env.home : null;
   const homed = home ? w.replace(/^(?:~|\$home|\$env:userprofile|\$\{env:userprofile\}|%userprofile%)(?=[\\/]|$)/i, () => home) : w;
   return homed.replace(/^(?:\$env:systemroot|\$\{env:systemroot\}|%systemroot%|\$env:windir|\$\{env:windir\}|%windir%)(?=[\\/]|$)/i, "C:\\Windows");
 }
 
-/** The remover words of a unit: the operands (flags dropped) when it is a PowerShell or cmd delete with a recursive flag, else null. */
+/** `-Recurse` as a word: not `-Recurse:$false` or `-Recurse:0`. */
+const psRecurses = (w: string): boolean => PS_RECURSE.test(w) && !/^-\w+:(?:\$false|0)$/i.test(w);
+
+/** A Remove-Item parameter that names the path (`-Path`, `-LiteralPath`, any prefix of them, `-LP`, `-PSPath`). */
+const psPathParam = (name: string): boolean => name !== "" && ("path".startsWith(name) || "literalpath".startsWith(name) || name === "lp" || name === "pspath");
+
+/** The arguments `iex` runs: the words after `iex`, less a leading `-Command` (any other parameter is not Invoke-Expression's: `iex -S mix` is Elixir's shell). */
+function iexArgs(words: string[]): string[] {
+  const rest = words.slice(1);
+  const flag = /^-(\w*)/.exec(rest[0] ?? "");
+  if (!flag) return rest;
+  return flag[1] !== "" && "command".startsWith(flag[1].toLowerCase()) ? rest.slice(1) : [];
+}
+
+/** The literal string `iex` runs (`iex 'Remove-Item ...'`, or a double-quoted one without `$` or a backtick), else null. */
+function iexBody(words: string[]): string | null {
+  const arg = iexArgs(words).join(" ");
+  const single = /^'((?:[^']|'')*)'$/.exec(arg);
+  if (single) return single[1].replace(/''/g, "'");
+  return /^"([^"`$]*)"$/.exec(arg)?.[1] ?? null;
+}
+
+/** The remover words of a unit: the operands (flags dropped; `-Path:x` and a comma list split) when it is a PowerShell or cmd delete with a recursive flag, else null. */
 function psRecursiveDelete(words: string[]): string[] | null {
   if (!PS_REMOVERS.has(base(words[0]))) return null;
   const rest = words.slice(1);
-  if (!rest.some((w) => PS_RECURSE.test(w))) return null;
-  return rest.filter((w) => !/^-/.test(w) && !CMD_SWITCHES.test(w));
+  if (!rest.some(psRecurses)) return null;
+  const ops: string[] = [];
+  for (const w of rest) {
+    const named = /^-([a-z]+):(.*)$/i.exec(w);
+    if (named) {
+      if (psPathParam(named[1].toLowerCase())) ops.push(...named[2].split(",").filter(Boolean).concat(named[2] === "" ? [""] : []));
+      continue;
+    }
+    if (!/^-/.test(w) && !CMD_SWITCHES.test(w)) ops.push(...(w.includes(",") ? w.split(",").filter(Boolean) : [w]));
+  }
+  return ops;
 }
 
 /**
  * The floors of the PowerShell units of a line (O4): a recursive delete whose target is the home directory, the file system root or a system folder
  * (`systemRemoval`, after the fixed substitution of psOperand) is `rm-system`; `Format-Volume`, `Clear-Disk`, `Remove-Partition`, `diskpart` and `format X:` are `disk`.
  */
-function psUnitFloors(line: string, env: FloorEnv): FloorHit | null {
+function psUnitFloors(line: string, env: FloorEnv, depth = 0): FloorHit | null {
   const diskRe = RAW.find((r) => r.name === "disk")!;
   for (const words of psUnits(line)) {
     const text = words.join(" ");
     if (diskRe.re.test(text) || /^format(?:\.exe|\.com)?\s+[a-z]:/i.test(text)) return hit("disk", diskRe.reason, text);
+    if (/^(?:iex|invoke-expression)$/.test(base(words[0]))) {
+      // `iex` of a literal string runs that string's units; of a download, unreviewed code
+      const body = iexBody(words);
+      if (body !== null) {
+        const inner = depth < MAX_DEPTH ? psUnitFloors(body, env, depth + 1) : null;
+        if (inner) return inner;
+      } else if (PS_DOWNLOAD.test(text)) return hit("download-shell", RAW.find((r) => r.name === "download-shell")!.reason, text);
+    }
     const ops = psRecursiveDelete(words);
     if (!ops) continue;
     const subst = ops.map((o) => psOperand(o, env));
@@ -1062,7 +1127,7 @@ function psOutsideDelete(line: string, env: FloorEnv): FloorHit | null {
   for (const words of psUnits(line)) {
     const ops = psRecursiveDelete(words);
     if (!ops) continue;
-    const out = ops.map((o) => psOperand(o, env)).find((o) => !/[$%@]/.test(o) && outside(o, env.cwd, env));
+    const out = ops.map((o) => psOperand(o, env)).find((o) => !/[$%@]/.test(o) && (outside(o, env.cwd, env) || ((env.platform ?? process.platform) !== "win32" && /^[a-z]:[\\/]/i.test(o))));
     if (out !== undefined) return { rule: "floor-delete-outside", kind: "ask", reason: `A recursive PowerShell or cmd delete of '${cutFragment(out)}' outside the worktree, your scratch dir and /tmp needs the owner's answer until the permission modes go.`, fragment: cutFragment(words.join(" ")) };
   }
   return null;
@@ -1074,6 +1139,8 @@ export interface UnknownDelete {
   reason: string;
   /** Also a floor until the permission modes go (`lineFloors`): the forms the owner decided to refuse in every mode; the other forms keep the label only. */
   floor: boolean;
+  /** A floor of the kind `ask` (the old check asked): a dialog for the owner in every mode, refused for a child; the label stays for the judge. */
+  ask?: boolean;
 }
 
 const UNKNOWN_DELETE = (why: string, floor = true): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})`, floor });
@@ -1104,6 +1171,15 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
   return hits.find((h) => h.floor) ?? hits[0] ?? null;
 }
 
+/** The floors of the label's predicate: a deny for a hit that is a floor, else an ask for a hit the old check asked on (a PowerShell form it could not read). */
+function unknownFloor(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
+  const hits = unknownTargetDeletes(text, segments, env);
+  const deny = hits.find((h) => h.floor);
+  if (deny) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${deny.reason}). Name the path literally; a later change moves this check to the judge.`, text);
+  const ask = hits.find((h) => h.ask);
+  return ask ? { rule: "floor-ps-unreadable", kind: "ask", reason: `This PowerShell command cannot be read (${ask.reason}); the owner decides until the judge-first change lands.`, fragment: cutFragment(text) } : null;
+}
+
 function unknownTargetDeletes(text: string, segments: ShellSegment[], env: FloorEnv): UnknownDelete[] {
   const hits: UnknownDelete[] = [];
   const win = (env.platform ?? process.platform) === "win32";
@@ -1123,41 +1199,220 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
       }
     }
     if (prog === "find" && argv.includes("-delete") && deleteOperands(s, prog).some((w) => w === "" || /[$`]/.test(w))) hits.push(UNKNOWN_DELETE("find -delete from a start path that is a variable"));
-    const exec = prog === "find" ? argv.findIndex((w) => EXEC_WORDS.has(w)) : -1;
-    if (exec >= 0) {
-      const tail = argv.slice(exec + 1);
-      const end = tail.findIndex((w) => w === ";" || w === "+");
-      const cmd = end >= 0 ? tail.slice(0, end) : tail;
-      const removes = cmd.some((w) => base(w) === "rm") && cmd.some((w) => RM_RECURSIVE.test(w));
-      const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && removerInString(cmd.join(" "));
-      if (removes || viaRunner) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
-    }
+    if (prog === "find" && argv.includes("-delete") && s.cwd === null && deleteOperands(s, prog).every((w) => !px_(win).isAbsolute(w) && !w.startsWith("~"))) hits.push(UNKNOWN_DELETE("find -delete from a directory changed through a variable"));
+    if (prog === "shred" && deleteOperands(s, prog).some((w) => w === "" || /[$`]/.test(w))) hits.push(UNKNOWN_DELETE("shred of a variable or empty operand"));
+    if (prog === "find" && findExecRemoves(argv)) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
     // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so its words are scanned as a runner's string under find -exec is
     if (s.opaque === "nonliteral_script" && removerInString([s.program, ...argv].join(" "))) hits.push(UNKNOWN_DELETE("a remover inside a script string built at run time"));
     if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
-    if (prog === "git" && argv.some((w) => /[$`]/.test(w))) {
+    if (prog === "git" && argv.some((w) => /[$`]/.test(w) || w === "")) {
       const call = gitCall(s, env);
-      if (call?.sub === "clean") hits.push(UNKNOWN_DELETE("git clean with a variable operand", false));
+      if (call?.sub === "clean") hits.push(UNKNOWN_DELETE("git clean with a variable operand"));
     }
   }
-  if (foreignSegments(segments)) {
-    const units = psUnits(text);
-    const recursiveElsewhere = units.some((w) => w.slice(1).some((x) => PS_RECURSE.test(x)));
-    for (const words of units) {
-      // a floor only where a word of the delete is a variable (`-Recurse:$true` and `/s/q` are switches); a literal PowerShell delete keeps the label
-      if (psRecursiveDelete(words)) hits.push(UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", words.slice(1).some((x) => (!/^-/.test(x) && !CMD_SWITCHES.test(x) && /[$%]/.test(x)) || /^-(?:path|literalpath|lp|pspath):\S*[$%]/i.test(x))));
-      if (PS_REMOVERS.has(base(words[0]))) {
-        const rest = words.slice(1);
-        if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) hits.push(UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false));
-        if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push(UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false));
+  if (foreignSegments(segments)) hits.push(...psUnknownDeletes(text, 0));
+  return hits;
+}
+
+/** The PowerShell and cmd forms of `unknownTargetDeletes`, read from the units of `text` (the literal string of an `iex` is read as units too). */
+function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
+  const hits: UnknownDelete[] = [];
+  const units = psUnits(text);
+  const recursiveElsewhere = units.some((w) => w.slice(1).some(psRecurses));
+  // the old check took any `cd` (`Set-Location`, `Push-Location` ...) as the end of a known directory: a relative target after one names a directory nobody can point at
+  let moved = false;
+  for (const words of units) {
+    const p = base(words[0]);
+    const ops = psRecursiveDelete(words);
+    // a floor only where a word of the delete is a variable (`-Recurse:$true` and `/s/q` are switches), is empty, or is relative to a changed directory; a literal PowerShell delete keeps the label
+    if (ops) {
+      const variable = ops.some((o) => /[$%]/.test(o)) || words.slice(1).some((x) => /^-(?:path|literalpath|lp|pspath):\S*[$%]/i.test(x));
+      const empty = ops.some((o) => o.replace(/^(["'])(.*)\1$/, "$2") === "");
+      hits.push(UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", variable || empty));
+      if (moved) {
+        const rel = ops.map((o) => o.replace(/^(["'])(.*)\1$/, "$2")).filter((o) => !/[$%]/.test(o) && !o.startsWith("~") && !slash(o).startsWith("/"));
+        if (rel.some((o) => ["*", ".", ".."].includes(slash(o).replace(/\/$/, "") || o))) hits.push(UNKNOWN_DELETE("a recursive PowerShell delete of the whole directory after a directory change"));
+        else if (rel.length) hits.push({ ...UNKNOWN_DELETE("a relative recursive PowerShell delete after a directory change", false), ask: true });
       }
-      const p = base(words[0]);
-      if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) hits.push(UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false));
-      if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) hits.push(UNKNOWN_DELETE("iex of a computed string cannot be read", false));
     }
+    if (PS_REMOVERS.has(p)) {
+      const rest = words.slice(1);
+      if (/^(?:remove-item|ri)$/i.test(p) && rest.some((x) => /^@\w+$/.test(x))) hits.push({ ...UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false), ask: true });
+      if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
+    }
+    if ((p === "pwsh" || p === "powershell") && words.slice(1, ((i) => (i < 0 ? words.length : i))(words.findIndex((w) => /^-c(?:ommand)?$/i.test(w)))).some((w) => PS_ENCODED.test(w))) hits.push({ ...UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false), ask: true });
+    if ((p === "pwsh" || p === "powershell") && depth < MAX_DEPTH) {
+      const c = words.findIndex((w) => /^-c(?:ommand)?$/i.test(w));
+      if (c > 0 && c < words.length - 1) hits.push(...psUnknownDeletes(words.slice(c + 1).join(" "), depth + 1));
+    }
+    if (p === "iex" || p === "invoke-expression") {
+      const body = iexBody(words);
+      if (body !== null) {
+        if (depth < MAX_DEPTH) hits.push(...psUnknownDeletes(body, depth + 1));
+      } else if (iexArgs(words).length > 0 && !PS_DOWNLOAD.test(words.join(" "))) hits.push({ ...UNKNOWN_DELETE("iex of a computed string cannot be read", false), ask: true });
+    }
+    if (PS_CD.has(p)) moved = true;
   }
   return hits;
 }
+
+// ------------------------------------------------------------------ recursing paths (PR B2): the checks of the old delete check, one function for every nested command
+
+/** Where a nested command runs: this machine, another one over `ssh` (a recursive `rm` there runs: the owner's exception), or in a container (every kind refused). */
+type Where = "local" | "ssh" | "container";
+
+/** Options of `ssh`, `docker`/`podman` `exec`/`run` and `kubectl exec` that take a value in the next word. */
+const REMOTE_VALUE_OPTS = new Set(["-p", "-i", "-l", "-o", "-F", "-J", "-L", "-R", "-D", "-b", "-c", "-e", "-E", "-I", "-m", "-O", "-Q", "-S", "-w", "-B", "-W", "-u", "-v", "-n", "-f", "-l", "-p", "--user", "--env", "--workdir", "--env-file", "--volume", "--name", "--publish", "--entrypoint", "--network", "--label", "--mount", "--namespace", "--container", "--filename", "--context", "--kubeconfig", "--image"]);
+
+/** The words of the command an `ssh`, `docker`/`podman` `exec`/`run` or `kubectl exec` segment runs elsewhere, else null: after the options and the operand that names the target (host, container, pod, image); `kubectl` takes it after `--`. */
+function remoteCommand(seg: ShellSegment, prog: string): { words: string[]; where: Where } | null {
+  const a = seg.argv;
+  let i = 0;
+  if (prog !== "ssh") {
+    if (!["docker", "podman", "kubectl"].includes(prog) || (a[0] !== "exec" && a[0] !== "run")) return null;
+    i = 1;
+    const dd = prog === "kubectl" ? a.indexOf("--", i) : -1;
+    if (dd >= 0) return { words: a.slice(dd + 1), where: "container" };
+  }
+  for (; i < a.length; i++) {
+    if (a[i] === "--") {
+      i++;
+      break;
+    }
+    if (a[i].startsWith("-") && a[i].length > 1) {
+      if (REMOTE_VALUE_OPTS.has(a[i])) i++;
+      continue;
+    }
+    break;
+  }
+  return { words: a.slice(i + 1), where: prog === "ssh" ? "ssh" : "container" };
+}
+
+const quoteWord = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
+
+/** The find tail (`-exec`, `-execdir`, `-ok`, `-okdir` up to its terminator) is a recursive remover, run directly or through a runner's string. */
+function findExecRemoves(argv: string[]): boolean {
+  const exec = argv.findIndex((w) => EXEC_WORDS.has(w));
+  if (exec < 0) return false;
+  const tail = argv.slice(exec + 1);
+  const end = tail.findIndex((w) => w === ";" || w === "+");
+  const cmd = end >= 0 ? tail.slice(0, end) : tail;
+  return (cmd.some((w) => base(w) === "rm") && cmd.some((w) => RM_RECURSIVE.test(w))) || (RUNNERS.has(base(cmd[0] ?? "")) && removerInString(cmd.join(" ")));
+}
+
+/** What a nested command does that the old check refused on another machine or in a container, else null; `rmOk` leaves a recursive rm out (ssh). */
+function remoteKind(seg: ShellSegment, prog: string, env: FloorEnv, rmOk: boolean): string | null {
+  const a = seg.argv;
+  const removes = (prog === "rm" && a.some((w) => RM_RECURSIVE.test(w))) || (prog === "find" && findExecRemoves(a)) || (seg.opaque === "nonliteral_script" && removerInString([seg.program, ...a].join(" ")));
+  if (removes && !rmOk) return "a recursive rm";
+  if (/[$`]/.test(seg.program) && !/[=\s]/.test(seg.program) && a.some((w) => VAR_CMD_RECURSIVE.test(w))) return "a command word that is a variable with a recursive flag";
+  if (prog === "shred") return "shred";
+  if (prog === "find" && a.includes("-delete")) return "find -delete";
+  if (pythonDisk(seg, prog)) return "a disk format or erase";
+  if (unknownWriteTarget(seg, prog) !== undefined) return "a write, truncation or recursive permission change whose target is a variable";
+  if (OWNERS.has(prog) && a.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w)) && a.filter((w) => !w.startsWith("-")).some((w) => systemRemoval(w, env))) return "a recursive permission change on a system path";
+  const call = prog === "git" ? gitCall(seg, env) : null;
+  if (call?.sub === "clean" && (gitCleanExclude(call) || a.some((w) => /[$`]/.test(w) || w === ""))) return "git clean with -e or a variable operand";
+  return null;
+}
+
+/** A PowerShell or cmd delete or disk command among the units of `text`: the old check read them in a remote command too. */
+function psRemoteKind(text: string): string | null {
+  if (psUnknownDeletes(text, 0).some((h) => h.floor || h.ask)) return "a PowerShell command that cannot be read";
+  const diskRe = RAW.find((r) => r.name === "disk")!;
+  for (const words of psUnits(text)) {
+    if (psRecursiveDelete(words)) return "a recursive PowerShell or cmd delete";
+    const t = words.join(" ");
+    if (diskRe.re.test(t) || /^format(?:\.exe|\.com)?\s+[a-z]:/i.test(t)) return "a disk format or erase";
+  }
+  return null;
+}
+
+const withFragment = (h: FloorHit, seg: ShellSegment): FloorHit => (h.fragment ? h : { ...h, fragment: cutFragment([seg.program, ...seg.argv].join(" ")) });
+
+/** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, an applet's words). */
+function localKind(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
+  const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
+  if (d) return withFragment(d, seg);
+  if (pythonDisk(seg, prog)) return withFragment(hit("disk", `\`${prog}\` formats, erases or overwrites a disk. Ask the user.`), seg);
+  const unreadable = unknownWriteTarget(seg, prog);
+  if (unreadable !== undefined) return withFragment(unknownWriteHit(unreadable), seg);
+  const call = prog === "git" ? gitCall(seg, env) : null;
+  const clean = call?.sub === "clean" ? gitCleanExclude(call) : null;
+  return clean ? withFragment(clean, seg) : null;
+}
+
+/** The script a shell (`-c`, cmd's `/c`, PowerShell's `-Command`) or `eval` reads as code, outer quotes taken off: the old check read these strings as lines of their own, a literal one or not. */
+function scriptsOf(seg: ShellSegment, prog: string): string[] {
+  const unquote = (w: string): string => w.replace(/^(["'])([\s\S]*)\1$/, "$2");
+  if (prog === "eval") return seg.argv.length ? [unquote(seg.argv.join(" "))] : [];
+  if (!SHELLS.has(prog)) return [];
+  const i = seg.argv.findIndex((w) => /^-[a-z]*c$/i.test(w) || /^\/[ck]$/i.test(w) || /^-command$/i.test(w));
+  const rest = i < 0 ? [] : seg.argv.slice(i + 1);
+  return rest.length ? [unquote(prog === "cmd" || prog === "pwsh" || prog === "powershell" ? rest.join(" ") : rest[0])] : [];
+}
+
+/** The segments of the applet behind `busybox` or `toybox` (`busybox rm -rf ~` is an `rm`): the same segment with the applet as its program; the words are kept as the applet reads them. */
+function appletOf(seg: ShellSegment): ShellSegment {
+  let s = seg;
+  while (/^(?:busybox|toybox)$/.test(base(s.program)) && s.argv.length > 0 && !s.argv[0].startsWith("-")) s = { ...s, program: s.argv[0], argv: s.argv.slice(1) };
+  return s;
+}
+
+/**
+ * The Python-kind check set (PR B2, owner decisions of 2026-11-18 and 2026-11-19): what the old delete check refused in every mode, read from parsed segments and run
+ * on every path that nests a command the parser does not unwrap itself: the body of a shell function, the applet behind `busybox`/`toybox`, and the command of
+ * `ssh`, `docker`/`podman` `exec`/`run` and `kubectl exec` (every kind there, a recursive `rm` over ssh excepted). The marker of the outer segment (`function_def`,
+ * the runner's `unsupported`) stays as it was, so mode `auto` and the other floors see these lines as before; only the old check's decisions are added.
+ * Until PR C moves them to the judge. `top` is the line itself: its own segments were judged by `segmentFloors` already.
+ */
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean): FloorHit | null {
+  if (depth > MAX_DEPTH) return null;
+  const eff: ShellSegment[] = [];
+  for (const s of segs) {
+    const seg = appletOf(s);
+    const prog = base(seg.program);
+    const applet = seg !== s;
+    eff.push(seg);
+    const remote = remoteCommand(seg, prog);
+    if (remote && remote.words.length > 0) {
+      const inWhere: Where = where === "container" || remote.where === "container" ? "container" : "ssh";
+      // ssh joins its words into one string for the remote shell; a quoted string after a container name is read as the script it is
+      const rtext = remote.where === "ssh" || remote.words.length === 1 ? remote.words.join(" ") : remote.words.map(quoteWord).join(" ");
+      const inner = parseShell(rtext, { cwd: seg.cwd, platform: env.platform });
+      const h = pythonKinds(rtext, inner, env, inWhere, depth + 1, false);
+      if (h) return withFragment(h, seg);
+      const ps = psRemoteKind(rtext);
+      if (ps) return withFragment(remoteHit(ps, inWhere), seg);
+    }
+    if (where !== "local") {
+      const kind = remoteKind(seg, prog, env, where === "ssh");
+      if (kind) return withFragment(remoteHit(kind, where), seg);
+      continue;
+    }
+    for (const script of scriptsOf(seg, prog)) {
+      const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false);
+      if (h) return withFragment(h, seg);
+    }
+    if (!top || applet) {
+      const h = localKind(seg, prog, env);
+      if (h) return h;
+    }
+  }
+  if (where === "local" && (!top || eff.some((s, i) => s !== segs[i]))) {
+    const unknown = unknownFloor(text, eff, env);
+    if (unknown) return unknown;
+  }
+  if (segs.some((s) => s.opaque === "function_def")) {
+    for (const body of opaqueBodies(text)) {
+      const h = pythonKinds(body, parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) }), env, where, depth + 1, false);
+      if (h) return h;
+    }
+  }
+  return null;
+}
+
+const remoteHit = (kind: string, where: Where): FloorHit => hit("remote-command", `${kind} on another machine or in a container (${where === "ssh" ? "ssh" : "docker, podman or kubectl"}) cannot be checked from here. Run it by hand or ask the user; a later change moves this check to the judge.`);
 
 // ------------------------------------------------------------------ raw text
 
@@ -1390,10 +1645,13 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
     const h = segmentFloors(s, env, segments);
     if (h) return h;
   }
+  // PR B2: the old check's decisions on the paths that nest a command (function bodies, busybox and toybox applets, ssh and containers)
+  const nested = pythonKinds(text, segments, env, "local", 0, true);
+  if (nested?.kind === "deny") return nested;
   // until the permission modes go (PR C moves this to the judge): a recursive delete the gate cannot read is refused in every mode, by the predicate of the label
-  const unknown = unknownTargetDelete(text, segments, env);
-  if (unknown?.floor) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${unknown.reason}). Name the path literally; a later change moves this check to the judge.`, text);
-  return pending ?? (foreignSegments(segments) ? psOutsideDelete(text, env) : null);
+  const unknown = unknownFloor(text, segments, env);
+  if (unknown?.kind === "deny") return unknown;
+  return pending ?? nested ?? unknown ?? (foreignSegments(segments) ? psOutsideDelete(text, env) : null);
 }
 
 /**
