@@ -23,7 +23,11 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   6: { dir: "stricter", why: "the redirect target ends its command by the parser's node offsets: a trailing comment or a closing `)` no longer hides `> $F` (the Python regex let `echo hi > $F # c` and `( echo hi > $F )` run)" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
   8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs until PR C; no text match, no program list" },
-  10: { dir: "stricter", why: "owner 2026-11-19: coproc bodies, stricter until PR C: `coproc { rm -rf ~; }`, `coproc { rm -rf $X; }` and `coproc { find $X -delete; }` ran before (the Python guard and the floors at f0d8b980 looked inside no coproc); their bodies are checked now" },
+  10: { dir: "stricter", why: "owner 2026-11-19: coproc bodies, stricter until PR C: every body kind (`coproc { rm -rf ~; }`, `rm -rf $X`, `find $X -delete`, `chmod -R $D`, `truncate`, `dd of=$F`, `git clean -e`, `shred`, `mkfs`) ran before (the Python guard and the floors at f0d8b980 looked inside no coproc); their bodies are checked now" },
+  11: { dir: "looser", why: "owner 2026-11-19: a remote compound (an ssh or container string wrapped in if/while/for/until/{ }) gets the verdict of its plain form, looser than the Python text match, until PR C" },
+  12: { dir: "stricter", why: "owner 2026-11-19: a shell that reads a here-string (`bash <<< '...'`, behind wrappers, `docker exec -i`, ssh) is checked and refused like `-c`; the Python guard and the floors at f0d8b980 did not look at it, until PR C" },
+  13: { dir: "stricter", why: "owner 2026-11-19: a `$( )` or `<( )` nested past the walker's depth (4) with content is refused as unreadable, harmless lines included (`echo $(echo ...x5)`), until PR C" },
+  14: { dir: "looser", why: "builder round of 2026-11-19: under `xargs` the stdin text becomes arguments, never the program (`xargs bash <<'E'`): the Python text match refused it, the gate no longer reads the body as code" },
 };
 
 const base = fs.realpathSync(mkTestTmp("pf-parity-"));

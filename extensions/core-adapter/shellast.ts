@@ -78,6 +78,25 @@ export interface ShellParseOptions {
 
 export const MAX_DEPTH = 4;
 
+/**
+ * Whether a shell given these arguments (and no `-c` string) reads its program from stdin: it has no script operand, or `-s` says so. The options that take a value
+ * (`-o name`, `-O name`, also inside a cluster such as `-euo pipefail`) are stepped over as the walker's own shell case steps over them.
+ */
+export function shellReadsStdin(argv: string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    const v = argv[i];
+    if (v === "--") return i + 1 >= argv.length;
+    if (v === "-") return true;
+    if (v.startsWith("--")) continue;
+    if (!/^[-+][A-Za-z]/.test(v)) return false;
+    for (const ch of v.slice(1)) {
+      if (ch === "s" && v[0] === "-") return true;
+      if (ch === "o" || ch === "O") i++;
+    }
+  }
+  return true;
+}
+
 const HARMLESS = new Set(["LANG", "TZ", "NO_COLOR", "FORCE_COLOR", "CI", "DEBUG", "NODE_ENV", "PYTHONDONTWRITEBYTECODE", "GIT_PAGER", "PAGER"]);
 export const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
 const INTERPRETERS = new Set([...SHELLS, "node", "nodejs", "bun", "deno", "python", "python2", "python3", "perl", "ruby", "php", "lua", "rscript"]);
@@ -344,9 +363,17 @@ function walkNode(n: any, sc: Scope): string | null {
   switch (n.type) {
     case "Command":
       return doCommand(n as Command, sc);
-    case "Pipeline":
-      (n.commands as CommandNode[]).forEach((cmd, i) => walkNode(cmd, { ...sc, stdin: sc.stdin || i > 0 }));
+    case "Pipeline": {
+      let docs = sc.docs;
+      (n.commands as CommandNode[]).forEach((cmd, i) => {
+        const before = sc.run.out.length;
+        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0 });
+        // a here-document of one command flows down the pipe: the shell at the end of `cat <<E | bash` reads its body as code
+        const fed = sc.run.out.slice(before).flatMap((x) => x.heredocs ?? []);
+        if (fed.length) docs = [...new Set([...docs, ...fed])];
+      });
       return sc.cwd;
+    }
     case "AndOr": {
       let cwd = sc.cwd;
       (n.commands as CommandNode[]).forEach((cmd, i) => {

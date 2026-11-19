@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, beforeParseError, parseShell, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
@@ -1361,12 +1361,33 @@ function scriptsOf(seg: ShellSegment, prog: string): string[] {
   return rest.length ? [unquote(prog === "cmd" || prog === "pwsh" || prog === "powershell" ? rest.join(" ") : rest[0])] : [];
 }
 
-/** A shell that reads its program from stdin (no `-c` string, no script file) runs the here-document or here-string on it as code: the texts, else none. */
+/** Under `xargs` the stdin text becomes arguments of the command, never its program. */
+const underXargs = (seg: ShellSegment): boolean => seg.wrappers.some((w) => base(w) === "xargs");
+
+/** A shell that reads its program from stdin (no `-c` string, no script file; `-s` and the values of `-o`/`-O` read as the parser reads them) runs the here-document or here-string on it as code: the texts, else none. */
 function heredocScripts(seg: ShellSegment, prog: string): string[] {
-  if (!(SHELLS.has(prog) || prog === "ash") || !seg.heredocs?.length) return [];
-  if (scriptsOf(seg, prog).length > 0 || seg.argv.some((w) => !w.startsWith("-"))) return [];
+  if (!(SHELLS.has(prog) || prog === "ash") || !seg.heredocs?.length || underXargs(seg)) return [];
+  if (scriptsOf(seg, prog).length > 0 || !shellReadsStdin(seg.argv)) return [];
   return seg.heredocs;
 }
+
+const SSH_VALUED = new Set("bcDEeFIiJLlmOopQRSWw");
+
+/** Whether an `ssh` call names a remote command after the host (the options that take a value are stepped over); without one the remote shell reads stdin as its program. */
+function sshHasCommand(words: string[]): boolean {
+  let operands = 0;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w === "--") return words.length - i - 1 + operands > 1;
+    if (w.length > 1 && w.startsWith("-")) {
+      const at = [...w.slice(1)].findIndex((ch) => SSH_VALUED.has(ch));
+      if (at >= 0 && at === w.length - 2) i++;
+    } else operands++;
+  }
+  return operands > 1;
+}
+
+const tooDeepHit = (text: string): FloorHit => hit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels). Run the inner command plainly.`, text);
 
 /** Hangs the stdin texts of `outer` on the segments parsed from what it unwrapped (the parser leaves the property off a clone). */
 function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
@@ -1387,6 +1408,8 @@ const NORMALISE_DEPTH = 16;
 function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true): FloorHit | null {
   // fail closed: a nesting this deep is not read
   if (depth > NORMALISE_DEPTH) return hit("delete-unknown-target", "This command nests wrappers too deep to be read. Run the command plainly.", text);
+  // every text parsed again (a string, a here-document, a body, the words behind a wrapper or a host) may hold a `$( )` the walker stopped at: refused unread as at the top
+  if (segs.some((s) => s.tooDeep)) return tooDeepHit(text);
   for (const seg of segs) {
     const prog = base(seg.program);
     // one normaliser for every entry point: a privilege program or multiplexer is taken off, the rest is parsed again and gets the whole check (strings, eval, bodies, xargs,
@@ -1396,7 +1419,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (rest) {
       const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
-      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}) }));
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
       withHeredocs(inner, seg);
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, rmAsks && !PRIVILEGE.has(prog) && seg.wrappers.length === 0);
@@ -1418,14 +1441,14 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         const ctext = remote.words.slice(at).join(" ");
         if (ctext !== rtext) {
           // each command of the compound stands where the plain path has the host: a word after the program, so the same rules read it as read `ssh h 'cmd'`
-          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}) }));
+          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
           withHeredocs(cparsed, seg);
           texts.push([ctext, cparsed]);
           compound = cparsed;
         }
       }
-      // a shell in the remote command reads the here-document of this segment as its program
-      if (seg.heredocs?.length && remote.words.some((w) => SHELLS.has(base(w)))) for (const body of seg.heredocs) texts.push([body, parseShell(body, { cwd: seg.cwd, platform: env.platform })]);
+      // a shell in the remote command reads the here-document of this segment as its program, and so does the login shell of an `ssh` that names no command
+      if (seg.heredocs?.length && !underXargs(seg) && (remote.words.some((w) => SHELLS.has(base(w))) || (prog === "ssh" && !sshHasCommand(remote.words)))) for (const body of seg.heredocs) texts.push([body, parseShell(body, { cwd: seg.cwd, platform: env.platform })]);
       // the old check refused a recursive rm anywhere in the text first; over ssh that is the owner's exception, and the text is not read further
       if (texts.some(([, parsed]) => parsed.some((x) => wordsRemove([x.program, ...x.argv])))) {
         if (inWhere === "ssh") continue;
@@ -1438,8 +1461,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, rmAsks);
         if (h) return withFragment(h, seg);
       }
-      // the compound's own units, each behind the host as the plain path reads a command (the joined text would put the keywords at command position); a function body is read as it stands
-      const ps = psRemoteKind(compound ? compound.flatMap((x) => [[x.program, ...x.argv].join(" "), ...(x.bodies ?? [])]).join("; ") : rtext);
+      // the compound's own units, each behind the host as the plain path reads a command (the joined text would put the keywords at command position); a function body stands behind the host when the function is the first command, as in the body check below
+      const ps = psRemoteKind(compound ? compound.flatMap((x, k) => [[x.program, ...x.argv].join(" "), ...(x.bodies ?? []).flatMap((b) => parseShell(b, { cwd: seg.cwd, platform: env.platform }).map((y, j) => [...(k === 0 && j === 0 ? [x.program] : []), y.program, ...y.argv].join(" ")))]).join("; ") : rtext);
       if (ps) return withFragment(remoteHit(ps, inWhere), seg);
     }
     if (where !== "local") {
@@ -1464,7 +1487,11 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
-      const inner = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
+      // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
+      // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
+      const first = where !== "local" && segs.indexOf(opaque) === 0;
+      const inner = parsed.map((x, k) => (first && k === 0 ? { ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) } : x));
       // a function inside a `-c` or eval string (or behind any wrapper) was a recursive rm run as code: a deny, never the dialog of a literal command
       const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && opaque.wrappers.length === 0);
       if (h) return h;
@@ -1710,7 +1737,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   const profile = RAW.find((r) => r.name === "perms-profile" && r.re.test(text));
   if (profile) return hit(profile.name, profile.reason, profile.re.exec(text)?.[0]);
   // `$( )` nested past the walker's depth cap: the script inside was never read, so the line is refused unread
-  if (segments.some((s) => s.tooDeep)) return hit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels). Run the inner command plainly.`, text);
+  if (segments.some((s) => s.tooDeep)) return tooDeepHit(text);
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
     const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
