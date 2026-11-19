@@ -15,7 +15,7 @@ const ok = [{ n: "ci", state: "ok" }];
 const entry = (number, over = {}) => ({ number, repo: "acme/app", title: `PR ${number}`, url: `https://example.test/acme/app/pull/${number}`, state: "open", head: H1, mergeState: "clean", mergeable: "MERGEABLE", headRefName: "feat", checks: ok, ...over });
 // Open PRs: 201 ready, 202 checks running, 203 failed, 204 merge blocked, 205 green with no host facts (older feed), 206 green but CONFLICTING.
 const OPEN = [
-  entry(201, { repo: "acme/ready" }), // its own repository: at most 5 PRs per repository are drawn
+  entry(201, { repo: "acme/ready" }), // its own repository: a group of its own
   entry(202, { checks: [{ n: "ci", state: "pending" }] }),
   entry(203, { checks: [{ n: "lint", state: "fail" }] }),
   entry(204, { mergeState: "blocked" }),
