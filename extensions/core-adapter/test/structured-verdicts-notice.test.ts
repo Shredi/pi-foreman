@@ -139,3 +139,29 @@ test("after a reload the notice of a failed run marks nothing (the route says fa
   await tick(400);
   assert.ok(/- \[x\] 2\. /.test(ledger()), ledger());
 });
+
+test("a review run that ends failed after a reload is flagged from the restored route: its notice marks nothing, a run completed after the reload still marks", async (t) => {
+  const w = reloadWorld(t, { ceremony: { default: "standard" } });
+  const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
+  const bad = await a.reviewLaunch("review items 1 and V", { items: [1, "V"] });
+  const good = await a.reviewLaunch("review item 2", { items: [2] });
+  assert.equal(bad.blocked, null, String(bad.blocked));
+  assert.equal(good.blocked, null, String(good.blocked));
+  assert.ok(a.record(bad.id, { verdict: "pass", items: [{ id: 1, result: "pass" }, { id: "V", result: "pass" }] }));
+  assert.ok(a.record(good.id, { verdict: "pass", items: [{ id: 2, result: "pass" }] }));
+  const b = await w.adapter("reload");
+  await b.endEvent(failedEnd(`run-${bad.id}`));
+  await b.endEvent({ runId: `run-${good.id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output: "ok" }] });
+  await tick(300);
+  const routes = w.entries.filter((e) => e.customType === "pi-foreman-ledger-route").map((e) => e.data as { run: string; review?: { failed?: boolean } });
+  assert.ok(routes.some((r) => r.run === `run-${bad.id}` && r.review?.failed === true), "the failed route is persisted after the reload");
+  const fire = (runId: string) => b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: noticeOf(runId) } });
+  const ledger = (): string => fs.readFileSync(path.join(w.project, ".workflow", "LEDGER-x.md"), "utf8");
+  await fire(`run-${bad.id}`);
+  await tick(400);
+  assert.ok(!/- \[x\] 1\. /.test(ledger()) && !/- \[x\] V\. /.test(ledger()), ledger());
+  await fire(`run-${good.id}`);
+  await tick(400);
+  assert.ok(/- \[x\] 2\. /.test(ledger()), ledger());
+});

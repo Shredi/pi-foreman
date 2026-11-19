@@ -2892,6 +2892,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // D27: a builder run that ends (any outcome) is work of the prompt it ends in, also when it was launched before that prompt
           if ((s.launchedRoles.get(runId) ?? []).includes("builder")) s.work.builders++;
         }
+        // a review run launched before a reload (restored route, no launched roles) that ends not completed: its record is ignored too (T7)
+        if (typeof runId === "string" && !s.isChild && !s.launchedRoles.has(runId) && s.ledgerByRun.get(runId)?.review) {
+          const status = runEndOf(data)?.status;
+          if (status !== undefined && status !== "completed") failedReviewRun(s, runId);
+        }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           const ended = runEndOf(data);
           s.ladder.onRunEnd(ended);
