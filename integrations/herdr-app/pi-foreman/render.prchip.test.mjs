@@ -52,12 +52,12 @@ test("a top-level and a child row carry their chip in the title row, none on a l
   assert.ok(!texts(out).some((s) => /\d+ PRs?\b/.test(s)), "no summary line");
 });
 
-test("several PRs: one chip of the most urgent PR with the count of the others, the same on both kinds of row", () => {
+test("several PRs: no chip on the title row, one line per PR below it (see render.sessionlines.test.mjs); the order is the chipPrs order", () => {
   const three = [dot(1, "ok"), dot(2, "fail"), dot(3, "ok")];
   const out = render(tree(three, three));
-  const chips = cards(out);
-  assert.equal(chips.length, 2);
-  assert.deepEqual(chipTexts(out), ["⎇ #2 +2", "⎇ #2 +2"]);
+  assert.equal(cards(out).length, 6, "three lines on each of the two rows");
+  assert.deepEqual(chipTexts(out).slice(0, 3), ["⎇ #2", "⎇ #3", "⎇ #1"]);
+  assert.ok(!texts(out).some((s) => /\+\d/.test(s)), "no +k text");
   assert.deepEqual(chipPrs([{ number: 1, checks: ["ok"] }, { number: 2, checks: ["fail"] }, { number: 3, checks: ["ok"] }]).more.map((p) => p.number), [3, 1]);
 });
 

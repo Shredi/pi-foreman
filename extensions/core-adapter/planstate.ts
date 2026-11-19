@@ -152,7 +152,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
     ...(o.planPhase && o.planPhaseOrigin === "parent" ? { planPhaseOrigin: "parent" as const } : {}),
-    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.occasion ? { occasion: r.occasion } : {}) })),
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.work !== undefined ? { work: r.work } : {}), ...(r.occasion ? { occasion: r.occasion } : {}) })),
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
     ...(o.gate ? { gate: o.gate } : {}),
     ...(o.sentBack ? { sentBack: true } : {}),

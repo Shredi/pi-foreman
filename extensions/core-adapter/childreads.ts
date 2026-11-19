@@ -4,8 +4,9 @@
 // Counted: read, grep, find, ls and read-only bash, by distinct top-level call id. A builder's
 // test, build or git-write bash call is never counted. At warn the result carries a notice;
 // above deny the call is refused and the child is told to return its report with what it has
-// (`STATUS: stuck` if it cannot finish: ladder trigger b). A role without limits has no budget:
-// the coded defaults apply only when `ceremony.childReads` is absent from the config altogether.
+// (`STATUS: stuck` if it cannot finish: ladder trigger b). A builder is told to write the code instead (its
+// texts never say "return your report"). A role without limits has no budget: the coded defaults (reviewer)
+// apply only when `ceremony.childReads` is absent from the config altogether; a builder has none unless configured.
 import { get, type Json } from "./config.ts";
 import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
 import { topLevelId } from "./budget.ts";
@@ -14,9 +15,11 @@ import { isReadOnlySed } from "./sedread.ts";
 export interface ChildLimits {
   warn: number;
   deny: number;
+  /** Set by the caller (index.ts) for the texts; childReadLimits never sets it. */
+  role?: string;
 }
 
-export const DEFAULT_CHILD_READS: Record<string, ChildLimits> = { builder: { warn: 20, deny: 40 }, reviewer: { warn: 15, deny: 30 } };
+export const DEFAULT_CHILD_READS: Record<string, ChildLimits> = { reviewer: { warn: 15, deny: 30 } };
 export const CHILD_READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls", "bash", ...PACK_READ_TOOL_NAMES]);
 
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 1;
@@ -105,9 +108,11 @@ export class ChildReads {
     if (this.ids.has(top)) return { kind: "allow" };
     const n = this.ids.size + 1;
     if (n > limits.deny) {
+      if (limits.role === "builder") return { kind: "deny", count: n - 1, reason: `pi-foreman: [child_read_budget_exceeded] ${n - 1} read calls (limit ${limits.deny}). Further reads are refused. Make your edits now with what you know. If you cannot edit without more reads, end with STATUS: stuck and say what is missing.` };
       return { kind: "deny", count: n - 1, reason: `pi-foreman: [child_read_budget_exceeded] ${n - 1} read calls (limit ${limits.deny}). Stop reading: return your report now with what you have. If you cannot finish, start it with "STATUS: stuck" and say what is missing.` };
     }
     this.ids.add(top);
+    if (n >= limits.warn && limits.role === "builder") return { kind: "warn", count: n, text: `pi-foreman: read budget ${n} of ${limits.deny} read calls. Stop reading and write the code now with what you know; at ${limits.deny} further reads are refused.` };
     if (n >= limits.warn) return { kind: "warn", count: n, text: `pi-foreman: read budget ${n} of ${limits.deny} read calls. Wrap up and return your report; at ${limits.deny} further reads are refused.` };
     return { kind: "allow" };
   }

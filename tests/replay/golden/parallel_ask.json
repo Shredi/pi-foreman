@@ -50,6 +50,9 @@
    "role": "builder"
   },
   {
+   "event": "child_scratch_root"
+  },
+  {
    "event": "guard",
    "role": "foreman",
    "toolFamily": "subagent",

@@ -370,7 +370,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const pre = deps.preflight ? await deps.preflight(ctx, t.op, id, dir) : undefined;
         if (pre) return failure(`${t.name}: ${pre.reason} Nothing was done.`, { decision: "blocked" });
         s.trace({ event: "tool_pack", pack: GIT_PACK, op: t.name });
-        const run = (op: PrOp, args: Record<string, unknown>): Promise<SafeOpOutcome> => runSafeOp({ python: s.python, script: deps.script, op, args, cwd: dir ?? ctx.cwd, config: s.config, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs });
+        const run = (op: PrOp, args: Record<string, unknown>): Promise<SafeOpOutcome> => runSafeOp({ python: s.python, script: deps.script, op, args, cwd: dir ?? ctx.cwd, config: s.config, ...(REPOLESS_OPS.has(op) && typeof args.repo === "string" && args.repo && outsideCheckout(dir ?? ctx.cwd) ? { repoless: true } : {}), env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs });
         const report = (o: SafeOpOutcome) => {
           if (o.kind === "ran") {
             const { ok: _ok, ...rest } = o.result;
@@ -577,6 +577,15 @@ async function hostOf(s: PrPackSession, cwd: string, repo: string, n: number, ho
   if (hosts.length === 1) return { host: hosts[0] };
   return { decision: "host_unresolved", error: `host not resolved for ${repo}#${n}: pass host (one of ${hosts.join(", ")})` };
 }
+
+/** True when no `.git` entry sits at or above `cwd` (a file-system walk, no spawn). */
+export function outsideCheckout(cwd: string): boolean {
+  for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, ".git"))) return false;
+    if (path.dirname(dir) === dir) return true;
+  }
+}
+const REPOLESS_OPS: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments"]);
 const notListed = (host: string, hosts: string[]): string => `host ${host} is not one of the hosts of tools.prGithubHosts (${hosts.join(", ")})`;
 
 type Armed =

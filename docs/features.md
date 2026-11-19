@@ -69,7 +69,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [foreman-show](#foreman-show) | tools |  | on | The foreman-only `foreman_show` tool publishes a markdown or HTML note as a page (text, tables, code fences, mermaid diagrams) that the Herdr plan panel lists and opens in the browser; each call adds a page. | on by default | [herdr](herdr.md#notes) |
 | [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the pi-background-tasks add-on (installed by default by `foreman setup`, skip with `--skip-addon background-tasks`; setup writes `PI_BG_FEATURES=process` into the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
+| [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own scratch dir (`$FOREMAN_SCRATCH`, under the worktree root, else the temp dir) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
 | [permissions](#permissions) | safety |  | on | Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. The user file can also name work folders: reads there are allowed and an auto folder lets writes no other root covers run as under mode auto, except in protected places (`/foreman perms list` shows them). | on by default | [permissions](permissions.md) |
 | [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots. | on by default | [permissions](permissions.md#owned-paths) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
@@ -259,6 +259,7 @@ Switch: `providers.*.roles.*.strong` is set.
 | `ladder.sizing.topRisks` | `["design"]` | not in project/session (the launch sizing rules come from the user or overlay config) |
 | `ladder.sizing.topRung` | `null` | not in project/session (the launch sizing rules come from the user or overlay config) |
 | `ladder.maxTurns` | `{"builder": 100}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
+| `ladder.contextCap` | `{"builder": 250000}` | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.research.factCriticalRung` | `null` | not in project/session (the fact-critical research rung comes from the user or overlay config) |
 
 ### idle-downshift
@@ -425,10 +426,10 @@ No config key.
 | `ceremony.foremanReads.after.warn` | `8` | tighten-only (lower only, minimum 1) |
 | `ceremony.foremanReads.after.every` | `8` | tighten-only (lower only, minimum 1) |
 | `ceremony.foremanReads.after.deny` | unset | tighten-only (lower only, minimum 1) |
-| `ceremony.childReads.<x>.warn` | `builder`: `20`, `reviewer`: `15` | tighten-only (lower only) |
-| `ceremony.childReads.<x>.deny` | `builder`: `40`, `reviewer`: `30` | tighten-only (lower only) |
-| `ceremony.childReads.<x>.perFile` | `builder`: `5`, `reviewer`: `2` | tighten-only (lower only) |
-| `ceremony.childReads.<x>.max` | `builder`: `120`, `reviewer`: `120` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.warn` | `reviewer`: `15` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.deny` | `reviewer`: `30` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.perFile` | `reviewer`: `2` | tighten-only (lower only) |
+| `ceremony.childReads.<x>.max` | `reviewer`: `120` | tighten-only (lower only) |
 
 ### launch-wait
 
@@ -483,7 +484,7 @@ Switch: `ceremony.orientation.enabled` is true.
 
 ### child-scratch
 
-**Child scratch dirs.** Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends.
+**Child scratch dirs.** Gives every single-child launch its own scratch dir (`$FOREMAN_SCRATCH`, under the worktree root, else the temp dir) that the guards allow writes in and the harness removes when the run ends.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -1065,6 +1066,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ladder.childPolicy` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.rolePolicy` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.maxTurns` | the ladder and the child rank policy come from the user or overlay config |
+| `ladder.contextCap` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.reviewerClimb` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.research` | the fact-critical research rung comes from the user or overlay config |
 | `ladder.reviewPanel` | the review panel's models come from the user or overlay config |

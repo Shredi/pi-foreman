@@ -165,13 +165,13 @@ class CacheRefusedTest(CacheWorktreeBase):
                 self.assertEqual(self.refused().files, [rel])
                 self.wipe()
 
-    def test_symlink_named_like_a_cache_folder_is_refused_not_followed(self):
+    def test_symlink_named_like_a_cache_folder_is_removed_not_followed(self):
         try:
             os.symlink(str(self.outside), str(self.wt / ".pytest_cache"), target_is_directory=True)
         except (OSError, NotImplementedError):
             self.skipTest("symlinks not available")
-        exc = self.refused()
-        self.assertEqual(exc.files, [".pytest_cache"])
+        safe_ops.remove_worktree(self.check())
+        self.assertFalse(self.wt.exists())
         self.assertEqual((self.outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
 
 

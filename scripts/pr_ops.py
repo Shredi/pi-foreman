@@ -2,7 +2,7 @@
 """PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.13+.
 
 Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo, pr_find and
-pr_batch (needs no work tree, nor does pr_comments with top-level `repoless: true` and `args.repo`; the PR tracker polls through them); the
+pr_batch (needs no work tree, nor do pr_status, pr_checks and pr_comments with top-level `repoless: true` and `args.repo`; the PR tracker polls through them); the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object
 plus `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object) and, when valid,
 `githubHosts` (tools.prGithubHosts: where a gh read call names no host, its first non-github.com entry is the fallback).
@@ -711,7 +711,7 @@ def op_pr_status(req):
     args, cfg, pr_host = _setup(req, ("number", "repo", "host"))
     number = arg_number(args)
     repo, hostname = arg_repo(args), arg_host(args)
-    root = workspace_root(req.get("cwd"))
+    root = _repoless_root(req) if req.get("repoless") is True and repo else workspace_root(req.get("cwd"))
     host = resolve_host(pr_host, "status", root)
     if host.kind == "template":
         out = run_template(host, "status", _values(root, number=number, repo=repo, host=hostname), root)
@@ -734,7 +734,7 @@ def op_pr_checks(req):
     required = args.get("required", False)
     if not isinstance(required, bool):
         raise _bad("required must be a boolean")
-    root = workspace_root(req.get("cwd"))
+    root = _repoless_root(req) if req.get("repoless") is True and repo else workspace_root(req.get("cwd"))
     host = resolve_host(pr_host, "checks", root)
     if host.kind == "template":
         out = run_template(host, "checks", _values(root, number=number, repo=repo, host=hostname), root)
@@ -1066,7 +1066,7 @@ def op_pr_find(req):
 
 
 def _repoless_root(req):
-    """The process cwd of an op that needs no work tree (pr_batch; pr_comments with top-level `repoless` and `repo`): realpath of an existing directory."""
+    """The process cwd of an op that needs no work tree (pr_batch; pr_status, pr_checks and pr_comments with top-level `repoless` and `repo`): realpath of an existing directory."""
     cwd = req.get("cwd")
     if not isinstance(cwd, str) or not cwd or not os.path.isdir(cwd):
         raise _bad("cwd is not a directory")
