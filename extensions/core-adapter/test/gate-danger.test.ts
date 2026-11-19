@@ -1,10 +1,10 @@
-// r79 item 3: the dangerous class (defaults.ts DANGER_RULES / dangerMatch). A positive and a negative case per entry; no built-in allow matches
+// r79 item 3: the dangerous class (defaults.ts JUDGE_FIRST / dangerMatch). A positive and a negative case per entry; no built-in allow matches
 // a positive case; the narrowed `default-role-launch`.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DANGER_RULES, dangerMatch, lineDefault, toolDefault } from "../defaults.ts";
+import { JUDGE_FIRST, dangerMatch, lineDefault, toolDefault } from "../defaults.ts";
 import type { DangerEnv, DefaultCtx, GitFacts } from "../defaults.ts";
 import { pathDecide } from "../pathrules.ts";
 import type { GateRoots } from "../pathrules.ts";
@@ -129,10 +129,14 @@ const NEGATIVE: Record<string, Case[]> = {
   "danger-harness-folder": [sh("ls src"), sh("cat a.txt"), sh("mytool a.txt")],
 };
 
-test("DANGER_RULES: every entry has the danger- name and a reason; the tables cover each entry", () => {
-  const names = DANGER_RULES.map((r) => r.name);
+// PR C: the list shrank to the judge-first entries; the cases of the removed entries (install, deploy, publish, forge, ...) now run with no judge call.
+const KEPT = new Set(JUDGE_FIRST.map((r) => r.name));
+for (const t of [POSITIVE, NEGATIVE] as Record<string, unknown>[]) for (const k of Object.keys(t)) if (!KEPT.has(k)) delete t[k];
+
+test("JUDGE_FIRST: every entry has the danger- name and a reason; the tables cover each entry", () => {
+  const names = JUDGE_FIRST.map((r) => r.name);
   assert.equal(new Set(names).size, names.length);
-  for (const r of DANGER_RULES) {
+  for (const r of JUDGE_FIRST) {
     assert.match(r.name, /^danger-[a-z-]+$/);
     assert.ok(r.reason.length > 10 && r.reason.length < 300, r.name);
   }
@@ -142,7 +146,7 @@ test("DANGER_RULES: every entry has the danger- name and a reason; the tables co
 
 test("positive: each case falls into its own entry (when several match, the table order decides, so the case's own entry must match)", () => {
   for (const [name, cases] of Object.entries(POSITIVE)) {
-    const rule = DANGER_RULES.find((r) => r.name === name)!;
+    const rule = JUDGE_FIRST.find((r) => r.name === name)!;
     for (const c of cases) assert.ok(rule.test(callOf(c), denv(c.upstream)), `${name}: ${c.line ?? `${c.tool} ${JSON.stringify(c.input)}`}`);
     // and the class as a whole reports something
     for (const c of cases) assert.notEqual(hit(c), null, `${name}: ${c.line ?? c.tool}`);
@@ -151,7 +155,7 @@ test("positive: each case falls into its own entry (when several match, the tabl
 
 test("negative: the safe cases are no entry of their own", () => {
   for (const [name, cases] of Object.entries(NEGATIVE)) {
-    const rule = DANGER_RULES.find((r) => r.name === name)!;
+    const rule = JUDGE_FIRST.find((r) => r.name === name)!;
     for (const c of cases) assert.ok(!rule.test(callOf(c), denv(c.upstream)), `${name}: ${c.line ?? `${c.tool} ${JSON.stringify(c.input)}`}`);
   }
 });

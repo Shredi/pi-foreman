@@ -90,7 +90,7 @@ const root = fs.realpathSync(mkTestTmp("g8-notetools-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 let n = 0;
 
-function store(files: { user?: unknown; project?: unknown; tracked?: unknown }, profile: string | null = null): PermStore {
+function store(files: { user?: unknown; project?: unknown; tracked?: unknown }): PermStore {
   const base = path.join(root, `w${++n}`);
   const agentDir = path.join(base, "agent");
   const main = path.join(base, "main");
@@ -103,13 +103,13 @@ function store(files: { user?: unknown; project?: unknown; tracked?: unknown }, 
     if (args[0] === "worktree") return { status: 0, stdout: `worktree ${main}\nHEAD abc\n\nworktree ${wt}\nHEAD abc\n` };
     return { status: args[0] === "check-ignore" ? 0 : 1, stdout: "" }; // untracked and ignored: a trusted project file
   };
-  const env: PermEnv = { agentDir, cwd: wt, home: path.join(base, "home"), git, profile };
+  const env: PermEnv = { agentDir, cwd: wt, home: path.join(base, "home"), git };
   return new PermStore(env);
 }
 
-test("floors.noteTools is read from the user file and from its selected profile", () => {
-  const s = store({ user: { floors: { noteTools: ["a_note"] }, profiles: { p: { floors: { noteTools: ["b_note"] } }, q: { floors: { noteTools: ["c_note"] } } } } }, "p");
-  assert.deepEqual(s.resolve().noteTools, ["a_note", "b_note"]);
+test("floors.noteTools is read from the user file", () => {
+  const s = store({ user: { floors: { noteTools: ["a_note"] } } });
+  assert.deepEqual(s.resolve().noteTools, ["a_note"]);
   assert.deepEqual(store({ user: { floors: { noteTools: ["a_note"] } } }).resolve().noteTools, ["a_note"]);
   assert.deepEqual(store({}).resolve().noteTools, []);
 });

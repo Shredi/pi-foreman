@@ -1,30 +1,20 @@
-// r79 permission config: the three `permissions.json` files (user, project, tracked), their trust rules, profiles, the mode resolution and the
-// remember writer. Pure Node, no Pi imports; git is injectable so tests stay hermetic.
+// Permission config: the three `permissions.json` files (user, project, tracked) and their trust rules. What they still hold: protected targets, work
+// folders, additional directories, `floors.noteTools` and `classifier.deny` (the protected-target check cites those sentences). The modes, profiles, rule
+// lists (`allow`, `ask`, `deny`) and allow sentences (`classifier.allow`) were removed: a file that still sets one is read, the key is ignored and recorded
+// in `Resolved.ignored` (the doctor prints one INFO line per key). Pure Node, no Pi imports; git is injectable so tests stay hermetic.
 //
-//   user     <agentDir>/pi-foreman/permissions.json   every key; `profiles` live only here
-//   project  <main checkout>/.workflow/permissions.json   widening keys (allow, additionalDirectories, classifier.allow) only when the file is
-//            untracked AND ignored by git and neither it nor `.workflow` is a symlink; else tighten-only. `mode` and `profiles` are ignored.
-//   tracked  <worktree>/.pi/permissions.json   deny, ask and classifier.deny only (it is reviewed code anyone can push)
+//   user     <agentDir>/pi-foreman/permissions.json   every key
+//   project  <main checkout>/.workflow/permissions.json   widening keys (additionalDirectories, protected) only when the file is untracked AND ignored by
+//            git and neither it nor `.workflow` is a symlink; else tighten-only (classifier.deny).
+//   tracked  <worktree>/.pi/permissions.json   classifier.deny only (it is reviewed code anyone can push)
 //
-// Merge: lists concatenate (user, profile, project, tracked); the verdict class decides at match time (rules.ts: deny > ask > allow).
-// Mode: session override > profile > user file > `auto`. An invalid user file reads as mode `ask` with the other files applied; an invalid project or
-// tracked file contributes nothing. Bad entries inside a valid file are skipped one by one, each with a notice naming it.
-//
-// The profile name is the caller's input. It comes from the merged foreman config key `permissions.profile` (honoured in the user, organisation and
-// default config layers only: the project and session layers must not set it, `IGNORED_KEYS` in scripts/foreman_config.py) or from the env variable
-// PI_FOREMAN_PERMS_PROFILE that `foreman session open --profile` sets; `profileName()` applies that order.
+// An invalid file contributes nothing. Bad entries inside a valid file are skipped one by one, each with a notice naming it.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { holdsHome } from "./effects.ts";
-import { parseRule } from "./rules.ts";
-import type { ParsedRule, RuleSets } from "./rules.ts";
-
-export type PermMode = "auto" | "ask" | "allow" | "deny";
-export const PERM_MODES: readonly PermMode[] = ["auto", "ask", "allow", "deny"];
 export const PROSE_MAX = 300;
 export const PROTECTED_NOTE_MAX = 200;
-export const PROFILE_ENV = "PI_FOREMAN_PERMS_PROFILE";
 
 /** The check mode of one protected entry; it can only tighten `gate.protected.check` (model < read-only < ask). */
 export type ProtectedCheckMode = "model" | "read-only" | "ask";
@@ -44,33 +34,19 @@ export interface ProtectedEntry extends ProtectedRaw {
   source: string;
 }
 
-/** The file shape both files and profiles share. */
+/** The file shape of one permissions file: what is still read (the removed keys are only recorded in `ignored`). */
 export interface PermBody {
-  mode?: PermMode;
   /** Protected targets (user file and trusted project file only; dropped everywhere else). */
   protected?: ProtectedRaw[];
-  allow: string[];
-  ask: string[];
-  deny: string[];
   additionalDirectories: string[];
-  classifier: { allow: string[]; deny: string[] };
-  /** `floors.noteTools`: tool names whose prose fields skip the raw-text floors (user file and its profiles only; dropped everywhere else). */
+  classifier: { deny: string[] };
+  /** `floors.noteTools`: tool names whose prose fields skip the raw-text floors (user file only; dropped everywhere else). */
   noteTools?: string[];
+  /** The removed keys this file still sets (`mode`, `profiles`, `allow`, `ask`, `deny`, `classifier.allow`). */
+  ignored: string[];
 }
 
 export type FileKind = "user" | "project" | "tracked";
-
-/** The built-in profiles. `steward` runs ask-free (mode auto) and may type text into other panes, read them and look at processes. */
-export const BUILTIN_PROFILES: Readonly<Record<string, PermBody>> = {
-  steward: {
-    mode: "auto",
-    allow: ["Bash(herdr pane send-text *)", "Bash(herdr pane send-keys *)", "Bash(herdr pane read *)", "Bash(herdr pane list *)", "Bash(pgrep *)", "Bash(ps *)", "Bash(intercom *)", "intercom"],
-    ask: [],
-    deny: [],
-    additionalDirectories: [],
-    classifier: { allow: [], deny: [] },
-  },
-};
 
 /** A folder the user works in (user file only): reads allowed; `auto` also relaxes writes no root covers (pathrules.ts workFolderOf). */
 export interface WorkFolder {
@@ -78,44 +54,32 @@ export interface WorkFolder {
   mode: "auto" | "read";
 }
 
-export interface RuleEntry {
-  kind: "allow" | "ask" | "deny";
-  rule: ParsedRule;
-  /** `user`, `project`, `tracked` or `profile <name>`. */
-  source: string;
-}
-
 export interface ProseEntry {
-  /** `A1`.. for allow entries, `D1`.. for deny entries. */
+  /** `D1`.. for deny entries. */
   id: string;
   text: string;
   source: string;
 }
 
 export interface Resolved {
-  mode: PermMode;
-  modeSource: "session" | "profile" | "user" | "invalid-user-file" | "default";
-  /** The mode without the session override. */
-  baseMode: PermMode;
-  profile: string | null;
-  rules: RuleSets;
-  entries: RuleEntry[];
-  prose: { allow: ProseEntry[]; deny: ProseEntry[] };
+  prose: { deny: ProseEntry[] };
   /** Protected targets (user, then trusted project), numbered P1.. */
   protected: ProtectedEntry[];
   /** Bumps on every reload and every re-resolve that saw a change (caches key on it). */
   version: number;
   /** Absolute directories the read roots widen by. */
   additionalDirectories: string[];
+  /** The removed keys still set, one per key and file: `<file kind> <key>` (the doctor prints one INFO line each). */
+  ignored: string[];
   /** Validated work folders of the user file: absolute, normalised, never the home dir or one of its ancestors. */
   workFolders: WorkFolder[];
   /** Why a folder was dropped or kept with a warning (shown by `/foreman perms list`). */
   workFolderNotes: string[];
   /** The project file may widen (untracked, ignored, no symlink). */
   projectTrusted: boolean;
-  /** The project file as the remember writer would write it. */
+  /** The project file (protected entries are written there). */
   projectFile: string;
-  /** `floors.noteTools` of the user file and the selected profile: note tools added to the built-in list (gate.ts `NOTE_TOOLS`). */
+  /** `floors.noteTools` of the user file: note tools added to the built-in list (gate.ts `NOTE_TOOLS`). */
   noteTools: string[];
 }
 
@@ -133,19 +97,7 @@ export interface PermEnv {
   /** The session's worktree (the tracked file lives below it; git runs here). */
   cwd: string;
   home: string;
-  /** Name of the selected profile (see `profileName`), or null. */
-  profile?: string | null;
-  /** The session override of `/foreman perms mode`. */
-  sessionMode?: PermMode | null;
   git?: GitRun;
-}
-
-/** The profile name: the env variable of `foreman session open --profile` wins, then the config key. Empty means none. */
-export function profileName(config: unknown, env: Record<string, string | undefined> = process.env): string | null {
-  const e = env[PROFILE_ENV];
-  if (typeof e === "string" && e.trim() !== "") return e.trim();
-  const c = (config as { permissions?: { profile?: unknown } } | null | undefined)?.permissions?.profile;
-  return typeof c === "string" && c.trim() !== "" ? c.trim() : null;
 }
 
 export const userFilePath = (agentDir: string): string => path.join(agentDir, "pi-foreman", "permissions.json");
@@ -154,19 +106,6 @@ export const userFilePath = (agentDir: string): string => path.join(agentDir, "p
 export function protectedBlock(r: Pick<Resolved, "protected">): string[] {
   if (r.protected.length === 0) return [];
   return ["Protected:", ...r.protected.map((e) => `  ${e.id}: ${e.kind} ${e.glob}${e.note ? ` - ${e.note}` : ""}${e.check ? ` [check: ${e.check}]` : ""} (${e.source})`)];
-}
-
-/** Doctor INFO lines: a `Bash(*<word>*)` ask rule whose word looks like a host or path fragment is a candidate for a `protected` entry (docs/permissions.md "Protected targets"). */
-export function protectHintLines(r: Pick<Resolved, "entries" | "protected">): string[] {
-  const out: string[] = [];
-  for (const e of r.entries) {
-    if (e.kind !== "ask" || e.rule.tool !== "Bash" || !e.rule.pattern) continue;
-    const m = /^\*([A-Za-z0-9._/-]{3,})\*$/.exec(e.rule.pattern);
-    if (!m || !/[./-]|prod|stag/i.test(m[1])) continue;
-    if (r.protected.some((p) => p.glob.includes(m[1]))) continue;
-    out.push(`INFO ${e.rule.text} (${e.source}) asks on every call that names ${m[1]}; a protected entry (\`/foreman perms protect add host|path ${m[1]}\`) lets the small model judge reads and writes instead`);
-  }
-  return out;
 }
 
 /** The "Work folders" block of `/foreman perms list`: each folder with its mode and the spelling matched (the real path when it differs), then the warnings. */
@@ -190,7 +129,6 @@ const clip = (s: string, n = 60): string => (s.length > n ? `${s.slice(0, n)}...
 interface ParsedFile {
   ok: true;
   body: PermBody;
-  profiles: Record<string, PermBody>;
   /** Keys present that this file kind may not use. */
   dropped: string[];
   /** `workFolders` as written in the user file (validated at resolve time). */
@@ -266,7 +204,7 @@ function noteToolList(v: unknown, where: string, notices: string[]): string[] {
 }
 
 function parseBody(o: Json, where: string, notices: string[], dropped?: string[]): PermBody | string {
-  const body: PermBody = { allow: [], ask: [], deny: [], additionalDirectories: [], classifier: { allow: [], deny: [] } };
+  const body: PermBody = { additionalDirectories: [], classifier: { deny: [] }, ignored: [] };
   if (o.protected !== undefined) {
     if (dropped) dropped.push(`${where}protected`);
     else {
@@ -275,22 +213,16 @@ function parseBody(o: Json, where: string, notices: string[], dropped?: string[]
       body.protected = l;
     }
   }
-  if (o.mode !== undefined) {
-    if (typeof o.mode === "string" && (PERM_MODES as readonly string[]).includes(o.mode)) body.mode = o.mode as PermMode;
-    else notices.push(`${where}mode '${clip(String(o.mode))}' is not auto, ask, allow or deny; ignored`);
-  }
-  for (const k of ["allow", "ask", "deny", "additionalDirectories"] as const) {
-    const l = strList(o[k], `${where}${k}`, notices);
-    if (l === null) return `${where}${k} must be a list of strings`;
-    body[k] = l;
-  }
+  for (const k of ["mode", "allow", "ask", "deny"] as const) if (o[k] !== undefined) body.ignored.push(k);
+  const l = strList(o.additionalDirectories, `${where}additionalDirectories`, notices);
+  if (l === null) return `${where}additionalDirectories must be a list of strings`;
+  body.additionalDirectories = l;
   if (o.classifier !== undefined) {
     if (!isObj(o.classifier)) return `${where}classifier must be an object`;
-    for (const k of ["allow", "deny"] as const) {
-      const l = strList(o.classifier[k], `${where}classifier.${k}`, notices);
-      if (l === null) return `${where}classifier.${k} must be a list of strings`;
-      body.classifier[k] = l;
-    }
+    if (o.classifier.allow !== undefined) body.ignored.push("classifier.allow");
+    const d = strList(o.classifier.deny, `${where}classifier.deny`, notices);
+    if (d === null) return `${where}classifier.deny must be a list of strings`;
+    body.classifier.deny = d;
   }
   return body;
 }
@@ -307,7 +239,6 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
   const dropped: string[] = [];
   const body = parseBody(raw, "", notices, kind === "tracked" ? dropped : undefined);
   if (typeof body === "string") return { ok: false, error: body };
-  const profiles: Record<string, PermBody> = {};
   const workFolders: WorkFolder[] = [];
   if (raw.floors !== undefined) {
     if (kind !== "user") dropped.push("floors");
@@ -329,38 +260,10 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
       });
     }
   }
-  if (raw.profiles !== undefined) {
-    if (kind !== "user") dropped.push("profiles");
-    else if (!isObj(raw.profiles)) return { ok: false, error: "profiles must be an object" };
-    else {
-      for (const [name, v] of Object.entries(raw.profiles)) {
-        if (!isObj(v)) {
-          notices.push(`profiles.${name} is not an object; skipped`);
-          continue;
-        }
-        if (v.workFolders !== undefined) dropped.push(`profiles.${name}.workFolders`);
-        const b = parseBody(v, `profiles.${name}.`, notices, dropped);
-        if (typeof b === "string") notices.push(`${b}; profile skipped`);
-        else {
-          if (v.floors !== undefined) b.noteTools = noteToolList(v.floors, `profiles.${name}.`, notices);
-          profiles[name] = b;
-        }
-      }
-    }
-  }
-  if (kind === "project" && raw.mode !== undefined) {
-    dropped.push("mode");
-    delete body.mode;
-  }
-  if (kind === "tracked") {
-    for (const k of ["mode", "allow", "additionalDirectories"] as const) if (raw[k] !== undefined) dropped.push(k);
-    if (isObj(raw.classifier) && raw.classifier.allow !== undefined) dropped.push("classifier.allow");
-    delete body.mode;
-    body.allow = [];
-    body.additionalDirectories = [];
-    body.classifier.allow = [];
-  }
-  return { ok: true, body, profiles, dropped, workFolders, notices };
+  if (raw.profiles !== undefined) body.ignored.push("profiles");
+  if (kind === "tracked" && raw.additionalDirectories !== undefined) dropped.push("additionalDirectories");
+  if (kind === "tracked") body.additionalDirectories = [];
+  return { ok: true, body, dropped, workFolders, notices };
 }
 
 // ------------------------------------------------------------------ the store
@@ -382,7 +285,6 @@ const sigOf = (file: string): string => {
 export class PermStore {
   private readonly env: PermEnv;
   private readonly git: GitRun;
-  private sessionMode: PermMode | null;
   private slots: Partial<Record<FileKind, Slot>> = {};
   private cached: { sig: string; resolved: Resolved } | null = null;
   private pending: string[] = [];
@@ -394,21 +296,14 @@ export class PermStore {
   constructor(env: PermEnv) {
     this.env = env;
     this.git = env.git ?? realGit;
-    this.sessionMode = env.sessionMode ?? null;
   }
 
-  /** The session override of `/foreman perms mode`; null clears it. */
-  setSessionMode(m: PermMode | null): void {
-    this.sessionMode = m;
-    this.cached = null;
-  }
-
-  /** Monotonic: grows on every reload, remember write and re-resolve that saw a change. */
+  /** Monotonic: grows on every reload, protected write and re-resolve that saw a change. */
   get version(): number {
     return this.resolve().version;
   }
 
-  /** `/foreman perms reload` and every remember write: forget everything read so far. */
+  /** Every protected write: forget everything read so far. */
   reload(): void {
     this.ver++;
     this.slots = {};
@@ -491,7 +386,7 @@ export class PermStore {
           if (parsed.dropped.length) this.note(`${file}: ${parsed.dropped.join(", ")} ${parsed.dropped.length === 1 ? "is" : "are"} not honoured in the ${kind} file; dropped`);
         }
       }
-      if (parsed && "error" in parsed) this.note(`${file} is invalid: ${parsed.error}.${kind === "user" ? " Mode ask applies until it is fixed." : " The file is ignored."}`);
+      if (parsed && "error" in parsed) this.note(`${file} is invalid: ${parsed.error}. The file is ignored.`);
     }
     const s: Slot = { sig, parsed };
     this.slots[kind] = s;
@@ -505,96 +400,46 @@ export class PermStore {
     const project = this.slot("project");
     const tracked = this.slot("tracked");
     const distrust = project.parsed?.ok ? this.projectDistrust() : null;
-    const sig = [user.sig, project.sig, tracked.sig, distrust ?? "trusted", this.sessionMode ?? "", this.env.profile ?? ""].join("|");
+    const sig = [user.sig, project.sig, tracked.sig, distrust ?? "trusted"].join("|");
     if (this.cached && this.cached.sig === sig) return this.cached.resolved;
 
-    const parts: { src: string; body: PermBody; widen: boolean }[] = [];
+    const parts: { src: string; body: PermBody }[] = [];
     const userOk = user.parsed?.ok === true ? user.parsed : null;
     const userBody = userOk ? userOk.body : null;
-    if (userBody) parts.push({ src: "user", body: userBody, widen: true });
-
-    let profile: string | null = null;
-    let profileBody: PermBody | null = null;
-    const want = this.env.profile ?? null;
-    if (want) {
-      const b = userOk?.profiles[want] ?? BUILTIN_PROFILES[want];
-      if (b) {
-        profile = want;
-        profileBody = b;
-        parts.push({ src: `profile ${want}`, body: b, widen: true });
-      } else this.note(`permissions profile '${clip(want)}' is not defined (built-in: ${Object.keys(BUILTIN_PROFILES).join(", ")}; others come from the profiles key of the user file); ignored`);
-    }
+    if (userBody) parts.push({ src: "user", body: userBody });
     if (project.parsed?.ok) {
-      if (distrust === null) parts.push({ src: "project", body: project.parsed.body, widen: true });
+      if (distrust === null) parts.push({ src: "project", body: project.parsed.body });
       else {
-        const t: PermBody = { ...project.parsed.body, allow: [], additionalDirectories: [], classifier: { allow: [], deny: project.parsed.body.classifier.deny }, protected: [] };
+        const t: PermBody = { ...project.parsed.body, additionalDirectories: [], protected: [] };
         if (project.parsed.body.protected?.length) this.note(`${this.filePath("project")}: ${distrust}, so protected is not honoured; dropped`);
-        parts.push({ src: "project", body: t, widen: false });
-        if (project.parsed.body.allow.length || project.parsed.body.additionalDirectories.length || project.parsed.body.classifier.allow.length) {
-          this.note(`${this.filePath("project")}: ${distrust}, so only its deny, ask and classifier.deny keys apply (allow, additionalDirectories and classifier.allow are ignored)`);
-        }
+        parts.push({ src: "project", body: t });
+        if (project.parsed.body.additionalDirectories.length) this.note(`${this.filePath("project")}: ${distrust}, so only its classifier.deny key applies (additionalDirectories is ignored)`);
       }
     }
-    if (tracked.parsed?.ok) parts.push({ src: "tracked", body: tracked.parsed.body, widen: false });
+    if (tracked.parsed?.ok) parts.push({ src: "tracked", body: tracked.parsed.body });
 
-    const sets: RuleSets = { deny: [], ask: [], allow: [] };
-    const entries: RuleEntry[] = [];
-    const prose = { allow: [] as ProseEntry[], deny: [] as ProseEntry[] };
+    const prose = { deny: [] as ProseEntry[] };
     const dirs: string[] = [];
     const prot: ProtectedEntry[] = [];
+    const ignored: string[] = [];
     for (const p of parts) {
       for (const e of p.body.protected ?? []) prot.push({ ...e, id: `P${prot.length + 1}`, source: p.src });
-      for (const kind of ["deny", "ask", "allow"] as const) {
-        for (const text of p.body[kind]) {
-          const r = parseRule(text);
-          if ("error" in r) this.note(`${p.src} ${kind} rule '${clip(text)}': ${r.error}; skipped`);
-          else {
-            sets[kind].push(r.rule);
-            entries.push({ kind, rule: r.rule, source: p.src });
-          }
+      for (const k of p.body.ignored) ignored.push(`${p.src} ${k}`);
+      for (const text of p.body.classifier.deny) {
+        if (text.length > PROSE_MAX) {
+          this.note(`${p.src} classifier.deny entry '${clip(text)}' is longer than ${PROSE_MAX} characters; skipped`);
+          continue;
         }
-      }
-      for (const kind of ["allow", "deny"] as const) {
-        for (const text of p.body.classifier[kind]) {
-          if (text.length > PROSE_MAX) {
-            this.note(`${p.src} classifier.${kind} entry '${clip(text)}' is longer than ${PROSE_MAX} characters; skipped`);
-            continue;
-          }
-          const list = prose[kind];
-          list.push({ id: `${kind === "allow" ? "A" : "D"}${list.length + 1}`, text, source: p.src });
-        }
+        prose.deny.push({ id: `D${prose.deny.length + 1}`, text, source: p.src });
       }
       for (const d of p.body.additionalDirectories) dirs.push(this.expandDir(d));
     }
 
     const workFolderNotes: string[] = [];
     const workFolders = this.validFolders(userOk?.workFolders ?? [], workFolderNotes);
-    let mode: PermMode = "auto";
-    let modeSource: Resolved["modeSource"] = "default";
-    if (user.parsed && !user.parsed.ok) {
-      mode = "ask";
-      modeSource = "invalid-user-file";
-    } else if (userBody?.mode) {
-      mode = userBody.mode;
-      modeSource = "user";
-    }
-    if (profileBody?.mode) {
-      mode = profileBody.mode;
-      modeSource = "profile";
-    }
-    const baseMode = mode;
-    if (this.sessionMode) {
-      mode = this.sessionMode;
-      modeSource = "session";
-    }
-    const resolved: Resolved = { mode, modeSource, baseMode, profile, rules: sets, entries, prose, protected: prot, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project"), noteTools: [...new Set([...(userBody?.noteTools ?? []), ...(profileBody?.noteTools ?? [])])] };
+    const resolved: Resolved = { prose, protected: prot, ignored, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project"), noteTools: [...new Set(userBody?.noteTools ?? [])] };
     this.cached = { sig, resolved };
     return resolved;
-  }
-
-  /** The mode without the session override (profile mode, user file mode, `auto`). */
-  baseMode(): PermMode {
-    return this.resolve().baseMode;
   }
 
   /** Work folders that may stand: absolute (after `~`), not the filesystem root, the home dir or an ancestor of it. Each drop and the outside-home case warn once. */
@@ -634,64 +479,6 @@ export class PermStore {
   private expandDir(d: string): string {
     if (d === "~" || d.startsWith("~/") || d.startsWith("~\\")) return path.join(this.env.home, d.slice(1));
     return path.isAbsolute(d) ? path.normalize(d) : path.resolve(this.main(), d);
-  }
-
-  /**
-   * The remember writer: appends a prose sentence to `classifier.allow` and/or a pattern rule to `allow` in the project file, keeping the file's
-   * other keys and their order. Refuses (with the reason) when the project file may not widen, when it is not valid JSON, or when an input is bad.
-   */
-  writeRemember(input: { prose?: string; rule?: string }): { ok: true; file: string } | { ok: false; reason: string } {
-    const file = this.filePath("project");
-    const prose = input.prose === undefined ? undefined : input.prose.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
-    if (prose === undefined && input.rule === undefined) return { ok: false, reason: "nothing to remember" };
-    if (prose !== undefined && (prose === "" || prose.length > PROSE_MAX)) return { ok: false, reason: `the sentence must be 1 to ${PROSE_MAX} characters` };
-    if (input.rule !== undefined) {
-      const r = parseRule(input.rule);
-      if ("error" in r) return { ok: false, reason: `the pattern rule is not valid: ${r.error}` };
-    }
-    this.trust = null;
-    const why = this.projectDistrust();
-    if (why !== null) return { ok: false, reason: `not written: ${why}. The remembered entries live in ${file}, which has to be untracked and ignored by git; add \`.workflow/\` to .git/info/exclude.` };
-    let obj: Json = {};
-    if (fs.existsSync(file)) {
-      try {
-        const v = JSON.parse(fs.readFileSync(file, "utf8"));
-        if (!isObj(v)) return { ok: false, reason: `not written: ${file} is not a JSON object` };
-        obj = v;
-      } catch (e) {
-        return { ok: false, reason: `not written: ${file} is not valid JSON (${clip((e as Error).message, 80)}); fix it first` };
-      }
-    }
-    const push = (holder: Json, key: string, value: string): string | null => {
-      const cur = holder[key];
-      if (cur === undefined) holder[key] = [value];
-      else if (Array.isArray(cur)) {
-        if (!cur.includes(value)) cur.push(value);
-      } else return `${key} in ${file} is not a list`;
-      return null;
-    };
-    if (input.rule !== undefined) {
-      const e = push(obj, "allow", input.rule.trim());
-      if (e) return { ok: false, reason: `not written: ${e}` };
-    }
-    if (prose !== undefined) {
-      if (obj.classifier === undefined) obj.classifier = {};
-      if (!isObj(obj.classifier)) return { ok: false, reason: `not written: classifier in ${file} is not an object` };
-      const e = push(obj.classifier, "allow", prose);
-      if (e) return { ok: false, reason: `not written: ${e}` };
-    }
-    try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      // a directory made by mkdir is no link; a link made since the check is caught by the second look
-      if (fs.lstatSync(path.dirname(file)).isSymbolicLink()) return { ok: false, reason: "not written: .workflow is a symbolic link" };
-      const tmp = `${file}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
-      fs.renameSync(tmp, file);
-    } catch (e) {
-      return { ok: false, reason: `not written: ${clip((e as Error).message, 120)}` };
-    }
-    this.reload();
-    return { ok: true, file };
   }
 
   /**
@@ -757,64 +544,4 @@ export function cleanProtected(e: { kind: unknown; glob: unknown; note?: unknown
   if (note.length > PROTECTED_NOTE_MAX) return `note must be at most ${PROTECTED_NOTE_MAX} characters`;
   const check = e.check === undefined ? undefined : (PROTECTED_CHECK_MODES as readonly unknown[]).includes(e.check) ? (e.check as ProtectedCheckMode) : "ask";
   return { kind: e.kind, glob, ...(note ? { note } : {}), ...(check ? { check } : {}) };
-}
-
-/**
- * The workshop writer (`foreman perms adopt`): appends pattern rules to `allow` and whitelist sentences to `classifier.allow` of the USER file,
- * atomically, keeping the file's other keys (`workFolders`, `profiles`, ...) and their order. Every input is re-validated here (the rule grammar,
- * the sentence length, control characters); the whole call is refused when one is bad, so nothing is half written. Never reachable from a dialog.
- */
-export function writeUserAllow(agentDir: string, input: { rules?: string[]; sentences?: string[] }): { ok: true; file: string; added: string[] } | { ok: false; reason: string } {
-  const file = userFilePath(agentDir);
-  const rules = (input.rules ?? []).map((r) => (typeof r === "string" ? r.trim() : r));
-  const sentences = input.sentences ?? [];
-  if (rules.length + sentences.length === 0) return { ok: false, reason: "nothing to write" };
-  for (const r of rules) {
-    const p = typeof r === "string" ? parseRule(r) : null;
-    if (!p || "error" in p) return { ok: false, reason: `the pattern rule is not valid: ${p && "error" in p ? p.error : "not a string"}` };
-  }
-  for (const s of sentences) {
-    if (typeof s !== "string" || s.trim() === "" || s.length > PROSE_MAX || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(s)) return { ok: false, reason: `a sentence must be 1 to ${PROSE_MAX} characters without control characters` };
-  }
-  let obj: Json = {};
-  try {
-    if (fs.lstatSync(file).isSymbolicLink()) return { ok: false, reason: `not written: ${file} is a symbolic link` };
-    const v = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (!isObj(v)) return { ok: false, reason: `not written: ${file} is not a JSON object` };
-    obj = v;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return { ok: false, reason: `not written: ${file} is not valid JSON (${clip((e as Error).message, 80)}); fix it first` };
-  }
-  const added: string[] = [];
-  const push = (holder: Json, key: string, value: string): string | null => {
-    const cur = holder[key];
-    if (cur === undefined) holder[key] = [value];
-    else if (Array.isArray(cur)) {
-      if (cur.includes(value)) return null;
-      cur.push(value);
-    } else return `${key} in ${file} is not a list`;
-    added.push(value);
-    return null;
-  };
-  for (const r of rules) {
-    const e = push(obj, "allow", r);
-    if (e) return { ok: false, reason: `not written: ${e}` };
-  }
-  if (sentences.length) {
-    if (obj.classifier === undefined) obj.classifier = {};
-    if (!isObj(obj.classifier)) return { ok: false, reason: `not written: classifier in ${file} is not an object` };
-    for (const s of sentences) {
-      const e = push(obj.classifier, "allow", s.trim());
-      if (e) return { ok: false, reason: `not written: ${e}` };
-    }
-  }
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
-    fs.renameSync(tmp, file);
-  } catch (e) {
-    return { ok: false, reason: `not written: ${clip((e as Error).message, 120)}` };
-  }
-  return { ok: true, file, added };
 }

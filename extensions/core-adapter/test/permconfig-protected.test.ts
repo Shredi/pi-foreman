@@ -61,7 +61,6 @@ test("a non-list protected key makes the file invalid like any other bad key", (
   const w = world();
   w.user({ protected: "nope" });
   const s = w.store();
-  assert.equal(s.resolve().mode, "ask");
   assert.match(s.drainNotices().join("\n"), /protected must be a list/);
 });
 
@@ -87,16 +86,6 @@ test("an untrusted project file drops the key; a trusted one keeps it, numbered 
   const tracked = new PermStore({ ...x.env, git: (args, cwd) => (args[0] === "ls-files" ? { status: 0, stdout: "" } : x.env.git!(args, cwd)) });
   assert.deepEqual(tracked.resolve().protected.map((e) => e.id), ["P1"]);
   assert.match(tracked.drainNotices().join("\n"), /protected is not honoured/);
-});
-
-test("profile bodies drop the key", () => {
-  const w = world();
-  w.user({ profiles: { p: { protected: [{ host: "x" }], allow: ["Bash(ls)"] } } });
-  const s = w.store();
-  void s;
-  const store = new PermStore({ ...w.env, profile: "p" });
-  assert.deepEqual(store.resolve().protected, []);
-  assert.match(store.drainNotices().join("\n"), /profiles\.p\.protected.*not honoured/);
 });
 
 test("version grows on reload and on a changed file, not on a plain re-resolve", () => {

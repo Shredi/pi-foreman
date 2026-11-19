@@ -539,33 +539,6 @@ const CLOUD_READ = new Set(["describe", "get", "list", "ls", "show", "logs", "st
 const CLOUD_WRITE = /^(?:delete|rm|remove|create|put|update|deploy|publish|push|apply|terminate|start|stop|run|invoke|cp|mv|sync|set|add|attach|detach|reboot|scale|promote|rollback|destroy|launch|import|up|down|restart|exec|ssh)$|^(?:delete|create|put|update|terminate|start|stop|run|invoke|remove)-/;
 const HELPFLAG = (a: string[]): boolean => a.some((w) => /^(?:--help|-h|--version|-v|-V|version|help)$/.test(w));
 
-function deploySeg(s: ShellSegment): boolean {
-  const p = progOf(s);
-  const a = s.argv;
-  const pos = positionals(a, KUBE.has(p) ? KUBE_VALUED : new Set());
-  if (p === "ssh") return !HELPFLAG(a);
-  if (p === "scp" || p === "sftp" || p === "rsync") return a.some(remoteOperand);
-  if (KUBE.has(p)) return pos.length > 0 && !KUBE_READ.has(pos[0]) && !(pos[0] === "config" && pos[1] === "view");
-  if (p === "helm") return ["install", "upgrade", "uninstall", "rollback", "delete"].includes(pos[0]);
-  if (p === "terraform" || p === "tofu") return ["apply", "destroy", "import"].includes(pos[0]);
-  if (p === "pulumi") return ["up", "destroy"].includes(pos[0]);
-  if (p.startsWith("ansible")) return true;
-  if (p === "docker" || p === "podman" || p === "docker-compose") {
-    const v = p === "docker-compose" ? ["compose", ...pos] : pos;
-    return ["push", "run", "exec", "rm"].includes(v[0]) || (v[0] === "compose" && ["up", "down", "restart"].includes(v[1]));
-  }
-  if (p === "systemctl") return pos.length > 0 && !SYSTEMD_READ.has(pos[0]);
-  if (p === "service") return pos.length >= 2 && pos[1] !== "status";
-  if (p === "launchctl") return pos.length > 0 && !LAUNCHCTL_READ.has(pos[0]);
-  if (p === "crontab") return a.includes("-e") || a.includes("-r") || positionals(a, new Set(["-u"])).length > 0;
-  if (CLOUD.has(p)) {
-    if (pos.length === 0) return CLOUD_BARE.has(p) && !HELPFLAG(a);
-    const read = pos.some((w) => CLOUD_READ.has(w) || /^(?:describe|list|get)-/.test(w));
-    return !read || pos.some((w) => CLOUD_WRITE.test(w));
-  }
-  return false;
-}
-
 const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B", "--base", "-H", "--head", "-t", "--title", "--body", "-q", "--jq", "--json", "-L", "--limit", "-s", "--state", "-a", "--assignee", "-l", "--label", "-m", "--milestone", "-A", "--author", "-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "--template", "-D", "--dir", "-n", "--name", "-j", "--job", "--page", "--per-page", "--cache", "-p"]);
 const GH_SAFE = new Set(["pr create", "pr view", "pr list", "pr diff", "pr checks", "pr status", "issue view", "issue list", "issue status", "label list", "repo view", "repo clone", "run view", "run list", "run watch", "run download", "release view", "release list", "release download", "auth status", "config get", "config list"]);
 const GLAB_SAFE = new Set(["mr create", "mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "label list", "release view", "release list", "repo view", "repo clone", "auth status", "config get"]);
@@ -630,60 +603,7 @@ function graphqlRead(f: ApiFlags): boolean {
   return !f.input && query !== null && query !== "" && !query.startsWith("@") && !/^\$|mutation/i.test(query);
 }
 
-function forgeSeg(s: ShellSegment): boolean {
-  const p = progOf(s);
-  if (p !== "gh" && p !== "glab") return false;
-  const pos = positionals(s.argv, GH_VALUED);
-  if (HELPFLAG(s.argv) && pos.length === 0) return false;
-  if (pos.length === 0 || pos[0] === "help" || pos[0] === "version" || pos[0] === "status" || pos[0] === "search") return false;
-  if (pos[0] === "api") return apiWrites(s.argv, pos[1] === "graphql");
-  return !(p === "gh" ? GH_SAFE : GLAB_SAFE).has(`${pos[0]} ${pos[1] ?? ""}`);
-}
-
-function publishSeg(s: ShellSegment): boolean {
-  const p = progOf(s);
-  const pos = positionals(s.argv);
-  if (["npm", "pnpm", "yarn", "bun"].includes(p)) return pos[0] === "publish" || (pos[0] === "npm" && pos[1] === "publish");
-  if (p === "cargo") return pos[0] === "publish";
-  if (p === "twine") return pos[0] === "upload";
-  if (p === "gem") return pos[0] === "push";
-  if (p === "docker" || p === "podman") return pos[0] === "push";
-  if (p === "gh") return pos[0] === "release" && pos[1] === "upload";
-  return false;
-}
-
 const METHOD_READ = new Set(["GET", "HEAD"]);
-
-function netWriteSeg(s: ShellSegment): boolean {
-  const p = progOf(s);
-  const a = s.argv;
-  if (["nc", "ncat", "netcat", "socat"].includes(p)) return true;
-  if (p === "curl") {
-    for (let i = 0; i < a.length; i++) {
-      const w = a[i];
-      const m = w === "-X" || w === "--request" || /^-[A-Za-z]*X$/.test(w) ? a[i + 1] : w.startsWith("--request=") ? w.slice(10) : /^-X.+/.test(w) ? w.slice(2) : undefined;
-      if (m !== undefined && !METHOD_READ.has(m.toUpperCase())) return true;
-      if (/^--(?:data(?:-[a-z]+)?|form(?:-string)?|upload-file|json)(?:=|$)/.test(w) || /^-[a-zA-Z]*[dFT]/.test(w) && !w.startsWith("--")) return true;
-    }
-    return false;
-  }
-  if (p === "wget") {
-    for (let i = 0; i < a.length; i++) {
-      const w = a[i];
-      if (/^--(?:post-data|post-file|body-data|body-file)(?:=|$)/.test(w)) return true;
-      const m = w === "--method" ? a[i + 1] : w.startsWith("--method=") ? w.slice(9) : undefined;
-      if (m !== undefined && !METHOD_READ.has(m.toUpperCase())) return true;
-    }
-    return false;
-  }
-  if (p === "http" || p === "https" || p === "xh" || p === "xhs") {
-    if (a.some((w) => /^(?:--form|-f|--json|-j|--multipart)$/.test(w))) return true;
-    const pos = positionals(a);
-    if (pos[0] !== undefined && /^[A-Za-z]+$/.test(pos[0]) && ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(pos[0].toUpperCase()) && !METHOD_READ.has(pos[0].toUpperCase())) return true;
-    return pos.some((w) => /^[\w.-]+(?::=|=(?!=)|@)/.test(w));
-  }
-  return false;
-}
 
 const PKG = new Set(["npm", "pnpm", "yarn", "bun"]);
 const PKG_VERBS = new Set(["install", "i", "ci", "add", "uninstall", "remove", "rm", "un"]);
@@ -713,23 +633,6 @@ function localNpx(s: ShellSegment): boolean {
   }
   const bins = path.join(dir, "node_modules", ".bin");
   return [bin, `${bin}.cmd`].some((n) => fs.existsSync(path.join(bins, n)));
-}
-
-function installSeg(s: ShellSegment): boolean {
-  const p = progOf(s);
-  const a = s.argv;
-  const pos = positionals(a);
-  if (PKG.has(p)) return PKG_VERBS.has(pos[0]) || pos[0] === "dlx" || (p === "yarn" && pos.length === 0 && !HELPFLAG(a));
-  if (p === "npx") return !localNpx(s);
-  if (p === "bunx" || p === "uvx") return true;
-  if (p === "pip" || p === "pip3") return pos[0] === "install" || pos[0] === "uninstall";
-  if (p === "uv") return pos[0] === "pip" && (pos[1] === "install" || pos[1] === "uninstall");
-  if (/^python[0-9.]*$/.test(p)) return a[0] === "-m" && a[1] === "pip" && (a.includes("install") || a.includes("uninstall"));
-  if (p === "cargo" || p === "gem") return pos[0] === "install" || pos[0] === "uninstall";
-  if (p === "brew") return !(pos.length === 0 ? a.some((w) => BREW_READ.has(w)) : BREW_READ.has(pos[0]));
-  if (SYS_PKG.has(p)) return SYS_VERBS.has(pos[0]);
-  if (p === "pacman") return a.some((w) => /^-(?:S$|S[^sicgl]|R|U)/.test(w));
-  return false;
 }
 
 /** The git subcommand and its words, past the global options. */
@@ -810,28 +713,6 @@ const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
 const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
 /**
- * A `git push` that only publishes the session's own branches: no URL remote, no tag, `--tags`, `--mirror`, `--all`, delete or colon refspec, and every
- * refspec `HEAD` or a branch that is the cwd branch or checked out in a linked worktree of the repo. `git push` and `git push origin` push the current branch.
- * Anything else is `danger-git` (the push floors deny force and protected-branch pushes before this question).
- */
-function pushOwn(rest: string[], cwd: string, env: DangerEnv): boolean {
-  if (env.facts?.isOwnWorktree && !env.facts.isOwnWorktree(cwd)) return false;
-  if (rest.some((w) => w.startsWith("--repo=") && URLISH.test(w.slice(7)))) return false;
-  if (rest.some((w) => /^--(?:tags|mirror|all|branches|delete|prune|follow-tags)$/.test(w) || /^-[A-Za-z]*d[A-Za-z]*$/.test(w))) return false;
-  const pos = positionals(rest, PUSH_VALUED);
-  const remote = pos[0];
-  if (remote !== undefined && URLISH.test(remote)) return false;
-  const refs = pos.slice(1);
-  if (refs.length === 0) return true;
-  const own = new Set([...(env.facts?.currentBranch(cwd) ? [env.facts.currentBranch(cwd) as string] : []), ...(env.facts?.ownBranches?.(cwd) ?? [])]);
-  return refs.every((r) => {
-    if (r === "HEAD") return true;
-    if (r === "tag" || r.startsWith("+") || r.includes(":")) return false;
-    return own.has(r.replace(/^refs\/heads\//, ""));
-  });
-}
-
-/**
  * `git branch -d|-D <b>` with exactly one plain branch name, no other flag: allowed when `<b>` is merged (`facts.branchMerged`, `-d` and `-D` alike), is not
  * the default or a protected branch, the session is not a child and the repo is not a work folder outside the worktree. No current-branch condition: the gate
  * judges the whole line before it runs, so in a post-merge chain HEAD is still `<b>`; git itself refuses to delete the checked-out branch.
@@ -897,10 +778,9 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
     case "branch":
       if (child && (flag(/^-[a-zA-Z]*[fmMC]/) || gitProgOpt(rest, "--force") || gitProgOpt(rest, "--move") || rest.includes("--force") || rest.includes("--move"))) return true;
       return (flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete")) && !(s.cwd !== null && branchDeleteMerged(rest, s.cwd ?? env.cwd, env));
-    case "push": {
-      // s.cwd is already moved by every `-C` (shellast); null: a `-C` operand that cannot be resolved
-      return s.cwd === null || !pushOwn(rest, s.cwd ?? env.cwd, env) || gitProgOpt(rest, "--receive-pack") || gitProgOpt(rest, "--exec");
-    }
+    case "push":
+      // a push that runs a program; where it goes is the push floors' (floors.ts pushFloor)
+      return gitProgOpt(rest, "--receive-pack") || gitProgOpt(rest, "--exec");
     case "rebase":
     case "filter-branch":
     case "filter-repo":
@@ -932,30 +812,6 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   }
 }
 
-/** `git <sub> <x>:<path>` where `<path>` is a secret path by the floors' matcher (`git show HEAD:.env` prints the file out of the object store). */
-function gitSecretSeg(s: ShellSegment, env: DangerEnv): boolean {
-  if (progOf(s) !== "git") return false;
-  const fenv: FloorEnv = env.floor ?? { cwd: env.cwd, platform: env.platform };
-  return s.argv.some((w) => {
-    const i = w.indexOf(":");
-    return i >= 0 && secretPath(w.slice(i + 1), fenv, true) !== null;
-  });
-}
-
-/** A segment that is no known read and names a policy or state file or folder of the harness; only with `env.floor`. Floors that refuse a write answer first. */
-function harnessFolderSeg(s: ShellSegment, env: DangerEnv): boolean {
-  if (!env.floor) return false;
-  const chain = toChain(s);
-  // a child's reads stay open (owner ruling brief-16): the read question is asked as for a session that is not a child
-  if (chain && segmentEffect(effectCtxOf({ ...env, roots: { ...env.roots, child: false } }), s.cwd, chain).cls === "read") return false;
-  const words = [...s.argv, ...s.redirects.map((r) => r.target)];
-  const cwd = s.cwd ?? env.cwd;
-  if (harnessFolderWord(words, cwd, env.floor)) return true;
-  // the folder itself: a known read program that writes nothing (a redirect) is skipped, whether or not its path is a read root
-  if (READ_PROGS.has(progOf(s)) && !s.redirects.some((r) => r.op !== "<" && r.op !== "dup")) return false;
-  return harnessFolderPaths(words, cwd, env.floor).some((abs) => !sanctionedHarnessPath(abs, env));
-}
-
 /** A path below the harness folder the session itself works in: its handoff dirs, its scratch dirs, and the wait folder `<agent dir>/pi-foreman/state/wait` (wait.ts). */
 function sanctionedHarnessPath(abs: string, env: DangerEnv): boolean {
   const r = env.roots;
@@ -965,24 +821,6 @@ function sanctionedHarnessPath(abs: string, env: DangerEnv): boolean {
 }
 
 const DETACH = new Set(["nohup", "setsid", "disown"]);
-const detachSeg = (s: ShellSegment): boolean => DETACH.has(progOf(s)) || s.wrappers.some((w) => DETACH.has(w));
-
-function processSeg(s: ShellSegment): boolean {
-  const p = progOf(s);
-  const a = s.argv;
-  const pos = positionals(a);
-  if (["kill", "pkill", "killall", "taskkill", "chown", "mount"].includes(p)) return true;
-  if (p === "chmod") return a.some((w) => /^-[a-zA-Z]*R/.test(w) || w === "--recursive");
-  if (p === "defaults") return pos[0] === "write" || pos[0] === "delete";
-  if (p === "reg") return pos[0] === "add" || pos[0] === "delete";
-  if (p === "launchctl") return pos[0] === "load" || pos[0] === "unload";
-  return false;
-}
-
-function injectSeg(s: ShellSegment): boolean {
-  return injection(s, progOf(s)) !== null;
-}
-
 const segs = (test: (s: ShellSegment, env: DangerEnv) => boolean) => (c: DangerCall, env: DangerEnv): boolean => live(c).some((s) => test(s, env));
 
 /** A path tool that writes where no path rule allows (`pathDecide` found no root that covers it): the path it names (absolute when it resolves), else null. */
@@ -1002,8 +840,6 @@ function pathOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
   const bad = ops?.find((o) => !covered(o))?.[0] ?? ["path", "file_path", "filePath", "dst"].map((k) => i[k]).find((v) => typeof v === "string");
   return typeof bad === "string" ? (resolveWord(env.platform, env.cwd, bad) ?? bad) : "";
 }
-
-const pathWriteOutside = (c: DangerCall, env: DangerEnv): boolean => pathOutsideTarget(c, env) !== null;
 
 /** Operands of a command: the words that are no option, past `--` all of them; the options in `valued` swallow the next word. */
 function operands(a: string[], valued: ReadonlySet<string> = new Set()): string[] {
@@ -1381,8 +1217,6 @@ function shellOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
   return null;
 }
 
-const shellWriteOutside = (c: DangerCall, env: DangerEnv): boolean => shellOutsideTarget(c, env) !== null;
-
 /**
  * A subagent child's `tee` with a literal path operand outside its worktree, scratch dir and handoff names (the parser marks every `tee` opaque, so this reads
  * the opaque segment's words): the first such operand. The null device and the standard sinks are exempt; a word with a variable, substitution or `~`, and a
@@ -1426,56 +1260,17 @@ export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
 
 const MCP_READ = /^(?:list|get|search|read|take|find|describe)_/;
 
-/** An `mcp__server__tool` call that is not named as a read; `navigate_page` to a plain URL is a read. */
-function mcpAct(c: DangerCall): boolean {
-  if (!c.tool.startsWith("mcp__")) return false;
-  const name = c.tool.split("__").slice(2).join("__") || c.tool;
-  if (MCP_READ.test(name)) return false;
-  if (name === "navigate_page") {
-    const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
-    const type = i.type === undefined ? "url" : i.type;
-    if (type === "back" || type === "forward" || type === "reload") return false;
-    return !(type === "url" && typeof i.url === "string" && /^https?:\/\/[^/?#@\s]*(?:[/?#]|$)/i.test(i.url));
-  }
-  return true;
-}
-
-/** A role launch outside the owned roots, a workflow script, or a tasks / chain form. Management actions are no launch. */
-function launchOutside(c: DangerCall, env: DangerEnv): boolean {
-  if (c.tool !== "subagent") return false;
-  const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
-  if (i.action !== undefined && i.action !== null && !(typeof i.action === "string" && i.action.trim() === "")) return false;
-  if (i.tasks !== undefined || i.chain !== undefined || i.workflow !== undefined) return true;
-  return !launchInside(c.input, env.roots, env.cwd, env.platform);
-}
-
-/** `fetch` / `curl` / `wget` that webReadAllow does not pass (S5: the finding-6 fixes decide between silent allow and the classifier). */
-function webNotRead(c: DangerCall, env: DangerEnv): boolean {
-  const cmd = (c.input && typeof c.input === "object" ? (c.input as Record<string, unknown>).command : undefined) as unknown;
-  if (c.tool !== "fetch" && !(BASH_TOOL_NAMES.has(c.tool) && typeof cmd === "string")) return false;
-  const v = webReadAllow(c.tool, c.input, { cwd: env.cwd, scratch: env.roots.scratch, platform: env.platform });
-  return v.candidate && !v.ok;
-}
-
 const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && c.tool !== "foreman_bg" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
-export const DANGER_RULES: readonly DangerRule[] = [
-  { name: "danger-write-outside", reason: "writes files outside the worktree, the session's scratch dir and the OS temp dir", test: (c, e) => pathWriteOutside(c, e) || shellWriteOutside(c, e) },
-  { name: "danger-deploy", reason: "reaches another machine or changes a deployment, cluster, service or cloud account", test: segs(deploySeg) },
-  { name: "danger-forge", reason: "changes something on the code forge (merge, close, comment, create or delete, a non-GET API call)", test: segs(forgeSeg) },
-  { name: "danger-publish", reason: "publishes a package, image or release", test: segs(publishSeg) },
-  { name: "danger-net-write", reason: "sends data over the network (a method other than GET or HEAD, a body, an upload, a raw socket, or a download with credentials or an unsafe target)", test: (c, e) => segs(netWriteSeg)(c, e) || webNotRead(c, e) },
-  { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: (c, e) => segs(installSeg)(c, e) || (c.segments ?? []).some((s) => s.opaque === "assignment" && s.program !== "" && installSeg(s)) },
-  { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, push to a URL, rebase, amend of published work, stash drop, worktree removal, history rewrite)", test: segs(gitSeg) },
-  { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
-  { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
-  { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable, an unparsed form or an interpreter one-liner such as python -c or node -e)", test: (c, e) => (c.segments ?? []).some((s) => s.opaque !== null) || segs(inlineCode)(c, e) },
-  // the judge-first label of the old Python delete check (floors.ts unknownTargetDelete); until the judge-first list replaces this one it takes this path, after the opaque class (an opaque line is asked as that)
+/**
+ * The judge-first list: calls the judge reads before they run (a clear runs, anything else asks the owner, or a child's parent). A call this list and the
+ * floors do not name runs. Floors add their own judge-first hits (`kind: "judge"`: git config and remotes, terminal injection, whole-disk scans, a push whose
+ * destination cannot be read, the delete-outside and PowerShell units); the protected targets (protected.ts) go to their own check.
+ */
+export const JUDGE_FIRST: readonly DangerRule[] = [
+  { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },
+  { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, rebase, amend of published work, stash drop, worktree removal, history rewrite) or runs a program or moves credentials through git", test: segs(gitSeg) },
   { name: "danger-delete-unknown-target", reason: "a delete whose target the harness cannot read (a variable, a glob without a readable directory, a changed directory, input from another command, a PowerShell or cmd recursive delete)", test: (c, e) => !!c.segments && BASH_TOOL_NAMES.has(c.tool) && unknownTargetDelete(c.text ?? "", c.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null },
-  { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
-  { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
-  { name: "danger-git-secret", reason: "shows a secret or key file through a git revision (git show HEAD:<path>)", test: segs(gitSecretSeg) },
-  { name: "danger-harness-folder", reason: "a program that is no known read names a policy or state file of the harness, or the harness folder itself or a path below it outside the session's own handoff, scratch and wait folders", test: segs(harnessFolderSeg) },
 ];
 
 /** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */
@@ -1511,18 +1306,14 @@ export function mergesPullRequest(segments: ShellSegment[]): boolean {
 
 /** The first dangerous-class entry a call falls into, or null. */
 export function dangerMatch(call: DangerCall, env: DangerEnv): DangerHit | null {
-  for (const r of DANGER_RULES) if (r.test(call, env)) return { name: r.name, reason: r.reason };
+  for (const r of JUDGE_FIRST) if (r.test(call, env)) return { name: r.name, reason: r.reason };
   return null;
 }
-
-const SEGMENT_RULES = [deploySeg, forgeSeg, publishSeg, netWriteSeg, installSeg, gitSeg, (s: ShellSegment) => processSeg(s) || detachSeg(s), injectSeg, gitSecretSeg, harnessFolderSeg] as const;
 
 /** The `danger-*` name of a single non-opaque segment (every entry that needs no path facts), or null. `segmentDefault` refuses such a segment. */
 export function dangerSegment(seg: ShellSegment, env: DangerEnv): string | null {
   if (seg.opaque !== null || seg.program === "") return null;
-  const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject", "danger-git-secret", "danger-harness-folder"];
-  const i = SEGMENT_RULES.findIndex((f) => f(seg, env));
-  return i < 0 ? null : names[i];
+  return gitSeg(seg, env) ? "danger-git" : null;
 }
 
 const CONFIG_MODES = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"]);

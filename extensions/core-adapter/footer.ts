@@ -85,12 +85,12 @@ const usd = (v: number): string => `$${v.toFixed(2)}`;
 const money = (v: number, unpriced: boolean): string => (!unpriced ? usd(v) : v !== 0 ? `${usd(v)} + n/a` : "n/a");
 
 /** `↑in ↓out tok · $total list (warm $x / cold $y)`, plus the summed estimate when the runs cost something. */
-export function footerText(t: FooterTotals, runsCost: number | null = null, perms: string | null = null): string {
+export function footerText(t: FooterTotals, runsCost: number | null = null): string {
   const up = t.input + t.cacheRead + t.cacheWrite;
   const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${money(t.cost, t.unpriced)} list (warm ${money(t.costCacheRead, t.unpriced)} / cold ${money(t.costCold, t.unpriced)})`;
   // The summed estimate: the foreman's cost plus every run's priced cost (lane 3b).
   const all = runsCost !== null && runsCost > 0 ? `${base} · all ${usd(t.cost + runsCost)} est (runs ${usd(runsCost)})` : base;
-  return perms && perms !== "auto" ? `${all} · perms: ${perms}` : all; // r79: the permissions mode shows when it is not the default
+  return all;
 }
 
 export const CACHE_STATUS_KEY = "foreman-cache";
@@ -220,7 +220,7 @@ export class UsageFooter {
     this.timers = timers;
   }
 
-  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; runsCost?: number; perms?: string | null }): void {
+  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; runsCost?: number }): void {
     try {
       const t = this.totals.get(sessionId) ?? zeroTotals();
       this.totals.set(sessionId, t);
@@ -228,7 +228,7 @@ export class UsageFooter {
       const mount = this.mounts.get(sessionId);
       if (mount) mount.ctx = ctx;
       if (opts.enabled !== true || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
-      const text = footerText(t, opts.isChild ? null : opts.runsCost ?? null, opts.perms ?? null);
+      const text = footerText(t, opts.isChild ? null : opts.runsCost ?? null);
       if (!mount) {
         ctx.ui.setStatus(FOOTER_KEY, text);
         return;

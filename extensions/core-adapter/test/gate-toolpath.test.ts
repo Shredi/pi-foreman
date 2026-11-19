@@ -12,7 +12,6 @@ import type { GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { tmpRoots } from "../pathrules.ts";
 import { toolPath, slashForm } from "../pathnorm.ts";
-import { parseRule, type ParsedRule, type RuleSets } from "../rules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { resolveToCwd } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";
@@ -43,23 +42,16 @@ const childRoots: GateRoots = { worktree: wt, scratch: [scr], tmp: [], scratchBa
 const mainRoots: GateRoots = { worktree: wt, scratch: [], tmp: tmpRoots(os.tmpdir(), platform, real), owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true, agentDir };
 const verdictOf = (r: GateResult): string => (r === undefined ? "none" : "block" in r ? `block:${r.rule}` : "allow" in r ? `allow:${r.rule}` : `ask:${r.rule}`);
 const env = (child: boolean) => baseFloorEnv(wt, { child, home: HOME, agentDir, platform });
-function gate(tool: string, input: Record<string, unknown>, o: { child?: boolean; sets?: RuleSets } = {}): string {
+function gate(tool: string, input: Record<string, unknown>, o: { child?: boolean; } = {}): string {
   const child = o.child ?? false;
   return verdictOf(
     gateEvaluate(tool, input, wt, {
       env: () => env(child),
       roots: () => (child ? childRoots : mainRoots),
-      ...(o.sets ? { rules: { sets: o.sets, env: { cwd: wt, home: HOME, platform, checkout: wt } } } : {}),
     }).result,
   );
 }
-const w = (p: string, o?: { child?: boolean; sets?: RuleSets }): string => gate("write", { path: p, content: "x" }, o);
-const rl = (t: string): ParsedRule => {
-  const r = parseRule(t);
-  assert.ok(r.ok, t);
-  return (r as { ok: true; rule: ParsedRule }).rule;
-};
-const absRule = (p: string): string => `${platform === "win32" ? "//" : "/"}${slashForm(platform, p)}/**`;
+const w = (p: string, o?: { child?: boolean; }): string => gate("write", { path: p, content: "x" }, o);
 
 // ------------------------------------------------------------------ toolPath against Pi's function
 
@@ -163,31 +155,6 @@ test("main: the Pi agent files and ~/.ssh in @, ~ and file:// spellings get the 
 });
 
 // ------------------------------------------------------------------ rules
-
-test("a deny rule on an absolute path refuses the @ and file:// spellings, and a deny rule in the raw spelling still refuses", () => {
-  const o = path.join(outside, "a");
-  const sets: RuleSets = { allow: [], ask: [], deny: [rl(`Write(${absRule(outside)})`)] };
-  assert.match(w(o, { sets }), /^block:rule /, "plain");
-  for (const spelled of [`@${o}`, url(o)]) assert.match(w(spelled, { sets }), /^block:rule /, spelled);
-  assert.doesNotMatch(w("src/a.ts", { sets }), /^block:/, "beside it: another path");
-  const raw: RuleSets = { allow: [], ask: [], deny: [rl("Write(@notes/**)")] };
-  assert.match(w("@notes/a", { sets: raw }), /^block:rule /, "the raw spelling");
-  assert.doesNotMatch(w("notes2/a", { sets: raw }), /^block:/);
-  const ask: RuleSets = { allow: [], ask: [rl(`Write(${absRule(outside)})`)], deny: [] };
-  assert.match(w(`@${o}`, { sets: ask }), /^ask:rule /, "an ask rule too");
-});
-
-test("an allow rule for a worktree path does not allow @/outside; an allow rule for an outside path allows its @ spelling as it allows the plain one", () => {
-  const o = path.join(outside, "a");
-  const inWt: RuleSets = { allow: [rl(`Write(${absRule(wt)})`)], ask: [], deny: [] };
-  // the OS temp dir is a built-in allow for the main session, so the rule's own allow is what is told apart
-  assert.match(w("src/a.ts", { sets: inWt }), /^allow:Write\(/, "the rule works for its own path");
-  assert.doesNotMatch(w(`@${o}`, { sets: inWt }), /^allow:Write\(/);
-  assert.doesNotMatch(w(url(o), { sets: inWt }), /^allow:Write\(/);
-  const out: RuleSets = { allow: [rl(`Write(${absRule(outside)})`)], ask: [], deny: [] };
-  assert.match(w(o, { sets: out }), /^allow:Write\(/, "plain");
-  for (const spelled of [`@${o}`, url(o)]) assert.equal(w(spelled, { sets: out }), w(o, { sets: out }), spelled);
-});
 
 // ------------------------------------------------------------------ the shell keeps its own reading
 
