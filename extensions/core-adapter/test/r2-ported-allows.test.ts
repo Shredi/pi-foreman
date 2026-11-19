@@ -120,12 +120,10 @@ test("bg", { skip: posixOnly }, () => {
   run([
     // bg.test.ts:280 guard parity of a background shell tool with the bash call (the foreman_bg rows went with the tool)
     [1,"bash","echo x > src/a.txt","m"],
-    [1,"bash","rm -rf -- \"$1\"/*","m"],
     [1,"bash"," ","m"],
     [1,"bash","echo hi","m"],
     // bg.test.ts:373 guard parity: the add-on's bg_run gets exactly the verdict a bash call gets; a non-string 
     [1,"bg_run",{"command":"echo x > src/a.txt"},"m"],
-    [1,"bg_run",{"command":"rm -rf -- \"$1\"/*"},"m"],
     [1,"bg_run",{"command":" "},"m"],
     [1,"bg_run",{"command":"echo hi"},"m"],
     [1,"bg_run",{},"m"],

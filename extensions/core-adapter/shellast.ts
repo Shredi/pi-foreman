@@ -53,10 +53,18 @@ export interface ShellSegment {
   heredoc: boolean;
   /** Set (true) only when stdin is fed by a pipe, a heredoc, a here-string, `<` or `<>`; an fd dup onto stdin (`<&3`) is not counted. */
   stdinFed?: boolean;
+  /** Set (not enumerable) by the walker: the command text ends in its last redirect, nothing follows its target (`echo > $F` yes, `echo > $F arg` no). Read as true when unset. */
+  redirectEnd?: boolean;
   cwd: string | null;
   /** The wrappers this segment was unwrapped from, outermost first (`env`, `bash`, `$(`, backtick ...). */
   wrappers: string[];
   opaque: OpaqueReason | null;
+  /** Set (not enumerable) on a segment that stands for a function, select, coproc or arithmetic for, or a nested string too deep to walk: the source text of the bodies it holds. */
+  bodies?: string[];
+  /** Set (not enumerable): the texts of the here-documents and here-strings that feed stdin (`bash <<'E'` runs its body as code). */
+  heredocs?: string[];
+  /** Set (true, not enumerable) on a `$( )` the walker stopped at on MAX_DEPTH with a script inside it: that script was never walked. */
+  tooDeep?: boolean;
 }
 
 export interface ShellParseOptions {
@@ -69,6 +77,25 @@ export interface ShellParseOptions {
 }
 
 export const MAX_DEPTH = 4;
+
+/**
+ * Whether a shell given these arguments (and no `-c` string) reads its program from stdin: it has no script operand, or `-s` says so. The options that take a value
+ * (`-o name`, `-O name`, also inside a cluster such as `-euo pipefail`) are stepped over as the walker's own shell case steps over them.
+ */
+export function shellReadsStdin(argv: string[]): boolean {
+  for (let i = 0; i < argv.length; i++) {
+    const v = argv[i];
+    if (v === "--") return i + 1 >= argv.length;
+    if (v === "-") return true;
+    if (v.startsWith("--")) continue;
+    if (!/^[-+][A-Za-z]/.test(v)) return false;
+    for (const ch of v.slice(1)) {
+      if (ch === "s" && v[0] === "-") return true;
+      if (ch === "o" || ch === "O") i++;
+    }
+  }
+  return true;
+}
 
 const HARMLESS = new Set(["LANG", "TZ", "NO_COLOR", "FORCE_COLOR", "CI", "DEBUG", "NODE_ENV", "PYTHONDONTWRITEBYTECODE", "GIT_PAGER", "PAGER"]);
 export const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
@@ -99,6 +126,8 @@ interface Run {
   assignOk: Set<Command>;
   env: Record<string, string>;
   platform: string;
+  /** The text of every string the parser ran as a script (`-c`, `eval` ...) behind whatever wrappers and path stood before the shell. */
+  strings: string[];
 }
 
 interface Scope {
@@ -110,7 +139,11 @@ interface Scope {
   stdin: boolean;
   redirects: ShellRedirect[];
   heredoc: boolean;
+  /** The texts of the here-documents and here-strings on stdin. */
+  docs: string[];
   reason: OpaqueReason | null;
+  /** The source text of the script being walked (set by `walkScript`), for the body slices. */
+  src?: string;
 }
 
 /** One simple command being resolved. */
@@ -118,8 +151,11 @@ interface Cmd {
   sc: Scope;
   redirs: ShellRedirect[];
   heredoc: boolean;
+  docs: string[];
   feeds: boolean;
   reason: OpaqueReason | null;
+  /** The command text ends in its last redirect (nothing follows the redirect target); true for redirects inherited from a compound command. */
+  redirectEnd?: boolean;
 }
 
 interface Assign {
@@ -242,14 +278,27 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   // not enumerable: a segment's own keys (and so its serialised form and the pinned digests) stay as they were
   // always set (true or false): a clone that lost the property reads as undefined, which protected.ts treats as fed
   Object.defineProperty(out, "stdinFed", { value: Boolean(c ? c.feeds : sc.stdin), enumerable: false });
+  // not enumerable either: the old delete check read a `> $X` only when the target ended the command (`echo > $F arg` is none)
+  Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
+  Object.defineProperty(out, "heredocs", { value: [...(c ? c.docs : sc.docs)], enumerable: false, configurable: true });
   sc.run.out.push(out);
+}
+
+/** Hangs the body texts on the segment just emitted (not enumerable: a segment's own keys stay as they were). */
+function withBodies(sc: Scope, bodies: string[]): void {
+  const last = sc.run.out[sc.run.out.length - 1];
+  if (last && bodies.length > 0) Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
 }
 
 function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {
   for (const s of subs) {
-    if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth");
+    if (sc.depth + 1 > MAX_DEPTH) {
+      seg(sc, s.label, [], "depth");
+      // the script inside was never walked: a consumer must not read the segment as a plain unresolved word
+      if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
+    }
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
+    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null });
   }
 }
 
@@ -260,7 +309,14 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
     const stdin = fd === null || fd === "0";
     if (r.type === "HereDoc" || r.type === "HereString") {
       c.heredoc = true;
-      if (stdin) c.feeds = true;
+      if (stdin) {
+        c.feeds = true;
+        if (r.type === "HereDoc") c.docs.push(r.body.text);
+        else if (r.target) {
+          const w = wordOf(r.target, vars);
+          c.docs.push(w.value ?? w.text.replace(/^(["'])([\s\S]*)\1$/, "$2"));
+        }
+      }
       continue;
     }
     const t = r.target ? wordOf(r.target, vars) : { text: "", value: null, reason: "unsupported" as OpaqueReason };
@@ -307,9 +363,17 @@ function walkNode(n: any, sc: Scope): string | null {
   switch (n.type) {
     case "Command":
       return doCommand(n as Command, sc);
-    case "Pipeline":
-      (n.commands as CommandNode[]).forEach((cmd, i) => walkNode(cmd, { ...sc, stdin: sc.stdin || i > 0 }));
+    case "Pipeline": {
+      let docs = sc.docs;
+      (n.commands as CommandNode[]).forEach((cmd, i) => {
+        const before = sc.run.out.length;
+        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0 });
+        // a here-document of one command flows down the pipe: the shell at the end of `cat <<E | bash` reads its body as code
+        const fed = sc.run.out.slice(before).flatMap((x) => x.heredocs ?? []);
+        if (fed.length) docs = [...new Set([...docs, ...fed])];
+      });
       return sc.cwd;
+    }
     case "AndOr": {
       let cwd = sc.cwd;
       (n.commands as CommandNode[]).forEach((cmd, i) => {
@@ -319,12 +383,12 @@ function walkNode(n: any, sc: Scope): string | null {
       return cwd;
     }
     case "Redirected": {
-      const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, feeds: sc.stdin, reason: sc.reason };
+      const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, docs: [...sc.docs], feeds: sc.stdin, reason: sc.reason };
       redirectsOf(n.redirects, c);
       const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
       for (const r of n.redirects as Redirection[]) scriptsIn(r, acc);
       walkSubs(acc.subs, sc);
-      return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
+      return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
     }
     case "Subshell":
       walkList(n.body.commands, sc);
@@ -350,10 +414,12 @@ function walkNode(n: any, sc: Scope): string | null {
     }
     case "Function":
       seg(sc, n.name.text, [], "function_def");
+      withBodies(sc, nodeBodies(n, sc.src ?? ""));
       return sc.cwd;
     default: {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
+      withBodies(sc, nodeBodies(n, sc.src ?? ""));
       return sc.cwd;
     }
   }
@@ -361,7 +427,7 @@ function walkNode(n: any, sc: Scope): string | null {
 
 function doCommand(cmd: Command, sc: Scope): string | null {
   const vars = sc.run.vars.get(cmd);
-  const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, feeds: sc.stdin || sc.heredoc, reason: sc.reason };
+  const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, docs: [...sc.docs], feeds: sc.stdin || sc.heredoc, reason: sc.reason };
   const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
   scriptsIn(cmd, acc);
   if (acc.proc) c.reason = pick(c.reason, "process_substitution");
@@ -379,6 +445,11 @@ function doCommand(cmd: Command, sc: Scope): string | null {
     else if (s.type === "Word") words.push(wordOf(s, vars));
     else redirectsOf([s], c, vars);
   }
+  const own = c.redirs.length - sc.redirects.length;
+  const tail = cmd.suffix[cmd.suffix.length - 1];
+  // the redirect ends the command when its node reaches the end of the command node (nothing follows the target inside the command)
+  const closes = tail && "end" in tail && typeof tail.end === "number" && typeof cmd.end === "number" ? tail.end >= cmd.end : true;
+  c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" && closes : !cmd.name);
   if (!cmd.name) {
     // standalone assignments (and bare redirects): harmless names, or the closed grammar's own assignment
     const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && harmless(a.assign));
@@ -480,8 +551,10 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
 /** Parses `src` as a nested script (bash -c, eval, watch, flock -c) and walks it. */
 function runString(label: string, src: string, c: Cmd, cwd: string | null): string | null {
   const sc: Scope = { ...c.sc, cwd, wrappers: [...c.sc.wrappers, label] };
+  sc.run.strings.push(src);
   if (sc.depth + 1 > MAX_DEPTH) {
     seg(sc, label, [], "depth", c);
+    withBodies(sc, opaqueBodies(src, false));
     return cwd;
   }
   let script: Script | undefined;
@@ -494,7 +567,7 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
     seg(sc, label, [src], "parse_error", c);
     return cwd;
   }
-  walkScript(script, src, { ...sc, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, stdin: c.feeds, reason: c.reason });
+  walkScript(script, src, { ...sc, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
   return cwd;
 }
 
@@ -793,6 +866,7 @@ function prepare(script: Script, src: string, sc: Scope): void {
 }
 
 function walkScript(script: Script, src: string, sc: Scope): void {
+  sc.src = src;
   prepare(script, src, sc);
   walkList(script.commands, sc);
 }
@@ -833,8 +907,8 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform };
-    return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [] };
+    return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   const unreadable = (): ShellSegment[] => {
     const sc = start();
@@ -855,7 +929,59 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     if (e instanceof RangeError) return unreadable();
     throw e;
   }
+  Object.defineProperty(sc.run.out, "strings", { value: sc.run.strings, enumerable: false });
   return sc.run.out;
+}
+
+/**
+ * The text before the statement that holds the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position
+ * and are not empty. Null when `cmd` parses, throws, or no statement precedes the error.
+ */
+export function beforeParseError(cmd: string): string | null {
+  let script: Script | undefined;
+  try {
+    script = parse(cmd);
+  } catch {
+    return null;
+  }
+  const err = (script as any)?.errors?.[0] as { pos: number } | undefined;
+  if (!script || !err) return null;
+  let cut = 0;
+  for (const st of script.commands) if (st.end > st.pos && st.end <= err.pos) cut = Math.max(cut, st.end);
+  return cut > 0 ? cmd.slice(0, cut) : null;
+}
+
+const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
+
+function ownBody(n: SyntaxNode, cmd: string): string | null {
+  const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
+  // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
+  if (b && typeof b === "object" && b.type !== "Word") return n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end);
+  return null;
+}
+
+/** The body text of one function, select, coproc or arithmetic for node (none for any other node). */
+function nodeBodies(n: SyntaxNode, cmd: string): string[] {
+  const b = ownBody(n, cmd);
+  return b === null ? [] : [b];
+}
+
+/** The source text of the body of every function, select, coproc and arithmetic for in `cmd` (outermost only) that parses as a script. */
+export function opaqueBodies(cmd: string, intoStrings = false): string[] {
+  const out: string[] = [];
+  const walk = (n: SyntaxNode): void => {
+    const b = ownBody(n, cmd);
+    if (b !== null) out.push(b);
+    else forEachChild(n, walk);
+  };
+  walk(parse(cmd));
+  // the strings run as scripts hold function bodies of their own (the floors read them as the old check read a string): the parser names them, as it resolves the shell
+  // behind env, nice, timeout, command, nohup, a path and the like, so every spelling that reaches a shell string is read the same
+  if (intoStrings) {
+    const strings = (parseShell(cmd) as ShellSegment[] & { strings?: string[] }).strings ?? [];
+    for (const str of strings) out.push(...opaqueBodies(str, false));
+  }
+  return out;
 }
 
 /** The names a line binds: `names` are the assigned ones, `any` is set when a construct may bind any name (`read`, `for`, `eval`, a parse failure ...). */

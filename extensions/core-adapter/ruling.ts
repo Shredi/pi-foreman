@@ -10,7 +10,7 @@ import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits
 import { READ_PROGS, braceVariants } from "./floors.ts";
 import { realDefault, realSpelling } from "./pathrules.ts";
 import { isRulingName, RULING_RE } from "./rulingname.ts";
-import { MAX_DEPTH as SH_DEPTH, parseShell, SHELLS } from "./shellast.ts";
+import { MAX_DEPTH as SH_DEPTH, opaqueBodies, parseShell, SHELLS } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 
 export { isRulingName };
@@ -457,20 +457,6 @@ function globDirHits(dir: string, forms: string[]): boolean {
 
 /** The programs the parse names for a select, coproc or arithmetic for: opaque, with no inner segments. */
 const NO_INNER = new Set(["select", "coproc", "for"]);
-const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
-
-/** The source text of the body of every function, select, coproc and arithmetic for in `cmd` (outermost only) that parses as a script. */
-function opaqueBodies(cmd: string): string[] {
-  const out: string[] = [];
-  const walk = (n: SyntaxNode): void => {
-    const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
-    // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
-    if (b && typeof b === "object" && b.type !== "Word") out.push(n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end));
-    else forEachChild(n, walk);
-  };
-  walk(parse(cmd));
-  return out;
-}
 
 /**
  * Refusal reason when `toolName` writes a `ruling*.md` or `brief-*.md` inside one of `childDirs` (the dirs where this session is the child) at a

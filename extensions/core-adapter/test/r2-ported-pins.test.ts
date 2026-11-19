@@ -807,8 +807,8 @@ test("permoverlay-r41", { skip: posixOnly }, () => {
     [31,"bash","find ~ -name x","bm","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:493 
     [29,"bash","bash -c 'rm -rf /pf41/agent/pi-foreman/state'","m","block:floor-delete-outside"],
-    [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","m","ask:floor-policy-file"],
-    [29,"bash","rm -rf $'/pf41/agent/pi-foreman/managed.json'","m","ask:floor-policy-file"],
+    [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","m","block:floor-delete-unknown-target"],
+    [29,"bash","rm -rf $'/pf41/agent/pi-foreman/managed.json'","m","block:floor-delete-unknown-target"],
     // permoverlay-r41.test.ts:494 
     [29,"bash","bash -c 'rm -rf /pf41/agent/pi-foreman/state'","b","block:floor-delete-outside"],
     [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","b","block:floor-policy-file"],
