@@ -22,6 +22,7 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
   6: { dir: "stricter", why: "the redirect target ends its command by the parser's node offsets: a trailing comment or a closing `)` no longer hides `> $F` (the Python regex let `echo hi > $F # c` and `( echo hi > $F )` run)" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
+  8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs until PR C; no text match, no program list" },
 };
 
 const base = fs.realpathSync(mkTestTmp("pf-parity-"));
@@ -90,5 +91,25 @@ test("the harmless lines still run", () => {
       assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "allow", child: "allow" } }, child), "allow", `${child ? "child" : "foreman"}: ${l}`);
     }
     assert.equal(verdict({ path: "x", tool: "powershell", line: "iex 'Get-Date'", was: { foreman: "allow", child: "allow" } }, child), "allow");
+  }
+});
+
+test("sudo/doas in a body or string is read behind the privilege program; the rm dialog is for a literal command only", () => {
+  const refused = (line: string): void => {
+    for (const child of [false, true]) assert.notEqual(verdict({ path: "x", tool: "bash", line, was: { foreman: "deny", child: "refused" } }, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
+  };
+  const denied = (line: string): void => assert.equal(verdict({ path: "x", tool: "bash", line, was: { foreman: "deny", child: "refused" } }, false), "deny", line);
+  for (const l of ["f(){ sudo rm -rf ~; }; f", "f(){ doas find / -delete; }; f", "f(){ sudo shred /x; }; f", "f(){ sudo mkfs.ext4 /dev/sdb; }; f", "f(){ xargs -I{} sudo rm -rf {}; }; f"]) refused(l);
+  for (const l of ["sh -c 'busybox rm -rf /opt/x'", "eval 'toybox rm -r /opt/x'", "sh -c 'busybox nice rm -rf /opt/x'", "sh -c 'busybox env rm -rf /opt/x'", "sh -c 'busybox timeout 5 rm -rf /opt/x'",
+    "sh -c 'busybox setsid rm -rf /opt/x'", "sh -c 'busybox nohup rm -rf /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f"]) denied(l);
+  // the literal commands keep the dialog
+  for (const l of ["busybox rm -rf /opt/x", "f(){ rm -rf /opt/x; }; f"]) assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "ask", child: "refused" } }, false), "ask", l);
+});
+
+test("class 8: an unknown wrapper inside a -c/eval string or a function body keeps running (no text match, no program list)", () => {
+  for (const child of [false, true]) {
+    for (const l of ["sh -c 'ionice rm -rf ~'", "sh -c 'taskset 1 rm -rf ~'", "sh -c 'chroot / rm -rf ~'", "sh -c 'strace rm -rf ~'", "sh -c 'unbuffer rm -rf ~'", "busybox sh -c 'ionice rm -rf ~'", "eval 'ionice rm -rf ~'", "f(){ ionice rm -rf ~; }; f"]) {
+      assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "allow", child: "allow" } }, child), "allow", `${child ? "child" : "foreman"}: ${l}`);
+    }
   }
 });
