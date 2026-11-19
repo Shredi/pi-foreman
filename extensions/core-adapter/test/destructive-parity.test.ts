@@ -20,6 +20,7 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   3: { dir: "looser", why: "approved by #289 (ledger 8): scratch deletes through FOREMAN_SCRATCH, a read-only `which rm`/git loop, a non-delete `$a=...` assignment, a push to a named feature branch" },
   4: { dir: "stricter", why: "PowerShell system-folder and disk lines stay a hard deny where the Python guard only asked" },
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
+  6: { dir: "stricter", why: "the redirect target ends its command by the parser's node offsets: a trailing comment or a closing `)` no longer hides `> $F` (the Python regex let `echo hi > $F # c` and `( echo hi > $F )` run)" },
 };
 
 const base = fs.realpathSync(mkTestTmp("pf-parity-"));
@@ -84,7 +85,7 @@ test("the restored forms are refused again for both", () => {
 
 test("the harmless lines still run", () => {
   for (const child of [false, true]) {
-    for (const l of ["echo > $F arg", "echo hi >| $F", "echo hi > $F # c", "( echo hi > $F )", "git push origin $B", "ssh host 'rm -rf /data'", "ssh host ls", "docker ps", "rm -rf *", "iex -S mix"]) {
+    for (const l of ["echo > $F arg", "echo hi >| $F", "git push origin $B", "ssh host 'rm -rf /data'", "ssh host ls", "docker ps", "rm -rf *", "iex -S mix"]) {
       assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "allow", child: "allow" } }, child), "allow", `${child ? "child" : "foreman"}: ${l}`);
     }
     assert.equal(verdict({ path: "x", tool: "powershell", line: "iex 'Get-Date'", was: { foreman: "allow", child: "allow" } }, child), "allow");

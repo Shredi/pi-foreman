@@ -1338,7 +1338,7 @@ function localKind(seg: ShellSegment, prog: string, env: FloorEnv, rmAsks: boole
 function scriptsOf(seg: ShellSegment, prog: string): string[] {
   const unquote = (w: string): string => w.replace(/^(["'])([\s\S]*)\1$/, "$2");
   if (prog === "eval") return seg.argv.length ? [unquote(seg.argv.join(" "))] : [];
-  if (!SHELLS.has(prog)) return [];
+  if (!(SHELLS.has(prog) || prog === "ash")) return [];
   const i = seg.argv.findIndex((w) => /^-[a-z]*c$/i.test(w) || /^\/[ck]$/i.test(w) || /^-command$/i.test(w));
   const rest = i < 0 ? [] : seg.argv.slice(i + 1);
   return rest.length ? [unquote(prog === "cmd" || prog === "pwsh" || prog === "powershell" ? rest.join(" ") : rest[0])] : [];
@@ -1366,6 +1366,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     const prog = base(seg.program);
     const applet = seg !== s;
     eff.push(seg);
+    // `busybox xargs rm -rf`: the applet is a remover under xargs, as `xargs busybox rm -rf` is
+    if (applet && prog === "xargs" && wordsRemove(seg.argv)) return withFragment(hit("delete-unknown-target", "The target of this recursive delete cannot be read (a remover under xargs). Name the path literally; a later change moves this check to the judge."), seg);
     const remote = remoteCommand(seg, prog);
     if (remote && remote.words.length > 0) {
       const inWhere: Where = where === "container" || remote.where === "container" ? "container" : "ssh";
@@ -1400,9 +1402,23 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (unknown) return unknown;
   }
   if (segs.some((s) => s.opaque === "function_def")) {
-    for (const body of opaqueBodies(text)) {
-      const h = pythonKinds(body, parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) }), env, where, depth + 1, false, rmAsks);
+    for (const body of opaqueBodies(text, true)) {
+      const inner = parseShell(body, { cwd: segs.find((s) => s.opaque === "function_def")?.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
+      // a function inside a `-c` or eval string was a recursive rm in a string run as code: a deny, never the dialog of a literal command
+      const fnSeg = segs.find((x) => x.opaque === "function_def");
+      const inString = !!fnSeg?.wrappers.some((w) => SHELLS.has(base(w)) || base(w) === "ash" || base(w) === "eval");
+      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && !inString);
       if (h) return h;
+      // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
+      const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
+      if (psText) {
+        const d = psUnitFloors(psText, env);
+        if (d) return d;
+        const u = psUnknownDeletes(psText, 0).find((x) => x.floor);
+        if (u) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${u.reason}). Name the path literally; a later change moves this check to the judge.`, psText);
+        const o = psOutsideDelete(psText, env);
+        if (o) return o;
+      }
     }
   }
   return null;

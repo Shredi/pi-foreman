@@ -255,14 +255,7 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
   for (const s of subs) {
     if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth");
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else {
-      subDepth++;
-      try {
-        walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
-      } finally {
-        subDepth--;
-      }
-    }
+    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
   }
 }
 
@@ -394,8 +387,8 @@ function doCommand(cmd: Command, sc: Scope): string | null {
   }
   const own = c.redirs.length - sc.redirects.length;
   const tail = cmd.suffix[cmd.suffix.length - 1];
-  // the redirect's target is followed by the end of the text or `;`, `&`, `|`, a newline: a comment, `)` or `}` after it is none (as the old check read it)
-  const closes = tail && "end" in tail && typeof tail.end === "number" ? (subDepth > 0 ? REDIRECT_END_SUB : REDIRECT_END).test(walkedSource.slice(tail.end)) : true;
+  // the redirect ends the command when its node reaches the end of the command node (nothing follows the target inside the command)
+  const closes = tail && "end" in tail && typeof tail.end === "number" && typeof cmd.end === "number" ? tail.end >= cmd.end : true;
   c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" && closes : !cmd.name);
   if (!cmd.name) {
     // standalone assignments (and bare redirects): harmless names, or the closed grammar's own assignment
@@ -810,22 +803,9 @@ function prepare(script: Script, src: string, sc: Scope): void {
   });
 }
 
-/** The source text being walked (`walkScript` sets it, nested scripts restore it): what follows a redirect decides whether it ends its command (`redirectEnd`). */
-let walkedSource = "";
-/** Inside a command substitution: its closing `)` or backtick ends the command text as the end of the text does. */
-let subDepth = 0;
-const REDIRECT_END = /^[ \t]*(?:$|[;&|\n])/;
-const REDIRECT_END_SUB = /^[ \t]*(?:$|[;&|\n)`])/;
-
 function walkScript(script: Script, src: string, sc: Scope): void {
-  const outer = walkedSource;
-  walkedSource = src;
-  try {
-    prepare(script, src, sc);
-    walkList(script.commands, sc);
-  } finally {
-    walkedSource = outer;
-  }
+  prepare(script, src, sc);
+  walkList(script.commands, sc);
 }
 
 /**
@@ -892,9 +872,17 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
 const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
 
 /** The source text of the body of every function, select, coproc and arithmetic for in `cmd` (outermost only) that parses as a script. */
-export function opaqueBodies(cmd: string): string[] {
+export function opaqueBodies(cmd: string, intoStrings = false): string[] {
   const out: string[] = [];
   const walk = (n: SyntaxNode): void => {
+    // the literal script of `sh -c` or `eval` holds function bodies of its own (the floors read them as the old check read a string)
+    if (intoStrings && n.type === "Command" && n.name) {
+      const name = wordOf(n.name).value;
+      const args = n.suffix.filter((x): x is Word => x.type === "Word").map((w) => wordOf(w).value);
+      const i = name !== null && SHELLS.has(name) ? args.findIndex((v) => v !== null && /^-[a-z]*c$/.test(v)) : -1;
+      const script = name === "eval" ? (args.every((v) => v !== null) ? args.join(" ") : null) : i >= 0 ? args[i + 1] : null;
+      if (script) out.push(...opaqueBodies(script, true));
+    }
     const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
     // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
     if (b && typeof b === "object" && b.type !== "Word") out.push(n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end));

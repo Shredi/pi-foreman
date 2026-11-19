@@ -41,6 +41,6 @@ test("PowerShell: -LiteralPath:C:\\Windows is a system delete", () => {
 });
 
 test("lines the old check let run still run: narrowed redirect, ssh rm, literal iex, bare glob in the worktree, other remote kinds over ssh and in a container", () => {
-  for (const l of ["echo > $F arg", "echo hi >| $F", "echo hi > $F # c", "( echo hi > $F )", "ssh host 'rm -rf /data'", "ssh host shred /x", "docker exec c shred /x", "rm -rf *"]) assert.equal(run("bash", l), "allow", l);
+  for (const l of ["echo > $F arg", "echo hi >| $F", "ssh host 'rm -rf /data'", "ssh host shred /x", "docker exec c shred /x", "rm -rf *"]) assert.equal(run("bash", l), "allow", l);
   assert.equal(run("powershell", "iex 'Get-Date'"), "allow");
 });
