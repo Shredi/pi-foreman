@@ -1023,20 +1023,27 @@ const EXEC_WORDS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
  * No floor: the delete floors (`rm-system`, `delete-outside`) were judged before this is asked.
  */
 export function unknownTargetDelete(text: string, segments: ShellSegment[], env: FloorEnv): UnknownDelete | null {
+  const hits = unknownTargetDeletes(text, segments, env);
+  // a floor-eligible hit anywhere on the line wins over a label-only one
+  return hits.find((h) => h.floor) ?? hits[0] ?? null;
+}
+
+function unknownTargetDeletes(text: string, segments: ShellSegment[], env: FloorEnv): UnknownDelete[] {
+  const hits: UnknownDelete[] = [];
   const win = (env.platform ?? process.platform) === "win32";
   for (const s of segments) {
     const prog = base(s.program);
     const argv = s.argv;
     if (prog === "rm" && argv.some((w) => RM_RECURSIVE.test(w))) {
-      if (s.wrappers.some((w) => base(w) === "xargs")) return UNKNOWN_DELETE("a remover under xargs");
+      if (s.wrappers.some((w) => base(w) === "xargs")) hits.push(UNKNOWN_DELETE("a remover under xargs"));
       const ops = deleteOperands(s, prog);
-      if ((s.opaque === "unresolved_var" || s.opaque === "process_substitution") && !homeSpelling(s)) return UNKNOWN_DELETE("an operand is a variable or a substitution");
-      if (ops.some((w) => w === "")) return UNKNOWN_DELETE("an operand is empty");
+      if ((s.opaque === "unresolved_var" || s.opaque === "process_substitution") && !homeSpelling(s)) hits.push(UNKNOWN_DELETE("an operand is a variable or a substitution"));
+      if (ops.some((w) => w === "")) hits.push(UNKNOWN_DELETE("an operand is empty"));
       for (const w of ops) {
-        if (/[$`]/.test(w) && !/^\$\{?HOME\}?(?:[\\/]|$)/.test(w)) return UNKNOWN_DELETE(`'${cutFragment(w)}' holds a variable`);
+        if (/[$`]/.test(w) && !/^\$\{?HOME\}?(?:[\\/]|$)/.test(w)) hits.push(UNKNOWN_DELETE(`'${cutFragment(w)}' holds a variable`));
         const abs = px_(win).isAbsolute(w) || /^(?:~|\$HOME|\$\{HOME\})(?:[\\/]|$)/.test(w);
-        if (s.cwd === null && !abs) return UNKNOWN_DELETE(`'${cutFragment(w)}' is relative to a directory changed through a variable`);
-        if (/[*?[{]/.test(w) && resolveWord(w, s.cwd ?? env.cwd, env) === null) return UNKNOWN_DELETE(`the glob '${cutFragment(w)}' has no readable directory`);
+        if (s.cwd === null && !abs) hits.push(UNKNOWN_DELETE(`'${cutFragment(w)}' is relative to a directory changed through a variable`));
+        if (/[*?[{]/.test(w) && resolveWord(w, s.cwd ?? env.cwd, env) === null) hits.push(UNKNOWN_DELETE(`the glob '${cutFragment(w)}' has no readable directory`));
       }
     }
     const exec = prog === "find" ? argv.findIndex((w) => EXEC_WORDS.has(w)) : -1;
@@ -1048,18 +1055,18 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
       const inner = cmd.join(" ").split(/[\s;&|()$"'`{}]+/);
       const at = inner.findIndex((w) => REMOVERS.has(base(w)));
       const viaRunner = RUNNERS.has(base(cmd[0] ?? "")) && at >= 0 && inner.slice(at + 1).some((w) => RM_RECURSIVE.test(w));
-      if (removes || viaRunner) return UNKNOWN_DELETE("a remover under find -exec");
+      if (removes || viaRunner) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
     }
     if (s.opaque === "nonliteral_script") {
       // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so the words of it are scanned as find -exec scans a runner's string
       const words = [s.program, ...argv].join(" ").split(/[\s;&|()$"'`{}]+/);
       const at = words.findIndex((w) => REMOVERS.has(base(w)));
-      if (at >= 0 && words.slice(at + 1).some((w) => RM_RECURSIVE.test(w))) return UNKNOWN_DELETE("a remover inside a script string built at run time");
+      if (at >= 0 && words.slice(at + 1).some((w) => RM_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("a remover inside a script string built at run time"));
     }
-    if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) return UNKNOWN_DELETE("the command word is a variable with a recursive flag");
+    if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
     if (prog === "git" && argv.some((w) => /[$`]/.test(w))) {
       const call = gitCall(s, env);
-      if (call?.sub === "clean") return UNKNOWN_DELETE("git clean with a variable operand", false);
+      if (call?.sub === "clean") hits.push(UNKNOWN_DELETE("git clean with a variable operand", false));
     }
   }
   if (foreignSegments(segments)) {
@@ -1067,18 +1074,18 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
     const recursiveElsewhere = units.some((w) => w.slice(1).some((x) => PS_RECURSE.test(x)));
     for (const words of units) {
       // a floor only where a word of the delete is a variable (`-Recurse:$true` and `/s/q` are switches); a literal PowerShell delete keeps the label
-      if (psRecursiveDelete(words)) return UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", words.slice(1).some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x) && /[$%]/.test(x)));
+      if (psRecursiveDelete(words)) hits.push(UNKNOWN_DELETE("a recursive PowerShell or cmd delete: the harness cannot read where it deletes", words.slice(1).some((x) => (!/^-/.test(x) && !CMD_SWITCHES.test(x) && /[$%]/.test(x)) || (/^-\w+:/.test(x) && !PS_RECURSE.test(x) && /[$%]/.test(x.slice(x.indexOf(":") + 1)) && !/^\$(?:true|false)$/i.test(x.slice(x.indexOf(":") + 1))))));
       if (PS_REMOVERS.has(base(words[0]))) {
         const rest = words.slice(1);
-        if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) return UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false);
-        if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) return UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false);
+        if (/^(?:remove-item|ri)$/i.test(base(words[0])) && rest.some((x) => /^@\w/.test(x))) hits.push(UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false));
+        if (recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push(UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false));
       }
       const p = base(words[0]);
-      if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) return UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false);
-      if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) return UNKNOWN_DELETE("iex of a computed string cannot be read", false);
+      if ((p === "pwsh" || p === "powershell") && words.slice(1).some((w) => PS_ENCODED.test(w))) hits.push(UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false));
+      if ((p === "iex" || p === "invoke-expression") && /[$(]/.test(words.slice(1).join(" "))) hits.push(UNKNOWN_DELETE("iex of a computed string cannot be read", false));
     }
   }
-  return null;
+  return hits;
 }
 
 // ------------------------------------------------------------------ raw text

@@ -47,3 +47,11 @@ test(`${FLOOR}: recursive PowerShell delete of a variable (powershell tool, pwsh
 test(`${FLOOR}: literal and resolved deletes, a read-only variable command and plain finds keep running`, async (t) => {
   for (const l of ["rm -rf build", "rm -rf ./dist", "for b in $(git branch -r | grep origin/round); do git log --oneline -1 $b; done", "find . -name x -print", "pwsh -c '$a=Get-Acl -Force'"]) await runs(t, l);
 });
+
+test(`${FLOOR}: a floor-eligible hit anywhere on the line fires, in either order beside a label-only hit`, async (t) => {
+  for (const l of ["git clean -fd $X; rm -rf $Y", "rm -rf $Y; git clean -fd $X"]) await refused(t, "bash", l);
+});
+test(`${FLOOR}: PowerShell -Path:$p and -LiteralPath:$p are variable operands`, async (t) => {
+  for (const l of ["Remove-Item -Recurse -Path:$p", "Remove-Item -Recurse -LiteralPath:$p"]) await refused(t, "powershell", l);
+  await refused(t, "bash", `pwsh -c 'Remove-Item -Recurse -Path:$p'`);
+});
