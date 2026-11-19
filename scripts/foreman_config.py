@@ -183,7 +183,7 @@ CHILD_ROLES = ["explorer", "builder", "reviewer"]
 SESSION_FOREMAN = "session-foreman"
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
 # contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
-CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch", "pr_unwatch", "pr_follow")
+CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch", "pr_unwatch", "pr_follow", "foreman_reports")
 THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # project-layer tightening of safety.* (see module docstring)
@@ -1233,9 +1233,10 @@ def with_pr_pack(cfg, role, tools):
 def role_allowlist(cfg, role):
     """`roles.<id>.tools` plus `roles.<id>.searchable` (found on demand through tool_search), child-denied tools removed."""
     entry = (cfg.get("roles") or {}).get(role, {})
+    report_off = (cfg.get("retro") or {}).get("report") is False  # retro.report: false takes the report tool off every role
     out = []
     for name in list(entry.get("tools", [])) + list(entry.get("searchable", [])):
-        if name not in CHILD_DENIED_TOOLS and name not in out:
+        if name not in CHILD_DENIED_TOOLS and name not in out and not (report_off and name == "foreman_report"):
             out.append(name)
     return out
 

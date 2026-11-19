@@ -689,11 +689,24 @@
       "title": "Retro and backlog",
       "purpose": "`/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`.",
       "doc": "docs/retro.md#switches",
-      "keys": ["retro.enabled", "retro.proposalMinReviews", "retro.workspaceKey", "retro.expireDays", "retro.askThreshold"],
-      "commands": ["/retro", "/foreman flag-ask", "foreman retro", "foreman backlog"],
+      "keys": ["retro.enabled", "retro.proposalMinReviews", "retro.workspaceKey", "retro.askThreshold"],
+      "commands": ["/retro", "foreman retro", "foreman backlog"],
       "switch": null,
       "state": "on",
       "enable": ""
+    },
+    {
+      "id": "reports",
+      "area": "retro",
+      "toggle": {"on": {"retro.report": true}, "off": {"retro.report": false}},
+      "title": "Fault reports",
+      "purpose": "Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too.",
+      "doc": "docs/retro.md#reporting-at-the-source",
+      "keys": ["retro.report", "retro.expireDays"],
+      "commands": ["foreman reports", "/foreman flag-ask"],
+      "switch": {"key": "retro.report", "on": "true"},
+      "state": "on",
+      "enable": "{\"retro\": {\"report\": true}}"
     },
     {
       "id": "repo-backlog",

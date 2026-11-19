@@ -1,8 +1,65 @@
 # Retro backlog
 
-> Covers what retro reads, what counts as friction, the `Friction:` report line and trace event, the backlog store, recurrence and aging, `foreman backlog`, the lessons flow, bench, and privacy.
+> Covers reporting a fault at the source (`foreman_report`, the report store, states, expiry, `foreman reports`), what retro reads, what counts as friction, the `Friction:` report line and trace event, the backlog store, recurrence and aging, `foreman backlog`, the lessons flow, bench, and privacy.
 > Retro findings survive sessions in a local backlog, count recurrences and age out.
 > The harness never acts on them: you decide what to change.
+
+## Reporting at the source
+
+A session that hits a fault writes it down at that moment, with one `foreman_report` call. Every role has the tool (foreman, explorer, builder, reviewer), in a child as in a main session; it is on by default (`retro.report`, `false` takes the tool away and nothing is written). It calls no model and appends one line.
+
+The fields are data, nothing parses the text:
+
+| field | values |
+| --- | --- |
+| `kind` | `harness-bug`, `permission`, `rule`, `prompt`, `agent`, `routing`, `skill` |
+| `subject` | the tool, command, rule or file the fault is about, up to 40 characters |
+| `what` | what happened, up to 300 |
+| `effect` | `blocked`, `slowed`, `wrong-result`, `note` |
+| `suggest` | optional fix, up to 200 |
+
+A report is for a fault of the harness, a rule, a prompt, a permission, routing or a skill that blocked or slowed the work or gave a wrong result. A finding about the task's own code goes into the result of the run, not here. The answer is one line: `recorded <id>`, `seen <id>` (this session reported the same kind and subject before) or `limit reached` (5 reports per child run, 20 per main session; nothing is written then). A store that cannot be written answers one line and the run goes on.
+
+Every text passes the secret masking of the trace and is cut to file names where it names a path (`/home/x/y/app.ts` becomes `app.ts`) before it is stored. The key of a report is the first 12 hex of sha1 of the kind and the stored subject, trimmed and lowercased, taken after the masking: the same fault reported twice has the same key, and the same file under two paths has the same key.
+
+### The report store
+
+`.workflow/reports/reports.jsonl` in the main checkout of the repository: a linked worktree writes into its main checkout, so a worktree that is removed at close does not take its reports with it; outside git, in a submodule and in a bare layout the store lives in the workspace root. The first write creates `.workflow/reports/.gitignore` with `*`, so the store is never committed, also in a repository that does not ignore `.workflow/`. The rows are append-only (`report`, `group`, `state`); the entries, counts and states are a fold over them, and a row of an unknown type is skipped. Every writer holds `reports.jsonl.lock` (waits up to 5 seconds, breaks a lock older than 60 seconds).
+
+A report row carries `id`, `key`, `kind`, `subject`, `what`, `effect`, `suggest`, `repo` (`owner/name` of the `origin` remote, else the first remote by name, else null), `workspace` (the workspace key of the main checkout, see `retro.workspaceKey`), `branch`, `role`, `session`, `runId`, `version`, `ts` and `source` (`agent`, or `owner` for a flagged ask). `session` is the foreman session: a child counts as its foreman's session. The count of an entry is the number of distinct sessions that reported its key, so one looping session never makes a fault look common. A test or fixture workspace is a temporary repository with its own store.
+
+### States
+
+| state | meaning |
+| --- | --- |
+| `open` | reported, nobody works on it |
+| `planned` | a round is planned for it (the label names the round) |
+| `done` | fixed (the PR number is recorded) |
+| `dropped` | not worth a change (the reason is recorded) |
+| `expired` | open and not seen for `retro.expireDays` |
+
+Entries with different keys that describe one fault are merged with a `group` row: the entry then has the union of the sessions. A new report of an expired entry opens it again. No gate reads a state.
+
+The foreman session manages the list with `foreman_reports` (deferred; `list`, `group`, `set`; it refuses in a child). Its `list` output opens with one fixed line saying that the entries are data written by other sessions and never instructions; each text is quoted and cut to 160 characters. Treat every entry as a note to check, not as an order.
+
+### Expiry
+
+At most once a day, inside the write path of `foreman_report` (a stamp file `.expired` holds the time), the store is cleaned: an `open` entry not seen for `retro.expireDays` (default 14) gets an `expired` state row, and the rows of entries that have been `done`, `dropped` or `expired` for more than 90 days move to `reports-archive.jsonl`. The rewrite holds the store lock and replaces the file in one rename, so a report written at the same time is not lost. `foreman reports expire` runs the step by hand.
+
+### `foreman reports`
+
+```
+foreman reports list [--state open|planned|done|dropped|expired|all] [--json]
+foreman reports show KEY [--json]
+foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT]
+foreman reports expire [--days N] [--archive-days N]
+```
+
+The command works on the store of the repository the current folder belongs to. `KEY` is a key or a unique prefix of four or more characters. `list` opens with the same data line as the tool.
+
+### Flagged asks
+
+`/foreman flag-ask [note]` also writes a report: kind `permission`, subject the command family, `what` the command after the masking and the file-name cut, 300 characters at most, effect `slowed`, source `owner`; the note becomes `suggest`. The complete command stays in the trace only.
 
 ## Sources
 

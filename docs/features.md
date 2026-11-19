@@ -96,6 +96,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
+| [reports](#reports) | retro | toggle | on | Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. | `{"retro": {"report": true}}` | [retro](retro.md#reporting-at-the-source) |
 | [repo-backlog](#repo-backlog) | retro |  | opt-in | Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`. | `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}` | [retro](retro.md#the-store) |
 | [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -139,6 +140,7 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 | [workflow-scripts](#workflow-scripts) | safety | `safety.subagents.allowWorkflow` = `true` | `safety.subagents.allowWorkflow` = `false` | off | yes |
 | [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
 | [retro](#retro) | retro | `retro.enabled` = `null` | `retro.enabled` = `false` | on | no |
+| [reports](#reports) | retro | `retro.report` = `true` | `retro.report` = `false` | on | no |
 | [trace](#trace) | ops | `trace.enabled` = `null` | `trace.enabled` = `false` | on | no |
 | [footer-ui](#footer-ui) | ui | `footer.usage` = `true` | `footer.usage` = `false` | on | no |
 | [herdr](#herdr) | ui | `herdr.blockedShim` = `true`, `herdr.groupTag` = `true` | `herdr.blockedShim` = `false`, `herdr.groupTag` = `false` | on | no |
@@ -201,7 +203,7 @@ Switch: `providers` is non-empty.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write"]`, `reviewer`: `["read", "ls", "grep", "find", "bash"]` | tighten-only (can only narrow the list) |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash", "foreman_report"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_report"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
 | `roles.<x>.denyTools` | `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
 | `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `["security-review"]` | not in project/session (the skills a role gets come from the user or overlay config) |
@@ -760,8 +762,18 @@ Switch: `sync.repos` is non-empty.
 | `retro.proposalMinReviews` | `5` | not in project/session (the proposal threshold comes from the user or overlay config) |
 | `retro.enabled` | `null` | any layer |
 | `retro.workspaceKey` | `null` | not in project/session (the backlog key comes from the user or overlay config) |
-| `retro.expireDays` | `14` | any layer |
 | `retro.askThreshold` | `2` | any layer |
+
+### reports
+
+**Fault reports.** Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too.
+
+Switch: `retro.report` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `retro.report` | `true` | any layer |
+| `retro.expireDays` | `14` | any layer |
 
 ### repo-backlog
 
@@ -818,7 +830,7 @@ No config key.
 
 | Key | Default | Layer |
 |---|---|---|
-| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
+| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_reports", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
 
 ### skill-visibility
 
@@ -965,7 +977,8 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [open-prs](#open-prs) | `foreman radar --json`, `foreman prs` |
 | [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session remote notice`, `foreman session close-remote`, `foreman machine` |
 | [sync](#sync) | `/sync`, `foreman sync` |
-| [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
+| [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
+| [reports](#reports) | `foreman reports`, `/foreman flag-ask` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
