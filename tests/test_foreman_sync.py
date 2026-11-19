@@ -410,19 +410,17 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(g(self.work, "show", "--name-only", "--format=", "HEAD").split(), ["notes/a.md"])
         self.assertEqual(rep.get("warnings") or [], [])
 
-    def test_retro_forwards_backlog_flags(self):
+    def test_retro_forwards_trace_files_only(self):
         seen = {}
 
         def fake_run(cmd, **kw):
             seen["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0, b"ok", b"")
-        args = fs.build_parser().parse_args(["--cwd", ".", "--state", ".", "--session", "s", "--backlog-workspace", "W",
-                                             "--workspace-key", "bench/t", "--backlog-session", "r1", "--no-backlog",
+        args = fs.build_parser().parse_args(["--cwd", ".", "--state", ".", "--session", "s",
                                              "--trace", "T1", "--trace", "T2"])
         with mock.patch.object(fs.subprocess, "run", fake_run):
             fs.run_retro(args, "A")
-        self.assertEqual(seen["cmd"][-7:], ["--backlog-workspace", "W", "--workspace-key", "bench/t",
-                                            "--backlog-session", "r1", "--no-backlog"])
+        self.assertFalse([a for a in seen["cmd"] if a.startswith("--backlog") or a in ("--workspace-key", "--no-backlog")])
         self.assertEqual(seen["cmd"][6:10], ["--trace", "T1", "--trace", "T2"])  # every trace file is forwarded
 
     def test_banned_argv_shapes_absent(self):

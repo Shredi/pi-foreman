@@ -153,8 +153,8 @@ class BenchRetroTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             cmd = calls[0]
             self.assertTrue(cmd[1].endswith("foreman_retro.py"))
-            self.assertEqual(cmd[cmd.index("--workspace-key") + 1], "bench/t1")
-            self.assertEqual(cmd[cmd.index("--backlog-session") + 1], "r")
+            self.assertNotIn("--workspace-key", cmd)  # the retro writes no backlog, so no key is passed
+            self.assertNotIn("--backlog-session", cmd)
             self.assertIn("--trace", cmd)
             self.assertNotIn("--model", cmd)
             self.assertEqual(status["bench_retro"], 0)

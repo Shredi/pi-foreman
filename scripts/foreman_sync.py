@@ -489,13 +489,9 @@ def run_retro(args, agent_dir):
     for t in args.trace or []:
         cmd += ["--trace", t]
     for flag, val in (("--session", args.session_file), ("--usage", args.usage),
-                      ("--review-log", args.review_log), ("--rates", args.rates),
-                      ("--backlog-workspace", args.backlog_workspace), ("--workspace-key", args.workspace_key),
-                      ("--backlog-session", args.backlog_session)):
+                      ("--review-log", args.review_log), ("--rates", args.rates)):
         if val:
             cmd += [flag, val]
-    if args.no_backlog:
-        cmd.append("--no-backlog")
     try:
         r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -549,10 +545,6 @@ def build_parser():
     p.add_argument("--usage")
     p.add_argument("--review-log")
     p.add_argument("--rates")
-    p.add_argument("--backlog-workspace")
-    p.add_argument("--workspace-key")
-    p.add_argument("--backlog-session")
-    p.add_argument("--no-backlog", action="store_true")
     return p
 
 
