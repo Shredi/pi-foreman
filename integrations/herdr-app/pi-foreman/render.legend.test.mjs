@@ -108,10 +108,10 @@ test("the sample draws the marker of every PR key; the pulsing discs loop, the c
   assert.deepEqual(look("pr-no-checks"), ["#dim", false]);
   assert.deepEqual(look("pr-draft-failed"), ["#blocked", false]);
   assert.deepEqual(look("pr-merge-blocked"), ["#ansi3", false]);
-  assert.equal(pr["pr-draft-failed"].parts[0].props.border_color, "#blocked");
+  assert.equal(pr["pr-draft-failed"].parts[0].props.text_color, "#blocked");
   assert.ok(pr["pr-not-reviewed"].parts.some((e) => hasText(e, "unreviewed head")));
   assert.ok(pr["pr-conflict"].parts.some((e) => hasText(e, "!")));
-  assert.equal(pr["pr-failed"].parts[0].props.border_color, "#blocked");
+  assert.equal(pr["pr-failed"].parts[0].props.text_color, "#blocked");
   // the three pulsing PR discs; no green disc pulses
   assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 3);
   assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.bg === "#ansi2").length, 0, "no green pulse");

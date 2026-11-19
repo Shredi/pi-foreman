@@ -62,9 +62,15 @@ export const remoteQuestionText = (label: string, ageMs: number): string => `Rem
 /** The quiet notice for a local child idle at its open plan phase: fixed words, the registry label, the age and planWait's fixed text. */
 export const planIdleText = (label: string, ageMs: number, waits: string): string => `Child session ${label}: idle at its plan for ${duration(ageMs)}; ${waits}.`;
 
-export const clearedText = (label: string, waitedMs: number): string => `Child session ${label}: its dialog was answered after ${duration(waitedMs)}.`;
+/** The owner's answers to a child's plan checkpoint, as the child's live file records them; the words are fixed. */
+const ANSWER_WORDS: Record<string, string> = { approve: "plan approved by the owner", revise: "plan sent back by the owner (revise)", reject: "plan rejected by the owner" };
 
-type Obs = { blocked: false; plan?: { since: number; waits: string } } | { blocked: true; since: number; kind: unknown; plan?: undefined };
+export const clearedText = (label: string, waitedMs: number, answer?: string): string => `Child session ${label}: its dialog was answered after ${duration(waitedMs)}${answer ? `: ${ANSWER_WORDS[answer]}` : ""}.`;
+
+/** The information line for a checkpoint answer: fixed words and the registry label; approves nothing. */
+export const answerText = (label: string, answer: string): string => `Child session ${label}: ${ANSWER_WORDS[answer]}.`;
+
+type Obs = ({ blocked: false; plan?: { since: number; waits: string } } | { blocked: true; since: number; kind: unknown; plan?: undefined }) & { answer?: { decision: string; at: string } };
 interface Sent {
   child: string;
   label: string;
@@ -97,13 +103,18 @@ export interface ChildBlockedDeps {
 export class ChildBlocked {
   private readonly d: ChildBlockedDeps;
   private sent = new Map<string, Sent>();
+  /** The checkpoint answers already reported or seeded: key `${label}\n${at}` -> child. */
+  private answered = new Map<string, string>();
+  /** The first start of this session's watcher, kept in the state file so a reload does not move it. */
+  private startedMs: number;
   private cancel: Cancel | null = null;
   /** The remote children whose registry ask was seen: when first, and whether the reminder went out (memory only; it ends with the entry). */
   private readonly remoteAsks = new Map<string, { seq: unknown; first: number; reminded: boolean }>();
 
   constructor(d: ChildBlockedDeps) {
     this.d = d;
-    this.load();
+    this.startedMs = (d.now ?? Date.now)();
+    if (!this.load()) this.save();
   }
 
   start(): void {
@@ -134,6 +145,16 @@ export class ChildBlocked {
       for (const e of mine) {
         const obs = this.observe(e, now);
         if (!(secs > 0) || !obs) continue; // unreadable, stale or skipped: nothing is known, so nothing is said
+        // an answer older than this session's start is seeded, never replayed
+        let answer: string | undefined;
+        if (obs.answer) {
+          const akey = `${cleanLabel(e.label)}\n${obs.answer.at}`;
+          if (!this.answered.has(akey)) {
+            this.answered.set(akey, e.child);
+            dirty = true;
+            if (Date.parse(obs.answer.at) >= this.startedMs) answer = obs.answer.decision;
+          }
+        }
         for (const [key, rec] of [...this.sent]) {
           if (rec.child !== e.child || (obs.blocked && obs.since === rec.since && !rec.plan) || (rec.plan && !obs.blocked && obs.plan?.since === rec.since)) continue;
           this.sent.delete(key); // the announced episode ended
@@ -141,7 +162,12 @@ export class ChildBlocked {
           if (rec.plan) continue;
           const waitedMs = now - rec.since;
           this.d.trace?.({ event: "child_blocked_cleared", label: rec.label, waitedMs });
-          this.d.send(clearedText(rec.label, waitedMs), false);
+          this.d.send(clearedText(rec.label, waitedMs, answer), false);
+          answer = undefined; // merged into the note: no second line
+        }
+        if (answer) {
+          this.d.trace?.({ event: "child_checkpoint_answer", label: cleanLabel(e.label), decision: answer });
+          this.d.send(answerText(cleanLabel(e.label), answer), false);
         }
         const label = cleanLabel(e.label);
         if (!obs.blocked) {
@@ -165,6 +191,11 @@ export class ChildBlocked {
       for (const [key, rec] of [...this.sent]) {
         if (open.has(rec.child)) continue;
         this.sent.delete(key); // the child is closed or gone
+        dirty = true;
+      }
+      for (const [key, child] of [...this.answered]) {
+        if (open.has(child)) continue;
+        this.answered.delete(key);
         dirty = true;
       }
       if (dirty) this.save();
@@ -218,7 +249,7 @@ export class ChildBlocked {
     if (typeof e.handoff !== "string" || !e.handoff) return undefined;
     const id = readLive(e.handoff)?.piSessionId;
     if (!id || !SAFE_ID.test(id)) return undefined;
-    let f: { heartbeatAt?: unknown; state?: unknown; lastEventAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown };
+    let f: { heartbeatAt?: unknown; state?: unknown; lastEventAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown; lastCheckpoint?: { decision?: unknown; at?: unknown } };
     try {
       f = JSON.parse(fs.readFileSync(path.join(liveDir(this.d.agentDir), `${id}.json`), "utf8"));
     } catch {
@@ -226,13 +257,16 @@ export class ChildBlocked {
     }
     const beat = typeof f.heartbeatAt === "string" ? Date.parse(f.heartbeatAt) : NaN;
     if (!Number.isFinite(beat) || now - beat > STALE_LIVE_MS) return undefined;
+    const cp = f.lastCheckpoint;
+    const answer = cp && typeof cp.decision === "string" && Object.hasOwn(ANSWER_WORDS, cp.decision) && typeof cp.at === "string" && Number.isFinite(Date.parse(cp.at)) ? { decision: cp.decision, at: cp.at } : undefined;
     if (f.blockedOn !== "owner") {
       const pw = f.state === "idle" ? planWait(e.handoff) : null;
       const at = typeof f.lastEventAt === "string" ? Date.parse(f.lastEventAt) : NaN;
-      return pw?.open && Number.isFinite(at) ? { blocked: false, plan: { since: at, waits: pw.text } } : { blocked: false };
+      const plan = pw?.open && Number.isFinite(at) ? { since: at, waits: pw.text } : undefined;
+      return { blocked: false, ...(plan ? { plan } : {}), ...(answer ? { answer } : {}) };
     }
     const since = typeof f.ownerBlockedSince === "string" ? Date.parse(f.ownerBlockedSince) : NaN;
-    return Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind } : undefined;
+    return Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind, ...(answer ? { answer } : {}) } : undefined;
   }
 
   private observeRemote(e: SessionEntry, now: number): Obs | undefined {
@@ -245,14 +279,21 @@ export class ChildBlocked {
     return Number.isFinite(since) ? { blocked: true, since, kind: "dialog" } : undefined;
   }
 
-  private load(): void {
+  /** True when a state file with a start time was read. */
+  private load(): boolean {
     try {
-      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { sent?: Record<string, Partial<Sent> & { ask?: true }> };
+      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { startedMs?: unknown; sent?: Record<string, Partial<Sent> & { ask?: true }>; answered?: Record<string, unknown> };
+      for (const [k, c] of Object.entries(j.answered ?? {})) if (typeof c === "string") this.answered.set(k, c);
       // an `ask: true` record of an older state file is dropped: it is no owner episode
       for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since, ...(r.plan === true ? { plan: true as const } : {}) });
+      if (typeof j.startedMs === "number" && Number.isFinite(j.startedMs)) {
+        this.startedMs = j.startedMs;
+        return true;
+      }
     } catch {
       // no file yet
     }
+    return false;
   }
 
   /** Atomic: temp file in the same folder, then rename. */
@@ -261,7 +302,7 @@ export class ChildBlocked {
     const tmp = `${file}.${process.pid}.tmp`;
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, sent: Object.fromEntries(this.sent) })}\n`, "utf8");
+      fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, startedMs: this.startedMs, sent: Object.fromEntries(this.sent), answered: Object.fromEntries(this.answered) })}\n`, "utf8");
       fs.renameSync(tmp, file);
     } catch {
       try {

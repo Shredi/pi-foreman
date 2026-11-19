@@ -10,6 +10,7 @@ import coreAdapter from "../index.ts";
 import { planVersionHash } from "../checkpoint.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { probeSpawner } from "./_probe-memo.ts";
+import type { Spawner } from "../spawn.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Fn = (...a: unknown[]) => Promise<unknown>;
@@ -31,6 +32,8 @@ export interface WorldOpts {
   ceremony?: Record<string, unknown>;
   /** Production wiring of the launch snapshot (no `worktreeSnapshot` dependency); by default the rig passes a no-op. */
   realSnapshot?: boolean;
+  /** The adapter's spawner (default: the version-probe memo over the real one); a file whose cases do not test the python guards passes _light-spawner.ts. */
+  spawner?: Spawner;
   /** Collects the custom messages the adapter sends (`pi.sendMessage`) with their options. */
   sent?: { message: { customType: string; content: string }; options: unknown }[];
 }
@@ -108,7 +111,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setThinkingLevel: () => undefined,
       sendMessage: (message: { customType: string; content: string }, options?: unknown) => void o.sent?.push({ message, options }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
       cwd: project,

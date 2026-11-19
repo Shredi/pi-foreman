@@ -28,8 +28,10 @@ export interface OwnedRoots {
   readWrite: string[];
   /** Read only (reads of any role). */
   readOnly: string[];
-  /** `<tmpRoot>/pi-foreman-scratch`: each child owns only its own subdir (`$FOREMAN_SCRATCH`). */
+  /** The session's scratch base (`<worktree root>/.foreman/scratch`, else `<tmpRoot>/pi-foreman-scratch`): each child owns only its own subdir (`$FOREMAN_SCRATCH`). */
   childScratchRoot: string;
+  /** `<tmpRoot>/pi-foreman-scratch`, where lanes of older runs may still lie. */
+  tmpScratchRoot: string;
   /** The global npm root when resolved (also the last `readOnly` entry). */
   npmRoot?: string;
   /** Block globs of a custom worktree root (worktreeroot.ts rootTemplateGlobs); the overlay adds them to the child block. */
@@ -42,6 +44,8 @@ export interface OwnedInput {
   workspaceRoot: string;
   /** The OS temp dir, resolved the way childscratch.ts resolves it (realpath). */
   tmpRoot: string;
+  /** The session's worktree-side scratch base (`<root>/.foreman/scratch`); absent: the temp folder. */
+  scratchBase?: string;
   npmRoot?: string | null;
   /** A custom worktree root (spelled and real) for a session whose workspace is the main checkout: owned instead of `<ws>.worktrees`. */
   worktreeRoot?: string[];
@@ -58,7 +62,52 @@ export function ownedRoots(i: OwnedInput): OwnedRoots {
   ];
   const readOnly = [path.join(i.agentDir, "pi-foreman"), path.join(i.agentDir, "foreman.json"), path.join(i.agentDir, "settings.json")];
   if (i.npmRoot) readOnly.push(path.resolve(i.npmRoot));
-  return { readWrite, readOnly, childScratchRoot: path.join(i.tmpRoot, SCRATCH_DIR_NAME), ...(i.npmRoot ? { npmRoot: path.resolve(i.npmRoot) } : {}), ...(i.worktreeGlobs?.length ? { worktreeGlobs: i.worktreeGlobs } : {}) };
+  const tmpScratchRoot = path.join(i.tmpRoot, SCRATCH_DIR_NAME);
+  return { readWrite, readOnly, childScratchRoot: i.scratchBase ?? tmpScratchRoot, tmpScratchRoot, ...(i.npmRoot ? { npmRoot: path.resolve(i.npmRoot) } : {}), ...(i.worktreeGlobs?.length ? { worktreeGlobs: i.worktreeGlobs } : {}) };
+}
+
+/**
+ * The owned read-write roots as literal dirs: the `*` segment (one dir per session) is expanded from disk. A root that holds the child scratch base
+ * `exclude` (`<root>/.foreman/scratch`) is replaced by the directories beside the path down to it, so no shell write reaches the scratch lanes.
+ */
+export function literalOwnedDirs(roots: string[], exclude?: string, platform: string = process.platform): string[] {
+  const out: string[] = [];
+  const fold = (x: string): string => (platform === "win32" || platform === "darwin" ? x.toLowerCase() : x);
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  for (const r of roots) {
+    const i = r.split(path.sep).indexOf("*");
+    if (i < 0) {
+      const rel = exclude ? path.relative(fold(real(r)), fold(exclude)) : "";
+      if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) {
+        out.push(r);
+        continue;
+      }
+      let cur = r;
+      for (const seg of rel.split(path.sep)) {
+        try {
+          for (const e of fs.readdirSync(cur, { withFileTypes: true })) if (e.isDirectory() && fold(e.name) !== seg) out.push(path.join(cur, e.name));
+        } catch {
+          // the dir does not exist yet: nothing to allow
+        }
+        cur = path.join(cur, seg);
+      }
+      continue;
+    }
+    const parts = r.split(path.sep);
+    const parent = parts.slice(0, i).join(path.sep) || path.sep;
+    try {
+      for (const e of fs.readdirSync(parent, { withFileTypes: true })) if (e.isDirectory()) out.push(path.join(parent, e.name, ...parts.slice(i + 1)));
+    } catch {
+      // the parent does not exist yet: nothing to allow
+    }
+  }
+  return out;
 }
 
 /** The handoffs root (`<agentDir>/pi-foreman/handoffs`) among the read-write roots, if any. */
