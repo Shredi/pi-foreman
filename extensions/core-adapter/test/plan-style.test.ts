@@ -8,7 +8,7 @@ import { htmlToMarkdown } from "../htmlmd.ts";
 import { renderPage, STYLE } from "../pages.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const skeleton = fs.readFileSync(path.join(root, "instructions", "plan-skeleton.html"), "utf8");
+const skeleton = fs.readFileSync(path.join(root, "instructions", "plan-skeleton.html"), "utf8").replace(/\r\n/g, "\n");
 
 test("stylesheet: the converter finds no hidden-style fact in it", () => {
   assert.deepEqual(htmlToMarkdown(`<style>${STYLE}</style><p>x</p>`).hidden, []);
