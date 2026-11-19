@@ -14,11 +14,11 @@ for (const d of [wt, scr]) fs.mkdirSync(d, { recursive: true });
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 const roots = (child: boolean): GateRoots => ({ worktree: wt, scratch: [scr], tmp: [path.join(base, "tmp")], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child, role: child ? "builder" : "foreman", tmpAccess: true });
-/** The gate result: "<rule>:block" or "<rule>:ask", "allow" when nothing decided. */
+/** The gate result: "<rule>:block" or "<rule>:ask", "judge" when the call goes to the judge first (PR C), "allow" when nothing decided. */
 const run = (tool: string, command: string, child = false): string => {
   const o = gateEvaluate(tool, { command }, wt, { env: (cwd) => baseFloorEnv(cwd, { scratch: [scr], home: "/Users/fixture", ...(child ? { child: true, builder: true } : {}) }), roots: () => roots(child) });
   const x = o.result;
-  return x && "block" in x ? `${x.rule}:block` : x && "ask" in x ? `${x.rule}:ask` : "allow";
+  return x && "block" in x ? `${x.rule}:block` : x && "ask" in x ? `${x.rule}:ask` : o.danger ? "judge" : "allow";
 };
 
 
@@ -70,8 +70,8 @@ test("each compound in a remote string has the verdict of its plain form, for ss
 
 test("a $( ) nested past the depth cap is refused unread; the harmless 5-deep line is reported", () => {
   for (const l of ["$($($($($(rm -rf $X)))))", "x=$(true; $(true; $(true; $(true; $(true; rm -rf ~)))))"]) refused(l);
-  // the harmless 5-deep line is refused as well (deny for unreadable depth): the cap cannot tell it from a hidden delete
+  // the harmless 5-deep line goes to the judge as well (unreadable depth): the cap cannot tell it from a hidden delete
   const deep = "echo $(echo $(echo $(echo $(echo $(echo hi)))))";
-  for (const child of [false, true]) assert.match(run("bash", deep, child), /^floor-delete-unknown-target:block$/);
+  for (const child of [false, true]) assert.equal(run("bash", deep, child), "judge");
   runs("echo $(echo $(echo hi))");
 });

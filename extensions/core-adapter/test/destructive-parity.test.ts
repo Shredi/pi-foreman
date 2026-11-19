@@ -1,5 +1,6 @@
-// PR B2 parity: in mode `allow` (the gate result before the mode step: nothing decided runs) every line of the fixture is refused at least as hard as the stricter of the removed
-// Python delete guard and the floors at f0d8b980, for the foreman and for a child. The classes below are the only differences that pass; any other difference fails.
+// PR B2 parity, re-based on PR C (there are no modes): every line of the fixture gets the verdict recorded in its `now` field, for the foreman and for a child, and `now` stays
+// consistent with `was`, the stricter of the removed Python delete guard and the floors at f0d8b980: a line that was refused is never run unless it is in a named class below, and
+// a line that was refused or asked on is never looser than the judge-first list says (judge: the gate hands the call to the judge first).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -10,25 +11,25 @@ import { mkTestTmp } from "./_tmpbase.ts";
 
 type Foreman = "allow" | "ask" | "deny";
 type Child = "allow" | "refused";
-interface Row { path: string; tool: string; line: string; was: { foreman: Foreman; child: Child }; class?: number }
+type Now = "run" | "judge" | "floor" | "ask";
+interface Row { path: string; tool: string; line: string; was: { foreman: Foreman; child: Child }; now: { foreman: Now; child: Now }; class?: number }
 const rows: Row[] = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "fixtures", "destructive-parity.json"), "utf8")).rows;
 
-/** The allowed differences: `dir` is the only direction the class allows, with its reason. */
+/** The deliberate differences from `was` that stay: `dir` is the only direction the class allows, with its reason. Everything the judge-first list took over from a refusal needs no class. */
 const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   1: { dir: "looser", why: "owner exception: a recursive rm over ssh, and a delete inside the worktree, run" },
-  2: { dir: "stricter", why: "2026-11-18 ruling: `cd $D && rm -rf build` and `find . -exec rm -rf {} +` (and their direct variants, `git -C d clean $X`) are refused for the foreman instead of a dialog" },
   3: { dir: "looser", why: "approved by #289 (ledger 8): scratch deletes through FOREMAN_SCRATCH, a read-only `which rm`/git loop, a non-delete `$a=...` assignment, a push to a named feature branch" },
   4: { dir: "stricter", why: "PowerShell system-folder and disk lines stay a hard deny where the Python guard only asked" },
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
-  6: { dir: "stricter", why: "the redirect target ends its command by the parser's node offsets: a trailing comment or a closing `)` no longer hides `> $F` (the Python regex let `echo hi > $F # c` and `( echo hi > $F )` run)" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
-  8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs until PR C; no text match, no program list" },
-  10: { dir: "stricter", why: "owner 2026-11-19: coproc bodies, stricter until PR C: every body kind (`coproc { rm -rf ~; }`, `rm -rf $X`, `find $X -delete`, `chmod -R $D`, `truncate`, `dd of=$F`, `git clean -e`, `shred`, `mkfs`) ran before (the Python guard and the floors at f0d8b980 looked inside no coproc); their bodies are checked now" },
-  11: { dir: "looser", why: "owner 2026-11-19: a remote compound (an ssh or container string wrapped in if/while/for/until/{ }) gets the verdict of its plain form, looser than the Python text match, until PR C" },
-  12: { dir: "stricter", why: "owner 2026-11-19: a shell that reads a here-string (`bash <<< '...'`, behind wrappers, `docker exec -i`, ssh) is checked and refused like `-c`; the Python guard and the floors at f0d8b980 did not look at it, until PR C" },
-  13: { dir: "stricter", why: "owner 2026-11-19: a `$( )` or `<( )` nested past the walker's depth (4) with content is refused as unreadable, harmless lines included (`echo $(echo ...x5)`), until PR C" },
+  8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs; no text match, no program list" },
+  10: { dir: "stricter", why: "coproc bodies are read (the Python guard and the floors at f0d8b980 looked inside none): a system delete in one is a floor" },
+  11: { dir: "looser", why: "owner 2026-11-19: a remote compound (an ssh or container string wrapped in if/while/for/until/{ }) gets the verdict of its plain form, looser than the Python text match" },
   14: { dir: "looser", why: "builder round of 2026-11-19: under `xargs` the stdin text becomes arguments, never the program (`xargs bash <<'E'`): the Python text match refused it, the gate no longer reads the body as code" },
 };
+
+/** `looser`: refused or asked on before, runs now. `stricter`: allowed or asked on before, a floor now (a judge-first hit is the list taking a call over and needs no class). */
+const direction = (was: Foreman | Child, now: Now): "looser" | "stricter" | null => (was !== "allow" && now === "run" ? "looser" : (was === "allow" || was === "ask") && now === "floor" ? "stricter" : null);
 
 const base = fs.realpathSync(mkTestTmp("pf-parity-"));
 const wt = path.join(base, "wt");
@@ -37,14 +38,19 @@ for (const d of [path.join(wt, "sub"), path.join(wt, "build"), scr]) fs.mkdirSyn
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 const roots = (child: boolean): GateRoots => ({ worktree: wt, scratch: [scr], tmp: [path.join(base, "tmp")], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child, role: child ? "builder" : "foreman", tmpAccess: true });
-const verdict = (r: Row, child: boolean): Foreman | Child => {
-  const o = gateEvaluate(r.tool, { command: r.line }, wt, { env: (cwd) => baseFloorEnv(cwd, { scratch: [scr], home: "/Users/fixture", ...(child ? { child: true, builder: true } : {}) }), roots: () => roots(child) });
+/** What the gate does with the call: a refusal (`floor`), a question that is no judge-first hit (`ask`), the judge first (`judge`), or nothing (`run`). */
+const verdictOf = (tool: string, line: string, child: boolean): Now => {
+  const o = gateEvaluate(tool, { command: line }, wt, { env: (cwd) => baseFloorEnv(cwd, { scratch: [scr], home: "/Users/fixture", ...(child ? { child: true, builder: true } : {}) }), roots: () => roots(child) });
   const x = o.result;
-  if (x && "block" in x) return child ? "refused" : "deny";
-  if (x && "ask" in x) return child ? "refused" : "ask";
-  return "allow";
+  if (x && "block" in x) return "floor";
+  if (x && "ask" in x) return "ask";
+  return o.danger ? "judge" : "run";
 };
-const RANK: Record<string, number> = { allow: 0, ask: 1, deny: 2, refused: 2 };
+const verdict = (r: Row, child: boolean): Now => verdictOf(r.tool, r.line, child);
+/** One line, both roles, the same verdict. */
+const both = (tool: string, line: string, want: Now): void => {
+  for (const child of [false, true]) assert.equal(verdictOf(tool, line, child), want, `${child ? "child" : "foreman"}: ${line}`);
+};
 
 test("the fixture covers every recursing path and a spread of rows", () => {
   assert.ok(rows.length >= 800, String(rows.length));
@@ -52,69 +58,66 @@ test("the fixture covers every recursing path and a spread of rows", () => {
 });
 
 for (const [who, child] of [["foreman", false], ["child", true]] as const) {
-  test(`mode allow, ${who}: no difference from the baseline outside the allowed classes`, () => {
+  test(`${who}: every row gets the verdict recorded in its now field`, () => {
     const bad: string[] = [];
-    const used = new Set<number>();
+    for (const r of rows) {
+      const now = verdict(r, child);
+      if (now !== r.now[who]) bad.push(`${r.tool} ${JSON.stringify(r.line)}: recorded ${r.now[who]}, now ${now}`);
+    }
+    assert.deepEqual(bad, [], `\n${bad.join("\n")}`);
+  });
+
+  test(`${who}: no difference from the baseline outside the named classes`, () => {
+    const bad: string[] = [];
     for (const r of rows) {
       const was = r.was[who];
-      const now = verdict(r, child);
-      const dir = RANK[now] < RANK[was] ? "looser" : RANK[now] > RANK[was] ? "stricter" : null;
-      if (dir === null) continue;
-      if (r.class !== undefined && CLASSES[r.class]?.dir === dir) { used.add(r.class); continue; }
+      const now = r.now[who];
+      const dir = direction(was, now);
+      if (dir === null || (r.class !== undefined && CLASSES[r.class]?.dir === dir)) continue;
       bad.push(`${r.tool} ${JSON.stringify(r.line)}: was ${was}, now ${now} (${dir}${r.class ? `, class ${r.class} allows ${CLASSES[r.class]?.dir}` : ", no class"})`);
     }
     assert.deepEqual(bad, [], `\n${bad.join("\n")}`);
-    assert.ok(used.size > 0);
   });
 }
 
-test("every class is used, and a row with a class differs for the foreman or the child (no stale class)", () => {
+test("every class is used, and a row with a class differs for the foreman or the child in its direction (no stale class)", () => {
   const stale: string[] = [];
   const seen = new Set<number>();
   for (const r of rows) {
     if (r.class === undefined) continue;
     seen.add(r.class);
-    const differs = (["foreman", "child"] as const).some((w) => RANK[verdict(r, w === "child")] !== RANK[r.was[w]]);
-    if (!differs) stale.push(r.line);
+    if (!(["foreman", "child"] as const).some((w) => direction(r.was[w], r.now[w]) === CLASSES[r.class!]?.dir)) stale.push(r.line);
   }
   assert.deepEqual(stale, []);
   assert.deepEqual([...seen].sort((x, y) => x - y).map(String), Object.keys(CLASSES));
 });
 
-test("the restored forms are refused again for both", () => {
-  const refused = (line: string, tool = "bash"): void => {
-    for (const child of [false, true]) assert.notEqual(verdict({ path: "x", tool, line, was: { foreman: "deny", child: "refused" } }, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
-  };
-  for (const l of ["busybox rm -rf ~", "toybox rm -rf ~", "git clean -fd $X", "docker exec c rm -rf /data", "kubectl exec p -- rm -rf /data",
-    "f(){ rm -rf ~; }; f", "function g { rm -rf $1; }; g x", "busybox sh -c 'rm -rf ~'", "f(){ mkfs.ext4 /dev/sdb; }; f", "git push origin HEAD:$B", "git clean -fd -e keep"]) refused(l);
-  for (const l of ["Remove-Item -Recurse -LiteralPath:C:\\Windows", "Remove-Item -Recurse $p", "iex $s", "pwsh -EncodedCommand AAAA", "Remove-Item @p"]) refused(l, "powershell");
+test("the moved forms go to the judge first, for the foreman and a child", () => {
+  for (const l of ["git clean -fd $X", "docker exec c rm -rf /data", "kubectl exec p -- rm -rf /data", "function g { rm -rf $1; }; g x", "git clean -fd -e keep"]) both("bash", l, "judge");
+  for (const l of ["chmod -R 777 $X", "chown -R me $X", "truncate -s 0 $X", "echo hi > $F", "dd of=$X if=/dev/zero", "find $X -delete", "xargs rm -rf", "find . -exec rm -rf {} +", "sh -c \"rm -rf $D\"", "eval \"rm -rf $D\"", "rm -rf \"$X\"/*"]) both("bash", l, "judge");
+  for (const l of ["Remove-Item -Recurse $p", "iex $s", "pwsh -EncodedCommand AAAA", "Remove-Item @p", "Get-ChildItem | Remove-Item -Recurse"]) both("powershell", l, "judge");
+});
+
+test("the forms that stay floors: literal system deletes, the rare local forms, a variable push destination", () => {
+  for (const l of ["rm -rf ~", "busybox rm -rf ~", "toybox rm -rf ~", "f(){ rm -rf ~; }; f", "busybox sh -c 'rm -rf ~'", "git push origin HEAD:$B", "rm -rf $X; rm -rf ~", "f(){ rm -rf $1; rm -rf ~; }; f", "sh -c 'rm -rf $X; rm -rf ~'"]) both("bash", l, "floor");
+  both("powershell", "Remove-Item -Recurse -LiteralPath:C:\\Windows", "floor");
 });
 
 test("the harmless lines still run", () => {
   for (const child of [false, true]) {
-    for (const l of ["echo > $F arg", "echo hi >| $F", "git push origin $B", "ssh host 'rm -rf /data'", "ssh host ls", "docker ps", "rm -rf *", "iex -S mix"]) {
-      assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "allow", child: "allow" } }, child), "allow", `${child ? "child" : "foreman"}: ${l}`);
-    }
-    assert.equal(verdict({ path: "x", tool: "powershell", line: "iex 'Get-Date'", was: { foreman: "allow", child: "allow" } }, child), "allow");
+    for (const l of ["git push origin $B", "ssh host 'rm -rf /data'", "ssh host ls", "docker ps", "rm -rf *", "iex -S mix"]) assert.equal(verdictOf("bash", l, child), "run", `${child ? "child" : "foreman"}: ${l}`);
   }
+  // a redirect through a variable is run by the foreman when the variable is not the target at the end of the command; a child's write through it is the write check's judge-first hit (D4)
+  for (const l of ["echo > $F arg", "echo hi >| $F"]) assert.equal(verdictOf("bash", l, false), "run", `foreman: ${l}`);
+  both("powershell", "iex 'Get-Date'", "run");
 });
 
-test("sudo/doas in a body or string is read behind the privilege program; the rm dialog is for a literal command only", () => {
-  const refused = (line: string): void => {
-    for (const child of [false, true]) assert.notEqual(verdict({ path: "x", tool: "bash", line, was: { foreman: "deny", child: "refused" } }, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
-  };
-  const denied = (line: string): void => assert.equal(verdict({ path: "x", tool: "bash", line, was: { foreman: "deny", child: "refused" } }, false), "deny", line);
-  for (const l of ["f(){ sudo rm -rf ~; }; f", "f(){ doas find / -delete; }; f", "f(){ sudo shred /x; }; f", "f(){ sudo mkfs.ext4 /dev/sdb; }; f", "f(){ xargs -I{} sudo rm -rf {}; }; f"]) refused(l);
+test("sudo/doas in a body or string is read behind the privilege program; a recursive rm outside the roots in a body or behind a wrapper goes to the judge", () => {
+  for (const l of ["f(){ sudo rm -rf ~; }; f", "f(){ doas find / -delete; }; f", "f(){ sudo shred /x; }; f", "f(){ sudo mkfs.ext4 /dev/sdb; }; f", "f(){ xargs -I{} sudo rm -rf {}; }; f"]) assert.notEqual(verdictOf("bash", l, false), "run", l);
   for (const l of ["sh -c 'busybox rm -rf /opt/x'", "eval 'toybox rm -r /opt/x'", "sh -c 'busybox nice rm -rf /opt/x'", "sh -c 'busybox env rm -rf /opt/x'", "sh -c 'busybox timeout 5 rm -rf /opt/x'",
-    "sh -c 'busybox setsid rm -rf /opt/x'", "sh -c 'busybox nohup rm -rf /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f"]) denied(l);
-  // the literal commands keep the dialog
-  for (const l of ["busybox rm -rf /opt/x", "f(){ rm -rf /opt/x; }; f"]) assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "ask", child: "refused" } }, false), "ask", l);
+    "sh -c 'busybox setsid rm -rf /opt/x'", "sh -c 'busybox nohup rm -rf /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f", "busybox rm -rf /opt/x", "f(){ rm -rf /opt/x; }; f"]) both("bash", l, "judge");
 });
 
 test("class 8: an unknown wrapper inside a -c/eval string or a function body keeps running (no text match, no program list)", () => {
-  for (const child of [false, true]) {
-    for (const l of ["sh -c 'ionice rm -rf ~'", "sh -c 'taskset 1 rm -rf ~'", "sh -c 'chroot / rm -rf ~'", "sh -c 'strace rm -rf ~'", "sh -c 'unbuffer rm -rf ~'", "busybox sh -c 'ionice rm -rf ~'", "eval 'ionice rm -rf ~'", "f(){ ionice rm -rf ~; }; f"]) {
-      assert.equal(verdict({ path: "x", tool: "bash", line: l, was: { foreman: "allow", child: "allow" } }, child), "allow", `${child ? "child" : "foreman"}: ${l}`);
-    }
-  }
+  for (const l of ["sh -c 'ionice rm -rf ~'", "sh -c 'taskset 1 rm -rf ~'", "sh -c 'chroot / rm -rf ~'", "sh -c 'strace rm -rf ~'", "sh -c 'unbuffer rm -rf ~'", "busybox sh -c 'ionice rm -rf ~'", "eval 'ionice rm -rf ~'", "f(){ ionice rm -rf ~; }; f"]) both("bash", l, "run");
 });

@@ -403,14 +403,14 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   if (call.sub === "remote") return remoteFloor(call) ?? soft;
   if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env) ?? soft;
-  // `-e <pattern>` reads as "keep this", and a pattern that matches nothing deletes the whole tree (the old Python delete check refused it in every mode)
-  return (call.sub === "clean" ? gitCleanExclude(call) : null) ?? soft;
+  // `-e <pattern>` reads as "keep this", and a pattern that matches nothing deletes the whole tree: judge-first, as every `git clean`
+  return soft ?? (call.sub === "clean" ? gitCleanExclude(call) : null);
 }
 
-/** `git clean` with `-e` or `--exclude`: it reads as "keep this", and a pattern that matches nothing deletes the whole tree (the old delete check refused it in every mode). */
+/** `git clean` with `-e` or `--exclude`: it reads as "keep this", and a pattern that matches nothing deletes the whole tree (judge-first, losing local work). */
 function gitCleanExclude(call: GitCall): FloorHit | null {
   if (!call.rest.some((w) => w === "--exclude" || w.startsWith("--exclude=") || /^-(?!-)\S*e/.test(w))) return null;
-  return hit("git-clean-exclude", "`git clean` with `-e` or `--exclude` deletes everything the pattern does not match, and a pattern that matches nothing deletes the whole tree. Name the paths to clean instead; a later change moves this check to the judge.");
+  return judgeHit("git", "`git clean` with `-e` or `--exclude` deletes everything the pattern does not match, and a pattern that matches nothing deletes the whole tree.");
 }
 
 // ------------------------------------------------------------------ other programs
@@ -542,8 +542,7 @@ function outside(word: string, cwd: string | null, env: FloorEnv): boolean {
 }
 
 /**
- * The word a segment writes to, truncates or changes recursively that holds a variable (the checks of the old Python delete guard, refused in every mode until PR C moves them
- * to the judge): `dd of=$X`, `chmod -R`/`chown -R` with a variable operand, `truncate -s 0 $X`, and a `>` or `&>` redirect whose whole target is a variable.
+ * The word a segment writes to, truncates or changes recursively that holds a variable (judge-first for every role): `dd of=$X`, `chmod -R`/`chown -R` with a variable operand, `truncate -s 0 $X`, and a `>` or `&>` redirect whose whole target is a variable.
  */
 function unknownWriteTarget(seg: ShellSegment, prog: string): string | undefined {
   const a = seg.argv;
@@ -581,7 +580,7 @@ function pythonDisk(seg: ShellSegment, prog: string): boolean {
   return prog.startsWith("mkfs") || (prog === "dd" && seg.argv.some((w) => /^of=(\/dev\/|\\\\\.\\)/i.test(w))) || (prog === "diskutil" && seg.argv.some((w) => /^(erase|partition|reformat|zero|secure|apfs)/i.test(w)));
 }
 
-const unknownWriteHit = (target: string): FloorHit => hit("unknown-write-target", `The target '${cutFragment(target)}' of this write, truncation or recursive permission change is a variable the gate cannot read, so it could be any path. Name the path literally; a later change moves this check to the judge.`);
+const unknownWriteHit = (target: string): FloorHit => judgeHit("unknown-write-target", `The target '${cutFragment(target)}' of this write, truncation or recursive permission change is a variable the gate cannot read, so it could be any path.`);
 
 /** The floors of one segment, with the fragment of the denial: the program word and the operand the reason names (else the first arguments). */
 export function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
@@ -615,7 +614,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   }
   if (prog === "dd" && seg.argv.some((w) => /^of=(\/dev\/|\\\\\.\\)/i.test(w))) return hit("disk", "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
   const unreadable = unknownWriteTarget(seg, prog);
-  if (unreadable !== undefined) return unknownWriteHit(unreadable);
+  if (unreadable !== undefined) soft.hit ??= unknownWriteHit(unreadable);
   for (const r of seg.redirects) if (r.op !== "<" && r.op !== "dup" && /^\/dev\/(sd|nvme|hd|vd|xvd|disk|rdisk|mmcblk)/i.test(r.target)) return hit("disk", "Redirecting into a block device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
   const del = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
   if (del) return del;
@@ -1137,15 +1136,15 @@ function psUnitFloors(line: string, env: FloorEnv, depth = 0): FloorHit | null {
 }
 
 /**
- * A literal recursive PowerShell or cmd delete outside the worktree, scratch and /tmp is a question for the owner (a deny for a child), as the old Python delete check
- * asked in every mode; variable operands are `unknownTargetDelete`, home, root and system targets `psUnitFloors`.
+ * A literal recursive PowerShell or cmd delete outside the worktree, scratch and /tmp is judge-first (the harness cannot read where a PowerShell delete lands);
+ * variable operands are `unknownTargetDelete`, home, root and system targets `psUnitFloors`.
  */
 function psOutsideDelete(line: string, env: FloorEnv): FloorHit | null {
   for (const words of psUnits(line)) {
     const ops = psRecursiveDelete(words);
     if (!ops) continue;
     const out = ops.map((o) => psOperand(o, env)).find((o) => !/[$%@]/.test(o) && (outside(o, env.cwd, env) || ((env.platform ?? process.platform) !== "win32" && /^[a-z]:[\\/]/i.test(o))));
-    if (out !== undefined) return { rule: "floor-delete-outside", kind: "ask", reason: `A recursive PowerShell or cmd delete of '${cutFragment(out)}' outside the worktree, your scratch dir and /tmp needs the owner's answer until the permission modes go.`, fragment: cutFragment(words.join(" ")) };
+    if (out !== undefined) return judgeHit("delete-unknown-target", `A recursive PowerShell or cmd delete of '${cutFragment(out)}' outside the worktree, your scratch dir and /tmp.`, words.join(" "));
   }
   return null;
 }
@@ -1154,9 +1153,9 @@ function psOutsideDelete(line: string, env: FloorEnv): FloorHit | null {
 export interface UnknownDelete {
   name: "danger-delete-unknown-target";
   reason: string;
-  /** Also a floor until the permission modes go (`lineFloors`): the forms the owner decided to refuse in every mode; the other forms keep the label only. */
+  /** The forms the old Python check refused: `lineFloors` hands them to the judge itself (a judge-first hit that no built-in allow clears); the other forms keep the label only. */
   floor: boolean;
-  /** A floor of the kind `ask` (the old check asked): a dialog for the owner in every mode, refused for a child; the label stays for the judge. */
+  /** The forms the old check asked on (a PowerShell form it could not read); judge-first like `floor`. */
   ask?: boolean;
 }
 
@@ -1188,13 +1187,11 @@ export function unknownTargetDelete(text: string, segments: ShellSegment[], env:
   return hits.find((h) => h.floor) ?? hits[0] ?? null;
 }
 
-/** The floors of the label's predicate: a deny for a hit that is a floor, else an ask for a hit the old check asked on (a PowerShell form it could not read). */
+/** The judge-first hit of the label's predicate (`danger-delete-unknown-target`): a delete the old check refused or asked on, whose target cannot be read. */
 function unknownFloor(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
   const hits = unknownTargetDeletes(text, segments, env);
-  const deny = hits.find((h) => h.floor);
-  if (deny) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${deny.reason}). Name the path literally; a later change moves this check to the judge.`, text);
-  const ask = hits.find((h) => h.ask);
-  return ask ? { rule: "floor-ps-unreadable", kind: "ask", reason: `This PowerShell command cannot be read (${ask.reason}); the owner decides until the judge-first change lands.`, fragment: cutFragment(text) } : null;
+  const h = hits.find((x) => x.floor) ?? hits.find((x) => x.ask);
+  return h ? judgeHit("delete-unknown-target", `The target of this delete cannot be read (${h.reason}).`, text) : null;
 }
 
 function unknownTargetDeletes(text: string, segments: ShellSegment[], env: FloorEnv): UnknownDelete[] {
@@ -1354,12 +1351,11 @@ function behindWrapper(seg: ShellSegment): string[] | null {
 }
 
 /** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, the words behind a wrapper). */
-function localKind(seg: ShellSegment, prog: string, env: FloorEnv, rmAsks: boolean): FloorHit | null {
+function localKind(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
-  // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) only where the rm stood as a literal command: no wrapper of
-  // the parser (xargs, env, a shell string, eval ...) and nothing unwrapped before (`rmAsks`); the home, root and system targets and shred were denies
-  const literal = rmAsks && seg.wrappers.length === 0;
-  if (d) return withFragment(d.rule === "floor-delete-outside" && literal && prog === "rm" ? { ...d, kind: "ask" } : d, seg);
+  // a recursive rm outside the roots is judge-first here (the old check asked on a literal one and refused one behind a wrapper; no floor read these nested forms before #289);
+  // the home, root and system targets and shred stay denies
+  if (d) return withFragment(d.rule === "floor-delete-outside" && prog === "rm" ? judgeHit("delete-unknown-target", `A recursive rm of a target outside the worktree, your scratch dir and /tmp, run through a function body, wrapper or string.`) : d, seg);
   if (pythonDisk(seg, prog)) return withFragment(hit("disk", `\`${prog}\` formats, erases or overwrites a disk. Ask the user.`), seg);
   const unreadable = unknownWriteTarget(seg, prog);
   if (unreadable !== undefined) return withFragment(unknownWriteHit(unreadable), seg);
@@ -1405,7 +1401,7 @@ function sshHasCommand(words: string[]): boolean {
   return operands > 1;
 }
 
-const tooDeepHit = (text: string): FloorHit => hit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels). Run the inner command plainly.`, text);
+const tooDeepHit = (text: string): FloorHit => judgeHit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels), so what it deletes cannot be read.`, text);
 
 /** Hangs the stdin texts of `outer` on the segments parsed from what it unwrapped (the parser leaves the property off a clone). */
 function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
@@ -1417,22 +1413,28 @@ function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
 const NORMALISE_DEPTH = 16;
 
 /**
- * The Python-kind check set (PR B2, owner decisions of 2026-11-18 and 2026-11-19): what the old delete check refused in every mode, read from parsed segments and run
+ * The Python-kind check set (PR B2, owner decisions of 2026-11-18 and 2026-11-19): what the old delete check refused, read from parsed segments and run
  * on every path that nests a command the parser does not unwrap itself: the body of a shell function, what stands behind a privilege program or `busybox`/`toybox` (taken off, parsed again and checked whole, to a fixpoint), and the command of
  * `ssh`, `docker`/`podman` `exec`/`run` and `kubectl exec` (every kind there, a recursive `rm` over ssh excepted). The marker of the outer segment (`function_def`,
- * the runner's `unsupported`) stays as it was, so mode `auto` and the other floors see these lines as before; only the old check's decisions are added.
- * Until PR C moves them to the judge. `top` is the line itself: its own segments were judged by `segmentFloors` already.
+ * the runner's `unsupported`) stays as it was; only the old check's decisions are added. A system delete, a disk format and a recursive permission change on a system path
+ * are denies; everything else the old check refused is a judge-first hit, kept in `acc` so that a deny found later on the line still wins. `top` is the line itself: its own
+ * segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, rmAsks = true): FloorHit | null {
-  // fail closed: a nesting this deep is not read
-  if (depth > NORMALISE_DEPTH) return hit("delete-unknown-target", "This command nests wrappers too deep to be read. Run the command plainly.", text);
-  // every text parsed again (a string, a here-document, a body, the words behind a wrapper or a host) may hold a `$( )` the walker stopped at: refused unread as at the top
-  if (segs.some((s) => s.tooDeep)) return tooDeepHit(text);
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null }): FloorHit | null {
+  // a judge-first hit is kept, not returned: a deny later on the line still wins
+  const settle = (h: FloorHit | null): FloorHit | null => {
+    if (h?.kind !== "judge") return h;
+    acc.hit ??= h;
+    return null;
+  };
+  // an unreadable nesting this deep goes to the judge unread
+  if (depth > NORMALISE_DEPTH) return settle(judgeHit("delete-unknown-target", "This command nests wrappers too deep to be read, so what it deletes cannot be read.", text));
+  // every text parsed again (a string, a here-document, a body, the words behind a wrapper or a host) may hold a `$( )` the walker stopped at: unread, as at the top
+  if (segs.some((s) => s.tooDeep)) settle(tooDeepHit(text));
   for (const seg of segs) {
     const prog = base(seg.program);
     // one normaliser for every entry point: a privilege program or multiplexer is taken off, the rest is parsed again and gets the whole check (strings, eval, bodies, xargs,
-    // containers, ssh), to a fixpoint. The dialog of a literal rm is for what stood as a plain command: a bare applet (`busybox rm`) keeps it as the old check read it, any other
-    // unwrapping (privilege program, a parser wrapper, a string, a body behind one) is a deny. A line's own `sudo` is the privilege floor's.
+    // containers, ssh), to a fixpoint. A line's own `sudo` is the privilege floor's.
     const rest = top && PRIVILEGE.has(prog) ? null : behindWrapper(seg);
     if (rest) {
       const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
@@ -1440,7 +1442,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
       withHeredocs(inner, seg);
-      const h = pythonKinds(restText, inner, env, where, depth + 1, false, rmAsks && !PRIVILEGE.has(prog) && seg.wrappers.length === 0);
+      const h = pythonKinds(restText, inner, env, where, depth + 1, false, acc);
       if (h) return withFragment(h, seg);
       continue;
     }
@@ -1470,37 +1472,38 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       // the old check refused a recursive rm anywhere in the text first; over ssh that is the owner's exception, and the text is not read further
       if (texts.some(([, parsed]) => parsed.some((x) => wordsRemove([x.program, ...x.argv])))) {
         if (inWhere === "ssh") continue;
-        return withFragment(remoteHit("a recursive rm", inWhere), seg);
+        settle(withFragment(remoteHit("a recursive rm", inWhere), seg));
+        continue;
       }
       // a container takes its words as argv: a word that holds whitespace is a string some program may run (`zsh -c "sh -c 'rm -rf /'"`, `su -c ...`), whatever precedes it; it is parsed
       // and read the same way, in the words with spaces inside it too. Only a recursive rm found there is refused; every other kind in such a word is ignored
-      if (remote.where === "container" && remote.words.some((w) => /\s/.test(w) && spacedRemove(w, seg, env))) return withFragment(remoteHit("a recursive rm", inWhere), seg);
+      if (remote.where === "container" && remote.words.some((w) => /\s/.test(w) && spacedRemove(w, seg, env))) {
+        settle(withFragment(remoteHit("a recursive rm", inWhere), seg));
+        continue;
+      }
       for (const [t, parsed] of texts) {
-        const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, rmAsks);
+        const h = pythonKinds(t, parsed, env, inWhere, depth + 1, false, acc);
         if (h) return withFragment(h, seg);
       }
       // the compound's own units, each behind the host as the plain path reads a command (the joined text would put the keywords at command position); a function body stands behind the host when the function is the first command, as in the body check below
       const ps = psRemoteKind(compound ? compound.flatMap((x, k) => [[x.program, ...x.argv].join(" "), ...(x.bodies ?? []).flatMap((b) => parseShell(b, { cwd: seg.cwd, platform: env.platform }).map((y, j) => [...(k === 0 && j === 0 ? [x.program] : []), y.program, ...y.argv].join(" ")))]).join("; ") : rtext);
-      if (ps) return withFragment(remoteHit(ps, inWhere), seg);
+      if (ps) settle(withFragment(remoteHit(ps, inWhere), seg));
     }
     if (where !== "local") {
       const kind = remoteKind(seg, prog, env, where === "ssh");
-      if (kind) return withFragment(remoteHit(kind, where), seg);
+      if (kind) settle(withFragment(remoteHit(kind, where), seg));
       continue;
     }
     for (const script of [...scriptsOf(seg, prog), ...heredocScripts(seg, prog)]) {
-      const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, rmAsks && (prog === "pwsh" || prog === "powershell" || prog === "cmd"));
+      const h = pythonKinds(script, parseShell(script, { cwd: seg.cwd, platform: env.platform }), env, where, depth + 1, false, acc);
       if (h) return withFragment(h, seg);
     }
     if (!top) {
-      const h = localKind(seg, prog, env, rmAsks);
+      const h = settle(localKind(seg, prog, env));
       if (h) return h;
     }
   }
-  if (where === "local" && !top) {
-    const unknown = unknownFloor(text, segs, env);
-    if (unknown) return unknown;
-  }
+  if (where === "local" && !top) settle(unknownFloor(text, segs, env));
   // every segment kind whose body the walker records (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
@@ -1510,8 +1513,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
       const inner = parsed.map((x, k) => (first && k === 0 ? { ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) } : x));
-      // a function inside a `-c` or eval string (or behind any wrapper) was a recursive rm run as code: a deny, never the dialog of a literal command
-      const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && opaque.wrappers.length === 0);
+      const h = pythonKinds(body, inner, env, where, depth + 1, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
@@ -1519,16 +1521,21 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         const d = psUnitFloors(psText, env);
         if (d) return d;
         const u = psUnknownDeletes(psText, 0).find((x) => x.floor);
-        if (u) return hit("delete-unknown-target", `The target of this recursive delete cannot be read (${u.reason}). Name the path literally; a later change moves this check to the judge.`, psText);
-        const o = psOutsideDelete(psText, env);
-        if (o) return o;
+        if (u) settle(judgeHit("delete-unknown-target", `The target of this recursive delete cannot be read (${u.reason}).`, psText));
+        settle(psOutsideDelete(psText, env));
       }
     }
   }
   return null;
 }
 
-const remoteHit = (kind: string, where: Where): FloorHit => hit("remote-command", `${kind} on another machine or in a container (${where === "ssh" ? "ssh" : "docker, podman or kubectl"}) cannot be checked from here. Run it by hand or ask the user; a later change moves this check to the judge.`);
+const remoteHit = (kind: string, where: Where): FloorHit => judgeHit("remote-command", `${kind} on another machine or in a container (${where === "ssh" ? "ssh" : "docker, podman or kubectl"}) cannot be checked from here.`);
+
+/** `pythonKinds` for one line: a deny, else the first judge-first hit it kept. */
+function nestedKinds(text: string, segs: ShellSegment[], env: FloorEnv, top: boolean): FloorHit | null {
+  const acc: { hit: FloorHit | null } = { hit: null };
+  return pythonKinds(text, segs, env, "local", 0, top, acc) ?? acc.hit;
+}
 
 // ------------------------------------------------------------------ raw text
 
@@ -1557,7 +1564,6 @@ const RAW: { name: string; re: RegExp; reason: string; cmd?: true }[] = [
   { name: "disk", re: /\bdd\b[^\n;&|]*\bof=(?:\/dev\/|\\\\\.\\)/i, reason: "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead." },
   { name: "git-config", re: /(?:^|[\s;&|(=])(?:GIT_CONFIG_(?:COUNT|KEY_[0-9]+|VALUE_[0-9]+|SYSTEM|PARAMETERS)\s*=|GIT_CONFIG_GLOBAL\s*=(?!(?:\/dev\/null|'\/dev\/null'|"\/dev\/null")(?:[\s;&|]|$)))/, reason: "Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials." },
   { name: "git-config", re: /--config-env\b/, reason: "`--config-env` injects git config." },
-  { name: "perms-adopt", re: /\bforeman(?:\.(?:ps1|cmd))?\s+(?:\S+\s+)*perms\s+(?:\S+\s+)*adopt\b|permssuggest-cli(?:\.ts)?\s+(?:\S+\s+)*adopt\b/, reason: "`foreman perms adopt` writes the owner's permissions file and only the owner runs it, in their own terminal or pane. Run `foreman perms suggest` and give the owner the report path." },
 ];
 
 /** Floors that need the raw text only: specific enough to apply to every shell line (a download piped into a shell, privilege, power, disk, injected git config). */
@@ -1744,7 +1750,7 @@ function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): F
   if (prefix === null) return null;
   const parsed = parseShell(prefix, { cwd: segments[0].cwd, platform: env.platform });
   if (parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error")) return null;
-  return pythonKinds(prefix, parsed, env, "local", 0, false);
+  return nestedKinds(prefix, parsed, env, false);
 }
 
 /**
@@ -1755,10 +1761,8 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   const scan = maskLine(text, segments);
   const raw = rawScan(scan, cleanLine(segments));
   if (raw?.kind === "deny") return raw;
-  // `$( )` nested past the walker's depth cap: the script inside was never read, so the line is refused unread
-  if (segments.some((s) => s.tooDeep)) return tooDeepHit(text);
-  // an ask or a judge-first hit waits behind every deny of the line
-  let pending: FloorHit | null = raw;
+  // an ask or a judge-first hit waits behind every deny of the line; `$( )` nested past the walker's depth cap was never read, so the line goes to the judge
+  let pending: FloorHit | null = segments.some((s) => s.tooDeep) ? strongerHit(raw, tooDeepHit(text)) : raw;
   if (segments.some((s) => s.opaque !== null)) {
     const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
     const t = opaqueTextFloorsAt(scan, env, anywhere);
@@ -1786,11 +1790,12 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   // PR B2: the old check's decisions on the paths that nest a command (function bodies, busybox and toybox applets, ssh and containers)
   // the powershell tool's line is one opaque segment: the old check read its text as a shell line too
   const psTool = segments.length === 1 && segments[0].program === "powershell" && segments[0].argv.length === 0 && segments[0].opaque === "foreign_shell";
-  const nested = psTool ? pythonKinds(text, parseShell(text, { cwd: segments[0].cwd, platform: env.platform }), env, "local", 0, false) : pythonKinds(text, segments, env, "local", 0, true) ?? completeLines(text, segments, env);
+  const n1 = nestedKinds(text, psTool ? parseShell(text, { cwd: segments[0].cwd, platform: env.platform }) : segments, env, !psTool);
+  const n2 = psTool ? null : completeLines(text, segments, env);
+  const nested = n1?.kind === "deny" ? n1 : n2?.kind === "deny" ? n2 : n1 ?? n2;
   if (nested?.kind === "deny") return nested;
-  // until the permission modes go (PR C moves this to the judge): a recursive delete the gate cannot read is refused in every mode, by the predicate of the label
+  // a recursive delete the gate cannot read goes to the judge, by the predicate of the label
   const unknown = unknownFloor(text, segments, env);
-  if (unknown?.kind === "deny") return unknown;
   return pending ?? nested ?? unknown ?? (foreignSegments(segments) ? psOutsideDelete(text, env) : null);
 }
 

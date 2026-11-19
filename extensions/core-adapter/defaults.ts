@@ -1262,8 +1262,6 @@ export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
   return false;
 }
 
-const MCP_READ = /^(?:list|get|search|read|take|find|describe)_/;
-
 const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
 /**

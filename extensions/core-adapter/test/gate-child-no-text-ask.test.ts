@@ -50,8 +50,9 @@ test("child loop variable: a loop body stays opaque, never a default write-in al
   for (const l of ["for f in *; do rm -rf $f/; done", "for f in 'a /etc/outside'; do rm -rf $f; done"]) {
     const out = run(l);
     assert.equal(isAsk(out), false, `${l}: ${JSON.stringify(out.result)}`);
-    // until PR C turns it judge-first: B2's floor `delete-unknown-target` refuses a recursive rm of the loop variable, so it is no default allow either
-    assert.match(String((out.result as { rule?: string } | undefined)?.rule), /floor-delete-unknown-target/, `${l}: ${JSON.stringify(out.result)}`);
+    // a recursive rm of the loop variable is a delete with an unknown target: no default allow, the judge looks first
+    assert.equal(out.result, undefined, `${l}: ${JSON.stringify(out.result)}`);
+    assert.equal(out.danger?.name, "danger-delete-unknown-target", `${l}: ${JSON.stringify(out.danger)}`);
   }
 });
 

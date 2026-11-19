@@ -58,8 +58,8 @@ test("A8: every other unknown word keeps the segment opaque (no built-in allow)"
   ]) {
     assert.equal(rule(l), "none", l);
   }
-  // a redirect target that is a variable ends the command: the floor refuses it first (PR B2, the old Python delete check did)
-  assert.equal(rule('grep -n "$PAT" src/a.ts > "$OUT"'), "floor-unknown-write-target");
+  // a redirect target that is a variable ends the command: the judge looks first (PR C)
+  assert.equal(rule('grep -n "$PAT" src/a.ts > "$OUT"'), "danger-unknown-write-target");
 });
 
 test("A8: a relaxed pattern word does not hide a floored path", () => {

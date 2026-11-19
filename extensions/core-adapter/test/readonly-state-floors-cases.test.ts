@@ -41,18 +41,18 @@ test("C.1 git-config: every other value and key stays floored", () => {
     "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 git x", "GIT_CONFIG_GLOBAL=/dev/null git a; GIT_CONFIG_GLOBAL=/tmp/g git b",
     "GIT_CONFIG_SYSTEM=/dev/null git x", "GIT_CONFIG_COUNT=1 git x", "GIT_CONFIG_KEY_0=a.b git x", "GIT_CONFIG_VALUE_0=v git x", "GIT_CONFIG_PARAMETERS='a=b' git x", "git --config-env=a.b=V x",
   ]) {
-    assert.equal(rawFloors(l)?.rule, "floor-git-config", l);
+    assert.equal(rawFloors(l)?.rule, "danger-git-config", l);
   }
 });
 
 test("C.1 git-config: the quoted \"/dev/null\" stays floored (stricter than the regex alone: the scan sees the line with its quotes masked)", () => {
-  assert.equal(rule('GIT_CONFIG_GLOBAL="/dev/null" git status'), "floor-git-config");
+  assert.equal(rule('GIT_CONFIG_GLOBAL="/dev/null" git status'), "danger-git-config");
 });
 
 test("C.1 git-config: GIT_CONFIG_GLOBAL=/dev/null passes for every role (builder, main, read-only child)", () => {
   for (const e of [base, { ...base, child: true }, ro]) {
-    assert.notEqual(rule("GIT_CONFIG_GLOBAL=/dev/null git status", e), "floor-git-config");
-    assert.equal(rule("GIT_CONFIG_GLOBAL='/dev/null' git status", e), "floor-git-config", "a single-quoted value reaches the line scan masked, like the double-quoted one");
+    assert.notEqual(rule("GIT_CONFIG_GLOBAL=/dev/null git status", e), "danger-git-config");
+    assert.equal(rule("GIT_CONFIG_GLOBAL='/dev/null' git status", e), "danger-git-config", "a single-quoted value reaches the line scan masked, like the double-quoted one");
   }
 });
 
@@ -107,5 +107,5 @@ test("C.3 replay: the same lines stay refused for a builder (the .git/config rea
   for (const l of [L1, L2]) {
     assert.notEqual(rule(l, base), null, l);
   }
-  assert.equal(rawFloors(L1.replace("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_GLOBAL=/tmp/g"))?.rule, "floor-git-config");
+  assert.equal(rawFloors(L1.replace("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_GLOBAL=/tmp/g"))?.rule, "danger-git-config");
 });
