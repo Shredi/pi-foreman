@@ -117,7 +117,7 @@ import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
-import { addTracked, lastPollAgeMs, readStoreEntry, trackerDoctorLine } from "./prstore.ts";
+import { addTracked, lastPollAgeMs, readStoreEntry, trackedHostOf, trackerDoctorLine } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
 import { parseWakeRules } from "./prwake.ts";
@@ -5998,6 +5998,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       trace: (r) => s.trace?.emit(r),
       tracker: s.prHost,
       track: s.isChild ? undefined : async (repo, n, host) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n, undefined, host) : "off"),
+      trackedHost: (repo, n, hosts) => trackedHostOf(s.agentDir, repo, n, hosts),
       githubHosts: () => resolveGithubHosts(s.config.config),
       draftFlow: () => draftFlowOn(s),
     };

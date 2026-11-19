@@ -89,6 +89,28 @@ export function remoteHostsOf(cwd: string): Promise<string[]> {
   });
 }
 
+/** Host and `owner/name` of each `git remote -v` remote of a checkout (host lowercased, a `.git` suffix cut, repeats once); `[]` on any failure or for a remote whose path is not `owner/name`. */
+export function remoteReposOf(cwd: string): Promise<Repo[]> {
+  return new Promise((resolve) => {
+    execFile("git", ["remote", "-v"], { cwd, timeout: 5000, windowsHide: true }, (err, stdout) => {
+      if (err) return resolve([]);
+      const seen = new Set<string>();
+      const out: Repo[] = [];
+      for (const line of String(stdout).split("\n")) {
+        const url = line.split(/\s+/)[1] ?? "";
+        const m = /^(?:[a-z+]+:\/\/)?(?:[^@/]+@)?([A-Za-z0-9.-]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/.exec(url);
+        if (!m || !validRepo(m[2])) continue;
+        const host = m[1].toLowerCase();
+        const id = `${host}/${m[2].toLowerCase()}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        out.push({ host, repo: m[2] });
+      }
+      resolve(out);
+    });
+  });
+}
+
 /** The checked-out branch name, "" when detached or on any failure. */
 export function branchOf(cwd: string): Promise<string> {
   return new Promise((resolve) => {

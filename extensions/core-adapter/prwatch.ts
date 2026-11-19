@@ -106,6 +106,11 @@ export interface WatchSnapshot {
   draft?: boolean;
   /** The check names the base branch requires; null: unreadable (the host hid or rejected them); absent: not asked (counts as unreadable). */
   required?: string[] | null;
+  /**
+   * The tracker's decision for a PR whose only missing runs are required names (see waitingOf): every one of them runs only at merge time on this base (`merge-time`: no veto,
+   * a pass at once), or one of them ran before the merge on a recent merged PR (`pre-merge`: the veto stands); absent: not learnable (or an older tracker): the fallback line after the hold.
+   */
+  learn?: "merge-time" | "pre-merge";
   /** The run list was cut for size or the head has more checks than were read: the expected set does not apply, the settle time does. */
   cut?: true;
   /** The expected-set facts while they veto a pass (see ExpectFacts); absent: none, every function behaves as before. */
@@ -185,6 +190,9 @@ export interface WatchState {
   /** The head the expected-checks-not-reported line was sent for, and whether the PR was a draft then (a draft that got it gets it once more after it leaves draft); absent: none. */
   overdueHead?: string;
   overdueDraft?: boolean;
+  /** The head the `checks passed, waiting on required checks` event was sent for (not learnable base), and the head its child report line was sent for (non-draft ticks only); absent: none. */
+  waitingHead?: string;
+  waitingReportHead?: string;
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
 }
@@ -263,6 +271,16 @@ const gatingOf = (runs: Run[]): Run[] => runs.filter((r) => r.gates !== false);
 /** Whether a run is the required check `name`. */
 const isCheck = (r: Run, name: string): boolean => r.name === name || rawName(r) === name;
 
+/**
+ * The required check names with no run on the head, only when at least one gating run exists and every gating run passed (no pending, failed or missing one); else `[]`.
+ * The tracker decides what these names mean (`WatchSnapshot.learn`): checks the host reports only at merge time (a merge queue, a gate), or checks still to come.
+ */
+export const waitingOf = (all: Run[], required?: string[] | null): string[] => {
+  const runs = gatingOf(all);
+  if (!required?.length || runs.length === 0 || runs.some((r) => r.bucket !== "passed")) return [];
+  return required.filter((n) => !all.some((r) => isCheck(r, n)));
+};
+
 /** A pass is not settled while a required check has no run on the head (a failure is settled at once). */
 export const settledOf = (all: Run[], required?: string[] | null): { settled: boolean; result: "pass" | "fail" | "" } => {
   const runs = gatingOf(all);
@@ -279,6 +297,9 @@ export const EXPECT_BOUND_MS = 10 * 60_000;
 /** Expected checks are still to come: a missing name or an unknown baseline (the facts of the tracker). A failure is never vetoed. */
 const vetoOf = (snap: { expect?: ExpectFacts }): boolean => !!snap.expect && (snap.expect.unknown === true || snap.expect.missing.length > 0);
 
+/** The tracker learned that every required check with no run is a merge-time check on this base: those names do not veto and the pass stands at once. */
+const mergeTimeOf = (snap: WatchSnapshot): boolean => snap.learn === "merge-time" && !vetoOf(snap) && waitingOf(snap.runs, snap.required).length > 0;
+
 /** The checks part of the readiness rule; `leaving`: the managed-draft leave step, which also takes a veto that is overdue with nothing pending or failed (zero runs included). */
 function checksInput(st: WatchState, snap: WatchSnapshot, now: number, settleMs: number, leaving: boolean): "green" | "red" | "running" {
   const gating = gatingOf(snap.runs);
@@ -287,8 +308,9 @@ function checksInput(st: WatchState, snap: WatchSnapshot, now: number, settleMs:
   if (gating.length === 0) return st.noCi >= 2 && !veto ? "green" : "running";
   const s = settledOf(snap.runs, snap.required);
   if (s.result === "fail") return "red";
+  const result = mergeTimeOf(snap) ? "pass" : s.result;
   const holding = !!st.passSince && st.passSince.head === snap.head && now - st.passSince.at < settleMs;
-  return s.result === "pass" && !veto && st.ci === `${snap.head}:pass` && !holding ? "green" : "running";
+  return result === "pass" && !veto && st.ci === `${snap.head}:pass` && !holding ? "green" : "running";
 }
 
 /**
@@ -388,6 +410,10 @@ export interface Delta {
   counts: Counts | null;
   failed: { name: string; url: string; source?: string }[];
   missing: string[];
+  /** The required checks with no run (host text, data lines only): the merge-time ones of a pass, or the ones the fallback line waits on. */
+  waiting?: string[];
+  /** Child session line: the fallback `checks passed, waiting on required checks` (not learnable base, no ready label), once per head on a non-draft tick. */
+  waitingReport?: true;
   newComments: { id: string; kind: string; author: string; path?: string; line?: number; body: string; source?: string; state?: string }[];
   moreComments: number;
   /** Child session lines (PI_FOREMAN_HANDOFF_DIR set). */
@@ -446,6 +472,12 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   // expected checks are still to come (a missing name or an unreadable baseline): no pass whatever the settle time; a failure stays immediate
   const veto = vetoOf(snap);
   if (veto && s.result === "pass") s = { settled: false, result: "" };
+  // learned merge-time checks (the tracker filtered them out of the facts): every check that ran passed, so the pass stands at once, with no settle hold
+  const waiting = waitingOf(snap.runs, snap.required);
+  const mergeTime = mergeTimeOf(snap);
+  if (mergeTime) s = { settled: true, result: "pass" };
+  // a base the tracker could not learn: the veto stands; after the settle hold the fallback line says the PR waits on required checks (no pass, no label)
+  const unlearned = veto && !snap.learn && waiting.length > 0;
   // no readable required set to wait for (none, or unreadable): a pass holds until the same gating run set has stood for the settle time;
   // while the ready line is still to come the hold covers it too (a watch armed inside the window starts with the early pass as reported)
   let held = false;
@@ -454,7 +486,16 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     st.passSince = h.since;
     held = h.held;
     if (held && st.ci !== `${snap.head}:pass`) s = { settled: false, result: "" };
-  } else delete st.passSince;
+  } else if (!unlearned) delete st.passSince;
+  let fallback = false;
+  if (unlearned && st.waitingHead !== snap.head) {
+    if (gate && gate.settleMs > 0) {
+      const h = holdPass(st.passSince, snap.head, snap.runs, gate.now, gate.settleMs);
+      st.passSince = h.since;
+      fallback = !h.held;
+    } else fallback = true;
+    if (fallback) delete st.passSince;
+  }
   const green = s.result === "pass" && !held;
   let ciFired = false;
   let ciWakes = false;
@@ -464,6 +505,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     ciWakes = wakeOf("checks_settled", "github");
     if (ciWakes) {
       events.push(snap.draft ? `checks finished: ${s.result}, draft` : `checks finished: ${s.result}`);
+      if (mergeTime) d.waiting = waiting;
       d.failed = snap.runs.filter((r) => r.bucket === "failed").map(asked);
       d.missing = snap.runs.filter((r) => r.bucket === "missing").map((r) => r.name);
     }
@@ -473,6 +515,22 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   if (freshWake.length > 0 && !folded) {
     events.push("check failed");
     d.failed = freshWake.map(asked);
+  }
+  // the fallback of a base that is not learnable: once per head, under the checks_settled wake kind; `st.ci` is not set (it is not a pass)
+  const waitText = `checks passed, waiting on required checks${snap.draft ? ", draft" : ""}`;
+  if (fallback) {
+    st.waitingHead = snap.head;
+    if (wakeOf("checks_settled", "github")) {
+      events.push(waitText);
+      d.waiting = waiting;
+    }
+  }
+  // the child's report line has its own latch and follows on the first non-draft tick after the event (a draft gets the event only)
+  if (unlearned && child && !snap.draft && st.waitingHead === snap.head && st.waitingReportHead !== snap.head) {
+    st.waitingReportHead = snap.head;
+    d.waitingReport = true;
+    d.waiting = waiting;
+    if (!events.includes(waitText)) events.push(waitText);
   }
 
   if (snap.comments) {
@@ -524,7 +582,8 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     delete st.overdueHead;
     delete st.overdueDraft;
   }
-  if (veto && snap.expect?.overdue && gating.every((r) => r.bucket === "passed") && st.overdueHead !== snap.head && !(rule?.managed && snap.draft)) {
+  // (not for a base that is not learnable: its fallback line says it, and the managed-draft leave step still takes the overdue veto)
+  if (veto && !unlearned && snap.expect?.overdue && gating.every((r) => r.bucket === "passed") && st.overdueHead !== snap.head && !(rule?.managed && snap.draft)) {
     st.overdueHead = snap.head;
     st.overdueDraft = !!snap.draft;
     if (wakeOf("no_checks", "github")) {
@@ -578,9 +637,10 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   for (const f of d.failed.slice(0, 10)) lines.push(`- failed ${f.source ? `[${oneLine(f.source, 40)}] ` : ""}${oneLine(f.name, 120)} ${oneLine(f.url, 200)}`.trimEnd());
   for (const m of d.missing.slice(0, 10)) lines.push(`- missing ${oneLine(m, 120)}`);
   for (const m of (d.unreported ?? []).slice(0, 10)) lines.push(`- not reported ${oneLine(m, 120)}`);
+  for (const m of (d.waiting ?? []).slice(0, 10)) lines.push(`- waiting ${oneLine(m, 120)}`);
   if (d.unreadable) lines.push("- expected checks unreadable");
   for (const c of d.newComments) lines.push(`- ${c.source ? `[${oneLine(c.source, 40)}] ` : ""}${c.kind} ${oneLine(c.author, 60)}${c.state ? ` (${oneLine(c.state, 40)})` : ""}${c.path ? ` ${oneLine(c.path, 120)}${c.line !== undefined ? `:${c.line}` : ""}` : ""}: ${oneLine(c.body)}`);
-  let more = d.moreComments + Math.max(0, d.failed.length - 10) + Math.max(0, d.missing.length - 10) + Math.max(0, (d.unreported?.length ?? 0) - 10);
+  let more = d.moreComments + Math.max(0, d.failed.length - 10) + Math.max(0, d.missing.length - 10) + Math.max(0, (d.unreported?.length ?? 0) - 10) + Math.max(0, (d.waiting?.length ?? 0) - 10);
   let content = "";
   for (let i = 0; i < lines.length; i++) {
     const next = (content ? content + "\n" : "") + lines[i];
@@ -591,6 +651,7 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
     content = next;
   }
   if (more > 0) content += `\n(+${more} more: call pr_comments)`;
+  if (d.waitingReport) content += `\nreport to the parent: PR #${number} checks passed, waiting on required checks (not learned yet, no ready label)`;
   if (d.stuck) content += `\nreport to the parent: PR #${number} expected checks not reported on ${d.head.slice(0, 7)}, not counted as passed`;
   if (d.notReady) content += `\nreport to the parent: PR #${number} ${d.notReady}`;
   if (d.ready) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
@@ -779,7 +840,7 @@ function parseState(v: unknown): WatchState | null {
   const lb = s.label as Record<string, unknown> | null | undefined;
   const label = lb && typeof lb === "object" && typeof lb.name === "string" && lb.name && typeof lb.own === "boolean" && typeof lb.onHead === "string" && typeof lb.selfOff === "string" ? { label: { name: lb.name, own: lb.own, onHead: lb.onHead, selfOff: lb.selfOff } } : {};
   const overdue = { ...(typeof s.overdueHead === "string" && s.overdueHead ? { overdueHead: s.overdueHead } : {}), ...(typeof s.overdueDraft === "boolean" && typeof s.overdueHead === "string" && s.overdueHead ? { overdueDraft: s.overdueDraft } : {}) };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...label, ...overdue, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, last: s.last };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...label, ...overdue, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, ...(typeof s.waitingHead === "string" && s.waitingHead ? { waitingHead: s.waitingHead } : {}), ...(typeof s.waitingReportHead === "string" && s.waitingReportHead ? { waitingReportHead: s.waitingReportHead } : {}), last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */

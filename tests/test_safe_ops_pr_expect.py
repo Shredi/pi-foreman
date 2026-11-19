@@ -57,7 +57,7 @@ class ExpectBatchTest(prt.RepoLessCase):
     def test_with_the_flag_the_merged_field_is_asked_and_the_row_carries_the_names(self):
         got = self.batch(answer(nodes=[merged("main", MERGE, ck("build"))]))
         self.assertIn("merged: pullRequests(states: MERGED", self.query())
-        self.assertEqual(got["baseline"], {"names": ["build"]})
+        self.assertEqual(got["baseline"], {"names": ["build"], "learn": {"ran": ["build"], "merged": 1}})
 
     def test_the_flag_must_be_a_boolean(self):
         self.scn({"gh api graphql": {"stdout": prt.j(answer())}})
