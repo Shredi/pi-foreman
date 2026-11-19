@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAppendixLine, planBody, planSummary, planTitle, planVersionHash } from "../checkpoint.ts";
@@ -54,7 +55,7 @@ test("form hints: the skeleton page gives none", () => {
 });
 
 test("form hints: the facts line carries them after the checked prefix", () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), "pf-hints-"));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pf-hints-"));
   try {
     fs.writeFileSync(path.join(dir, "p.md"), "# W\n\n## Summary\n\nplain\n");
     fs.writeFileSync(path.join(dir, "q.md"), `# W\n\n${FULL}`);
