@@ -12,7 +12,7 @@ test("plan skeleton: converts with the owner section first, a mermaid fence, a t
   const html = fs.readFileSync(path.join(root, "instructions", "plan-skeleton.html"), "utf8");
   const r = htmlToMarkdown(html);
   assert.equal(r.title, "Plan title");
-  assert.match(r.markdown, /^# Plan title\n\n## For the owner\n/);
+  assert.match(r.markdown, /^# Plan title\n\n## Summary\n/);
   assert.match(r.markdown, /```mermaid\nflowchart LR/);
   assert.match(r.markdown, /\| Topic \| Decision \| Reason \|/);
   assert.deepEqual(r.hidden, []);

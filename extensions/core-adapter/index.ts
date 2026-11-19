@@ -158,7 +158,7 @@ import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
-import { ownerFactsLines, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
+import { ownerFactsLines, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
@@ -4276,7 +4276,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           if (faults.length > 0) {
             s.trace?.emit({ event: "launch_refused", reason: "plan_form", tier: s.ceremony.tier, ...launchDeny(input) });
-            return { block: true, reason: `pi-foreman: reviewer launch refused [plan_form]: the plan form is wrong (${faults.join(" | ")}). Fix the plan and launch again; no reviewer was started.` };
+            return { block: true, reason: `pi-foreman: reviewer launch refused [plan_form]: the plan form is wrong (${faults.join(" | ")}). Fix the plan and launch again: the first ## section must be a non-empty ## Summary (## For the owner is still accepted); no reviewer was started.` };
           }
         }
         // Lane 3c: budget guard on the summed estimate (foreman + all runs); 3e: review cap and item-only re-review.
@@ -5597,8 +5597,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a write in the tool batch of a still-open [plan-review] launch (also one nested in a codemode call): the reviewer reads these bytes
         owner.planReviews.refreshLaunch(written.plan.path, written.plan.hash, written.plan.markdown, owner.launchBatch.generation);
         const issues = planFormIssues(written.plan.markdown, {});
-        if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
+        if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed. The first ## section must be a non-empty ## Summary (## For the owner is still accepted).`;
         if (written.plan.kind === "html" && typeof wrotePath === "string" && wrotePath.endsWith(".md")) planFormNote = `pi-foreman: plan-${written.plan.topic}.md is generated from plan-${written.plan.topic}.html; edit the page, not the copy. The copy was written again from the page.${planFormNote ? `\n${planFormNote}` : ""}`;
+        // jargon in the Summary is advice on its own line, never a form fault and never a refusal
+        const jargon = ownerSectionIssues(written.plan.markdown).find((i) => i.startsWith("jargon: "));
+        if (jargon) planFormNote += `${planFormNote ? "\n" : ""}pi-foreman: advice: the Summary section reads like jargon (${jargon.slice("jargon: ".length)}); the owner reads it cold, write it in plain words. This never blocks a review.`;
       }
     } else if (owner && wroteFile) {
       // `rulings-<topic>.md` is the rulings sidecar of an HTML plan: the copy is derived again, with or without a plan page open

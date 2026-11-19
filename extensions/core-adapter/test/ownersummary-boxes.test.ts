@@ -7,7 +7,7 @@ const PLAN = "# P\n\n## For the owner\n\n**Goal:** Uploads try again.\n\n1. Thre
 
 test("ownerSummary: an alert shows its label and items, with no marker line and no quote prefix", () => {
   const s = ownerSummary(PLAN);
-  assert.equal(s, ["For the owner", "  **Goal:** Uploads try again.", "  1. Three tries.", "  2. One message.", "  **Heads-up**", "  - A slow network takes longer.", "  **Decided for you**", "  - Three tries.", "  > A plain quote stays quoted."].join("\n"));
+  assert.equal(s, ["Summary", "  **Goal:** Uploads try again.", "  1. Three tries.", "  2. One message.", "  **Heads-up**", "  - A slow network takes longer.", "  **Decided for you**", "  - Three tries.", "  > A plain quote stays quoted."].join("\n"));
   assert.doesNotMatch(s, /\[!/);
 });
 

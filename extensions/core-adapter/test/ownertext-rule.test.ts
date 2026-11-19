@@ -25,7 +25,7 @@ test("the facts line carries the points, also for a plan that cannot be read", (
     fs.writeFileSync(path.join(dir, "a.md"), "# P\n\n## For the owner\nWe ship it.\n");
     const lines = ownerFactsLines(["a.md", "missing.md"], dir);
     for (const l of lines) assert.ok(l.endsWith(`; judge it as owner text: ${OWNER_TEXT_POINTS}`), l);
-    assert.match(lines[0], /^Owner section \(a\.md\): present/);
+    assert.match(lines[0], /^Summary section \(a\.md\): present/);
     assert.match(lines[1], /plan not readable/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
