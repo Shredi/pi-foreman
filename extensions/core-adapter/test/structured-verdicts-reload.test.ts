@@ -60,7 +60,12 @@ test("after a reload the completion notice of a reviewer run marks the record's 
   await until(() => marked(w, 1));
   assert.ok(marked(w, 1), ledgerOf(w));
   assert.ok(!marked(w, 2) && !marked(w, 3) && !marked(w, "V"), `only the passed item is marked:\n${ledgerOf(w)}`);
-  assert.equal((await w.traceEvents()).filter((e) => e.event === "ledger_mark_by_review").length, 1, "the plan review marked nothing");
+  // the trace event follows the ledger writes (emitted once markPassItems has also noted the open item): wait for it, then a tick so a second mark would show
+  const markEvents = async () => (await w.traceEvents()).filter((e) => e.event === "ledger_mark_by_review").length;
+  const end = Date.now() + 8000;
+  while ((await markEvents()) < 1 && Date.now() < end) await tick(50);
+  await tick(300);
+  assert.equal(await markEvents(), 1, "the plan review marked nothing");
 });
 
 test("a resume with a headless parent and childAsk deny keeps the route and its record counts", async (t) => {
