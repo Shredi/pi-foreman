@@ -1,5 +1,5 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|migrate (old backlog import).
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
