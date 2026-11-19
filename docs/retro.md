@@ -55,9 +55,24 @@ foreman reports list [--state open|planned|done|dropped|expired|all] [--json]
 foreman reports show KEY [--json]
 foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT]
 foreman reports expire [--days N] [--archive-days N]
+foreman reports import FILE
 ```
 
-The command works on the store of the repository the current folder belongs to. `KEY` is a key or a unique prefix of four or more characters. `list` opens with the same data line as the tool. `foreman reports migrate` is described [below](#migrating-the-old-backlog).
+The command works on the store of the repository the current folder belongs to. `KEY` is a key or a unique prefix of four or more characters. `list` opens with the same data line as the tool. `foreman reports import` is described [below](#reports-from-parent-opened-sessions); `foreman reports migrate` [here](#migrating-the-old-backlog).
+
+### Reports from parent-opened sessions
+
+A session opened by `foreman session open` (on another machine or not) keeps its own store, and the report tool also appends each recorded row, of the session and of its subagent children, to `reports.jsonl` in the session's handoff dir (best effort; see [sessions](sessions.md#reports-from-remote-and-parent-opened-sessions)). The parent imports that file: its watcher at a remote `result`, `update` or `closed` notice, or by hand with `foreman reports import FILE`. A local parent that shares the store does not need it.
+
+The file is data from outside, so every line is checked again and the row is rebuilt from its fields, never copied:
+
+- Only rows of type `report` come in; `state`, `group`, `lesson` and `emitted` rows are skipped.
+- `repo` must equal the `repo` of this store. A row or a store without a repository is no match.
+- `kind` and `effect` must be in the lists above, `id` ten hex characters, `session` and `ts` present (a time more than a day ahead is refused). Text over the caps (40, 300, 200) or a line over 4096 characters is skipped, not cut; the texts pass masking and the file-name cut again, and the key is computed again from the stored subject.
+- `count`, `firstSeen`, `lastSeen` and `source` never survive, so an imported row counts as one report of its own `session`.
+- The file may be CRLF; a file above 512 KiB, a malformed line or a missing file imports nothing and is no error for the notice (the command exits 1 for a missing or oversized file).
+
+A second import of the same file adds nothing (rows are known by `id`, also in the archive); writers hold the store lock, so imports and local reports at the same time lose nothing. The command prints how many rows it imported, knew and skipped.
 
 ### Flagged asks
 
