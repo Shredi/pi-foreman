@@ -55,7 +55,7 @@ All lists carry `truncated` (bool) and `total` (count before the cut). Caps: 200
 
 ### Write tools in the pack
 
-`foreman_move`, `foreman_copy` and `foreman_worktree_remove` are always registered (in a folder that is not a git repository, `foreman_move` and `foreman_copy` work inside the session working folder instead of the git workspace root, with the same limits; the foreman's `foreman_copy` may also read from its own session handoff dir; `foreman_worktree_remove` also accepts a squash-merged branch when the PR host reports its PR merged with this exact head commit (the PR lookup runs only after a `not_merged` refusal), and deletes untracked paths of `safety.ops.worktreeDisposable` first); see
+`foreman_move`, `foreman_copy` and `foreman_worktree_remove` are always registered (in a folder that is not a git repository, `foreman_move` and `foreman_copy` work inside the session working folder instead of the git workspace root, with the same limits, and the other safe ops answer `not_a_git_repo`, except `foreman_worktree_remove` with an absolute worktree path (the repository is taken from that path) and `pr_status`, `pr_checks` and `pr_comments` with an explicit `repo`; the foreman's `foreman_copy` may also read from its own session handoff dir; `foreman_worktree_remove` also accepts a squash-merged branch when the PR host reports its PR merged with this exact head commit (the PR lookup runs only after a `not_merged` refusal), and deletes untracked paths of `safety.ops.worktreeDisposable` first); see
 [safety](safety.md). While the pack is on they also emit a `tool_pack` trace event, so retro can compare tool use.
 
 ### Children

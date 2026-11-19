@@ -785,7 +785,7 @@ logged in or rate limited, the last file stays and carries `error` and `errorAt`
 
 | File | Writer |
 |---|---|
-| `open-prs.json` (`hiddenRepo` per entry) | `refreshOpenPrs` (a Pi session or `foreman prs poll`) and the poll's re-mark of `hiddenRepo` (rewrites only when a mark changed), each under `open-prs.json.lock` |
+| `open-prs.json` (`hiddenRepo` per entry) | `refreshOpenPrs` (a Pi session or `foreman prs poll`) the poll's re-mark of `hiddenRepo` (rewrites only when a mark changed) and the poll's clear (search or feature off: `openPrs: []`, once), each under `open-prs.json.lock` |
 | `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt, host?}]}` (at most 200 lines; `host` is absent for `github.com`) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
 | `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt`, `hiddenRepo` per PR; `trackedAt`; `off`) | the poll only |
 | `tracked-prs-comments.json` | the poll only |
@@ -794,7 +794,9 @@ The stored snap also carries the host's review decision as the optional field `r
 
 `foreman radar --json` merges the tracked PRs into `openPrs`, sorted by repo (case-insensitive) and number, independent of session nodes: every search entry is listed; a tracked entry with a search twin replaces it while it is display-fresh (`okAt` within 15 minutes) and keeps the twin's `author` and `bodyText`; a tracked entry without a twin is listed whatever its age and carries `tracked: true`. A tracked-only entry never makes its repository "covered" in the mod, so it cannot drop a session chip the search alone would have kept. `openPrsAt` stays the search's success time. Merged and closed (ended) PRs are not listed; neither are tracked PRs while the state file's `off` is true (they show again once the feed is back on). The mod itself only runs the CLI and the radar; it never writes.
 
-When the list is full (200), `pr_follow` says so; remove a stuck or unwanted line by editing `tracked-prs.json` by hand, and the next poll prunes its state. `radar.openPrs.enabled: false`, or a `tools.prHost` other than `auto`/`gh`, switches tracking and `pr_follow` off too (the state file gets `off: true`).
+When the list is full (200), `pr_follow` says so; remove a stuck or unwanted line by editing `tracked-prs.json` by hand, and the next poll prunes its state. `radar.openPrs.enabled: false`, or a `tools.prHost` other than `auto`/`gh`, switches tracking and `pr_follow` off too (the state file gets `off: true`). The same poll clears the search list of `open-prs.json` once (`foreman prs poll` prints `search off, cleared <n> entries`; `--json` adds `cleared`).
+
+Session PR pills for PRs that no session watches come only from the search; turning the search off (no `mine`, authors or scope) or the feature off removes them at the next poll, and the radar then lists only tracked PRs.
 
 `tools.prGithubHosts` (user or overlay config, set by `foreman setup`; no built-in default) names the GitHub hosts the tracker and the search cover, for example `github.com` and a GitHub Enterprise host. The poll makes one `pr_batch` per host; the search runs its queries (at most 20 in all, shared round-robin) for each listed host, `github.com` with the unchanged command and another host with `--hostname <host>`, and `open-prs.json` entries of another host carry `host`. A host whose search fails keeps its previous entries and does not hide the others. Unset, the poll and the search make no `gh` call and record the one error `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`; an invalid list records an error naming the key. A tracked line whose host has left the list is skipped by the poll and pruned. `foreman radar --json` joins a tracked PR to its search twin by host, repository and number, so the same `owner/name#N` on two hosts stays two entries.
 
