@@ -1109,6 +1109,43 @@ def _rollup_nodes(roll):
     return [nd for nd in nodes if isinstance(nd, dict)] if isinstance(nodes, list) else []
 
 
+def _check_key(nd):
+    """The identity a check counts by: a StatusContext by its context, a CheckRun by workflow name + check name (app slug when the
+    workflow name is unknown, the name alone when neither is)."""
+    if nd.get("__typename") == "StatusContext":
+        return ("ctx", nd.get("context"))
+    suite = nd.get("checkSuite")
+    wf = suite.get("workflowRun") if isinstance(suite, dict) else None
+    flow = wf.get("workflow") if isinstance(wf, dict) else None
+    wname = flow.get("name") if isinstance(flow, dict) else None
+    app = suite.get("app") if isinstance(suite, dict) else None
+    slug = app.get("slug") if isinstance(app, dict) else None
+    if isinstance(wname, str) and wname:
+        return ("run", wname, nd.get("name"))
+    return ("run", None, slug if isinstance(slug, str) and slug else None, nd.get("name"))
+
+
+def _newest_rank(nd):
+    """Order of runs of one check: start time (a run that has none yet, queued, is newest), then completion time (none: newest)."""
+    ctxt = nd.get("__typename") == "StatusContext"
+    start = nd.get("createdAt") if ctxt else nd.get("startedAt")
+    done = None if ctxt else nd.get("completedAt")
+    def at(v):
+        t = None if not v or v in ZERO_TIME else _stamp(v)
+        return float("inf") if t is None else t
+    return (at(start), at(done))
+
+
+def _latest_nodes(roll):
+    """_rollup_nodes reduced to the newest run of each check, in the order of the nodes: a re-run supersedes the runs it replaces."""
+    best = {}
+    for i, nd in enumerate(_rollup_nodes(roll)):
+        key = _check_key(nd)
+        if key not in best or _newest_rank(nd) >= _newest_rank(best[key][1]):
+            best[key] = (i, nd)
+    return [nd for _, nd in sorted(best.values(), key=lambda e: e[0])]
+
+
 EXPECT_EVENTS = ("pull_request", "pull_request_target", "push")
 OWN_RUNNER = "github-actions"
 MAX_BASELINE = 100
@@ -1152,7 +1189,7 @@ def watch_runs(roll, required=None):
     """One entry {id, name, bucket, url[, expected]} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
     or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run. `expected`: see _counts_expected."""
     out = []
-    for nd in _rollup_nodes(roll):
+    for nd in _latest_nodes(roll):
         name, group = _node_group(nd)
         if nd.get("__typename") == "StatusContext":
             rid, url = "%s@%s" % (nd.get("context"), nd.get("createdAt")), nd.get("targetUrl")
@@ -1179,7 +1216,7 @@ def readable_required(required, roll, runs):
     ctx = roll.get("contexts") if isinstance(roll, dict) else None
     total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
     nodes = _rollup_nodes(roll)
-    seen = {title_or_none(_node_group(nd)[0]) or "?" for nd in nodes}
+    seen = {title_or_none(_node_group(nd)[0]) or "?" for nd in _latest_nodes(roll)}
     kept = {r["name"] for r in runs}
     truncated = isinstance(total, int) and not isinstance(total, bool) and total > len(nodes)
     for n in required:
@@ -1194,7 +1231,7 @@ def map_rollup(roll):
     counts = dict.fromkeys(names, 0)
     ctx = roll.get("contexts") if isinstance(roll, dict) else None
     total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
-    for nd in _rollup_nodes(roll):
+    for nd in _latest_nodes(roll):
         name, group = _node_group(nd)
         counts[group] += 1
         if len(names[group]) < MAX_NAMES:
@@ -1210,7 +1247,7 @@ def run_list_cut(roll, runs):
     ctx = roll.get("contexts") if isinstance(roll, dict) else None
     total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
     nodes = _rollup_nodes(roll)
-    return len(runs) < len(nodes) or (isinstance(total, int) and not isinstance(total, bool) and total > len(nodes))
+    return len(runs) < len(_latest_nodes(roll)) or (isinstance(total, int) and not isinstance(total, bool) and total > len(nodes))
 
 
 def _is_run_error(x):
@@ -1272,7 +1309,7 @@ def baseline_names(node, alias, base, errs):
             total = ctx.get("totalCount") if isinstance(ctx, dict) else None
             if not isinstance(total, int) or isinstance(total, bool) or total > len(_rollup_nodes(roll)):
                 complete = False
-        for c in _rollup_nodes(roll):
+        for c in _latest_nodes(roll):
             name = title_or_none(_node_group(c)[0])
             if name and name not in names and _counts_expected(c, at):
                 names.append(name)
@@ -1312,7 +1349,7 @@ def required_checks(pr, errs):
 
 def _merged_query():
     # the newest merged pull requests of the repository by update time (the host cannot order by merge time): base, merge time and the head's checks
-    nodes = ("__typename ... on CheckRun { name status conclusion startedAt checkSuite { app { slug } workflowRun { event } } } "
+    nodes = ("__typename ... on CheckRun { name status conclusion startedAt completedAt checkSuite { app { slug } workflowRun { event workflow { name } } } } "
              "... on StatusContext { context state createdAt }")
     return (" merged: pullRequests(states: MERGED, first: 10, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { baseRefName mergedAt "
             "commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { %s } } } } } } } }" % nodes)
@@ -1326,9 +1363,9 @@ def _pr_query(count, watch=False, policy=True, runs=False, merged=()):
     if watch and policy:
         pr_extra += ("mergeStateStatus baseRef { branchProtectionRule { requiredStatusCheckContexts } rules(first: 30) { nodes { "
                      "parameters { ... on RequiredStatusChecksParameters { requiredStatusChecks { context } } } } } } ")
-    run_extra = "databaseId detailsUrl " if watch else ""
+    run_extra = "databaseId detailsUrl completedAt " if watch else ""
     if watch and runs:
-        run_extra += "checkSuite { app { slug } workflowRun { event } } "
+        run_extra += "checkSuite { app { slug } workflowRun { event workflow { name } } } "
     ctx_extra = "createdAt targetUrl " if watch else ""
     decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
     parts = []
