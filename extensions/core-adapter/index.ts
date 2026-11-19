@@ -220,7 +220,7 @@ import { shellPathSetting } from "./bg.ts";
 import type { ShellConfigFn } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
+import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overrideAvailability, overrideDeclinedReason, overrideHint, overrideShape, overrideSpec, overrideUnavailableReason, takePressureOverride, taskHash, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
@@ -554,6 +554,10 @@ interface Session {
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
   pressureSampler: PressureSampler | null;
   pressureQ: { gen: number; entries: unknown[]; started: boolean } | null;
+  /** Foreman only: the owner declined or dismissed a pressure override; cleared by the next owner prompt (input source interactive or rpc). */
+  overrideDeclined: boolean;
+  /** Foreman only: tool call ids whose launch the owner approved at critical load, with the launch arguments; settled at tool_execution_end (one approval, one launch). */
+  overridden: Map<string, Record<string, unknown>>;
 }
 
 export interface AdapterDeps {
@@ -1149,6 +1153,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       openPrs: null,
       pressureSampler: null,
       pressureQ: null,
+      overrideDeclined: false,
+      overridden: new Map(),
     };
     sessions.set(id, s);
     // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman removes worktree-side lanes older than 7 days
@@ -3788,6 +3794,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let heavyDefault: Json[] = []; // builder entries the heavy tier put on the strong rung (launchModel's tier default; no Climb record)
       let sizingClimbs: ReadonlySet<Json> = new Set();
       let sizingTop: string | null = null;
+      let override: ReturnType<typeof takePressureOverride> = { nested: false };
       let occasions = new Map<Record<string, unknown>, Occasion>();
       let panel: ReturnType<typeof primaryPanel> = null;
       let shadow: ShadowDecision = { kind: "none" };
@@ -3797,6 +3804,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
+        // The owner-approval request of a deferred launch leaves every call here, before the copy: pi-subagents and a relaunch never carry it.
+        override = takePressureOverride(input);
+        if (override.text !== undefined && s.isChild) s.trace?.emit({ event: "pressure_override", decision: "not_needed", reason: "child" });
         rawLaunch = JSON.parse(JSON.stringify(input)) as Record<string, unknown>; // the arguments as the model gave them, for a deferred or queued launch
         // R39 launch sizing (sizing.ts): `size` and `risk` leave every launch here (after the copy, so a relaunch is sized again); malformed ones refuse only the foreman's own launches.
         const lifted = liftSizing(input);
@@ -3898,16 +3908,57 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Host pressure (pressure.ts): critical defers the launch (nothing below runs or counts), high narrows the fan-out to one and suppresses climbs.
         if (!s.isChild && isLaunchArgs(input) && !explorerOnly(rawLaunch)) {
           const p = pressureOf(s);
+          const ovTrace = { agent: typeof rawLaunch.agent === "string" ? rawLaunch.agent : "", hash: taskHash(rawLaunch.task), reasons: p.reasons.join(","), level: p.level };
+          let approved = false;
           if (p.level === "critical") {
             const args = rawLaunch;
-            const w = await waits.startPressure(ctx, { kind: "pressure", mode: "critical", args: [args], pollMs: sampleSecondsOf(s.config.config) * 1000, boundSeconds: CRITICAL_WAIT_SECONDS, note: "launch deferred" });
-            s.trace?.emit({ event: "launch_deferred", level: p.level, reasons: p.reasons.join(",") });
-            return { block: true, reason: `${criticalReason(p.reasons)}${"error" in w ? ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})` : ""}` };
+            let refusal = criticalReason(p.reasons);
+            let deferWait = true;
+            const availability = overrideAvailability({ reasons: p.reasons, call: rawLaunch, nested: override.nested, ui: !!ctx.hasUI && (ctx.mode === "tui" || ctx.mode === "rpc"), declinedRecently: s.overrideDeclined });
+            if (override.text === undefined) {
+              refusal = `${refusal}. ${overrideHint(availability === "declined_recently" ? "ok" : availability, overrideShape(rawLaunch))}`;
+            } else if (availability !== "ok") {
+              s.trace?.emit({ event: "pressure_override", decision: "unavailable", ...ovTrace, reason: availability });
+              refusal = overrideUnavailableReason(p.reasons, availability);
+              deferWait = !waits.hasPressure(ctx, args);
+            } else {
+              s.trace?.emit({ event: "dialog", surface: "pressure_override" });
+              const spec = overrideSpec({ agent: ovTrace.agent, task: typeof rawLaunch.task === "string" ? rawLaunch.task : "", reason: override.text, host: p.host, maxLoadPerCore: get(s.config.config, "resources.maxLoadPerCore") });
+              let answer: string | undefined;
+              try {
+                answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, cleanDialogText(spec.ask), () => shapedSelect(ctx.ui, ctx.mode, spec, ["Yes", "No"], { signal: ctx.signal }));
+              } catch {
+                answer = undefined;
+              }
+              if (answer === "Yes") {
+                approved = true;
+                s.overridden.set(event.toolCallId, args);
+                s.trace?.emit({ event: "pressure_override", decision: "approved", ...ovTrace });
+              } else {
+                s.overrideDeclined = true;
+                s.trace?.emit({ event: "pressure_override", decision: answer === "No" ? "declined" : "dismissed", ...ovTrace });
+                refusal = overrideDeclinedReason(p.reasons);
+                deferWait = !ctx.signal?.aborted && !waits.hasPressure(ctx, args);
+              }
+            }
+            if (!approved) {
+              let failed = "";
+              if (deferWait) {
+                const w = await waits.startPressure(ctx, { kind: "pressure", mode: "critical", args: [args], pollMs: sampleSecondsOf(s.config.config) * 1000, boundSeconds: CRITICAL_WAIT_SECONDS, note: "launch deferred" });
+                if ("error" in w) failed = ` (no wait could be started: ${w.error}; relaunch with: ${JSON.stringify(args)})`;
+              }
+              s.trace?.emit({ event: "launch_deferred", level: p.level, reasons: p.reasons.join(",") });
+              return { block: true, reason: `${refusal}${failed}` };
+            }
+          } else if (override.text !== undefined) {
+            s.trace?.emit({ event: "pressure_override", decision: "not_needed", ...ovTrace, reason: "level" });
           }
-          if (p.level === "high") {
+          if (p.level === "high" && !approved) {
             const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
             if (queued) return { block: true, reason: queued };
           }
+        } else if (override.text !== undefined && !s.isChild) {
+          s.trace?.emit({ event: "pressure_override", decision: "not_needed", reason: isLaunchArgs(input) ? "explorer" : "action" });
         }
         // D6: pi-subagents' isolation worktree is a plain `git worktree add` of the innermost repo; inside a nested submodule checkout it would not carry the tree
         if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
@@ -4673,6 +4724,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) ownAskFor(s).typed();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) persistRounds(s);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.overrideDeclined = false; // a declined override may be asked again after an owner prompt
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       const was = s.budget.phase;
@@ -5224,6 +5276,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.questionCalls.delete(event.toolCallId);
     s?.runningCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
+    // An owner-approved launch (pressure override) is spent here, whether it started or a later check refused it.
+    const spent = s?.overridden.get(event.toolCallId);
+    if (s && spent) {
+      s.overridden.delete(event.toolCallId);
+      s.trace?.emit({ event: "pressure_override", decision: event.isError ? "not_launched" : "launched", agent: typeof spent.agent === "string" ? spent.agent : "", hash: taskHash(spent.task) });
+      if (!event.isError) {
+        try {
+          await waits.dropPressure(ctx, spent);
+        } catch { /* best effort: the rest of this handler still runs */ }
+      }
+    }
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       s.loopStop = null;
