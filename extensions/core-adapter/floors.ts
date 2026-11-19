@@ -1054,7 +1054,7 @@ const PS_ENCODED = /^-e(?:c|nc(?:o(?:d(?:e(?:d(?:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?
  */
 function psUnits(line: string): string[][] {
   // `${env:X}` is read as `$env:X` before lexing (the lexer cuts a braced name into a block); a text substitution, the lexer is unchanged
-  return psUnitTexts(line.replace(/\$\{env:(\w+)\}/gi, "$$env:$1")).filter((t) => !/[;|&\n]/.test(t)).map((t) => t.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length > 0);
+  return psUnitTexts(line.replace(/\$\{env:(\w+)\}/gi, "$$env:$1")).filter((t) => !/[;|&\n]/.test(t.replace(/'[^']*'|"[^"]*"/g, ""))).map((t) => t.trim().split(/\s+/).filter(Boolean)).filter((w) => w.length > 0);
 }
 
 /** The line is read through the PowerShell units: the powershell tool (one segment, program `powershell`) or a bash line with a `pwsh`, `powershell` or `cmd` segment. */
@@ -1544,7 +1544,7 @@ const CMD = "(?:^|[;&|(\\n`]|\\$\\()\\s*(?:\\w+=\\S*\\s+)*";
 // A2: `git` at a command position. CMD widened by the shell keywords that can stand before a command and by the wrapper programs; the options
 // `-C <dir>`, `-c k=v`, `--git-dir`, `--work-tree` and friends may sit between `git` and its verb (captured).
 const GIT_WRAPPERS = "env|nohup|xargs|timeout|nice|command|exec|time|sudo|doas|stdbuf|ionice|setsid";
-const GIT_VERB = `(?:[\\w.~/-]*/)?git(?:[ \\t]+(?:-[Cc][ \\t]+\\S+|--(?:git-dir|work-tree|namespace|exec-path)(?:=\\S*|[ \\t]+\\S+)|-[pP]|--(?:no-pager|paginate|bare|no-replace-objects|literal-pathspecs|no-optional-locks)))*[ \\t]+([a-z][\\w-]*)`;
+const GIT_VERB = `(?:[\\w.~/-]*/)?git(?:[ \\t]+(?:-[Cc][ \\t]+\\S+|--(?:git-dir|work-tree|namespace|exec-path)(?:=\\S*|[ \\t]+\\S+)|-[pP]|--(?:no-pager|paginate|bare|no-replace-objects|literal-pathspecs|no-optional-locks)))*[ \\t]+([a-z][\\w-]*|\\$\\S*)`;
 const CALL_PREFIX =
   `(?:^|[;&|(\\n\`{!]|\\$\\()[ \\t]*(?:\\w+=\\S*[ \\t]+)*(?:(?:do|then|else|elif|if|while|until|coproc|time)[ \\t]+|[!{(][ \\t]*)*` +
   `(?:(?:${GIT_WRAPPERS})(?:[ \\t]+(?:-{1,2}[\\w-]+(?:=\\S+)?|\\d+[smhd]?|\\w+=\\S*|\\{\\}))*[ \\t]+)*`;
@@ -1605,11 +1605,13 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
     const end = (m.index ?? 0) + m[0].length;
     return { verb: m[1], tail: lower.slice(end).split(/[\n;&|]/)[0], tailText: text.slice(end).split(/[\n;&|]/)[0] };
   });
+  // a verb that is a variable (`git ${V:-push} origin main`) may be a push: it gets the force and protected-branch checks below (not the child's push deny)
+  const dynamic = calls.find((c) => c.verb.startsWith("$"));
   if (calls.length > 0 || (anywhere && /\bgit\b/.test(lower))) {
-    const push = calls.find((c) => c.verb === "push");
+    const push = calls.find((c) => c.verb === "push") ?? dynamic;
     // A3: a child cannot answer an owner question about a line the parser could not read: a deterministic deny that says how to rephrase
     const flag = env.child ? opaqueDeny : askHit;
-    if (env.child && !env.builder && push) return flag("git-push-child", `The unparsed line looks like a git push. ${PUSH_CHILD_TEXT}`);
+    if (env.child && !env.builder && push && push !== dynamic) return flag("git-push-child", `The unparsed line looks like a git push. ${PUSH_CHILD_TEXT}`);
     // git config words are judge-first (a child's judge-first hit asks its parent): they wait behind the push floors and the denies below
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
     if (key !== undefined) soft = judgeHit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`, key);
