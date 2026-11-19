@@ -59,6 +59,8 @@ export interface ShellSegment {
   /** The wrappers this segment was unwrapped from, outermost first (`env`, `bash`, `$(`, backtick ...). */
   wrappers: string[];
   opaque: OpaqueReason | null;
+  /** Set (not enumerable) on a segment that stands for a function, select, coproc or arithmetic for, or a nested string too deep to walk: the source text of the bodies it holds. */
+  bodies?: string[];
 }
 
 export interface ShellParseOptions {
@@ -115,6 +117,8 @@ interface Scope {
   redirects: ShellRedirect[];
   heredoc: boolean;
   reason: OpaqueReason | null;
+  /** The source text of the script being walked (set by `walkScript`), for the body slices. */
+  src?: string;
 }
 
 /** One simple command being resolved. */
@@ -253,6 +257,12 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   sc.run.out.push(out);
 }
 
+/** Hangs the body texts on the segment just emitted (not enumerable: a segment's own keys stay as they were). */
+function withBodies(sc: Scope, bodies: string[]): void {
+  const last = sc.run.out[sc.run.out.length - 1];
+  if (last && bodies.length > 0) Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
+}
+
 function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {
   for (const s of subs) {
     if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth");
@@ -358,10 +368,12 @@ function walkNode(n: any, sc: Scope): string | null {
     }
     case "Function":
       seg(sc, n.name.text, [], "function_def");
+      withBodies(sc, nodeBodies(n, sc.src ?? ""));
       return sc.cwd;
     default: {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
+      withBodies(sc, nodeBodies(n, sc.src ?? ""));
       return sc.cwd;
     }
   }
@@ -496,6 +508,7 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
   sc.run.strings.push(src);
   if (sc.depth + 1 > MAX_DEPTH) {
     seg(sc, label, [], "depth", c);
+    withBodies(sc, opaqueBodies(src, false));
     return cwd;
   }
   let script: Script | undefined;
@@ -807,6 +820,7 @@ function prepare(script: Script, src: string, sc: Scope): void {
 }
 
 function walkScript(script: Script, src: string, sc: Scope): void {
+  sc.src = src;
   prepare(script, src, sc);
   walkList(script.commands, sc);
 }
@@ -873,15 +887,45 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   return sc.run.out;
 }
 
+/**
+ * The text before the statement that holds the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position
+ * and are not empty. Null when `cmd` parses, throws, or no statement precedes the error.
+ */
+export function beforeParseError(cmd: string): string | null {
+  let script: Script | undefined;
+  try {
+    script = parse(cmd);
+  } catch {
+    return null;
+  }
+  const err = (script as any)?.errors?.[0] as { pos: number } | undefined;
+  if (!script || !err) return null;
+  let cut = 0;
+  for (const st of script.commands) if (st.end > st.pos && st.end <= err.pos) cut = Math.max(cut, st.end);
+  return cut > 0 ? cmd.slice(0, cut) : null;
+}
+
 const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
+
+function ownBody(n: SyntaxNode, cmd: string): string | null {
+  const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
+  // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
+  if (b && typeof b === "object" && b.type !== "Word") return n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end);
+  return null;
+}
+
+/** The body text of one function, select, coproc or arithmetic for node (none for any other node). */
+function nodeBodies(n: SyntaxNode, cmd: string): string[] {
+  const b = ownBody(n, cmd);
+  return b === null ? [] : [b];
+}
 
 /** The source text of the body of every function, select, coproc and arithmetic for in `cmd` (outermost only) that parses as a script. */
 export function opaqueBodies(cmd: string, intoStrings = false): string[] {
   const out: string[] = [];
   const walk = (n: SyntaxNode): void => {
-    const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
-    // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
-    if (b && typeof b === "object" && b.type !== "Word") out.push(n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end));
+    const b = ownBody(n, cmd);
+    if (b !== null) out.push(b);
     else forEachChild(n, walk);
   };
   walk(parse(cmd));

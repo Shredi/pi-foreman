@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, opaqueBodies, parseShell, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, beforeParseError, parseShell, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
@@ -1383,7 +1383,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (rest) {
       const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
-      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd }));
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}) }));
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, rmAsks && !PRIVILEGE.has(prog) && seg.wrappers.length === 0);
       if (h) return withFragment(h, seg);
       continue;
@@ -1427,10 +1427,10 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     const unknown = unknownFloor(text, segs, env);
     if (unknown) return unknown;
   }
-  // every segment kind whose body `opaqueBodies` extracts (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
-  const opaque = segs.find((s) => s.opaque !== null && s.opaque !== "parse_error");
-  if (opaque) {
-    for (const body of opaqueBodies(text, true)) {
+  // every segment kind whose body the walker records (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
+  for (const opaque of segs) {
+    if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
+    for (const body of opaque.bodies ?? []) {
       const inner = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
       // a function inside a `-c` or eval string (or behind any wrapper) was a recursive rm run as code: a deny, never the dialog of a literal command
       const h = pythonKinds(body, inner, env, where, depth + 1, false, rmAsks && opaque.wrappers.length === 0);
@@ -1651,30 +1651,18 @@ export function cleanLine(segments: ShellSegment[]): boolean {
   return segments.length > 0 && segments.every((s) => s.opaque === null && !runsText(s)) && (!segments.some((s) => s.heredoc) || dataBodies(segments));
 }
 
-/** How many prefixes of a line that fails to parse are tried (each is one parse, so the cost is linear in the line times this). */
-const PREFIX_TRIES = 32;
-
 /**
- * A line that does not parse is one `parse_error` segment, but a shell runs the complete lines before the error. The longest prefix of whole lines (cut at newline
- * positions) that parses gets the restored checks; the parse error itself stays opaque for the rest, so the result is the stricter of the two. The prefixes tried are the
- * longest ones first and then ever sparser ones, a bounded number of parses.
+ * A line that does not parse is one `parse_error` segment, but a shell runs the statements before the error. The text before the statement that holds the parser's first
+ * error (by its own offsets) is parsed once more and, when it parses, gets the restored checks; the parse error itself stays opaque for the rest, so the result is the
+ * stricter of the two. A text whose cut still fails to parse is not read further.
  */
 function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
   if (segments.length !== 1 || segments[0].opaque !== "parse_error") return null;
-  const cuts: number[] = [];
-  for (let i = text.lastIndexOf("\n"); i > 0; i = text.lastIndexOf("\n", i - 1)) cuts.push(i);
-  const tries: number[] = [];
-  for (let i = 0, step = 1; i < cuts.length && tries.length < PREFIX_TRIES; i += step) {
-    tries.push(cuts[i]);
-    if (tries.length >= PREFIX_TRIES / 2) step *= 2;
-  }
-  for (const cut of tries) {
-    const prefix = text.slice(0, cut);
-    const parsed = parseShell(prefix, { cwd: segments[0].cwd, platform: env.platform });
-    if (parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error")) continue;
-    return pythonKinds(prefix, parsed, env, "local", 0, false);
-  }
-  return null;
+  const prefix = beforeParseError(text);
+  if (prefix === null) return null;
+  const parsed = parseShell(prefix, { cwd: segments[0].cwd, platform: env.platform });
+  if (parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error")) return null;
+  return pythonKinds(prefix, parsed, env, "local", 0, false);
 }
 
 /**
