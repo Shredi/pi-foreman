@@ -5,12 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { main, type ReportsDeps } from "../reports-cli.ts";
+import { realPath } from "../workspacekey.ts";
 import { DATA_LINE, foldRows, readRows, recordReport, storeFor } from "../reports.ts";
 import type { Writer } from "../reports.ts";
 
 const DAY = 86_400_000;
 function tmp(t: { after(fn: () => void): void }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-reports-cli-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-reports-cli-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
