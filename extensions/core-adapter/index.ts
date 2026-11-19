@@ -241,6 +241,7 @@ import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, contextCap, topClimbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { topEntries, topRefusal } from "./topkeyword.ts";
+import { STEWARD_ENTRY, STEWARD_TEXT_TYPE, STEWARD_WAKE_TYPE, StewardWatch, stewardSettings } from "./steward.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel, topRoleEntry } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countsForItems, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, OCCASIONS, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
@@ -447,8 +448,8 @@ interface Session {
   loopStop: LoopStop | null;
   /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval, /foreman plan off, or below heavy in a phase a parent's launch started by the session's plan-review PASS. */
   planPhase: boolean;
-  /** The steward session of this repository (/foreman steward on); only then may a launch use `model: "top"`. Set from session state, never from text. */
-  steward: { active: boolean };
+  /** The steward watch (steward.ts): `steward.active` is the one fact that lets a launch use `model: "top"`. Session state, never read from text. */
+  steward: StewardWatch;
   /** Who started the plan phase (persisted beside it): `parent` (a parent's launch, PI_FOREMAN_PLAN_PHASE=1 with a handoff dir) or `owner` (/foreman plan, or an entry without the field). */
   planPhaseOrigin: PlanPhaseOrigin;
   /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
@@ -1116,7 +1117,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewerFails: new ReviewerFails(),
       loopStop: null,
       planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
-      steward: { active: false },
+      steward: new StewardWatch({
+        cwd: () => s.cwd,
+        settings: () => stewardSettings(s.config.config),
+        now: () => Date.now(),
+        piSessionId: () => s.id,
+        persist: (entry) => pi.appendEntry(STEWARD_ENTRY, entry),
+        sendText: (text) => pi.sendMessage({ customType: STEWARD_TEXT_TYPE, content: text, display: true }, { triggerTurn: false }),
+        sendWake: (text) => pi.sendMessage({ customType: STEWARD_WAKE_TYPE, content: text, display: true }, { triggerTurn: true }),
+        idle: () => (s.prCtx ?? s.idleCtx)?.isIdle() ?? false,
+        instruction: () => fs.readFileSync(path.join(PKG_ROOT, "instructions", "steward.md"), "utf8"),
+        trace: (r) => s.trace?.emit(r),
+        notice: (text) => (s.prCtx ?? s.idleCtx)?.ui.notify(text, "info"),
+      }),
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
@@ -2092,6 +2105,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.prCtx ??= ctx;
       s.prWatches.restore(latestWatches((ctx.sessionManager.getBranch?.() ?? []) as unknown[], ctx.sessionManager.getSessionId?.() ?? ""));
       await waits.restore(ctx); // foreman_wait waits do not survive a restart: one visible notice (waitstate.ts)
+      if (!process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) s.steward.restore((ctx.sessionManager.getBranch?.() ?? []) as unknown[]); // the steward watch and its lock (steward.ts)
     }
     if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
@@ -2274,6 +2288,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.registration = undefined;
     s.panels.clear();
     s.prWatches.clear();
+    s.steward.clear();
     s.extStatus.clear();
     s.selfWarm.onShutdown();
     // a detached owner script does not outlive its session: killed, recorded as aborted
@@ -6299,7 +6314,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A main session without a parent only; sent once, recorded in a session entry. A message appended to the transcript, never system text.
   pi.on("before_agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
-    if (!s || s.isChild || s.startNoteDone || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) return;
+    if (!s || s.isChild || s.startNoteDone || s.steward.active || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) return;
     s.startNoteDone = true;
     if (get(s.config.config, "retro.startNote") === false || get(s.config.config, "retro.report") === false) return;
     if (startNoteRecorded((ctx.sessionManager.getBranch?.() ?? []) as unknown[])) return;
@@ -7282,6 +7297,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("pi-foreman: the read budget only reminds; it never refuses a read, so there is nothing to lift.", "info");
         return;
       }
+      if (sub === "steward") {
+        const s = await ensureSession(ctx);
+        const arg = rest[0];
+        if (arg !== "on" && arg !== "off" && arg !== "status") {
+          ctx.ui.notify("Usage: /foreman steward on | off | status", "warning");
+          return;
+        }
+        if (arg === "status") {
+          ctx.ui.notify(s.steward.status(), "info");
+          return;
+        }
+        if (s.isChild || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) {
+          ctx.ui.notify("pi-foreman: the steward is a main session of the owner; a child or a session a parent opened cannot be it.", "warning");
+          return;
+        }
+        s.prCtx ??= ctx;
+        const r = arg === "on" ? s.steward.on() : s.steward.off();
+        ctx.ui.notify(r.text, r.ok ? "info" : "warning");
+        return;
+      }
       if (sub === "flag-ask") {
         const s = await ensureSession(ctx);
         const rec = askFlag.flag(s.id, rest.join(" "));
@@ -7355,7 +7390,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman steward on|off|status | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
         return;
       }
       if (rest.length === 1 && rest[0] === "warm") {
