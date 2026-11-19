@@ -1651,6 +1651,32 @@ export function cleanLine(segments: ShellSegment[]): boolean {
   return segments.length > 0 && segments.every((s) => s.opaque === null && !runsText(s)) && (!segments.some((s) => s.heredoc) || dataBodies(segments));
 }
 
+/** How many prefixes of a line that fails to parse are tried (each is one parse, so the cost is linear in the line times this). */
+const PREFIX_TRIES = 32;
+
+/**
+ * A line that does not parse is one `parse_error` segment, but a shell runs the complete lines before the error. The longest prefix of whole lines (cut at newline
+ * positions) that parses gets the restored checks; the parse error itself stays opaque for the rest, so the result is the stricter of the two. The prefixes tried are the
+ * longest ones first and then ever sparser ones, a bounded number of parses.
+ */
+function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
+  if (segments.length !== 1 || segments[0].opaque !== "parse_error") return null;
+  const cuts: number[] = [];
+  for (let i = text.lastIndexOf("\n"); i > 0; i = text.lastIndexOf("\n", i - 1)) cuts.push(i);
+  const tries: number[] = [];
+  for (let i = 0, step = 1; i < cuts.length && tries.length < PREFIX_TRIES; i += step) {
+    tries.push(cuts[i]);
+    if (tries.length >= PREFIX_TRIES / 2) step *= 2;
+  }
+  for (const cut of tries) {
+    const prefix = text.slice(0, cut);
+    const parsed = parseShell(prefix, { cwd: segments[0].cwd, platform: env.platform });
+    if (parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error")) continue;
+    return pythonKinds(prefix, parsed, env, "local", 0, false);
+  }
+  return null;
+}
+
 /**
  * The floors of a parsed shell line (r79): raw-text floors (quoted strings of a data-program line are blanked first: pinned steward cases 1 and 2),
  * every segment (a deny), then the opaque-line scan, whose hits are asks. A deny of any kind wins over an ask.
@@ -1686,7 +1712,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   // PR B2: the old check's decisions on the paths that nest a command (function bodies, busybox and toybox applets, ssh and containers)
   // the powershell tool's line is one opaque segment: the old check read its text as a shell line too
   const psTool = segments.length === 1 && segments[0].program === "powershell" && segments[0].argv.length === 0 && segments[0].opaque === "foreign_shell";
-  const nested = psTool ? pythonKinds(text, parseShell(text, { cwd: segments[0].cwd, platform: env.platform }), env, "local", 0, false) : pythonKinds(text, segments, env, "local", 0, true);
+  const nested = psTool ? pythonKinds(text, parseShell(text, { cwd: segments[0].cwd, platform: env.platform }), env, "local", 0, false) : pythonKinds(text, segments, env, "local", 0, true) ?? completeLines(text, segments, env);
   if (nested?.kind === "deny") return nested;
   // until the permission modes go (PR C moves this to the judge): a recursive delete the gate cannot read is refused in every mode, by the predicate of the label
   const unknown = unknownFloor(text, segments, env);

@@ -1175,5 +1175,10 @@
 {"path":"body-coproc","tool":"bash","line":"coproc { find $X -delete; }","was":{"foreman":"deny","child":"refused"}},
 {"path":"body-coproc","tool":"bash","line":"coproc { echo hi > $F; }","was":{"foreman":"deny","child":"refused"}},
 {"path":"body-coproc","tool":"bash","line":"coproc { ls; }","was":{"foreman":"allow","child":"allow"}},
-{"path":"redirect","tool":"bash","line":"busybox sh -c 'echo > $F arg'","was":{"foreman":"allow","child":"allow"}}
+{"path":"redirect","tool":"bash","line":"busybox sh -c 'echo > $F arg'","was":{"foreman":"allow","child":"allow"}},
+{"path":"parse-error-prefix","tool":"bash","line":"rm -rf $X\necho \"done","was":{"foreman":"deny","child":"refused"}},
+{"path":"parse-error-prefix","tool":"bash","line":"find $X -delete\n)","was":{"foreman":"deny","child":"refused"}},
+{"path":"parse-error-prefix","tool":"bash","line":"echo hi > $F\n)","was":{"foreman":"deny","child":"refused"}},
+{"path":"parse-error-prefix","tool":"bash","line":"ls\necho \"x","was":{"foreman":"allow","child":"allow"}},
+{"path":"parse-error-prefix","tool":"bash","line":"rm -rf ~\necho \"done","was":{"foreman":"deny","child":"refused"}}
 ]}
