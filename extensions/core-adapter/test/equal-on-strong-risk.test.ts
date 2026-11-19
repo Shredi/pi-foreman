@@ -18,6 +18,7 @@ interface Opts {
   strong?: string | null; // the builder's strong model; null = none mapped
   builder?: string; // the builder's normal model
   reviewer?: string;
+  explorer?: string;
   ranks?: unknown[];
   model?: string; // the foreman's own model id (provider fake)
 }
@@ -25,7 +26,7 @@ const builder = (extra: Record<string, unknown> = {}): Record<string, unknown> =
 
 async function rig(t: Parameters<typeof r11Rig>[0], o: Opts = {}): Promise<Rig> {
   const roles: Record<string, unknown> = {
-    explorer: { model: "fake/explorer" },
+    explorer: { model: o.explorer ?? "fake/explorer" },
     reviewer: { model: o.reviewer ?? "fake/reviewer" },
     builder: { model: o.builder ?? "fake/builder", ...(o.strong === null ? {} : { strong: { model: o.strong ?? "fake/foreman" } }) },
   };
@@ -110,9 +111,10 @@ test("key on, a different model of the same rank: skipped, never a tie", async (
   assertSkipped(a, (await a.launch(input)).res, input, "sizing:risk_strong");
 });
 
-test("key on, a reviewer sharing the model in a parallel launch: refused", async (t) => {
-  const a = await rig(t, { key: true, reviewer: "fake/foreman" });
-  const res = (await a.launch({ tasks: [builder({ risk: ["guard"] }), { agent: "reviewer", task: "review it" }] })).res;
+// a reviewer in a group is refused earlier (review_single_launch), so the sibling that shares the model is an explorer
+test("key on, a sibling sharing the model in a parallel launch: refused", async (t) => {
+  const a = await rig(t, { key: true, explorer: "fake/foreman" });
+  const res = (await a.launch({ tasks: [builder({ risk: ["guard"] }), { agent: "explorer", task: "look around" }] })).res;
   assert.equal(res?.block, true);
   assert.equal(refusals(a).length, 1);
   assert.deepEqual(a.events("rank_equal_model"), []);

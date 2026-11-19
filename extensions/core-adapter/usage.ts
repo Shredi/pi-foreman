@@ -67,6 +67,10 @@ export interface LaunchBinding {
   askDir?: string;
   /** Why the launch has no ask dir: the parent's `gate.childAsk` is `deny`, or the parent has no pane; absent = unknown. */
   noAsk?: "deny" | "no-pane";
+  /** A review launch: the parent-owned record folder where the child's `review_verdict` tool writes `verdict.json` (verdict.ts); absent = the tool refuses. */
+  verdictDir?: string;
+  /** A review launch: the ledger item ids the verdict tool accepts (the launch's `items` field, resolved at the launch). */
+  items?: (number | "V")[];
 }
 
 export interface LadderLimits {
@@ -236,6 +240,25 @@ export function checkoutEnv(b: LaunchBinding | null): Record<string, string> {
   return b?.worktree && b.workspace ? { [CHECKOUT_ENV]: b.workspace } : {};
 }
 
+const itemId = (v: unknown): number | "V" | null => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : v === "V" ? "V" : null);
+
+const BINDING_CACHE = Symbol.for("pi-foreman.launch-binding");
+
+/** Remove this package's key from the bindings env var, keeping every other key; the var goes when nothing is left. */
+export function scrubBinding(env: Env): void {
+  const raw = env[BINDINGS_ENV];
+  if (!raw) return;
+  try {
+    const all = JSON.parse(raw) as unknown;
+    if (!isObj(all) || !(BINDING_NS in all)) return;
+    const { [BINDING_NS]: _own, ...rest } = all;
+    if (Object.keys(rest).length > 0) env[BINDINGS_ENV] = JSON.stringify(rest);
+    else delete env[BINDINGS_ENV];
+  } catch {
+    // unparsable: left as it is
+  }
+}
+
 /** This process's launch binding (child side), or null. */
 export function readBinding(env: Env): LaunchBinding | null {
   const raw = env[BINDINGS_ENV];
@@ -257,8 +280,10 @@ export function readBinding(env: Env): LaunchBinding | null {
     const askDir = str(b.askDir);
     const handoffDir = str(b.handoffDir);
     const noAsk = b.noAsk === "deny" || b.noAsk === "no-pane" ? b.noAsk : undefined;
+    const verdictDir = str(b.verdictDir);
+    const items = Array.isArray(b.items) ? b.items.map(itemId).filter((x): x is number | "V" => x !== null) : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(scratch && out && path.isAbsolute(scratch) && path.isAbsolute(out) ? { out } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(scratch && out && path.isAbsolute(scratch) && path.isAbsolute(out) ? { out } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(verdictDir && path.isAbsolute(verdictDir) ? { verdictDir } : {}), ...(items ? { items } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
   } catch {
     return null;
   }
@@ -282,18 +307,24 @@ function slot(): Map<string, LaunchBinding> {
  * A binding written by hand into the env of such a pi is read as a real value; this is not stopped (docs/safety.md).
  */
 export function takeBinding(env: Env): LaunchBinding | null {
+  const g = globalThis as unknown as Record<symbol, LaunchBinding | undefined>;
   const key = Object.keys(env).find((k) => k.toUpperCase() === BINDINGS_ENV);
   const raw = key === undefined ? undefined : env[key];
   if (!raw) return null;
   if (raw.startsWith(CONSUMED)) return slot().get(raw.slice(CONSUMED.length)) ?? null;
   const b = readBinding(env);
   if (!b) {
+    // a reload after the key strip below: other packages' keys remain, this child's binding stays on the process
+    if (g[BINDING_CACHE]) return g[BINDING_CACHE] ?? null;
     stripChildBindingEnv(env);
     return null;
   }
   const token = randomBytes(16).toString("hex");
   slot().set(token, b);
-  stripChildBindingEnv(env, `${CONSUMED}${token}`);
+  g[BINDING_CACHE] = b;
+  // own key out (verdict.ts, T12): other packages' keys stay; when none is left the variable carries the consumed marker
+  scrubBinding(env);
+  if (!env[BINDINGS_ENV]) stripChildBindingEnv(env, `${CONSUMED}${token}`);
   return b;
 }
 

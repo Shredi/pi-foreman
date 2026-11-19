@@ -6,6 +6,7 @@ import * as path from "node:path";
 import {
   assignment, deviations, equivalentCommand, installedAddons, loadFeatures, planChanges, resolveSetupPython, safetyFloorViolations, shippedState, toggleable, loadDefaults,
 } from "../profiles.mjs";
+import { posixOnly } from "./_platform.ts";
 
 const leafPaths = (r: any, id: string) => r.changes.find((c: any) => c.feature === id)?.leaves.map((l: any) => l.path) ?? [];
 
@@ -98,7 +99,8 @@ test("deviations: absent leaf equals shipped, absent provider gives no row, unkn
 
 test("installedAddons matches npm:<pkg> and npm:<pkg>@<ver> in both settings files", () => {
   assert.deepEqual(installedAddons(["npm:pi-polish"], []), [{ id: "polish", source: "npm:pi-polish", scope: "global" }]);
-  assert.deepEqual(installedAddons([], [{ source: "npm:pi-background-tasks@2.6.10" }]), [{ id: "background-tasks", source: "npm:pi-background-tasks@2.6.10", scope: "project" }]);
+  assert.deepEqual(installedAddons([], [{ source: "npm:pi-quiver@6.14.2" }]), [{ id: "quiver", source: "npm:pi-quiver@6.14.2", scope: "project" }]);
+  assert.deepEqual(installedAddons(["npm:pi-background-tasks@2.6.10"], []), [], "the bundled add-on is no setup add-on");
   const both = installedAddons(["npm:pi-polish@0.1.1"], ["npm:pi-polish@0.1.2"]);
   assert.deepEqual(both.map((a: any) => a.scope), ["global", "project"]);
   assert.deepEqual(installedAddons(["npm:pi-polish-extra@1.0.0", "git:github.com/x/pi-polish", "npm:other"], undefined as any), []);
@@ -109,7 +111,7 @@ test("equivalentCommand builds the flag line", () => {
   assert.equal(equivalentCommand({ project: true }), "foreman setup --project");
 });
 
-test("resolveSetupPython: python.path wins, then PI_FOREMAN_PYTHON; the probe line is parsed", { skip: process.platform === "win32" }, () => {
+test("resolveSetupPython: python.path wins, then PI_FOREMAN_PYTHON; the probe line is parsed", { skip: posixOnly }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-profiles-py-"));
   try {
     const fake = (name: string, version: string) => {

@@ -16,7 +16,7 @@ type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ details?: Re
 const SCRIPT = ".workflow/scratch/set-key.sh";
 const LONG = "Sets one key in the user config. ".repeat(14).trim();
 const TEXTS = { description: LONG, risk: "A wrong value in the user config.", undo: "Run the script again with the old value." };
-const skipWin = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 
 async function rig(t: import("node:test").TestContext, mode: "rpc" | "tui") {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "HERDR_ENV", "HERDR_PANE_ID"];
@@ -95,7 +95,7 @@ async function rig(t: import("node:test").TestContext, mode: "rpc" | "tui") {
   return { seen, propose, script: path.join(project, SCRIPT) };
 }
 
-test("owner script dialog (plain): the first line is the unchanged title; description, risk and undo are whole; the path is plain; choices unchanged", skipWin, async (t) => {
+test("owner script dialog (plain): the first line is the unchanged title; description, risk and undo are whole; the path is plain; choices unchanged", { skip: posixOnly }, async (t) => {
   const r = await rig(t, "rpc");
   const out = await r.propose();
   assert.equal(out.details?.decision, "reject");
@@ -115,7 +115,7 @@ test("owner script dialog (plain): the first line is the unchanged title; descri
   assert.deepEqual(r.seen.choices[0], ["approve", "revise", "reject"]);
 });
 
-test("owner script dialog (TUI): drawn through custom with the plain title as the blocked label; the script path is never a link", skipWin, async (t) => {
+test("owner script dialog (TUI): drawn through custom with the plain title as the blocked label; the script path is never a link", { skip: posixOnly }, async (t) => {
   const r = await rig(t, "tui");
   await r.propose();
   assert.equal(r.seen.titles.length, 0, "no plain select in the TUI");

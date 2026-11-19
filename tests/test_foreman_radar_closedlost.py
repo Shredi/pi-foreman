@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
-import foreman_radar as fr  # noqa: E402
+import foreman_radar as fr
 
 NOW = 1_800_000_000.0
 

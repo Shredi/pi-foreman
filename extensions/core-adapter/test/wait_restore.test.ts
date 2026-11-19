@@ -6,22 +6,22 @@ import { r11Rig } from "./_r11rig.ts";
 
 const entry = (data: unknown) => [{ type: "custom", customType: WAITS_ENTRY, data }];
 
-test("waitsEntry: pressure waits are not stored, bg and notes are", () => {
+test("waitsEntry: pressure waits are not stored, notes are", () => {
   const e = waitsEntry("s", [
     { id: "w1", kind: "timer", note: "n" },
     { id: "w2", kind: "pressure", note: "" },
-    { id: "w3", kind: "pid", note: "build", bg: true },
+    { id: "w3", kind: "pid", note: "build" },
   ]);
-  assert.deepEqual(e, { v: 1, piSessionId: "s", waits: [{ id: "w1", kind: "timer", note: "n" }, { id: "w3", kind: "pid", note: "build", bg: true }] });
+  assert.deepEqual(e, { v: 1, piSessionId: "s", waits: [{ id: "w1", kind: "timer", note: "n" }, { id: "w3", kind: "pid", note: "build" }] });
 });
 
 test("latestWaits / lostWaitsMessage: same id names the lost waits, other id and empty set say nothing", () => {
-  const stored = waitsEntry("s", [{ id: "w1", kind: "timer", note: "nightly" }, { id: "w2", kind: "pid", note: "", bg: true }]);
+  const stored = waitsEntry("s", [{ id: "w1", kind: "timer", note: "nightly" }, { id: "w2", kind: "pid", note: "" }]);
   const msg = lostWaitsMessage(latestWaits(entry(stored), "s"));
   assert.equal(msg?.customType, WAKE_MESSAGE_TYPE);
   assert.match(msg!.content, /foreman_wait lost on restart: 2 waits/);
   assert.match(msg!.content, /- w1 \(timer\) "nightly"/);
-  assert.match(msg!.content, /- w2 \(bg pid\)/);
+  assert.match(msg!.content, /- w2 \(pid\)/);
   assert.equal(lostWaitsMessage(latestWaits(entry(stored), "other")), null);
   assert.equal(lostWaitsMessage(latestWaits(entry(waitsEntry("s", [])), "s")), null);
   assert.equal(lostWaitsMessage(latestWaits([], "s")), null);

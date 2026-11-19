@@ -58,16 +58,15 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-high-stakes](#review-high-stakes) | review |  | opt-in | One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a risky change: a builder launch with risk tag `security`, `permission`, `guard`, `concurrency` or `design`, a heavy task that built something, or the foreman's own request. One per session; any pass opens its PRs. A due review only reminds (PR tool answers, normal reviewer receipts, one finish hold); a FAIL blocks until a normal reviewer that got the findings passes, and gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`. | `{"ceremony": {"highStakes": {"model": "provider-b/top"}}}` | [review](review.md#high-stakes) |
 | [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | The plan checkpoint is the owner's dialog in the session's own pane, also in a session opened by a parent; no file from a parent (`ruling.md`, `ruling-plan.md`) approves a plan, and `ceremony.checkpoint: parent` is refused. A plan phase that a parent's launch started (`--plan-first`) ends below tier heavy with the session's own plan-review PASS on the current plan version. Plan state, the user tier and the plan phase with its origin survive `/reload` and resume. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
-| [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
+| [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, keyed by workspace, repository and branch, with `foreman findings` to list, dismiss or export them, `foreman rounds` to count the review rounds of a change and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
 | [bench-climb](#bench-climb) | ops |  | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
 | [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a work tree clean of project files: the harness's own `.workflow/` and scratch files do not count). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [read-budgets](#read-budgets) | ceremony |  | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [launch-wait](#launch-wait) | ceremony |  | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | sessions |  | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
-| [foreman-bg](#foreman-bg) | tools |  | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job). | on by default | [sessions](sessions.md#background-runs) |
 | [foreman-show](#foreman-show) | tools |  | on | The foreman-only `foreman_show` tool publishes a markdown or HTML note as a page (text, tables, code fences, mermaid diagrams) that the Herdr plan panel lists and opens in the browser; each call adds a page. | on by default | [herdr](herdr.md#notes) |
-| [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the pi-background-tasks add-on (installed by default by `foreman setup`, skip with `--skip-addon background-tasks`; setup writes `PI_BG_FEATURES=process` into the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
+| [background-tasks-addon](#background-tasks-addon) | tools |  | on | The pi-background-tasks add-on ships with pi-foreman and runs background commands with its `bg_run` tool (status, logs and kill beside it), in the foreman session only. pi-foreman starts it with `PI_BG_FEATURES=process` and `PI_BG_DISABLE_UPDATE_CHECK=1` unless you set them: `/foreman doctor` reports it, `/foreman waits` lists its tasks, and `bg_run` passes the same bash guards as a foreground call. | on by default | [herdr](herdr.md#bundled-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own scratch dir (`$FOREMAN_SCRATCH`, under the worktree root, else the temp dir) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
 | [permissions](#permissions) | safety |  | on | Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. The user file can also name work folders: reads there are allowed and an auto folder lets writes no other root covers run as under mode auto, except in protected places (`/foreman perms list` shows them). | on by default | [permissions](permissions.md) |
@@ -92,11 +91,12 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [session-worktree](#session-worktree) | sessions |  | on | `foreman session open <label> <brief> --worktree [--base REF]` (and `foreman_session_open` with `worktree: true`) creates the session's own linked worktree at `<close.worktreeDir>/<label>` on the branch `<prefix>/<label>` from the fetched default branch, installs dependencies with `npm ci` only when a lockfile is declared, and opens the session there. `sessions.worktree.branchPrefix` (default `round`) sets the prefix. User or overlay config only. | on by default | [sessions](sessions.md#worktree-for-a-new-session) |
 | [open-prs](#open-prs) | sessions |  | on | The only PR and run data source: a tracked list (`pr_follow`, and the PRs `pr_create` and `pr_watch` handle) that `foreman prs poll` (herdr-app runs it) polls for checks and drops once merged or closed, and the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 120, one refresher per machine) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk with title, branch, a redacted description excerpt, mergeability and up to 20 check names. `foreman radar --json` reports them as `openPrs` for the herdr-app mod, which draws one dot per PR; radar polls never call the network. On by default; GitHub only (GitLab users get no PR display). User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The child reports with `foreman session remote notice`, which sets the `fm.notice` label on its own hc terminal; the parent watches the hc events stream, fetches the named file with `hc file read` (`sessions.remote.fetchTimeoutSeconds`), checks it and mirrors it. A Windows machine works as a remote (`pi.cmd`, the full `hc.exe` path, a PowerShell `foremanArgv`; see Windows remotes). User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
-| [msys-no-pathconv](#msys-no-pathconv) | sessions |  | on | On Windows the bash tool and `foreman_bg` set `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms. | `{"shell": {"msysNoPathconv": true}}` | [safety](safety.md#known-limit-background-runs-on-windows) |
+| [msys-no-pathconv](#msys-no-pathconv) | sessions |  | on | On Windows the bash tool sets `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms. | `{"shell": {"msysNoPathconv": true}}` | [safety](safety.md#known-limit-background-runs-on-windows) |
 | [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval, always the owner's dialog answer, returns only from the session's own state entry, never from the approval store; no file from the parent approves a plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
+| [reports](#reports) | retro | toggle | on | Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. | `{"retro": {"report": true}}` | [retro](retro.md#reporting-at-the-source) |
 | [repo-backlog](#repo-backlog) | retro |  | opt-in | Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`. | `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}` | [retro](retro.md#the-store) |
 | [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -123,7 +123,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 |---|---|---|---|
 | `orchestration` | The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace. | shipped states | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` |
 | `standard` | Every toggleable feature in its shipped state; the package defaults. | shipped states | none |
-| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `trace` | none |
+| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `reports`, `trace` | none |
 
 Toggleable features (`on` and `off` write these leaves into the user config; `*` = every provider present):
 
@@ -140,6 +140,7 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 | [workflow-scripts](#workflow-scripts) | safety | `safety.subagents.allowWorkflow` = `true` | `safety.subagents.allowWorkflow` = `false` | off | yes |
 | [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
 | [retro](#retro) | retro | `retro.enabled` = `null` | `retro.enabled` = `false` | on | no |
+| [reports](#reports) | retro | `retro.report` = `true` | `retro.report` = `false` | on | no |
 | [trace](#trace) | ops | `trace.enabled` = `null` | `trace.enabled` = `false` | on | no |
 | [footer-ui](#footer-ui) | ui | `footer.usage` = `true` | `footer.usage` = `false` | on | no |
 | [herdr](#herdr) | ui | `herdr.blockedShim` = `true`, `herdr.groupTag` = `true` | `herdr.blockedShim` = `false`, `herdr.groupTag` = `false` | on | no |
@@ -202,7 +203,7 @@ Switch: `providers` is non-empty.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write"]`, `reviewer`: `["read", "ls", "grep", "find", "bash"]` | tighten-only (can only narrow the list) |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash", "foreman_report"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_report"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
 | `roles.<x>.denyTools` | `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
 | `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `["security-review"]` | not in project/session (the skills a role gets come from the user or overlay config) |
@@ -371,7 +372,7 @@ Switch: `ceremony.planReview.standard` is true.
 
 ### findings
 
-**Findings store and reviewer model stats.** Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models.
+**Findings store and reviewer model stats.** Records every reviewer run's located findings locally, keyed by workspace, repository and branch, with `foreman findings` to list, dismiss or export them, `foreman rounds` to count the review rounds of a change and `foreman retro models` to compare reviewer models.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -453,12 +454,6 @@ No config key.
 | `wait.maxActive` | `8` | tighten-only (lower only, minimum 1) |
 | `wait.ci` | `true` | tighten-only (only false is accepted) |
 
-### foreman-bg
-
-**Background shell runs.** The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. It is offered only without the pi-background-tasks add-on (with it, `bg_run` does the job).
-
-No config key.
-
 ### foreman-show
 
 **Notes for the side panel.** The foreman-only `foreman_show` tool publishes a markdown or HTML note as a page (text, tables, code fences, mermaid diagrams) that the Herdr plan panel lists and opens in the browser; each call adds a page.
@@ -467,7 +462,7 @@ No config key.
 
 ### background-tasks-addon
 
-**Background-tasks add-on detection.** Detects the pi-background-tasks add-on (installed by default by `foreman setup`, skip with `--skip-addon background-tasks`; setup writes `PI_BG_FEATURES=process` into the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it.
+**Background shell runs (bundled background-tasks add-on).** The pi-background-tasks add-on ships with pi-foreman and runs background commands with its `bg_run` tool (status, logs and kill beside it), in the foreman session only. pi-foreman starts it with `PI_BG_FEATURES=process` and `PI_BG_DISABLE_UPDATE_CHECK=1` unless you set them: `/foreman doctor` reports it, `/foreman waits` lists its tasks, and `bg_run` passes the same bash guards as a foreground call.
 
 No config key.
 
@@ -722,7 +717,7 @@ Switch: `sessions.machines` is non-empty.
 
 ### msys-no-pathconv
 
-**Git Bash argument conversion off on Windows.** On Windows the bash tool and `foreman_bg` set `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms.
+**Git Bash argument conversion off on Windows.** On Windows the bash tool sets `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms.
 
 Switch: `shell.msysNoPathconv` is true.
 
@@ -767,8 +762,18 @@ Switch: `sync.repos` is non-empty.
 | `retro.proposalMinReviews` | `5` | not in project/session (the proposal threshold comes from the user or overlay config) |
 | `retro.enabled` | `null` | any layer |
 | `retro.workspaceKey` | `null` | not in project/session (the backlog key comes from the user or overlay config) |
-| `retro.expireDays` | `14` | any layer |
 | `retro.askThreshold` | `2` | any layer |
+
+### reports
+
+**Fault reports.** Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too.
+
+Switch: `retro.report` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `retro.report` | `true` | any layer |
+| `retro.expireDays` | `14` | any layer |
 
 ### repo-backlog
 
@@ -825,7 +830,7 @@ No config key.
 
 | Key | Default | Layer |
 |---|---|---|
-| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
+| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_reports", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
 
 ### skill-visibility
 
@@ -957,7 +962,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [setup](#setup) | `/foreman`, `/foreman setup`, `foreman setup`, `/foreman doctor`, `/foreman update-check`, `foreman update-check`, `foreman config`, `foreman config validate`, `/foreman config validate` |
 | [profiles](#profiles) | `foreman setup --profile`, `foreman setup --pick`, `foreman features` |
 | [presets](#presets) | `/foreman config`, `/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`, `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` |
-| [findings](#findings) | `foreman findings`, `foreman retro models` |
+| [findings](#findings) | `foreman findings`, `foreman rounds`, `foreman retro models` |
 | [bench](#bench) | `foreman bench`, `foreman bench review`, `foreman bench review-table` |
 | [bench-climb](#bench-climb) | `foreman bench review --mode climb --rungs <a>,<b>` |
 | [ceremony-tiers](#ceremony-tiers) | `/ceremony`, `/foreman plan` |
@@ -972,7 +977,8 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [open-prs](#open-prs) | `foreman radar --json`, `foreman prs` |
 | [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session remote notice`, `foreman session close-remote`, `foreman machine` |
 | [sync](#sync) | `/sync`, `foreman sync` |
-| [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
+| [retro](#retro) | `/retro`, `foreman retro`, `foreman backlog` |
+| [reports](#reports) | `foreman reports`, `/foreman flag-ask` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |

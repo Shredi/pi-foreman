@@ -6,9 +6,9 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
+import { posixOnly } from "./_platform.ts";
 
 type T = Parameters<typeof r11Rig>[0];
-const posix = process.platform !== "win32";
 const ALLOW = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
 const ROLES = ["explorer", "builder", "reviewer"];
 const GUARD = /git[ -]?guard/i;
@@ -43,7 +43,7 @@ async function rig(t: T, kind: "main" | "child", extra: { config?: Record<string
 }
 
 for (const kind of ["main", "child"] as const) {
-  test(`${kind}: sh -c "$X" and python3 -c naming git are handed to the classifier as dangerous class; no dialog, no guard text anywhere`, { skip: !posix }, async (t: T) => {
+  test(`${kind}: sh -c "$X" and python3 -c naming git are handed to the classifier as dangerous class; no dialog, no guard text anywhere`, { skip: posixOnly }, async (t: T) => {
     const r = await rig(t, kind);
     let asked = 0;
     for (const command of ['sh -c "$X"', "python3 -c \"import subprocess; subprocess.run(['git','status'])\""]) {
@@ -56,7 +56,7 @@ for (const kind of ["main", "child"] as const) {
     assert.doesNotMatch(JSON.stringify(r.c.trace()), GUARD);
   });
 
-  test(`${kind}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls runs with a classifier answering allow, and no dialog opens`, { skip: !posix }, async (t: T) => {
+  test(`${kind}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls runs with a classifier answering allow, and no dialog opens`, { skip: posixOnly }, async (t: T) => {
     const r = await rig(t, kind);
     const res = await r.c.call("bash", { command: 'echo "wall $(( $(date +%s) - start ))s"; ls' });
     assert.ok(!res?.block, JSON.stringify(res));
@@ -65,7 +65,7 @@ for (const kind of ["main", "child"] as const) {
     assert.doesNotMatch(JSON.stringify(r.c.trace()), GUARD);
   });
 
-  test(`${kind}: with safety.git.commit.messagePattern set to a pattern the message violates, git commit -m gets the decision it gets with the key unset`, { skip: !posix }, async (t: T) => {
+  test(`${kind}: with safety.git.commit.messagePattern set to a pattern the message violates, git commit -m gets the decision it gets with the key unset`, { skip: posixOnly }, async (t: T) => {
     const commit = { command: 'git commit -m "anything"' };
     const plain = await rig(t, kind);
     const before = await plain.c.call("bash", commit);
@@ -80,7 +80,7 @@ for (const kind of ["main", "child"] as const) {
 
 const heredoc = (target: string) => `cat > ${target.replaceAll("\\", "/")} <<'EOF'\nbuilt\nEOF`;
 
-test("child heredoc drop, both ways: a heredoc write inside the child's own worktree runs with no dialog and no block", { skip: !posix }, async (t: T) => {
+test("child heredoc drop, both ways: a heredoc write inside the child's own worktree runs with no dialog and no block", { skip: posixOnly }, async (t: T) => {
   const r = await rig(t, "child");
   r.setCheckout();
   const res = await r.c.call("bash", { command: heredoc(path.join(r.c.project, "heredoc.txt")) });
@@ -88,7 +88,7 @@ test("child heredoc drop, both ways: a heredoc write inside the child's own work
   assert.equal(r.dialogs(), 0);
 });
 
-test("child heredoc drop, both ways: the same write into the main checkout is floored child-write-foreman-checkout", { skip: !posix }, async (t: T) => {
+test("child heredoc drop, both ways: the same write into the main checkout is floored child-write-foreman-checkout", { skip: posixOnly }, async (t: T) => {
   const r = await rig(t, "child");
   r.setCheckout();
   const res = await r.c.call("bash", { command: heredoc(path.join(r.checkout, "heredoc.txt")) });
@@ -97,7 +97,7 @@ test("child heredoc drop, both ways: the same write into the main checkout is fl
   assert.equal(r.dialogs(), 0);
 });
 
-test("child heredoc drop, both ways: the same write to a path outside every checkout is floored child-write-outside", { skip: !posix }, async (t: T) => {
+test("child heredoc drop, both ways: the same write to a path outside every checkout is floored child-write-outside", { skip: posixOnly }, async (t: T) => {
   const r = await rig(t, "child");
   r.setCheckout();
   const res = await r.c.call("bash", { command: heredoc(path.join(r.c.project, "..", "elsewhere", "heredoc.txt")) });

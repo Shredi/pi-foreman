@@ -113,7 +113,7 @@ export class ChildReads {
     }
     this.ids.add(top);
     if (n >= limits.warn && limits.role === "builder") return { kind: "warn", count: n, text: `pi-foreman: read budget ${n} of ${limits.deny} read calls. Stop reading and write the code now with what you know; at ${limits.deny} further reads are refused.` };
-    if (n >= limits.warn) return { kind: "warn", count: n, text: `pi-foreman: read budget ${n} of ${limits.deny} read calls. Wrap up and return your report; at ${limits.deny} further reads are refused.` };
+    if (n >= limits.warn) return { kind: "warn", count: n, text: `pi-foreman: read budget ${n} of ${limits.deny} read calls; ${limits.deny - n} left. Continue the task; at ${limits.deny} further reads are refused.` };
     return { kind: "allow" };
   }
 }

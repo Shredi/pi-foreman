@@ -226,8 +226,9 @@ class Rig:
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
         bundled_check()
-        # one package entry: the repo brings pi-subagents and intercom; non-intercom rigs filter intercom out
-        entry = str(REPO) if intercom else {"source": str(REPO), "extensions": ["!node_modules/pi-intercom/**"]}
+        # one package entry: the repo brings pi-subagents and intercom; non-intercom rigs filter intercom out; every rig filters the
+        # bundled pi-background-tasks out (the replay baselines never had bg_run)
+        entry = {"source": str(REPO), "extensions": ["!node_modules/pi-background-tasks/**"] if intercom else ["!node_modules/pi-intercom/**", "!node_modules/pi-background-tasks/**"]}
         st = {"packages": [entry], "subagents": block}
         if settings:
             st = deep_merge(st, settings)
@@ -560,7 +561,8 @@ def wake_messages(records):
 
 def shape(records, keys=("event", "role", "toolFamily", "guard", "decision", "model", "tier", "exit")):
     """Golden-comparable view of trace records: volatile fields (ts, latency, tokens, cost) dropped."""
-    return [{k: r[k] for k in keys if k in r} for r in records]
+    # readonly_state_diff: async run-end event, timing-dependent, covered by extensions/core-adapter/test/readonly-state-wiring*.test.ts
+    return [{k: r[k] for k in keys if k in r} for r in records if r.get("event") != "readonly_state_diff"]
 
 
 PAD = "synthetic filler text for an over-threshold delegation. " * 30  # > 1500 characters

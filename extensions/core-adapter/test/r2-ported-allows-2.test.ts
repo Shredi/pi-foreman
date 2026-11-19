@@ -9,7 +9,7 @@ import { baseFloorEnv, gateDecide, type GateResult } from "../gate.ts";
 import { tmpRoots, type GateRoots } from "../pathrules.ts";
 
 // the fixture worlds are literal strings (nothing is created on disk); the win32 rows run on a posix host and show what the gate code says for that string
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 interface Ctx { platform: string; worktree: string; cwd: string; home?: string; agentDir?: string; sessionDir?: string; pkgRoot?: string; scratch?: string; scratchBase?: string; owned: string[]; handoff?: string; foremanRoot?: string; noTmp: boolean }
 const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
 const ROLE: Record<string, string> = { m: "foreman", b: "builder", r: "reviewer" };
@@ -71,7 +71,7 @@ const run = (rows: Row[]): void => {
   }
 };
 
-test("bashpath-win32", posixOnly, () => {
+test("bashpath-win32", { skip: posixOnly }, () => {
   run([
     // bashpath-win32.test.ts:56
     [0,"bash","D=C:/r2fx/home/.pi/agent/pi-foreman; D=C:/r2fx/tmp/pi-foreman-scratch/s1/L1; cat $D/handoffs/s1/ruling.md","b"],
@@ -80,7 +80,7 @@ test("bashpath-win32", posixOnly, () => {
   ]);
 });
 
-test("child-cd", posixOnly, () => {
+test("child-cd", { skip: posixOnly }, () => {
   run([
     // child-cd.test.ts:42
     [2,"bash","cd 'C:\\r2fx\\ws\\sub' && ls","b"],
@@ -97,21 +97,21 @@ test("child-cd", posixOnly, () => {
   ]);
 });
 
-test("child-install-owned-root", posixOnly, () => {
+test("child-install-owned-root", { skip: posixOnly }, () => {
   run([
     // child-install-owned-root.test.ts:29
     [4,"bash","npm ci --prefix=/Users/r2fx/ws.worktrees/r1","b"],
   ]);
 });
 
-test("child-install-owned-root-win32", posixOnly, () => {
+test("child-install-owned-root-win32", { skip: posixOnly }, () => {
   run([
     // child-install-owned-root-win32.test.ts:33
     [5,"bash","npm install --prefix C:/r2fx/ws.worktrees/r1","b"],
   ]);
 });
 
-test("childscratch", posixOnly, () => {
+test("childscratch", { skip: posixOnly }, () => {
   run([
     // childscratch.test.ts:128
     [6,"bash","cd /Users/r2fx/tmp/pi-foreman-scratch/sess-3/L-g && ls","b"],
@@ -135,7 +135,7 @@ test("childscratch", posixOnly, () => {
   ]);
 });
 
-test("childtmp", posixOnly, () => {
+test("childtmp", { skip: posixOnly }, () => {
   run([
     // childtmp.test.ts:47
     [9,"bash","npm test > /dev/null 2>&1","b"],
@@ -144,7 +144,7 @@ test("childtmp", posixOnly, () => {
   ]);
 });
 
-test("lane2-apply", posixOnly, () => {
+test("lane2-apply", { skip: posixOnly }, () => {
   run([
     // lane2-apply.test.ts:51
     [11,"bash","sed -n 1,5p package.json","b"],
@@ -157,7 +157,7 @@ test("lane2-apply", posixOnly, () => {
   ]);
 });
 
-test("lane2-isolation", posixOnly, () => {
+test("lane2-isolation", { skip: posixOnly }, () => {
   run([
     // lane2-isolation.test.ts:88
     [13,"bash","git -C /Users/r2fx/repo.worktrees/worktrees/round/pi-worktree-r1-s0-0 commit -m x","b"],
@@ -166,7 +166,7 @@ test("lane2-isolation", posixOnly, () => {
   ]);
 });
 
-test("permoverlay", posixOnly, () => {
+test("permoverlay", { skip: posixOnly }, () => {
   run([
     // permoverlay.test.ts:241
     [3,"bash","cd /Users/r2fx/ws; grep -n \"usage\" tests/replay/fake_provider.ts | head -20; grep -n '\"compaction\"' -A25 config/foreman.schema.json | head -40; grep -n '\"compaction\"' -A6 config/foreman.defaults.json; grep -n \"PROVIDERS\\s*=\" tests/replay/fake_provider.ts; grep -n \"cacheWarming\" node_modules/@earendil-works/pi-coding-agent/docs/settings.md","b"],
@@ -214,7 +214,7 @@ test("permoverlay", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-r41", posixOnly, () => {
+test("permoverlay-r41", { skip: posixOnly }, () => {
   run([
     // permoverlay-r41.test.ts:475
     [16,"bash","ls /Users/pf41home","m"],
@@ -222,7 +222,7 @@ test("permoverlay-r41", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-vars", posixOnly, () => {
+test("permoverlay-vars", { skip: posixOnly }, () => {
   run([
     // permoverlay-vars.test.ts:50
     [17,"bash","cat x > $FOREMAN_SCRATCH/probe/out.txt","b"],
@@ -231,7 +231,7 @@ test("permoverlay-vars", posixOnly, () => {
   ]);
 });
 
-test("probescan", posixOnly, () => {
+test("probescan", { skip: posixOnly }, () => {
   run([
     // probescan.test.ts:86
     [12,"bash","make test","r"],
@@ -273,7 +273,7 @@ test("probescan", posixOnly, () => {
   ]);
 });
 
-test("r12-interp-shadow", posixOnly, () => {
+test("r12-interp-shadow", { skip: posixOnly }, () => {
   run([
     // r12-interp-shadow.test.ts:67
     [21,"bash","python -c \"print(open('package.json').read())\"","b"],
@@ -281,14 +281,14 @@ test("r12-interp-shadow", posixOnly, () => {
   ]);
 });
 
-test("r14-child-msgfile", posixOnly, () => {
+test("r14-child-msgfile", { skip: posixOnly }, () => {
   run([
     // r14-child-msgfile.test.ts:126
     [22,"bash","git commit -F docs/pkg-notes.txt","b"],
   ]);
 });
 
-test("r14-own-state-read", posixOnly, () => {
+test("r14-own-state-read", { skip: posixOnly }, () => {
   run([
     // r14-own-state-read.test.ts:67
     [23,"bash","cd /Users/r2fx/ws && node --experimental-strip-types .workflow/scratch/dialogs.mjs ~/.pi/agent/pi-foreman/state/trace-01a1500b-own.jsonl 2>&1 | head -80","m"],
@@ -299,14 +299,14 @@ test("r14-own-state-read", posixOnly, () => {
   ]);
 });
 
-test("r29-protected-read-only", posixOnly, () => {
+test("r29-protected-read-only", { skip: posixOnly }, () => {
   run([
     // r29-protected-read-only.test.ts:150
     [24,"bash","cd sub && git diff -- ../package.json","b"],
   ]);
 });
 
-test("role-skills-live-line", posixOnly, () => {
+test("role-skills-live-line", { skip: posixOnly }, () => {
   run([
     // role-skills-live-line.test.ts:66
     [25,"bash","cat ~/.agents/skills/x/SKILL.md | head -3","b"],
@@ -321,7 +321,7 @@ test("role-skills-live-line", posixOnly, () => {
   ]);
 });
 
-test("role-skills-overlay", posixOnly, () => {
+test("role-skills-overlay", { skip: posixOnly }, () => {
   run([
     // role-skills-overlay.test.ts:101
     [25,"bash","grep -n name /Users/r2fx/home/.agents/skills/named/SKILL.md","b"],
@@ -330,7 +330,7 @@ test("role-skills-overlay", posixOnly, () => {
   ]);
 });
 
-test("roundowner-redirect", posixOnly, () => {
+test("roundowner-redirect", { skip: posixOnly }, () => {
   run([
     // roundowner-redirect.test.ts:45
     [12,"bash","cat f > /Users/r2fx/scratch/out","r"],
@@ -339,7 +339,7 @@ test("roundowner-redirect", posixOnly, () => {
   ]);
 });
 
-test("s2-child-redirects", posixOnly, () => {
+test("s2-child-redirects", { skip: posixOnly }, () => {
   run([
     // s2-child-redirects.test.ts:53
     [12,"bash","npm test </dev/null","r"],
@@ -348,14 +348,14 @@ test("s2-child-redirects", posixOnly, () => {
   ]);
 });
 
-test("shellvars-cases", posixOnly, () => {
+test("shellvars-cases", { skip: posixOnly }, () => {
   run([
     // shellvars-cases.test.ts:49
     [26,"bash","cd /Users/r2fx/repo.worktrees/round; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt","m"],
   ]);
 });
 
-test("shellvars-win32", posixOnly, () => {
+test("shellvars-win32", { skip: posixOnly }, () => {
   run([
     // shellvars-win32.test.ts:126
     [27,"bash","cd C:/w/proj && ls","b"],

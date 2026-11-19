@@ -25,7 +25,7 @@
    ]},
    {"text": "[[replay:d2]] built"}
   ],
-  "r-d3": [{"text": "[[replay:d3]] VERDICT: FAIL\n1. FAIL hub.go:3\nOverall verdict: FAIL"}],
-  "r-d4": [{"text": "[[replay:d4]] VERDICT: PASS\n1. PASS hub.go:3\nOverall verdict: PASS"}]
+  "r-d3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "hub.go:3 fails", "file": "hub.go", "line": 3}]}}]}, {"text": "[[replay:d3]] reviewed"}],
+  "r-d4": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:d4]] reviewed"}]
  }
 }

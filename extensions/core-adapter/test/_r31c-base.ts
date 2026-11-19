@@ -11,7 +11,6 @@ const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..
 
 export interface BaseModules {
   dir: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   load: (name: string) => Promise<any>;
 }
 

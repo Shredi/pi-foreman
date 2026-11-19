@@ -71,3 +71,43 @@ class PrsDispatch(unittest.TestCase):
             r = subprocess.run([str(ROOT / "bin" / "foreman")] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             self.assertEqual(r.returncode, 2, args)
             self.assertIn("usage: foreman prs poll [--json]", r.stderr)
+
+
+class RoundsDispatch(unittest.TestCase):
+    """`foreman rounds` runs extensions/core-adapter/rounds-cli.ts behind the Node >= 22.6 gate in all three wrappers."""
+
+    def test_posix_wrapper(self):
+        src = text("foreman")
+        self.assertRegex(src, r'if \[ "\$sub" = "rounds" \]')
+        self.assertIn("extensions/core-adapter/rounds-cli.ts", src)
+        self.assertIn("foreman rounds needs Node >= 22.6", src)
+
+    def test_cmd_wrapper_passes_every_argument(self):
+        src = text("foreman.cmd")
+        self.assertIn('if /i "%~1"=="rounds" goto rounds', src)
+        body = src.split(":rounds\n", 1)[1].split(":paneresume\n", 1)[0]
+        self.assertIn("rounds-cli.ts", body)
+        self.assertIn("set PF_ARGS=%PF_ARGS% %1", body)
+        self.assertNotIn('"%~2"', body)
+
+    def test_ps1_wrapper(self):
+        src = text("foreman.ps1")
+        self.assertIn("$sub -eq 'rounds'", src)
+        body = src.split("$sub -eq 'rounds'", 1)[1].split("$sub -eq 'dialogs'", 1)[0]
+        self.assertIn("rounds-cli.ts", body)
+        self.assertIn("@rest", body)
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("node"), "needs sh and node")
+    def test_posix_usage_exit_codes(self):
+        for args in (["rounds", "nope"], ["rounds", "--pr", "x"], ["rounds", "--since"]):
+            r = subprocess.run([str(ROOT / "bin" / "foreman")] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("usage: foreman rounds [--workspace here|KEY]", r.stderr)
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("node"), "needs sh and node")
+    def test_posix_json_on_an_empty_store(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as agent:
+            env = dict(os.environ, PI_CODING_AGENT_DIR=agent)
+            r = subprocess.run([str(ROOT / "bin" / "foreman"), "rounds", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, "[]"), r.stderr)

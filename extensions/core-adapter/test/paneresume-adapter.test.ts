@@ -14,11 +14,11 @@ import { LiveState, liveDir } from "../livestate.ts";
 import { NOTE_MAX_AGE_MS, hcGet, notePath, panesDir, readNoteRaw, writeNote } from "../paneresume-core.ts";
 import type { PaneNote } from "../paneresume-core.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 type Mod = typeof import("../paneresume.ts");
 const SLOT = Symbol.for("pi-foreman.paneresume");
 const SID = "11111111-2222-3333-4444-555555555555";
-const posix = process.platform !== "win32";
 let importN = 0;
 const fresh = (): Promise<Mod> => import(`../paneresume.ts?v=${++importN}`) as Promise<Mod>;
 const NO = () => undefined;
@@ -96,7 +96,7 @@ function rig(t: TestContext, over: { hc?: string } = {}) {
 
 const noteOf = (r: ReturnType<typeof rig>, over: Partial<PaneNote> = {}): PaneNote => ({ v: 1, sessionId: SID, sessionFile: r.sessionFile, cwd: r.cwd, terminal: "t1", socket: "/s/sock", createdMs: 1, rootPid: 2, writtenAt: Date.now(), ...over });
 
-test("start writes the note from a fake hc; the fake was called with get <terminal> --json", { skip: !posix }, async (t) => {
+test("start writes the note from a fake hc; the fake was called with get <terminal> --json", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   const mod = await fresh();
   signalWorld(t);
@@ -118,7 +118,7 @@ test("start writes the note from a fake hc; the fake was called with get <termin
   p?.stop("reload");
 });
 
-test("shutdown reasons reload, new, resume, fork keep the note; a next start overwrites; quit deletes only its own note", { skip: !posix }, async (t) => {
+test("shutdown reasons reload, new, resume, fork keep the note; a next start overwrites; quit deletes only its own note", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   const mod = await fresh();
   signalWorld(t);
@@ -139,7 +139,7 @@ test("shutdown reasons reload, new, resume, fork keep the note; a next start ove
   assert.equal(r.note()?.sessionId, "99999999-0000-0000-0000-000000000000", "a note naming another session stays");
 });
 
-test("a signal that Pi handles keeps the note and ends the live record with endedBy signal (SIGHUP and SIGTERM)", { skip: !posix }, async (t) => {
+test("a signal that Pi handles keeps the note and ends the live record with endedBy signal (SIGHUP and SIGTERM)", { skip: posixOnly }, async (t) => {
   for (const sig of ["SIGHUP", "SIGTERM"] as const) {
     const r = rig(t);
     const mod = await fresh();
@@ -160,7 +160,7 @@ test("a signal that Pi handles keeps the note and ends the live record with ende
   }
 });
 
-test("listeners are installed once across two starts and two fresh imports", { skip: !posix }, async (t) => {
+test("listeners are installed once across two starts and two fresh imports", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   signalWorld(t);
   const before = { SIGHUP: process.listenerCount("SIGHUP"), SIGTERM: process.listenerCount("SIGTERM") };
@@ -174,7 +174,7 @@ test("listeners are installed once across two starts and two fresh imports", { s
   assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
 });
 
-test("the flag set in one module instance is read by session_shutdown in another; persistent is recorded at the first load and kept", { skip: !posix }, async (t) => {
+test("the flag set in one module instance is read by session_shutdown in another; persistent is recorded at the first load and kept", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   const w = signalWorld(t);
   const a = await fresh();
@@ -195,7 +195,7 @@ test("the flag set in one module instance is read by session_shutdown in another
   assert.ok(r.note(), "the newer instance's shutdown keeps the note");
 });
 
-test("without Pi's handler a signal sets no flag, removes the adapter's listeners and re-raises; the normal quit still deletes the note", { skip: !posix }, async (t) => {
+test("without Pi's handler a signal sets no flag, removes the adapter's listeners and re-raises; the normal quit still deletes the note", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   const w = signalWorld(t);
   const mod = await fresh();
@@ -214,7 +214,7 @@ test("without Pi's handler a signal sets no flag, removes the adapter's listener
   assert.equal(r.note(), null, "the normal quit still deletes the note");
 });
 
-test("a Pi style handler registered again with a new function still counts as Pi's", { skip: !posix }, async (t) => {
+test("a Pi style handler registered again with a new function still counts as Pi's", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   const w = signalWorld(t);
   const mod = await fresh();
@@ -227,7 +227,7 @@ test("a Pi style handler registered again with a new function still counts as Pi
   assert.deepEqual(w.kills, []);
 });
 
-test("signal listeners are not installed with off, outside tui, for a child, or with an invalid terminal id; those start writes nothing", { skip: !posix }, async (t) => {
+test("signal listeners are not installed with off, outside tui, for a child, or with an invalid terminal id; those start writes nothing", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   signalWorld(t);
   const mod = await fresh();
@@ -251,7 +251,7 @@ test("signal listeners are not installed with off, outside tui, for a child, or 
   assert.equal(mod.PaneResume.start(r.init(mod, { mode: "print" })), null);
 });
 
-test("off deletes this terminal's note and writes none; the sweep still runs", { skip: !posix }, async (t) => {
+test("off deletes this terminal's note and writes none; the sweep still runs", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   signalWorld(t);
   const mod = await fresh();
@@ -264,7 +264,7 @@ test("off deletes this terminal's note and writes none; the sweep still runs", {
   assert.equal(readNoteRaw(r.agentDir, "t2"), undefined, "the old note of another terminal is swept");
 });
 
-test("a failing or hanging hc hits the timeout, traces, writes no note, throws nothing", { skip: !posix }, async (t) => {
+test("a failing or hanging hc hits the timeout, traces, writes no note, throws nothing", { skip: posixOnly }, async (t) => {
   const r = rig(t, { hc: "#!/bin/sh\nexit 3\n" });
   signalWorld(t);
   const mod = await fresh();
@@ -291,7 +291,7 @@ test("a failing or hanging hc hits the timeout, traces, writes no note, throws n
   assert.equal(await hcGet("t1", 2000, { ...r.env, HC_BIN: noPid }), "error", "a reply without a pid is an error");
 });
 
-test("the 14-day sweep goes by the live heartbeat, else the note's writtenAt", { skip: !posix }, async (t) => {
+test("the 14-day sweep goes by the live heartbeat, else the note's writtenAt", { skip: posixOnly }, async (t) => {
   const r = rig(t);
   signalWorld(t);
   const mod = await fresh();
@@ -394,7 +394,7 @@ test("D12: the package fails a dead pid's run (a failed result no gate counts); 
   const result = files(results).filter((f) => f.endsWith(".json")).map((f) => JSON.parse(fs.readFileSync(f, "utf8"))).find((j) => j.id === "run-dead" && Array.isArray(j.results));
   assert.ok(result, "the package wrote the failed result");
   assert.equal(result.success, false);
-  assert.deepEqual(stepsOfRunEnd(result), [], "a failed run never counts as a builder step: the finish gate still requires a builder");
+  assert.deepEqual(stepsOfRunEnd(result, []), [], "a failed run never counts as a builder step: the finish gate still requires a builder");
   const b = reconcileAsyncRun(moved, { resultsDir: results, pidNamespaceScope: () => "ns-new" });
   assert.equal(b.repaired, false, "the pid namespace changed: the package keeps the run");
   assert.equal(b.status?.state, "running");

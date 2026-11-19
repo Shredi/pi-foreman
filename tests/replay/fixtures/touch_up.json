@@ -22,10 +22,10 @@
  },
  "*": {
   "b-c2": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "type Hub struct{}", "newText": "type Hub struct{ n int }"}]}}]}, {"text": "[[replay:c2]] built"}],
-  "r-c3": [{"text": "[[replay:c3]] VERDICT: PASS\n1. PASS hub.go:4\nOverall verdict: PASS"}],
+  "r-c3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:c3]] reviewed"}],
   "b-c4": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "// Hub fans messages out.", "newText": "// Hub fans messages out to every client.\n// It counts them in n."}]}}]}, {"text": "[[replay:c4]] comment reworded"}],
   "b-d2": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "type Hub struct{}", "newText": "type Hub struct{ n int }"}]}}]}, {"text": "[[replay:d2]] built"}],
-  "r-d3": [{"text": "[[replay:d3]] VERDICT: PASS\n1. PASS hub.go:4\nOverall verdict: PASS"}],
+  "r-d3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:d3]] reviewed"}],
   "b-d4": [{"tools": [{"name": "edit", "arguments": {"path": "hub.go", "edits": [{"oldText": "// Hub fans messages out.", "newText": "// Hub fans messages out to every client."}, {"oldText": "{ n int }", "newText": "{ n int64 }"}]}}]}, {"text": "[[replay:d4]] changed"}]
  }
 }

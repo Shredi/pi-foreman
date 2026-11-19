@@ -76,6 +76,7 @@ test("a resumed reviewer's verdict applies to the checkouts of its target run; a
   assert.match(await settle(a), /last verdict FAIL/);
   const resumed = await launch(a, "reviewer", "x", { action: "resume", id: `run-${first.id}` });
   assert.equal(resumed.blocked, null, String(resumed.blocked));
+  assert.ok(a.record(first.id, { verdict: "pass" }), "the resumed child records into the first launch's folder");
   await end(a, resumed, "reviewer", VERDICT);
   await tick(300);
   assert.equal(await settle(a), "", "B's gate got the PASS of its resumed review; A still stands");

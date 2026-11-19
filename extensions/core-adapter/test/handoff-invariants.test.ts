@@ -9,8 +9,8 @@ import { baseFloorEnv, gateDecide, gateEvaluate, type GateResult } from "../gate
 import { childHandoffWrite, pathDecide, type GateRoots } from "../pathrules.ts";
 import type { RuleSets } from "../rules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hinv-"));
 const wt = path.join(base, "wt");
 const out = path.join(base, "elsewhere");
@@ -54,7 +54,7 @@ test("session-level child, write tool: .., bare work and work/ are no allow", ()
   for (const n of SPELLINGS) assert.equal(pathDecide("write", { path: `${H}/${n}` }, wt, ownRoots()), undefined, n);
 });
 
-test("session-level child, shell: .., bare work and work/ are write-outside, never an allow", { skip: !posix }, () => {
+test("session-level child, shell: .., bare work and work/ are write-outside, never an allow", { skip: posixOnly }, () => {
   const r = ownRoots();
   for (const n of SPELLINGS) {
     // cp and mv onto the existing dir `work` put the file below it, a name of its own: only the redirect form is judged for the bare entry
@@ -76,18 +76,18 @@ const sub = (tool: string, input: Record<string, unknown>, cwd = wt): GateResult
   });
 const tag = (r: GateResult): string => (r ? ("ask" in r ? `ask:${r.rule}` : "block" in r ? `block:${r.rule}` : `allow:${r.rule}`) : "pass");
 
-test("subagent: a literal write outside the checkout stays blocked with an allow-everything rule set (child deny before allow)", { skip: !posix }, () => {
+test("subagent: a literal write outside the checkout stays blocked with an allow-everything rule set (child deny before allow)", { skip: posixOnly }, () => {
   for (const [tool, input] of [["bash", { command: `echo x > ${out}/f` }], ["bash", { command: `cp ${wt}/a ${out}/f` }], ["bash", { command: `mv ${wt}/a ${out}/f` }], ["write", { path: `${out}/f`, content: "x" }]] as const) {
     assert.equal(tag(sub(tool, { ...input })), "block:child-write-outside", JSON.stringify(input));
     assert.equal(tag(sub(tool, { ...input }, wt)), "block:child-write-outside", `${JSON.stringify(input)} again`);
   }
 });
 
-test("pin: a plain redirect outside the checkout from a subagent is blocked (not reproducible as refused-by-mistake; refused by design)", { skip: !posix }, () => {
+test("pin: a plain redirect outside the checkout from a subagent is blocked (not reproducible as refused-by-mistake; refused by design)", { skip: posixOnly }, () => {
   assert.equal(tag(sub("bash", { command: `echo x > ${out}/f` })), "block:child-write-outside");
   assert.equal(tag(sub("bash", { command: `D=${out}; echo x > $D/f` })), "block:child-write-outside");
 });
 
-test("pin: git pull --ff-only in the worktree is not blocked by the child floor", { skip: !posix }, () => {
+test("pin: git pull --ff-only in the worktree is not blocked by the child floor", { skip: posixOnly }, () => {
   assert.notEqual(tag(sub("bash", { command: "git pull --ff-only" }, wt)).split(":")[0], "block");
 });

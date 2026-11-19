@@ -49,7 +49,6 @@ export interface EventBus {
 
 /** Strip control chars, collapse whitespace, cap at 80 chars. */
 export function cleanLabel(s: string): string {
-  // eslint-disable-next-line no-control-regex
   const t = s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim();
   return t.length > LABEL_MAX ? `${t.slice(0, LABEL_MAX - 1)}…` : t;
 }

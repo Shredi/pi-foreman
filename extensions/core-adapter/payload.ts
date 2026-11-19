@@ -77,7 +77,6 @@ export function coreToolInput(piTool: string, input: Json, pc: PayloadContext): 
   switch (piTool) {
     case "bash":
     case "powershell":
-    case "foreman_bg":
     case "bg_run":
       return { command: str(input.command) };
     case "write":

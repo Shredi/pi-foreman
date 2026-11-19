@@ -9,8 +9,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import PROVIDER_A, load_fixture
+from test_replay import REASON, ReplayCase
 
 ALLOW = {"value": "allow once"}
 

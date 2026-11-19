@@ -132,21 +132,22 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
   });
 
   await t.test("PASS marks: each result marks the ledger its own entry named; a second opinion marks nothing; the repeat after a PASS is refused", async () => {
-    const chain = { chain: [{ parallel: [{ agent: "reviewer", task: `review item 1 of ${fa}` }, { agent: "reviewer", task: `review item 2 of ${fb}` }] }] };
-    const tasks = { tasks: [{ agent: "reviewer", task: `[second-opinion] look at ${fb}` }, { agent: "reviewer", task: "review item 5" }, { agent: "reviewer", task: `review item 6 of ${fa}` }, { agent: "reviewer", task: `review item 3 of ${fa}` }, { agent: "reviewer", task: `review item 7 of ${fb}` }] };
-    await launched(chain, "run-c1");
-    await launched(tasks, "run-m1");
-    assert.ok(taskOf(tasks.tasks[2]).includes(`Ledger file (absolute path, readable from any directory): ${fs.realpathSync(fa)}`) || taskOf(tasks.tasks[2]).includes(fa), taskOf(tasks.tasks[2]));
+    // a reviewer launch is a single launch: each result of the old groups is a run of its own (item number, ledger it names)
+    const singles: [string, string, number][] = [["run-c1", `review item 1 of ${fa}`, 1], ["run-c2", `review item 2 of ${fb}`, 2], ["run-m1", `[second-opinion] look at ${fb}`, 4], ["run-m2", "review item 5", 5], ["run-m3", `review item 6 of ${fa}`, 6], ["run-m4", `review item 3 of ${fa}`, 3], ["run-m5", `review item 7 of ${fb}`, 7]];
+    const inputs = singles.map(([, task]) => ({ agent: "reviewer", task }));
+    for (const [i, [runId]] of singles.entries()) await launched(inputs[i], runId);
+    assert.ok(taskOf(inputs[4]).includes(`Ledger file (absolute path, readable from any directory): ${fs.realpathSync(fa)}`) || taskOf(inputs[4]).includes(fa), taskOf(inputs[4]));
     // the runs the notices below are about: launched before the first PASS, as a PASS makes a later reviewer launch a repeat
     await launched({ agent: "reviewer", task: `review item 8 of ${fa}` }, "run-n2");
     await launched({ agent: "reviewer", task: `review item 9 of ${fa}` }, "run-l1");
     await launched({ agent: "reviewer", task: "review item 11" }, "run-u1");
     const routed = (entries as { data: { run: string } }[]).map((e) => e.data.run);
     assert.ok(routed.includes("run-n2") && routed.includes("run-l1"), "a launch that named a ledger appended its route entry");
-    assert.ok(!routed.includes("run-u1"), "a launch that named none appended none");
+    // plan 2.2: every review launch appends a route entry (the notice after a reload needs the launch id and occasion); one that named none has no path
+    const unnamed = (entries as { data: { run: string; paths: unknown[] } }[]).find((e) => e.data.run === "run-u1");
+    assert.deepEqual(unnamed?.data.paths, [null], "a launch that named none appended an entry without a path");
 
-    a.end({ runId: "run-c1", agent: "reviewer", status: "completed", success: true, results: [pass(1), pass(2)] });
-    a.end({ runId: "run-m1", agent: "reviewer", status: "completed", success: true, results: [pass(4), pass(5), pass(6), pass(3), pass(7)] });
+    for (const [runId, , n] of singles) a.end({ runId, agent: "reviewer", status: "completed", success: true, results: [pass(n)] });
     await settle(1500);
     const A = read(fa);
     const B = read(fb);
@@ -159,11 +160,15 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
   });
 
   await t.test("notices, before and after a reload: the ledger the run named, else the bound ledger", async () => {
+    // the resumed child keeps the first launch's record folder: its call writes there
+    assert.ok(a.record("run-rs1", { verdict: "pass", items: [{ id: 10, result: "pass" }] }));
     a.end({ runId: "run-rs2", agent: "reviewer", status: "completed", success: true, results: [pass(10)] });
     await settle(1000);
     assert.ok(done(read(fa), 10) && !done(read(fb), 10), "a resumed run's PASS marks the ledger the resumed run named: " + read(fa));
     assert.ok(await hintsIn(fa, "run-rs2"), "its hints land in A");
     assert.doesNotMatch(read(fb), /run-rs2/);
+    // the reviewers' calls: the records wait in the launch folders until a notice (or a run end) reads them
+    for (const [runId, n] of [["run-n2", 8], ["run-l1", 9], ["run-u1", 11]] as const) assert.ok(a.record(runId, { verdict: "pass", items: [{ id: n, result: "pass" }] }));
     await a.notice(noticeOf("run-n2", 8));
     await settle();
     assert.ok(done(read(fa), 8) && !done(read(fb), 8), "a named run's notice marks A");

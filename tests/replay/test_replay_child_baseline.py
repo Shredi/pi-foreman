@@ -10,8 +10,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import load_fixture, tool_results
+from test_replay import REASON, ReplayCase
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
@@ -22,7 +22,7 @@ class TestChildBaseline(ReplayCase):
         (rig.project / "sub").mkdir()
         return rig
 
-    def test_foreman_bg_wait_allowed(self):
+    def test_bg_wait_allowed(self):
         pi = self.baseline_rig("cb-main").start()
         res = tool_results(pi.prompt("[[replay:f1]] go", timeout=60))
         pi.close()

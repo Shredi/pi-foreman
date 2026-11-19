@@ -138,22 +138,28 @@ test("item 4/6: the finish gate does not ask for the pass while a ledger item ot
   assert.doesNotMatch(await settle(a), /revise or answer the high-stakes findings/);
 });
 
-test("item 2: a child with a [high-stakes] launch binding has its ledger V mark refused", async (t) => {
+test("item 2: a child with a [high-stakes] launch binding has its verdict item V refused (the launch takes no items)", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-hs-v-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const saved = process.env[BINDINGS_ENV];
   t.after(() => {
     if (saved === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = saved;
   });
   const call = async (extra: Record<string, unknown>): Promise<{ text: string; isError?: boolean }> => {
-    process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "reviewer", launchId: "l1", kind: "first", workspace: "", ...extra } });
+    process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "reviewer", launchId: "l1", kind: "first", workspace: "", verdictDir: dir, ...extra } });
     const tools = new Map<string, { execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; isError?: boolean }> }>();
     const r = await r11Rig(t, { ledgerHelper: "tool" }, { child: true, config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: { reviewer: { model: "fake/reviewer" } } } } }, piExtra: { registerTool: (d: { name: string; execute: never }) => void tools.set(d.name, d as never), registerCommand: () => undefined } });
-    const res = await tools.get("foreman_ledger")!.execute("id", { action: "mark", items: ["V"] }, undefined, undefined, r.ctx);
+    const res = await tools.get("review_verdict")!.execute("id", { verdict: "pass", items: [{ id: "V", result: "pass" }] }, undefined, undefined, r.ctx);
     return { text: res.content.map((c) => c.text).join("\n"), isError: res.isError };
   };
-  const hs = await call({ highStakes: true });
+  const hs = await call({ highStakes: true, items: ["V"] });
   assert.equal(hs.isError, true);
-  assert.match(hs.text, /a \[high-stakes\] review marks no ledger item, item V included/);
+  assert.match(hs.text, /item V is not one of this launch's items: this launch takes no items/);
+  assert.equal(fs.readdirSync(dir).includes("verdict.json") && (JSON.parse(fs.readFileSync(path.join(dir, "verdict.json"), "utf8")) as { verdict: string }).verdict === "pass", false, "no pass was recorded");
+  const normal = await call({ items: ["V"] });
+  assert.equal(normal.isError, undefined, normal.text);
+  assert.equal((JSON.parse(fs.readFileSync(path.join(dir, "verdict.json"), "utf8")) as { verdict: string }).verdict, "pass", "control: the same call on a normal launch records");
 });
 
 // ---------------------------------------------------------------- PR gate scope

@@ -231,6 +231,8 @@ export interface CloseDeps {
   mergedPr?: () => number | null;
   /** Append `text` to the result file. */
   appendResult?: (file: string, text: string) => void;
+  /** The review-round lines of this session's reviews (reviewrounds.ts closeLines), appended to the result after the `## Close` section. May throw; never fails the close. */
+  reviewRounds?: () => string[];
 }
 
 /** What the self-finish checks found: report lines, and the detached cleanup to start as the very last step (absent: none). */
@@ -551,6 +553,12 @@ export class CloseFlow {
       report = null;
     }
     if (report) this.d.trace({ event: "close", cause: req.source, decision: "report", ready: report.ready, removed: report.removed, handover: report.handover.length });
+    try {
+      const rounds = this.d.reviewRounds?.() ?? [];
+      if (rounds.length > 0) this.d.appendResult?.(req.file, `\n${rounds.join("\n")}\n`);
+    } catch {
+      // best effort: no line when the store cannot be read or the file written
+    }
     const head = `pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`;
     this.d.notify([head, ...(report ? closeReportLines(report) : []), ...childLines].join("\n"), sync.ok && report?.ready !== false ? "info" : "warning");
     try {
@@ -668,6 +676,8 @@ export interface CloseSession {
   selfFinish?: (ctx: ExtensionContext, req: CloseRequest) => Promise<SelfFinish>;
   /** The number of the watched PR this child session saw merged, else null (see CloseDeps.mergedPr). */
   mergedPr?: () => number | null;
+  /** The review-round lines of the session's reviews, for the result (see CloseDeps.reviewRounds). */
+  reviewRounds?: () => string[];
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -742,6 +752,7 @@ export function registerClose(
       refreshWatched: s.refreshWatched,
       selfFinish: s.selfFinish ? (req) => s.selfFinish!(holder.ctx, req) : undefined,
       mergedPr: s.mergedPr,
+      reviewRounds: s.reviewRounds,
       appendResult: (file, text) => fs.appendFileSync(file, text, "utf8"),
       pushNotice: s.pushNotice ? () => s.pushNotice!(holder.ctx) : undefined,
       closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,

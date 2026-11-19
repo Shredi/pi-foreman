@@ -30,8 +30,8 @@ test("a shell denial appends the tool and the fragment after the unchanged floor
   // a segment floor: the program and the operand that decided
   const seg = call("bash", { command: "sh -c 'sudo ls'" });
   assert.match(seg?.reason ?? "", /\(tool: bash; matched: sudo ls\)$/);
-  const rm = call("foreman_bg", { command: "rm -rf /" });
-  assert.match(rm?.reason ?? "", /\(tool: foreman_bg; matched: rm \/\)$/);
+  const rm = call("bg_run", { command: "rm -rf /" });
+  assert.match(rm?.reason ?? "", /\(tool: bg_run; matched: rm \/\)$/);
 });
 
 test("a payload denial names its tool and the matched text", () => {

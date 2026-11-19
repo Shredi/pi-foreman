@@ -68,7 +68,7 @@ export type GateResult =
   | undefined;
 
 // cause "protected" is the one ask that runs a model first (the protected-target check in index.ts); `match` carries what the check judges.
-const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run"]);
+const SHELL_TOOLS = new Set(["bash", "bg_run"]);
 const PATH_TOOLS = PATH_TOOL_NAMES;
 
 const fragments = new WeakMap<object, string>();

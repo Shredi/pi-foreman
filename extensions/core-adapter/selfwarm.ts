@@ -39,7 +39,7 @@ export type TierReason = StrongReason | "question" | "dialog" | "command" | "tur
 
 /** What the session is doing right now, read at each tier decision. */
 export interface WarmSignals {
-  /** Strong whatever the presence: a subagent (sync or async), a background task (foreman_bg, bg_run) or a foreman_wait. */
+  /** Strong whatever the presence: a subagent (sync or async), a background task (bg_run) or a foreman_wait. */
   strongA: StrongReason | null;
   /** The session's turn is running. */
   turn: boolean;

@@ -1,21 +1,13 @@
-// `foreman_bg` (ledger item 5) and the optional background-tasks add-on (item 6).
+// The background-tasks add-on `pi-background-tasks`, which ships with pi-foreman (package.json lists its extensions). Background commands run
+// with its tool `bg_run`; index.ts routes `bg_run` through the same tool_call guards as a foreground `bash` call (overlay, shell write guard
+// and the config-change check) and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
 //
-// `foreman_bg {command, note}` runs one shell command detached (own process group on POSIX, see bgSpawnFlags for win32; stdout and stderr to
-// `<stateDir>/scratch/<session>/wait-<id>.log`, created exclusively: when that name already exists, e.g. after a reload, the run gets `wait-<id>-<token>.log`, and an existing log is never truncated or appended to) and registers a `pid` wait for it, so the foreman ends its turn and is
-// woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
-// index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard and the config-change check)
-// and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
-// This file only spawns; it never decides.
-//
-// The add-on package `pi-background-tasks` is never imported or required. It is detected by its tool `bg_run` (or its
-// package directory); while present, `foreman_bg` refuses with a pointer to `bg_run`, and `/foreman waits` also lists
-// its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`.
-import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+// The add-on package is never imported or required. It is detected by its tool `bg_run` (or its package directory), and `/foreman waits`
+// lists its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`. What else stays here: `bgSpawnFlags` (scriptrun.ts and
+// presence.ts spawn their runs with it), `shellPathSetting` (index.ts, the win32 shell resolution) and the `ShellConfigFn` type.
+// This file only reads; it never decides.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
-import { msysEnv } from "./env.ts";
 
 /** One line, control characters dropped, capped (same rule as wait.ts oneLine; kept here to avoid an import cycle). */
 function oneLine(v: unknown, max: number): string {
@@ -23,7 +15,6 @@ function oneLine(v: unknown, max: number): string {
   return s.length > max ? s.slice(0, max) : s;
 }
 
-export const BG_TOOL = "foreman_bg";
 /** Tool name of the optional add-on that marks it present. */
 export const ADDON_RUN_TOOL = "bg_run";
 export const ADDON_PACKAGE = "pi-background-tasks";
@@ -31,118 +22,18 @@ export const LOG_TAIL_LINES = 5;
 const TAIL_BYTES = 8192;
 const MAX_ADDON_TASKS = 20;
 
-export const BG_PARAMS = {
-  type: "object",
-  properties: {
-    command: { type: "string", description: "The shell command to run in the background (detached on POSIX, not detached on win32; same guards as a bash call). On win32 it runs in the bash tool's shell (Git Bash, `bash -c`), so write POSIX syntax; cmd.exe only when no bash is found." },
-    note: { type: "string", maxLength: 200, description: "Shown in the sidebar, `/foreman waits` and the wake message." },
-  },
-  required: ["command"],
-  additionalProperties: false,
-};
-
-/** Segment safe for a file name. */
-export const safeSegment = (v: string): string => v.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80) || "_";
-
-/** `<stateDir>/scratch/<session>`: where foreman_bg logs live. */
-export const bgScratchDir = (stateDir: string, sessionId: string): string => path.join(stateDir, "scratch", safeSegment(sessionId));
-export const bgLogPath = (stateDir: string, sessionId: string, waitId: string): string => path.join(bgScratchDir(stateDir, sessionId), `wait-${safeSegment(waitId)}.log`);
-
-/**
- * The log path of a new run: `bgLogPath`, or when that file exists (the wait id sequence restarts on a session reload while an older run
- * may still write its log) a name with a time+random token, so a new run never truncates or interleaves with an earlier run's log.
- */
-export function freshBgLogPath(stateDir: string, sessionId: string, waitId: string): string {
-  const base = bgLogPath(stateDir, sessionId, waitId);
-  if (!fs.existsSync(base)) return base;
-  return path.join(path.dirname(base), `wait-${safeSegment(waitId)}-${Date.now().toString(36)}${randomBytes(4).toString("hex")}.log`);
-}
-
-/**
- * The shell that runs the command: bash (else sh) on POSIX; on Windows the bash tool's shell, Pi's `getShellConfig(shellPath)`
- * (Git Bash, `-c`), so the guards' bash reading matches what runs. Only when that throws (no bash found) or wants the command on
- * stdin (legacy WSL bash) it is `cmd /d /s /c`: with `/s /c`, cmd strips the first and the last quote of its command line, so the
- * command is wrapped in one more pair of quotes (what Node's `shell: true` does on win32); without them a quoted `node -e "..."`
- * loses its quotes and cmd parses `<`, `>`, `&` inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting).
- * Known limit: the cmd.exe fallback runs the command under cmd.exe while the guards classify it as bash (docs/safety.md).
- */
+/** Pi's `getShellConfig(shellPath)`: the shell, its arguments and how it takes the command. */
 export type ShellConfigFn = (shellPath?: string) => { shell: string; args: string[]; commandTransport?: string };
 
-export function shellFor(command: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string } = {}): { file: string; args: string[]; verbatim: boolean } {
-  if (platform === "win32") {
-    try {
-      const cfg = (opts.getShellConfig ?? piGetShellConfig)(opts.shellPath || undefined);
-      if (cfg.commandTransport !== "stdin") return { file: cfg.shell, args: [...cfg.args, command], verbatim: false };
-    } catch {
-      // no bash found: cmd.exe below
-    }
-    return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
-  }
-  return { file: fs.existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh", args: ["-c", command], verbatim: false };
-}
-
 /**
- * The spawn flags of a foreman_bg run. POSIX: detached (own process group, so wait.ts kills `-pid`). win32: not detached, as
+ * The spawn flags of a background run (safe-ops scripts, the presence probe). POSIX: detached (own process group). win32: not detached, as
  * node's `detached` there is DETACHED_PROCESS: cmd.exe then has no console, a console grandchild it starts (node, npm) gets a new
  * console whose std handles replace the inherited log handle, and its output never reaches the log (CI ids 32, 33, 39; cmd's own
  * builtins still did). Without it cmd shares the parent's console (or, when the parent has none, a new one hidden by windowsHide)
- * and passes the log handle on. Windows ends no child when its parent exits, and wait.ts kills the plain pid on win32, so the run
- * still outlives the session; the trade-off: a console close or Ctrl+C event of the parent's console now reaches the run as well.
+ * and passes the log handle on. Windows ends no child when its parent exits, so the run still outlives the session; the trade-off: a console close or Ctrl+C event of the parent's console now reaches the run as well.
  */
 export function bgSpawnFlags(platform: string = process.platform): { detached: boolean; windowsHide: boolean } {
   return { detached: platform !== "win32", windowsHide: true };
-}
-
-type SpawnOpts = { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv };
-
-/** Creates `logPath` exclusively and spawns `command` detached (bgSpawnFlags) with stdout and stderr going to it; the pid, or why not (`exists` when the log name was taken). `spawnFn` is a test seam. */
-export function spawnIntoNewLog(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: SpawnOpts = {}, spawnFn: typeof spawn = spawn): { pid: number } | { error: string; exists?: true } {
-  let fd: number | null = null;
-  let taken = false;
-  try {
-    fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
-    // Exclusive create ("wx"/"ax": EEXIST when the name is taken), so a run never truncates or interleaves with an earlier run's log, even when two runs pick the same name at once.
-    // win32: node's "a" opens the handle with FILE_APPEND_DATA only; the MSYS runtime of Git Bash takes such a handle as not writable, so a bash builtin
-    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access, and the file is new, so nothing is truncated.
-    try {
-      fd = fs.openSync(logPath, platform === "win32" ? "wx" : "ax", 0o600);
-    } catch (err) {
-      taken = (err as NodeJS.ErrnoException).code === "EEXIST";
-      throw err;
-    }
-    const sh = shellFor(command, platform, opts);
-    // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
-    const child = spawnFn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
-    child.on("error", () => undefined);
-    child.unref();
-    if (!child.pid) return { error: `${BG_TOOL}: could not start ${sh.file}.` };
-    return { pid: child.pid };
-  } catch (err) {
-    const error = `${BG_TOOL}: could not start the command (${oneLine((err as Error).message, 160)}).`;
-    return taken ? { error, exists: true } : { error };
-  } finally {
-    if (fd !== null) fs.closeSync(fd);
-  }
-}
-
-/** Spawn `command` detached (bgSpawnFlags) with stdout and stderr going to `logPath`; the pid, or why not. An existing log is never truncated or appended to: the call then fails. */
-export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv } = {}): { pid: number } | { error: string } {
-  const run = spawnIntoNewLog(command, cwd, logPath, platform, opts);
-  return "pid" in run ? run : { error: run.error };
-}
-
-/** Number of log names `spawnWithFreshLog` tries before it gives up. */
-export const BG_LOG_TRIES = 5;
-
-/** `spawnIntoNewLog` with a new log name (`nextLog`) for each try that finds the name taken; at most `BG_LOG_TRIES` tries. The pid and the log used, or why not. */
-export function spawnWithFreshLog(command: string, cwd: string, nextLog: () => string, platform: string = process.platform, opts: SpawnOpts = {}, spawnFn: typeof spawn = spawn): { pid: number; log: string } | { error: string } {
-  for (let i = 0; i < BG_LOG_TRIES; i++) {
-    const log = nextLog();
-    const run = spawnIntoNewLog(command, cwd, log, platform, opts, spawnFn);
-    if ("pid" in run) return { pid: run.pid, log };
-    if (!run.exists) return { error: run.error };
-  }
-  return { error: `${BG_TOOL}: could not create a new log file after ${BG_LOG_TRIES} tries; the log names are taken.` };
 }
 
 /** Pi's `shellPath` setting: the project's `.pi/settings.json` over the agent dir's `settings.json`; undefined when unset. */
@@ -207,9 +98,9 @@ export function optionalAddonsDoctor(dirs: { agentDir: string; cwd: string }, to
   return out;
 }
 
-/** Installed add-on package directory (agent npm root first, then the project's), or null. */
-export function addonPackageDir(dirs: { agentDir: string; cwd: string }): string | null {
-  const candidates = [path.join(dirs.agentDir, "npm", "node_modules", ADDON_PACKAGE), path.join(dirs.cwd, ".pi", "npm", "node_modules", ADDON_PACKAGE)];
+/** Installed add-on package directory (agent npm root first, then the project's, then the copy bundled below `bundledRoot`, pi-foreman's package root), or null. */
+export function addonPackageDir(dirs: { agentDir: string; cwd: string; bundledRoot?: string }): string | null {
+  const candidates = [path.join(dirs.agentDir, "npm", "node_modules", ADDON_PACKAGE), path.join(dirs.cwd, ".pi", "npm", "node_modules", ADDON_PACKAGE), ...(dirs.bundledRoot ? [path.join(dirs.bundledRoot, "node_modules", ADDON_PACKAGE)] : [])];
   return candidates.find((d) => fs.existsSync(path.join(d, "package.json"))) ?? null;
 }
 
@@ -268,7 +159,7 @@ export function rangeAllows(range: string, version: string): boolean | null {
  * Doctor info line: the add-on's declared peer range for Pi against the running Pi version. Never a FAIL;
  * null when the add-on package is not installed.
  */
-export function addonPeerRangeLine(dirs: { agentDir: string; cwd: string }, piVersion: string | null): string | null {
+export function addonPeerRangeLine(dirs: { agentDir: string; cwd: string; bundledRoot?: string }, piVersion: string | null): string | null {
   const dir = addonPackageDir(dirs);
   if (!dir) return null;
   let peers: Record<string, unknown> = {};
@@ -286,6 +177,8 @@ export function addonPeerRangeLine(dirs: { agentDir: string; cwd: string }, piVe
   const fits = rangeAllows(range, piVersion);
   if (fits === null) return `${head} ${r}; running Pi ${piVersion} (range not checked)`;
   if (fits) return `${head} ${r}; running Pi ${piVersion} is inside it`;
+  const bundled = dirs.bundledRoot !== undefined && dir === path.join(dirs.bundledRoot, "node_modules", ADDON_PACKAGE);
+  if (bundled) return `${head} ${r}; running Pi ${piVersion} is outside it (the copy bundled with pi-foreman; a newer one arrives with a pi-foreman update)`;
   return `${head} ${r}; running Pi ${piVersion} is outside it (npm may warn on install; check for a newer ${ADDON_PACKAGE})`;
 }
 
@@ -451,5 +344,3 @@ export function formatWaits(waits: readonly WaitRow[], addon: readonly AddonTask
   }
   return lines.length ? lines.join("\n") : "No active waits.";
 }
-
-export const ADDON_REFUSAL = `${BG_TOOL}: the optional ${ADDON_PACKAGE} add-on is installed, so background shell tasks belong to its ${ADDON_RUN_TOOL} tool (one owner for detached tasks, with status, logs and kill); use ${ADDON_RUN_TOOL} and foreman_wait for its pid.`;

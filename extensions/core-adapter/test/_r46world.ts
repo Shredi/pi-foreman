@@ -10,6 +10,7 @@ import coreAdapter from "../index.ts";
 import { planVersionHash } from "../checkpoint.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { probeSpawner } from "./_probe-memo.ts";
+import { writeFromReport, writeSpec, type RecSpec } from "./_verdict-rig.ts";
 import type { Spawner } from "../spawn.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -32,6 +33,10 @@ export interface WorldOpts {
   ceremony?: Record<string, unknown>;
   /** Production wiring of the launch snapshot (no `worktreeSnapshot` dependency); by default the rig passes a no-op. */
   realSnapshot?: boolean;
+  /** The session has no UI (a headless parent: no pane, no owner dialog). */
+  headless?: boolean;
+  /** More top-level keys of the agent's foreman.json (e.g. `gate: { childAsk: "deny" }`). */
+  config?: Record<string, unknown>;
   /** The adapter's spawner (default: the version-probe memo over the real one); a file whose cases do not test the python guards passes _light-spawner.ts. */
   spawner?: Spawner;
   /** Collects the custom messages the adapter sends (`pi.sendMessage`) with their options. */
@@ -59,7 +64,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
   fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   const roles = ["explorer", "builder", "reviewer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, radar: { openPrs: { enabled: false } }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, radar: { openPrs: { enabled: false } }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony }, ...o.config }));
   const sessionId = `r46-${++n}`;
   const sessionFile = path.join(agentDir, "sessions", "--project--", `2026_${sessionId}.jsonl`);
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
@@ -95,9 +100,17 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     const tools = new Map<string, { execute: Fn }>();
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
     const channels = new Map<string, (d: unknown) => void>();
+    /** The input of every subagent launch that went through a `tool_call` of this adapter, by call id (any helper, the test's own too): once the hook has run, its binding names the record folder (`bindingOf`). */
+    const inputs = new Map<string, Record<string, unknown>>();
     const pi = {
       events: { on: (c: string, h: (d: unknown) => void) => void channels.set(c, h), emit: () => undefined },
-      on: (name: string, h: Handler) => {
+      on: (name: string, h0: Handler) => {
+        const h: Handler = name !== "tool_call" ? h0 : async (e, c) => {
+          const r = await h0(e, c);
+          const ev = e as { toolName?: string; toolCallId?: string; input?: Record<string, unknown> };
+          if (ev.toolName === "subagent" && ev.toolCallId && ev.input) inputs.set(ev.toolCallId, ev.input);
+          return r;
+        };
         const prev = handlers.get(name);
         handlers.set(name, !prev ? h : name === "tool_call" ? async (e, c) => (await prev(e, c)) ?? (await h(e, c)) : async (e, c) => { const r = await prev(e, c); const r2 = await h(e, c); return r ?? r2; });
       },
@@ -111,13 +124,13 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setThinkingLevel: () => undefined,
       sendMessage: (message: { customType: string; content: string }, options?: unknown) => void o.sent?.push({ message, options }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
+    coreAdapter(pi as never, { env: {}, pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
       cwd: project,
       model: { provider: "fake", id: "foreman" },
       mode: "tui",
-      hasUI: true,
+      hasUI: !o.headless,
       isProjectTrusted: () => false,
       isIdle: () => true,
       // the gate reviews the foreman's own subagent launches: the review model answers allow (no review model is a dialog)
@@ -141,21 +154,25 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       /** How many review records the run ends wrote so far: `review_recorded` (normal review) plus `review_high_stakes` (high-stakes run). */
       recordTraces: async (): Promise<number> => (await traceEvents()).filter((e) => e.event === "review_recorded" || e.event === "review_high_stakes").length,
       tool: (name: string) => tools.get(name),
-      /** The `[plan-review]` launch: a block reason, or null once started (then `end` ends the run). */
-      async reviewLaunch(task = "[plan-review] review .workflow/scratch/plan-widget.md"): Promise<{ blocked: string | null; id: string; task: string }> {
+      /** The launch input of call `id` (its `extensionBindings` carry the launch id, record folder and items). */
+      inputOf: (id: string): Record<string, unknown> | undefined => inputs.get(id),
+      /** Leaves the record of call `id` (what the reviewer's `review_verdict` call writes); false when that launch has no record folder. */
+      record: (id: string, spec: RecSpec): boolean => writeSpec(inputs.get(id), spec),
+      /** The `[plan-review]` launch (`extra`: more launch fields, e.g. `items`): a block reason, or null once started (then `end` ends the run). */
+      async reviewLaunch(task = "[plan-review] review .workflow/scratch/plan-widget.md", extra: Record<string, unknown> = {}): Promise<{ blocked: string | null; id: string; task: string }> {
         const id = `c${++calls}`;
-        const input = { agent: "reviewer", task };
+        const input: Record<string, unknown> = { agent: "reviewer", task, ...extra };
         await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } }, ctx);
         const blocked = (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block;
-        if (blocked) return { blocked: blocked.reason ?? "blocked", id, task: input.task };
+        if (blocked) return { blocked: blocked.reason ?? "blocked", id, task: String(input.task) };
         await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
-        return { blocked: null, id, task: input.task }; // the task as launched, facts block included
+        return { blocked: null, id, task: String(input.task) }; // the task as launched, facts block included
       },
-      /** A full `[plan-review]` run ending with `verdict`; returns the block reason when the launch was refused. */
+      /** A full `[plan-review]` run ending with `verdict` (as a record); returns the block reason when the launch was refused. */
       async review(verdict: "PASS" | "FAIL"): Promise<string | null> {
         const r = await this.reviewLaunch();
         if (r.blocked) return r.blocked;
-        channels.get("subagent:async-complete")!({ runId: `run-${r.id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output: `Overall verdict: ${verdict}` }] });
+        this.endRun(r.id, `Overall verdict: ${verdict}`);
         await tick();
         return null;
       },
@@ -175,8 +192,18 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       },
       /** Fires a Pi event (e.g. `session_compact`) at the adapter's handler. */
       fire: (name: string, event: unknown) => handlers.get(name)?.(event, ctx),
-      /** The run-end event of a launch started by `reviewLaunch` (its callId), as the harness delivers it. */
-      endRun: (id: string, output: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] }),
+      /** The run-end event of a launch started by `reviewLaunch` (its callId), as the harness delivers it. A report that names a verdict (`Overall verdict: PASS`, `1. FAIL ...`) leaves its record first (`legacySpec`); one that names none leaves none. */
+      endRun: (id: string, output: string) => {
+        writeFromReport(inputs.get(id), output);
+        return channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] });
+      },
+      /** A raw `subagent:async-complete` event (the run end of a run no `reviewLaunch` id names, e.g. a resumed run). */
+      endEvent: (data: Record<string, unknown>) => channels.get("subagent:async-complete")!(data),
+      /** The run end of call `id` after the reviewer's `review_verdict` call `spec`; `output` is the report text (no verdict word needed). */
+      endRunRecord: (id: string, spec: RecSpec, output = "report") => {
+        writeSpec(inputs.get(id), spec);
+        return channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] });
+      },
       /** The run-end event of a launch with one reviewer result per output, in order. */
       endRunMany: (id: string, outputs: string[]) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, success: true, status: "completed", results: outputs.map((output) => ({ agent: "reviewer", status: "completed", success: true, output })) }),
       /** A launch of any `agent` that started (a run id came back), or the block reason; `endRunAs` ends it. */
@@ -191,7 +218,10 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       },
       /** The run-end event of one run with the given results (agent, output) in order, e.g. reviewer, builder, reviewer. */
       endRunResults: (id: string, results: { agent: string; output: string }[]) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, success: true, status: "completed", results: results.map((r) => ({ ...r, status: "completed", success: true })) }),
-      endRunAs: (id: string, agent: string, output: string, cwd?: string, summary?: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent, success: true, ...(summary ? { summary } : {}), status: "completed", results: [{ agent, status: "completed", success: true, output, ...(cwd ? { cwd } : {}) }] }),
+      endRunAs: (id: string, agent: string, output: string, cwd?: string, summary?: string) => {
+        writeFromReport(inputs.get(id), output);
+        return channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent, success: true, ...(summary ? { summary } : {}), status: "completed", results: [{ agent, status: "completed", success: true, output, ...(cwd ? { cwd } : {}) }] });
+      },
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
       command: (name: string, args: string) => commands.get(name)!.handler(args, ctx),
       /** A foreman write of the ledger (tool_call, file, tool_result) so the tier header is read. */

@@ -191,12 +191,14 @@ function emphasis(s: string): string {
 export interface MarkdownOpts {
   /** The HTML for a mermaid fence's text, or null to keep it as a code block. */
   mermaid?: (text: string) => string | null;
-  /** When set, a level-2 section whose heading text this returns true for renders folded (`<details>`, the heading as its summary). */
+  /** When set, a level-2 section whose heading text this returns true for renders folded (`<details class="fold" id="…">`, the heading as an `h2` inside its summary). */
   fold?: (heading: string) => boolean;
+  /** The plan layout, by position only: the first `Summary` (or `For the owner`) section is wrapped (goal, numbered path, trailing alerts in a side column) and `Open questions` is a highlighted section. Independent of `fold`. */
+  ownerLayout?: boolean;
 }
 
-/** The plan page's fold: every `##` section except `For the owner` and `Open questions` (case-insensitive, trimmed). */
-export const foldPlanSection = (heading: string): boolean => !["for the owner", "open questions"].includes(heading.trim().toLowerCase());
+/** The plan page's fold: every `##` section except `Summary`, `For the owner` and `Open questions` (case-insensitive, trimmed). */
+export const foldPlanSection = (heading: string): boolean => !["summary", "for the owner", "open questions"].includes(heading.trim().toLowerCase());
 
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE = /^ {0,3}([`~]+)[ \t]*$/;
@@ -219,7 +221,7 @@ const HEADING_OPEN = /^ {0,3}(#{1,6})(?=[ \t])/;
 const isBlank = (c: string): boolean => c === " " || c === "\t";
 
 /** An ATX heading line: its level and text (closing `#` run and outer blanks dropped), or null. Scans once, no backtracking. */
-function headingOf(line: string): { level: number; text: string } | null {
+export function headingOf(line: string): { level: number; text: string } | null {
   const m = HEADING_OPEN.exec(line);
   if (!m) return null;
   const tail = line.slice(m[0].length); // starts with a blank
@@ -248,17 +250,59 @@ function splitRow(line: string): string[] {
   return t.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
 }
 
-/** Markdown to an HTML fragment. */
-export function renderMarkdown(markdown: string, opts: MarkdownOpts = {}): string {
+const sectionKey = (heading: string): string => heading.trim().toLowerCase();
+
+/** A fragment id from a heading: lowercase ascii words joined by `-`; `section` when nothing is left. */
+const slugOf = (heading: string): string => heading.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "section";
+
+interface RenderedPart {
+  html: string;
+  /** The part is the wrapped `Summary` section. */
+  owner?: boolean;
+}
+
+interface FoldedSection {
+  id: string;
+  heading: string;
+}
+
+/** The owner section: the heading and the goal, path and other blocks in the main column, the trailing run of top-level alerts in the side column. DOM order is source order. */
+function ownerSection(heading: string, body: string[], opts: MarkdownOpts): string {
+  const items = blockList(body, opts, false, 0);
+  let side = items.length;
+  while (side > 0 && items[side - 1].kind === "alert") side--;
+  const shown = (b: Blk, i: number): string => (i === 0 && b.kind === "p" ? b.html.replace(/^<p>/, '<p class="goal">') : b.kind === "ol" ? b.html.replace(/^<ol/, '<ol class="path"') : b.html);
+  const main = [`<h2>${inline(heading)}</h2>`, ...items.slice(0, side).map(shown)];
+  const aside = items.slice(side).map(shown);
+  return `<section class="owner">\n<div class="o-main">\n${main.join("\n")}\n</div>${aside.length ? `\n<div class="o-side">\n${aside.join("\n")}\n</div>` : ""}\n</section>`;
+}
+
+/** Markdown to its top-level parts (and the folded sections among them), see renderMarkdown. */
+function renderParts(markdown: string, opts: MarkdownOpts = {}): { parts: RenderedPart[]; folds: FoldedSection[] } {
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
-  const { fold } = opts;
-  if (!fold) return blocks(lines, opts, false, 0);
-  const parts: string[] = [];
+  const { fold, ownerLayout } = opts;
+  if (!fold && !ownerLayout) return { parts: [{ html: blocks(lines, opts, false, 0) }].filter((p) => p.html !== ""), folds: [] };
+  const parts: RenderedPart[] = [];
+  const folds: FoldedSection[] = [];
+  const ids = new Set<string>();
   let start = 0; // the first line of the part being collected
   let heading: string | null = null; // the heading text of the part when it is a level-2 section
+  let ownerSeen = false; // only the first `Summary` / `For the owner` section gets the owner layout
   const flush = (end: number): void => {
     if (end <= start) return;
-    parts.push(heading !== null && fold(heading) ? `<details><summary>${inline(heading)}</summary>\n${blocks(lines.slice(start + 1, end), opts, false, 0)}\n</details>` : blocks(lines.slice(start, end), opts, false, 0));
+    const key = heading === null ? "" : sectionKey(heading);
+    if (heading !== null && fold?.(heading)) {
+      const base = slugOf(heading);
+      let id = base;
+      for (let n = 2; ids.has(id); n++) id = `${base}-${n}`;
+      ids.add(id);
+      folds.push({ id, heading });
+      parts.push({ html: `<details class="fold" id="${id}"><summary><h2>${inline(heading)}</h2></summary>\n${blocks(lines.slice(start + 1, end), opts, false, 0)}\n</details>` });
+    } else if (heading !== null && ownerLayout && !ownerSeen && (key === "summary" || key === "for the owner")) {
+      ownerSeen = true;
+      parts.push({ html: ownerSection(heading, lines.slice(start + 1, end), opts), owner: true });
+    } else if (heading !== null && ownerLayout && key === "open questions") parts.push({ html: `<section class="questions">\n${blocks(lines.slice(start, end), opts, false, 0)}\n</section>` });
+    else parts.push({ html: blocks(lines.slice(start, end), opts, false, 0) });
   };
   for (let i = 0; i < lines.length; i++) {
     const fence = scanFence(lines, i);
@@ -267,19 +311,55 @@ export function renderMarkdown(markdown: string, opts: MarkdownOpts = {}): strin
       continue;
     }
     const h = headingOf(lines[i]);
-    if (h?.level !== 2 || !lines[i].startsWith("##")) continue; // only a heading at column 0 is a top-level section
+    if (!h || h.level > 2 || !lines[i].startsWith("#")) continue; // only a heading at column 0 is a top-level section
     flush(i);
     start = i;
-    heading = h.text;
+    // a level-1 heading ends the part before it and starts an ordinary part (unfolded, no owner layout)
+    heading = h.level === 2 ? h.text : null;
   }
   flush(lines.length);
-  return parts.filter((p) => p !== "").join("\n");
+  return { parts: parts.filter((p) => p.html !== ""), folds };
+}
+
+/** Markdown to an HTML fragment. */
+export const renderMarkdown = (markdown: string, opts: MarkdownOpts = {}): string =>
+  renderParts(markdown, opts)
+    .parts.map((p) => p.html)
+    .join("\n");
+
+const ALERT_MARK = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*$/i;
+
+/** The alert type (lower case) of a quote whose first line is exactly a marker and that has a body; null for any other quote. */
+export function alertOf(quote: readonly string[]): string | null {
+  const m = ALERT_MARK.exec(quote[0] ?? "");
+  return m && quote.slice(1).some((l) => l.trim()) ? m[1].toLowerCase() : null;
+}
+
+/** The quote block that starts at `lines[i]` (null when that line does not open one): its lines without the `>` prefix, with lazy continuation lines, and the next line index. */
+export function quoteBlockAt(lines: readonly string[], i: number): { body: string[]; next: number } | null {
+  if (!/^ {0,3}>/.test(lines[i] ?? "")) return null;
+  const body: string[] = [];
+  while (i < lines.length && (/^ {0,3}>/.test(lines[i]) || (lines[i].trim() && body.length && !startsBlock(lines[i])))) body.push(lines[i++].replace(/^ {0,3}> ?/, ""));
+  return { body, next: i };
 }
 
 const startsBlock = (l: string): boolean => FENCE_OPEN.test(l) || headingOf(l) !== null || RULE.test(l) || /^ {0,3}>/.test(l) || /^ {0,3}(?:[-*+]|1[.)])[ \t]+\S/.test(l);
 
-function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: number): string {
-  const out: string[] = [];
+interface Blk {
+  html: string;
+  kind: "p" | "ol" | "ul" | "alert" | "other";
+}
+
+const blocks = (lines: string[], opts: MarkdownOpts, tight: boolean, depth: number): string =>
+  blockList(lines, opts, tight, depth)
+    .map((b) => b.html)
+    .join("\n");
+
+function blockList(lines: string[], opts: MarkdownOpts, tight: boolean, depth: number): Blk[] {
+  const out: Blk[] = [];
+  const add = (html: string, kind: Blk["kind"] = "other"): void => {
+    out.push({ html, kind });
+  };
   let i = 0;
   while (i < lines.length) {
     const line = lines[i];
@@ -295,24 +375,27 @@ function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: numb
       const lang = info.trim().split(/\s+/)[0] ?? "";
       const text = body.join("\n");
       const diagram = lang === "mermaid" ? opts.mermaid?.(text) : null;
-      out.push(diagram ?? `<pre><code${/^[\w+#.-]{1,30}$/.test(lang) ? ` class="language-${escapeHtml(lang)}"` : ""}>${escapeHtml(text)}</code></pre>`);
+      add(diagram ?? `<pre><code${/^[\w+#.-]{1,30}$/.test(lang) ? ` class="language-${escapeHtml(lang)}"` : ""}>${escapeHtml(text)}</code></pre>`);
       continue;
     }
     const h = headingOf(line);
     if (h) {
-      out.push(`<h${h.level}>${inline(h.text)}</h${h.level}>`);
+      add(`<h${h.level}>${inline(h.text)}</h${h.level}>`);
       i++;
       continue;
     }
     if (RULE.test(line)) {
-      out.push("<hr>");
+      add("<hr>");
       i++;
       continue;
     }
     if (/^ {0,3}>/.test(line)) {
-      const q: string[] = [];
-      while (i < lines.length && (/^ {0,3}>/.test(lines[i]) || (lines[i].trim() && q.length && !startsBlock(lines[i])))) q.push(lines[i++].replace(/^ {0,3}> ?/, ""));
-      out.push(`<blockquote>${depth < 8 ? blocks(q, opts, false, depth + 1) : escapeHtml(q.join("\n"))}</blockquote>`);
+      const qb = quoteBlockAt(lines, i)!;
+      const q = qb.body;
+      i = qb.next;
+      const alert = depth < 8 ? alertOf(q) : null;
+      if (alert) add(`<blockquote class="callout callout-${alert}" data-alert="${alert}">${blocks(q.slice(1), opts, false, depth + 1)}</blockquote>`, "alert");
+      else add(`<blockquote>${depth < 8 ? blocks(q, opts, false, depth + 1) : escapeHtml(q.join("\n"))}</blockquote>`);
       continue;
     }
     if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].includes("-")) {
@@ -322,13 +405,13 @@ function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: numb
       const rows: string[][] = [];
       while (i < lines.length && lines[i].trim() && lines[i].includes("|")) rows.push(splitRow(lines[i++]));
       const cell = (tag: string, c: string, k: number): string => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ""}>${inline(c)}</${tag}>`;
-      out.push(`<table><thead><tr>${head.map((c, k) => cell("th", c, k)).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${head.map((_c, k) => cell("td", r[k] ?? "", k)).join("")}</tr>`).join("")}</tbody></table>`);
+      add(`<table><thead><tr>${head.map((c, k) => cell("th", c, k)).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${head.map((_c, k) => cell("td", r[k] ?? "", k)).join("")}</tr>`).join("")}</tbody></table>`);
       continue;
     }
     const item = ITEM.exec(line);
     if (item && indentOf(line) < 4) {
       const [html, next] = list(lines, i, opts, depth);
-      out.push(html);
+      add(html, /^<ol[ >]/.test(html) ? "ol" : "ul");
       i = next;
       continue;
     }
@@ -336,9 +419,9 @@ function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: numb
     i++;
     while (i < lines.length && lines[i].trim() && !startsBlock(lines[i]) && !(lines[i].includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].includes("-"))) para.push(lines[i++].trim());
     const html = inline(para.join("\n")).replace(/\n/g, " ");
-    out.push(tight ? html : `<p>${html}</p>`);
+    add(tight ? html : `<p>${html}</p>`, "p");
   }
-  return out.join("\n");
+  return out;
 }
 
 /** One list starting at `start`; returns its HTML and the next line. Items deeper than the marker belong to the item. */
@@ -397,32 +480,74 @@ export interface PageInput {
   source: string;
 }
 
-const STYLE = `:root{color-scheme:light dark;--fg:#1f2328;--bg:#fff;--mute:#59636e;--line:#d1d9e0;--code:#f6f8fa;--link:#0969da}
-@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--bg:#0d1117;--mute:#9198a1;--line:#3d444d;--code:#161b22;--link:#4493f8}}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:56rem;margin:0 auto;padding:2rem 1.25rem 4rem}
-h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.6em 0 .6em}h1{font-size:1.9rem}h2{font-size:1.45rem;border-bottom:1px solid var(--line);padding-bottom:.3em}
-.kicker{color:var(--mute);margin:0 0 1.5rem}a{color:var(--link)}
-pre{background:var(--code);padding:1rem;overflow:auto;border-radius:6px}code{background:var(--code);padding:.1em .3em;border-radius:4px;font:.9em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}pre code{padding:0;background:none}
-table{border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid var(--line);padding:.4em .8em}th{background:var(--code)}
-blockquote{margin:1em 0;padding:0 1em;color:var(--mute);border-left:4px solid var(--line)}hr{border:0;border-top:1px solid var(--line)}
-details{margin:1em 0}summary{cursor:pointer;font-size:1.45rem;font-weight:600;line-height:1.25;border-bottom:1px solid var(--line);padding-bottom:.3em}details[open]>summary{margin-bottom:.6em}
+// The five alert colours (accent, tint) for light and dark; the stylesheets set them as custom properties.
+const ALERT_LIGHT = "--note:#2563eb;--note-b:#eff5ff;--tip:#15803d;--tip-b:#ecfaf1;--imp:#7c3aed;--imp-b:#f5f0ff;--warn:#b45309;--warn-b:#fff7e8;--caut:#c2262d;--caut-b:#fff0f0";
+const ALERT_DARK = "--note:#6ea8fe;--note-b:#16233a;--tip:#4ade80;--tip-b:#132a1d;--imp:#b794f6;--imp-b:#241a3a;--warn:#f0b354;--warn-b:#2e2312;--caut:#f87171;--caut-b:#331718";
+const alertTypes = (scope: string): string => [["note", "note"], ["tip", "tip"], ["important", "imp"], ["warning", "warn"], ["caution", "caut"]].map(([t, v]) => `${scope}.callout-${t}{--c:var(--${v});--cb:var(--${v}-b)}`).join("");
+
+/** The harness stylesheet of every markdown page (also the `<style>` of instructions/plan-skeleton.html). No `content:`, hidden or zero-size rules: the converter reports those (htmlmd.ts). */
+export const STYLE = `:root{color-scheme:light dark;--fg:#1b1f24;--bg:#eef1f5;--card:#fff;--mute:#5c6673;--line:#d7dde5;--soft:#f3f5f8;--link:#1f6feb;--accent:#1f6feb;${ALERT_LIGHT}}
+@media (prefers-color-scheme:dark){:root{--fg:#e8ebef;--bg:#0f1216;--card:#181c22;--mute:#97a1ad;--line:#2b313a;--soft:#20252d;--link:#79b0ff;--accent:#4c8dff;${ALERT_DARK}}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:52rem;margin:0 auto;padding:2rem 1.5rem 4rem}body.plan main{max-width:74rem}
+h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.6em 0 .6em}h1{font-size:1.9rem;margin-top:.3em}h2{font-size:1.35rem}h3{font-size:1.1rem}
+.kicker{color:var(--mute);margin:0 0 1.5rem;font-size:.9rem}a{color:var(--link)}
+pre{background:var(--soft);padding:1rem;overflow:auto;border-radius:8px}code{background:var(--soft);padding:.08em .32em;border-radius:4px;font:.86em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow:auto;margin:1rem 0}th,td{border:1px solid var(--line);padding:.45em .8em;vertical-align:top}th{background:var(--soft);text-align:left}
+blockquote{margin:1em 0;padding:0 1em;color:var(--mute);border-left:3px solid var(--line)}hr{border:0;border-top:1px solid var(--line)}
+.callout{margin:1rem 0;padding:.8rem 1rem;border-radius:10px;border:1px solid var(--c);border-left-width:5px;background:var(--cb);color:var(--fg)}
+.callout>:first-child{margin-top:0}.callout>:last-child{margin-bottom:0}.callout ul,.callout ol{padding-left:1.1rem;margin:.3rem 0}.callout li{margin:.2rem 0}
+.callout>p:first-child>strong:first-child{color:var(--c)}
+${alertTypes("")}
+section.owner{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:1.25rem;align-items:start;margin:1rem 0}.o-main:only-child{grid-column:1/-1}
+@media (max-width:860px){section.owner{grid-template-columns:1fr}}
+.o-main{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0 1.5rem 1rem;overflow:hidden}
+.o-main>h2{margin:0 -1.5rem 0;padding:.5rem 1.5rem;font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:#fff;background:var(--accent)}
+p.goal{margin:0 -1.5rem 1rem;padding:1rem 1.5rem 1.2rem;background:var(--accent);color:#fff;font-size:1.3rem;line-height:1.4;font-weight:500}p.goal strong{color:#fff}
+ol.path{padding-left:2.4rem}ol.path>li{padding:.5rem 0 .5rem .3rem;border-bottom:1px dashed var(--line)}ol.path>li:last-child{border-bottom:0}ol.path>li::marker{color:var(--accent);font-weight:800;font-size:1.25em}
+.o-side .callout{margin:0 0 1rem;background:var(--card);border-width:0 0 0 5px;box-shadow:0 1px 3px #0000001a}
+details.fold{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:.8rem 1.3rem;margin:.6rem 0}details.fold>summary{cursor:pointer}
+details.fold>summary>h2{display:inline;margin:0;padding:0;font-size:1.1rem}details.fold[open]>summary{margin-bottom:.6rem}details.fold[open]{max-width:56rem}
+nav.index{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:1.5rem 0 .5rem}nav.index span{color:var(--mute);font-size:.85rem;margin-right:.3rem}
+nav.index a{font-size:.85rem;text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:.1rem .65rem;color:var(--fg)}nav.index a:hover{border-color:var(--link)}
+section.questions{border:2px solid var(--imp);border-radius:12px;padding:.2rem 1.2rem;margin:1.5rem 0;background:var(--imp-b)}section.questions>h2{margin-top:.8rem;color:var(--imp)}
 picture{display:block;margin:1em 0;overflow:auto}img{max-width:100%;height:auto}`;
+
+/** The alert look for the rulings below an HTML plan: the model's page brings no harness stylesheet, so the rules are scoped to the rulings block. */
+const RULINGS_STYLE = `#pi-foreman-rulings{${ALERT_LIGHT};--ink:#1b1f24}
+@media (prefers-color-scheme:dark){#pi-foreman-rulings{${ALERT_DARK};--ink:#e8ebef}}
+#pi-foreman-rulings .callout{margin:1rem 0;padding:.8rem 1rem;border-radius:10px;border:1px solid var(--c);border-left-width:5px;background:var(--cb);color:var(--ink)}
+#pi-foreman-rulings .callout>:first-child{margin-top:0}#pi-foreman-rulings .callout>:last-child{margin-bottom:0}#pi-foreman-rulings .callout>p:first-child>strong:first-child{color:var(--c)}
+${alertTypes("#pi-foreman-rulings ")}`;
 
 const b64 = (s: string): string => Buffer.from(s, "utf8").toString("base64");
 
 const pictureOf = (s: Svgs): string => `<picture><source media="(prefers-color-scheme: dark)" srcset="data:image/svg+xml;base64,${b64(s.dark)}"><img alt="diagram" src="data:image/svg+xml;base64,${b64(s.light)}"></picture>`;
 
-const shell = (title: string, body: string): string => `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body><main>\n${body}\n</main></body></html>\n`;
+const shell = (title: string, body: string, wide = false): string => `<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body${wide ? ' class="plan"' : ""}><main>\n${body}\n</main></body></html>\n`;
+
+/** The markdown body of a page; a plan page gets its index of folded sections right after the owner section (at the top without one). */
+function planBody(p: PageInput, svgs: ReadonlyMap<string, Svgs> | undefined): string {
+  const { parts, folds } = renderParts(p.markdown, {
+    fold: p.fold,
+    ownerLayout: p.fold !== undefined,
+    mermaid: (text) => {
+      const s = svgs?.get(fenceSha(text));
+      return s ? pictureOf(s) : null;
+    },
+  });
+  const links = folds.map((f) => `<a href="#${f.id}">${inline(f.heading).replace(/<\/?a(?:\s[^>]*)?>/g, "")}</a>`);
+  const html = parts.map((x) => x.html);
+  if (links.length) html.splice(parts.findIndex((x) => x.owner) + 1, 0, `<nav class="index"><span>In the details</span>${links.join("")}</nav>`);
+  return html.join("\n");
+}
 
 /** A whole page. Over PAGE_MAX_BYTES the diagrams go back to code blocks; still over it, the page names the markdown file instead of showing it. */
 export function renderPage(p: PageInput): string {
+  const plan = p.fold !== undefined; // only a plan page folds sections; it also gets the owner layout, the index and the wide page
   const head = `<h1>${escapeHtml(p.title)}</h1>\n<p class="kicker">${escapeHtml(p.kicker)}</p>`;
   const build = (svgs: ReadonlyMap<string, Svgs> | undefined): string =>
-    shell(p.title, `${head}\n${renderMarkdown(p.markdown, { fold: p.fold, mermaid: (text) => {
-      const s = svgs?.get(fenceSha(text));
-      return s ? pictureOf(s) : null;
-    } })}`);
+    shell(p.title, `${head}\n${planBody(p, svgs)}`, plan);
   for (const svgs of p.svgs?.size ? [p.svgs, undefined] : [undefined]) {
     const html = build(svgs);
     if (Buffer.byteLength(html, "utf8") <= PAGE_MAX_BYTES) return html;
@@ -481,7 +606,7 @@ function bodyCloseAt(html: string): number {
 export function renderHtmlPlanPage(p: HtmlPlanPageInput): string {
   const banner = `<div id="pi-foreman-banner" style="margin:0;padding:.5rem 1rem;font:14px system-ui,sans-serif;background:#1f2328;color:#fff">${escapeHtml(p.kicker)}</div>`;
   const rulings = p.rulings.trim()
-    ? `<section id="pi-foreman-rulings" style="max-width:56rem;margin:2rem auto;padding:1rem 1.25rem;border-top:2px solid #888;font:16px/1.6 system-ui,sans-serif"><h2>Rulings (below the approved page; they do not change its version)</h2>\n${renderMarkdown(p.rulings)}\n</section>`
+    ? `<section id="pi-foreman-rulings" style="max-width:56rem;margin:2rem auto;padding:1rem 1.25rem;border-top:2px solid #888;font:16px/1.6 system-ui,sans-serif"><style>${RULINGS_STYLE}</style><h2>Rulings (below the approved page; they do not change its version)</h2>\n${renderMarkdown(p.rulings)}\n</section>`
     : "";
   const page = normalizedPage(p.html);
   const pres = p.svgs?.size ? mermaidPres(p.html) : [];

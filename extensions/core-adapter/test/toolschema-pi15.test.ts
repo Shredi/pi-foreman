@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { compile } from "@earendil-works/pi-schema";
 import { GIT_PACK_TOOLS, PR_TOOLS } from "../gitpack.ts";
 import { SAFE_OP_TOOLS } from "../safeops.ts";
-import { BG_PARAMS } from "../bg.ts";
 
 // Pi 1.5 validates tool arguments with pi-schema (JSON Schema, with coercion). Every schema we register must compile
 // there, accept a minimal valid call and report a missing required property the pi-schema way.
@@ -13,7 +12,6 @@ const SCHEMAS: [string, Schema][] = [
   ...GIT_PACK_TOOLS.map((t) => [t.name, t.parameters as Schema] as [string, Schema]),
   ...PR_TOOLS.map((t) => [t.name, t.parameters as Schema] as [string, Schema]),
   ...SAFE_OP_TOOLS.map((t) => [t.name, t.parameters as Schema] as [string, Schema]),
-  ["foreman_bg", BG_PARAMS as unknown as Schema],
 ];
 
 function sample(p: NonNullable<Schema["properties"]>[string]): unknown {

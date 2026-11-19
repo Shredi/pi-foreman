@@ -1,11 +1,13 @@
 // Run-end findings (docs/review.md): every completed review child of a run is handed to
-// `scripts/foreman_findings.py record` (report text on stdin, the reviewed files in a temp list),
-// which appends the review and its located findings to the session's findings store and prints
-// them. Fail-soft: a failed, slow or unparsable call counts as zero findings and traces nothing.
-// The located findings feed the `finding` trace (file basename only) and the panel's attributed
-// block (panel.ts PendingPanels).
+// `scripts/foreman_findings.py record` (the verdict record's item numbers and located findings as JSON on stdin, the reviewed files in a
+// temp list), which appends the review to the session's findings store. Fail-soft: a failed or slow call records nothing.
+// The located findings are the `defect` findings of the reviewer's verdict record that name a file (verdict.ts); they
+// feed the `finding` trace (file basename only) and the panel's attributed block (panel.ts PendingPanels).
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { withFileLock } from "./statefile.ts";
+import { defectsOf } from "./verdict.ts";
 import { splitLevel } from "./launchmodel.ts";
 import type { PanelFinding } from "./panel.ts";
 import type { ReviewLaunch, ReviewResult } from "./occasion.ts";
@@ -16,24 +18,12 @@ export interface Finding extends PanelFinding {
 
 export const RECORD_TIMEOUT_MS = 10_000;
 
-/** The `findings` of the record call's stdout JSON; [] for anything else. */
-export function parseRecordOutput(text: string): Finding[] {
-  let j: unknown;
-  try {
-    j = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  const list = j && typeof j === "object" ? (j as { findings?: unknown }).findings : undefined;
-  if (!Array.isArray(list)) return [];
-  const out: Finding[] = [];
-  for (const f of list) {
-    if (!f || typeof f !== "object") continue;
-    const r = f as Record<string, unknown>;
-    if (typeof r.file !== "string" || !r.file) continue;
-    out.push({ id: typeof r.id === "string" ? r.id : "", file: r.file, line: typeof r.line === "number" && Number.isFinite(r.line) ? r.line : null, class: typeof r.class === "string" ? r.class : "", note: typeof r.note === "string" ? r.note : "" });
-  }
-  return out;
+/** The id of a finding: the triple of scripts/foreman_findings.py `finding_id` (file, line // 5, class), first 12 hex of its sha1. */
+export const findingId = (file: string, line: number | null, cls: string): string => crypto.createHash("sha1").update(`${file}\0${line !== null ? Math.floor(line / 5) : ""}\0${cls}`).digest("hex").slice(0, 12);
+
+/** The located findings of a review result: its `defect` findings that name a file (a finding without a file cannot be located). */
+export function findingsOfResult(r: Pick<ReviewResult, "findings">): Finding[] {
+  return defectsOf(r.findings).flatMap((f) => (f.file ? [{ id: findingId(f.file, f.line ?? null, f.class ?? ""), file: f.file, line: f.line ?? null, class: f.class ?? "", note: f.text }] : []));
 }
 
 /** Unified-diff file names (`diff --git a/x b/y`, `+++ b/y`), repo-relative, in order, without repeats. */
@@ -70,6 +60,10 @@ export interface RecordContext {
   /** The live reviewer rung, for a result that names no model. */
   live: string | null;
   now: number;
+  /** Workspace key of the main checkout, `owner/name` of its remote and the branch checked out where the review ran (each omitted when unknown). */
+  workspace?: string | null;
+  repo?: string | null;
+  branch?: string | null;
 }
 
 /** The `record` arguments of one review result (without --files-from). */
@@ -77,23 +71,33 @@ export function recordArgs(r: ReviewResult, launch: ReviewLaunch | null | undefi
   const model = r.model ?? c.live ?? "unknown";
   const args = ["record", "--session", c.session, "--gate", r.occasion, "--model", model, "--rung", String(r.rung), "--primary", r.primary ? "1" : "0", "--role", r.role, "--run-id", c.runId, "--source", r.primary ? "live" : "panel", "--cwd", c.cwd, "--agent-dir", c.agentDir];
   if (c.head) args.push("--head", c.head);
+  if (c.workspace) args.push("--workspace", c.workspace);
+  if (c.repo) args.push("--repo", c.repo);
+  if (c.branch) args.push("--branch", c.branch);
   if (r.verdict) args.push("--verdict", r.verdict.toUpperCase());
   if (launch) args.push("--secs", ((c.now - launch.started) / 1000).toFixed(1), "--started-ts", new Date(launch.started).toISOString());
   return args;
 }
 
+/** The JSON on stdin of a `record` call: the numbered items the reviewer gave a result (not `open`) and its located findings. */
+export function recordInput(r: Pick<ReviewResult, "items" | "findings">): string {
+  const items = r.items.flatMap((i) => (typeof i.id === "number" && i.result !== "open" ? [i.id] : []));
+  const findings = findingsOfResult(r).map((f) => ({ file: f.file, line: f.line, class: f.class || undefined, note: f.note }));
+  return JSON.stringify({ items, findings });
+}
+
 /** Runs one `foreman_findings.py` call: args, stdin text; never throws in practice (runScript). */
 export type RecordRunner = (args: string[], input: string) => Promise<{ text: string; ok: boolean }>;
 
-/** Record one review result; its located findings ([] on any failure). The temp file list lives in `tmpDir` and is removed after. */
+/** Record one review result in the findings store (fail-soft); its located findings come from the verdict record. The temp file list lives in `tmpDir` and is removed after. */
 export async function recordReview(r: ReviewResult, launch: ReviewLaunch | null | undefined, c: RecordContext, tmpDir: string, run: RecordRunner): Promise<Finding[]> {
   const list = path.join(tmpDir, `findings-files-${process.pid}-${Date.now()}-${r.index}-${Math.random().toString(36).slice(2, 8)}.txt`);
   try {
     fs.writeFileSync(list, (launch?.files ?? []).join("\n") + "\n", "utf8");
-    const res = await run([...recordArgs(r, launch, c), "--files-from", list], r.text);
-    return res.ok ? parseRecordOutput(res.text) : [];
+    await run([...recordArgs(r, launch, c), "--files-from", list], recordInput(r));
+    return findingsOfResult(r);
   } catch {
-    return [];
+    return findingsOfResult(r);
   } finally {
     try {
       fs.unlinkSync(list);
@@ -128,4 +132,48 @@ export async function onReviewRunEnd(o: RunEndInput, run: RecordRunner): Promise
     for (const f of findings) out.traces.push({ event: "finding", role: r.role, findingId: f.id, model: splitLevel(model).base, gate: r.occasion, class: f.class, file: traceFile(f.file), line: f.line, primary: r.primary });
   }
   return out;
+}
+
+/** `<agent dir>/pi-foreman/state/findings`, the findings store directory (scripts/foreman_findings.py `findings_dir`). */
+export const findingsDirOf = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "findings");
+
+/** A session's findings file, named as `_session_id` of scripts/foreman_findings.py names it: characters outside [A-Za-z0-9._-] dropped, 64 at most, `session` when empty. */
+export const sessionFileOf = (agentDir: string, session: string): string => path.join(findingsDirOf(agentDir), `${String(session ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64) || "session"}.jsonl`);
+
+export interface PrRow {
+  session: string;
+  workspace: string | null;
+  repo: string;
+  branch: string | null;
+  number: number;
+  head: string | null;
+  ts: string;
+}
+
+/**
+ * Appends a `pr` row to the session's findings file, once per PR number (and repository): under the lock file of the Python writer
+ * (`<file>.lock`). Returns false when the row was already there. Throws on a lock timeout or a write error (the caller treats it as best effort).
+ */
+export function appendPrRow(agentDir: string, row: PrRow): boolean {
+  const file = sessionFileOf(agentDir, row.session);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  return withFileLock(`${file}.lock`, () => {
+    let text = "";
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      // no file yet
+    }
+    for (const line of text.split("\n")) {
+      if (!line.includes('"pr"')) continue;
+      try {
+        const r = JSON.parse(line) as Record<string, unknown>;
+        if (r.type === "pr" && r.number === row.number && r.repo === row.repo) return false;
+      } catch {
+        // a torn line
+      }
+    }
+    fs.appendFileSync(file, `${JSON.stringify({ type: "pr", ...row })}\n`, "utf8");
+    return true;
+  });
 }

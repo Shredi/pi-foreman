@@ -277,7 +277,7 @@ def opener_id(given, adir, env=None):
 PLAN_FIRST_NOTES = [
     "   While you plan, change files only under `.workflow/` and use explorers and plan reviewers; builders wait until the plan phase ends.",
     "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent %(to_parent)s. When unsure whether it is a decision, ask the parent. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), %(no_human)s.",
-    "   `plan.md` starts with a `## For the owner` section (its reader is the owner, who reads it cold on the plan page between other topics and approves the plan from this section alone, so it must stand alone: explain it as to someone new to this topic, as owner text (your owner-text rule); form: a goal line, then the steps as a short list, then the heads-ups and the decisions you took for the owner, each as a list item; one fact per sentence; no paths or ids; for example \"Goal: pages load faster.\" then \"- Steps: measure first, then cache the slowest query.\" \"- Heads-up: cached data may be a minute old.\" \"- Decided for you: the admin pages stay as they are.\"), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none; your parent reads them to see what you decided and what is open).",
+    "   `plan.md` starts with a `## Summary` section (its reader is the owner, who reads it cold on the plan page between other topics and approves the plan from this section alone, so it must stand alone: explain it as to someone new to this topic, as owner text (your owner-text rule); form: a `**Goal:**` paragraph, then the steps as a numbered list, then, where a flow or a before-and-after exists, one diagram (a `mermaid` fence) or a small table, then the boxes at the end, each a GitHub alert (`> [!WARNING]`) whose first line is a bold label and whose items are a list: WARNING for a heads-up, NOTE for a decision you took for the owner, TIP for a decision the owner took, IMPORTANT for a question only the owner can answer, CAUTION for a serious risk or an accepted gap; one fact per sentence; no paths or ids; few code spans (code font only where a name must be exact); for example \"**Goal:** pages load faster.\" then \"1. Measure first.\" \"2. Cache the slowest query.\" then \"> [!WARNING]\" \"> **Heads-up**\" \"> - Cached data may be a minute old.\" and \"> [!NOTE]\" \"> **Decided for you**\" \"> - The admin pages stay as they are.\"), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none; your parent reads them to see what you decided and what is open).",
 ]
 
 
@@ -285,7 +285,10 @@ def plan_first_notes(local):
     """`PLAN_FIRST_NOTES` for a footer; `local`: the parent is reached by intercom, else by file."""
     fill = {"to_parent": "in a message whose first line starts with `Question` (by file, `ask.md`, when the parent is not a Pi session)", "no_human": "ask the parent in a message"} if local else \
         {"to_parent": "by file (`ask.md`)", "no_human": "ask by file (`ask.md`) and end your turn: the answer comes as a brief"}
-    return [n % fill for n in PLAN_FIRST_NOTES]
+    notes = [n % fill for n in PLAN_FIRST_NOTES]
+    if not local:
+        notes[-1] += " A harness on the remote machine that refuses the plan as `missing` is older: use `## For the owner` there."
+    return notes
 
 
 def footer(label, plan_first):
@@ -310,6 +313,7 @@ def footer(label, plan_first):
             "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
             "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir (an HTML plan stays in your scratch dir: copy its generated `plan-<topic>.md` there) and send",
             "   `Plan from %s: <absolute path of plan.md>`; it informs the parent, so do not wait for an answer to it." % label,
+            "   The review is done: next, below heavy go on and build; at heavy take the heavy step below (the waits-on line, then the checkpoint). Never idle waiting for the parent.",
             "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
             "   - Tier heavy: send the parent the plain line `%s waits on the owner at its plan checkpoint`, then call" % label,
             "     `foreman_checkpoint`; the owner answers in a dialog in this pane, and you build after the approval. The line",
@@ -384,6 +388,7 @@ def remote_footer(label, plan_first):
             "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir (an HTML plan stays in your scratch dir: copy its generated `plan-<topic>.md` there) and run",
             "       %s plan" % base,
             "   It informs the parent, so do not wait for an answer to it.",
+            "   The review is done: next, below heavy go on and build; at heavy call `foreman_checkpoint`. Never idle waiting for the parent.",
             "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
             "   - Tier heavy: call `foreman_checkpoint`; the owner answers in a dialog in this pane (attaching to it from the",
             "     other machine), and you build after the approval. Run no notice before it: the parent learns from its own check",

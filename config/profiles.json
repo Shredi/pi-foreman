@@ -37,6 +37,7 @@
         "herdr": true,
         "footer-ui": true,
         "retro": true,
+        "reports": true,
         "trace": true
       }
     }

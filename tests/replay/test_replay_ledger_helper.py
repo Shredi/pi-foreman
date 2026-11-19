@@ -3,8 +3,8 @@
 After a reviewer PASS four ledger marks through the tool, or a pure-ledger bash compound, go through
 and so does the finish. The tool closes V only after a PASS with no
 revision since (traced attested, no stop_hold after it); before a review and after a FAIL it
-refuses, and the escape-hatch finish leaves V open. A reviewer child closes V on the foreman's
-ledger through the tool and may do nothing else with it. The reviewer replies carry no `N. PASS` lines, so the harness marks nothing itself. "off" keeps the old behaviour: no tool,
+refuses, and the escape-hatch finish leaves V open. A reviewer child launched with `items: ["V"]` closes V on the foreman's
+ledger through its `review_verdict` call (a result for item 1 is refused: not a launch item) and may do nothing else with it; it has no foreman_ledger tool. The other reviewer records carry no item results, so the harness marks nothing itself. "off" keeps the old behaviour: no tool,
 every ledger shell call counts. A foreman ledger shell call refused by a permission rule is traced ledger_call allowed false.
 Same prerequisites and skips as test_replay.py.
 """
@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
-from test_replay_ceremony_gate import events  # noqa: E402
+from driver import load_fixture, tool_results
+from test_replay import REASON, ReplayCase
+from test_replay_ceremony_gate import events
 
 V_REFUSAL = "V closes after a reviewer PASS with no revision since"
 
@@ -98,7 +98,7 @@ class TestLedgerHelper(ReplayCase):
         rig, sid, recs = self.run_flow("g")
         text = self.ledger(rig, "lg")
         self.assertIn("- [ ] 1. a", text, "a reviewer child may not mark other items")
-        self.assertIn("- [x] V. fresh-eyes verification passed\n", text)
+        self.assertIn("- [x] V. fresh-eyes verification passed — verified by reviewer PASS\n", text)
         self.assertEqual(events(rig, sid, "ledger_call"), [], "child calls are not foreman ledger calls")
 
     def test_upsert_appends_rewrites_keeps_state_and_is_idempotent(self):

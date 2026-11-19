@@ -10,7 +10,7 @@ import { baseFloorEnv, gateDecide, type GateResult } from "../gate.ts";
 import { tmpRoots, type GateRoots } from "../pathrules.ts";
 
 // the fixture worlds are literal strings (nothing is created on disk); the win32 rows run on a posix host and show what the gate code says for that string
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 interface Ctx { platform: string; worktree: string; cwd: string; home?: string; agentDir?: string; sessionDir?: string; pkgRoot?: string; scratch?: string; scratchBase?: string; owned: string[]; handoff?: string; foremanRoot?: string; noTmp: boolean }
 const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
 const ROLE: Record<string, string> = { m: "foreman", b: "builder", r: "reviewer" };
@@ -106,7 +106,7 @@ const run = (rows: Row[]): void => {
   }
 };
 
-test("bashpath-win32", posixOnly, () => {
+test("bashpath-win32", { skip: posixOnly }, () => {
   run([
     // bashpath-win32.test.ts:45 
     [0,"bash","S=C:/r2fx/home/.ssh; cat $S/id_rsa","m","block:floor-secret-path"],
@@ -117,28 +117,26 @@ test("bashpath-win32", posixOnly, () => {
   ]);
 });
 
-test("bg", posixOnly, () => {
+test("bg", { skip: posixOnly }, () => {
   run([
     // bg.test.ts:298 
     [1,"bash","echo x > .git/config","m","block:floor-secret-path"],
     [1,"bash","trash /Users/r2fx/x","m","block:floor-delete-outside"],
     // bg.test.ts:300 
-    [1,"foreman_bg",{"command":"echo x > .git/config"},"m","block:floor-secret-path"],
-    [1,"foreman_bg",{"command":"trash /Users/r2fx/x"},"m","block:floor-delete-outside"],
     // bg.test.ts:393 
     [1,"bg_run",{"command":"echo x > .git/config"},"m","block:floor-secret-path"],
     [1,"bg_run",{"command":"trash /Users/r2fx/x"},"m","block:floor-delete-outside"],
   ]);
 });
 
-test("child-install-npm-ci-symlink", posixOnly, () => {
+test("child-install-npm-ci-symlink", { skip: posixOnly }, () => {
   run([
     // child-install-npm-ci-symlink.test.ts:62 
     [5,"bash","npm ci","b","block:child-write-outside"],
   ]);
 });
 
-test("child-install-npm-ci-worktree", posixOnly, () => {
+test("child-install-npm-ci-worktree", { skip: posixOnly }, () => {
   run([
     // child-install-npm-ci-worktree.test.ts:42 
     [7,"bash","npm ci","b","block:child-write-outside"],
@@ -153,7 +151,7 @@ test("child-install-npm-ci-worktree", posixOnly, () => {
   ]);
 });
 
-test("child-install-owned-root-win32", posixOnly, () => {
+test("child-install-owned-root-win32", { skip: posixOnly }, () => {
   run([
     // child-install-owned-root-win32.test.ts:73 
     [9,"bash","npm ci --prefix=C:/r2fx/other","b","block:child-write-outside"],
@@ -168,7 +166,7 @@ test("child-install-owned-root-win32", posixOnly, () => {
   ]);
 });
 
-test("child-install-owned-root", posixOnly, () => {
+test("child-install-owned-root", { skip: posixOnly }, () => {
   run([
     // child-install-owned-root.test.ts:33 
     [3,"bash","npm install --prefix /elsewhere","b","block:child-write-outside"],
@@ -179,7 +177,7 @@ test("child-install-owned-root", posixOnly, () => {
   ]);
 });
 
-test("childtmp-win32-shortname", posixOnly, () => {
+test("childtmp-win32-shortname", { skip: posixOnly }, () => {
   run([
     // childtmp-win32-shortname.test.ts:41 
     [10,"bash","echo x > C:/r2x/other/out.txt","b","block:child-write-outside"],
@@ -194,7 +192,7 @@ test("childtmp-win32-shortname", posixOnly, () => {
   ]);
 });
 
-test("childtmp", posixOnly, () => {
+test("childtmp", { skip: posixOnly }, () => {
   run([
     // childtmp.test.ts:20 
     [11,"bash","npm test > /tmp/_t1.txt 2>&1; echo done","b","block:child-write-outside"],
@@ -213,7 +211,7 @@ test("childtmp", posixOnly, () => {
   ]);
 });
 
-test("cycle3-safety", posixOnly, () => {
+test("cycle3-safety", { skip: posixOnly }, () => {
   run([
     // cycle3-safety.test.ts:50 
     [12,"write",{"path":".claude/settings.json","content":"x"},"m","ask:selfmod-project-claude"],
@@ -253,7 +251,7 @@ test("cycle3-safety", posixOnly, () => {
   ]);
 });
 
-test("handoff-child-overlay", posixOnly, () => {
+test("handoff-child-overlay", { skip: posixOnly }, () => {
   run([
     // handoff-child-overlay.test.ts:27 
     [14,"write",{"path":"/Users/r2fx/.pi/agent/pi-foreman/handoffs/h1/ruling.md","content":"x"},"b","block:child-write-outside"],
@@ -275,7 +273,7 @@ test("handoff-child-overlay", posixOnly, () => {
   ]);
 });
 
-test("handoff-parent-read", posixOnly, () => {
+test("handoff-parent-read", { skip: posixOnly }, () => {
   run([
     // handoff-parent-read.test.ts:33 
     [2,"write",{"path":"/Users/r2fx/home/.pi/agent/pi-foreman/handoffs/s1/parent"},"m","ask:selfmod-identity"],
@@ -286,7 +284,7 @@ test("handoff-parent-read", posixOnly, () => {
   ]);
 });
 
-test("lane2-apply", posixOnly, () => {
+test("lane2-apply", { skip: posixOnly }, () => {
   run([
     // lane2-apply.test.ts:104 
     [17,"bash","patch -d /Users/r2fx/repo.worktrees/other -p1 < /Users/r2fx/tmp/pi-foreman-scratch/child1/x.patch","b","block:child-write-outside"],
@@ -299,7 +297,7 @@ test("lane2-apply", posixOnly, () => {
   ]);
 });
 
-test("lane2-isolation", posixOnly, () => {
+test("lane2-isolation", { skip: posixOnly }, () => {
   run([
     // lane2-isolation.test.ts:94 
     [19,"bash","git -C /Users/r2fx/repo.worktrees/worktrees/round/pi-worktree-r1-s0-1 commit -m x","b","block:child-write-outside"],
@@ -318,7 +316,7 @@ test("lane2-isolation", posixOnly, () => {
   ]);
 });
 
-test("lane2-paths", posixOnly, () => {
+test("lane2-paths", { skip: posixOnly }, () => {
   run([
     // lane2-paths.test.ts:74 
     [21,"bash","echo x > \"/Users/r2fx/repo/a b\"","r","block:child-write-outside"],
@@ -350,14 +348,14 @@ test("lane2-paths", posixOnly, () => {
   ]);
 });
 
-test("lane2-prose-failclosed", posixOnly, () => {
+test("lane2-prose-failclosed", { skip: posixOnly }, () => {
   run([
     // lane2-prose-failclosed.test.ts:28 
     [24,"bash","rsync x \"/Users/r2fx/x/a b\"","m","block:floor-overwrite-outside"],
   ]);
 });
 
-test("overlay-hardening", posixOnly, () => {
+test("overlay-hardening", { skip: posixOnly }, () => {
   run([
     // overlay-hardening.test.ts:43 
     [12,"write",{"path":".git/hooks/pre-commit","content":"x"},"b","block:child-write-outside"],
@@ -423,7 +421,7 @@ test("overlay-hardening", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-grep", posixOnly, () => {
+test("permoverlay-grep", { skip: posixOnly }, () => {
   run([
     // permoverlay-grep.test.ts:35 
     [26,"bash","grep -nE \"x\" /Users/r2fx/home/.ssh/id_rsa","bm","block:floor-secret-path"],
@@ -436,7 +434,7 @@ test("permoverlay-grep", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-r41", posixOnly, () => {
+test("permoverlay-r41", { skip: posixOnly }, () => {
   run([
     // permoverlay-r41.test.ts:50 
     [29,"bash","find / -name x","bm","block:floor-fs-scan"],
@@ -809,8 +807,8 @@ test("permoverlay-r41", posixOnly, () => {
     [31,"bash","find ~ -name x","bm","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:493 
     [29,"bash","bash -c 'rm -rf /pf41/agent/pi-foreman/state'","m","block:floor-delete-outside"],
-    [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","m","ask:floor-policy-file"],
-    [29,"bash","rm -rf $'/pf41/agent/pi-foreman/managed.json'","m","ask:floor-policy-file"],
+    [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","m","block:floor-delete-unknown-target"],
+    [29,"bash","rm -rf $'/pf41/agent/pi-foreman/managed.json'","m","block:floor-delete-unknown-target"],
     // permoverlay-r41.test.ts:494 
     [29,"bash","bash -c 'rm -rf /pf41/agent/pi-foreman/state'","b","block:floor-delete-outside"],
     [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","b","block:floor-policy-file"],
@@ -818,7 +816,7 @@ test("permoverlay-r41", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-vars-bind", posixOnly, () => {
+test("permoverlay-vars-bind", { skip: posixOnly }, () => {
   run([
     // permoverlay-vars-bind.test.ts:107 
     [27,"bash","S=/tmp; echo x > $S/f","b","block:child-write-outside"],
@@ -826,14 +824,14 @@ test("permoverlay-vars-bind", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-vars", posixOnly, () => {
+test("permoverlay-vars", { skip: posixOnly }, () => {
   run([
     // permoverlay-vars.test.ts:45 
     [26,"bash","S=/Users/r2fx/home/.ssh; cat $S/id_rsa","m","block:floor-secret-path"],
   ]);
 });
 
-test("permoverlay", posixOnly, () => {
+test("permoverlay", { skip: posixOnly }, () => {
   run([
     // permoverlay.test.ts:74 
     [13,"bash","cat .env","m","block:floor-secret-path"],
@@ -991,7 +989,7 @@ test("permoverlay", posixOnly, () => {
   ]);
 });
 
-test("probescan", posixOnly, () => {
+test("probescan", { skip: posixOnly }, () => {
   run([
     // probescan.test.ts:133 
     [18,"bash","git config core.hooksPath $FOREMAN_SCRATCH/h","r","block:floor-git-config"],
@@ -1022,7 +1020,7 @@ test("probescan", posixOnly, () => {
   ]);
 });
 
-test("pubkey-read", posixOnly, () => {
+test("pubkey-read", { skip: posixOnly }, () => {
   run([
     // pubkey-read.test.ts:111 
     [34,"write",{"path":"~/.ssh/k.pub","content":"x"},"m","block:floor-secret-path"],
@@ -1114,7 +1112,7 @@ test("pubkey-read", posixOnly, () => {
   ]);
 });
 
-test("r10-child-npm-owned-subdir", posixOnly, () => {
+test("r10-child-npm-owned-subdir", { skip: posixOnly }, () => {
   run([
     // r10-child-npm-owned-subdir.test.ts:117 
     [3,"bash","npm ci --prefix /Users/r2fx/other","b","block:child-write-outside"],
@@ -1129,7 +1127,7 @@ test("r10-child-npm-owned-subdir", posixOnly, () => {
   ]);
 });
 
-test("r10-state-usage-read", posixOnly, () => {
+test("r10-state-usage-read", { skip: posixOnly }, () => {
   run([
     // r10-state-usage-read.test.ts:72 
     [39,"bash","echo x > /Users/r2fx/home/.pi/agent/pi-foreman/state/usage/f","m","ask:selfmod-state"],
@@ -1147,7 +1145,7 @@ test("r10-state-usage-read", posixOnly, () => {
   ]);
 });
 
-test("r10-toolchain-probe", posixOnly, () => {
+test("r10-toolchain-probe", { skip: posixOnly }, () => {
   run([
     // r10-toolchain-probe.test.ts:112 
     [2,"bash","cat ~/.npmrc","bm","block:floor-secret-path"],
@@ -1156,7 +1154,7 @@ test("r10-toolchain-probe", posixOnly, () => {
   ]);
 });
 
-test("r11-guard-false-positives", posixOnly, () => {
+test("r11-guard-false-positives", { skip: posixOnly }, () => {
   run([
     // r11-guard-false-positives.test.ts:105 
     [40,"bash","npm ci --prefix /Users/r2fx/foreman","b","block:child-write-foreman-checkout"],
@@ -1171,7 +1169,7 @@ test("r11-guard-false-positives", posixOnly, () => {
   ]);
 });
 
-test("r11-npm-lock-win32", posixOnly, () => {
+test("r11-npm-lock-win32", { skip: posixOnly }, () => {
   run([
     // r11-npm-lock-win32.test.ts:36 
     [43,"bash","npm ci --prefix D:/a/pf-r11-lock/foreman","b","block:child-write-outside"],
@@ -1186,14 +1184,14 @@ test("r11-npm-lock-win32", posixOnly, () => {
   ]);
 });
 
-test("r14-child-msgfile", posixOnly, () => {
+test("r14-child-msgfile", { skip: posixOnly }, () => {
   run([
     // r14-child-msgfile.test.ts:118 
     [46,"bash","git commit -F /Users/r2fx/home/.pi/agent/pi-foreman/state/trace-other-sid.jsonl","b","block:selfmod-state-read"],
   ]);
 });
 
-test("r2-trigger-state", posixOnly, () => {
+test("r2-trigger-state", { skip: posixOnly }, () => {
   run([
     // r2-trigger-state.test.ts:112 
     [12,"write",{"path":"/Users/r2fx/home/.pi/agent/pi-foreman/state/claudecfg-abc.json","content":"{}"},"m","ask:selfmod-state"],
@@ -1212,7 +1210,7 @@ test("r2-trigger-state", posixOnly, () => {
   ]);
 });
 
-test("r3-bridge-config", posixOnly, () => {
+test("r3-bridge-config", { skip: posixOnly }, () => {
   run([
     // r3-bridge-config.test.ts:116 
     [12,"write",{"path":"/Users/r2fx/home/.pi/agent/claude-bridge.json","content":"{}"},"m","ask:selfmod-agent-harness"],
@@ -1246,7 +1244,7 @@ test("r3-bridge-config", posixOnly, () => {
   ]);
 });
 
-test("r31c-net-read", posixOnly, () => {
+test("r31c-net-read", { skip: posixOnly }, () => {
   run([
     // r31c-net-read.test.ts:170 
     [47,"bash","curl -o /Users/r2fx/repo/f https://e.example/x","r","block:child-readonly-write"],
@@ -1255,14 +1253,14 @@ test("r31c-net-read", posixOnly, () => {
   ]);
 });
 
-test("r42-self-ruling-git-readonly", posixOnly, () => {
+test("r42-self-ruling-git-readonly", { skip: posixOnly }, () => {
   run([
     // r42-self-ruling-git-readonly.test.ts:170 
     [18,"bash","git ls-remote --upload-pack=/tmp/p origin","r","block:child-readonly-write"],
   ]);
 });
 
-test("r46-identity-protect", posixOnly, () => {
+test("r46-identity-protect", { skip: posixOnly }, () => {
   run([
     // r46-identity-protect.test.ts:27 
     [12,"write",{"path":"/Users/r2fx/home/.pi/agent/pi-foreman/handoffs/s1/live.json","content":"{}"},"m","ask:selfmod-identity"],
@@ -1281,7 +1279,7 @@ test("r46-identity-protect", posixOnly, () => {
   ]);
 });
 
-test("r46-install", posixOnly, () => {
+test("r46-install", { skip: posixOnly }, () => {
   run([
     // r46-install.test.ts:52 
     [48,"bash","npm ci --prefix /elsewhere","b","block:child-write-outside"],
@@ -1290,7 +1288,7 @@ test("r46-install", posixOnly, () => {
   ]);
 });
 
-test("r46-session-dir-move", posixOnly, () => {
+test("r46-session-dir-move", { skip: posixOnly }, () => {
   run([
     // r46-session-dir-move.test.ts:40 
     [50,"bash","mv /Users/r2fx/home/.pi/agent/sessions/--proj--/sub /Users/r2fx/home/.pi/agent/sessions/--proj--/sub.old","m","ask:selfmod-session-dir"],
@@ -1329,7 +1327,7 @@ test("r46-session-dir-move", posixOnly, () => {
   ]);
 });
 
-test("r46-session-file-deny", posixOnly, () => {
+test("r46-session-file-deny", { skip: posixOnly }, () => {
   run([
     // r46-session-file-deny.test.ts:45 
     [51,"write",{"path":"/Users/r2fx/home/.pi/agent/sessions/--proj--/2026-01-01T00-00-00_abc.jsonl","content":"x"},"bm","block:floor-policy-file"],
@@ -1353,7 +1351,7 @@ test("r46-session-file-deny", posixOnly, () => {
   ]);
 });
 
-test("role-skills-overlay", posixOnly, () => {
+test("role-skills-overlay", { skip: posixOnly }, () => {
   run([
     // role-skills-overlay.test.ts:140 
     [52,"bash","cat /Users/r2fx/home/.agents/skills/named/.git/config","b","block:floor-secret-path"],
@@ -1362,7 +1360,7 @@ test("role-skills-overlay", posixOnly, () => {
   ]);
 });
 
-test("roundowner-redirect", posixOnly, () => {
+test("roundowner-redirect", { skip: posixOnly }, () => {
   run([
     // roundowner-redirect.test.ts:41 
     [18,"bash","echo x > f2","r","block:child-readonly-write"],
@@ -1374,7 +1372,7 @@ test("roundowner-redirect", posixOnly, () => {
   ]);
 });
 
-test("roundowner-shell", posixOnly, () => {
+test("roundowner-shell", { skip: posixOnly }, () => {
   run([
     // roundowner-shell.test.ts:54 
     [18,"bash","rm f","r","block:child-readonly-write"],
@@ -1396,7 +1394,7 @@ test("roundowner-shell", posixOnly, () => {
   ]);
 });
 
-test("roundowner", posixOnly, () => {
+test("roundowner", { skip: posixOnly }, () => {
   run([
     // roundowner.test.ts:40 
     [53,"write",{"path":"/Users/r2fx/repo.worktrees/worktrees/round/pi-worktree-b/src/a.ts"},"b","block:child-write-outside"],
@@ -1419,7 +1417,7 @@ test("roundowner", posixOnly, () => {
   ]);
 });
 
-test("roundsurface", posixOnly, () => {
+test("roundsurface", { skip: posixOnly }, () => {
   run([
     // roundsurface.test.ts:118 
     [55,"write",{"path":"/Users/r2fx/repo.worktrees/other/f.txt"},"b","block:child-write-outside"],
@@ -1432,7 +1430,7 @@ test("roundsurface", posixOnly, () => {
   ]);
 });
 
-test("s2-child-redirects", posixOnly, () => {
+test("s2-child-redirects", { skip: posixOnly }, () => {
   run([
     // s2-child-redirects.test.ts:61 
     [18,"bash","cat f > out.txt","r","block:child-readonly-write"],
@@ -1447,7 +1445,7 @@ test("s2-child-redirects", posixOnly, () => {
   ]);
 });
 
-test("s2-main-ledger-read", posixOnly, () => {
+test("s2-main-ledger-read", { skip: posixOnly }, () => {
   run([
     // s2-main-ledger-read.test.ts:55 
     [56,"bash","cat /Users/r2fx/repo/.workflow/.env","br","block:floor-secret-path"],
@@ -1460,7 +1458,7 @@ test("s2-main-ledger-read", posixOnly, () => {
   ]);
 });
 
-test("s2-readonly-falsepos", posixOnly, () => {
+test("s2-readonly-falsepos", { skip: posixOnly }, () => {
   run([
     // s2-readonly-falsepos.test.ts:46 
     [57,"bash","echo x > .git/config","bm","block:floor-secret-path"],
@@ -1469,7 +1467,7 @@ test("s2-readonly-falsepos", posixOnly, () => {
   ]);
 });
 
-test("safety-followup", posixOnly, () => {
+test("safety-followup", { skip: posixOnly }, () => {
   run([
     // safety-followup.test.ts:90 
     [12,"bash","trash ~/.pi","m","block:floor-delete-outside"],
@@ -1486,7 +1484,7 @@ test("safety-followup", posixOnly, () => {
   ]);
 });
 
-test("sec-fix-bound", posixOnly, () => {
+test("sec-fix-bound", { skip: posixOnly }, () => {
   run([
     // sec-fix-bound.test.ts:69 
     [59,"bash","S=/Users/r2fx/repo.worktrees/round; echo x > $S/f","r","block:child-readonly-write"],
@@ -1497,7 +1495,7 @@ test("sec-fix-bound", posixOnly, () => {
   ]);
 });
 
-test("sec-fix-tilde", posixOnly, () => {
+test("sec-fix-tilde", { skip: posixOnly }, () => {
   run([
     // sec-fix-tilde.test.ts:77 
     [59,"bash","S=$FOREMAN_SCRATCH; npm run typecheck > $S/../x 2>&1","r","block:child-write-outside"],
@@ -1509,7 +1507,7 @@ test("sec-fix-tilde", posixOnly, () => {
   ]);
 });
 
-test("shellvars-cases", posixOnly, () => {
+test("shellvars-cases", { skip: posixOnly }, () => {
   run([
     // shellvars-cases.test.ts:72 
     [60,"bash","cat /Users/r2fx/home/.ssh/id_rsa","m","block:floor-secret-path"],
@@ -1520,7 +1518,7 @@ test("shellvars-cases", posixOnly, () => {
   ]);
 });
 
-test("shellvars-win32-escape", posixOnly, () => {
+test("shellvars-win32-escape", { skip: posixOnly }, () => {
   run([
     // shellvars-win32-escape.test.ts:53 
     [61,"bash","H=C:\\\\Profiles\\\\u\\\\.ssh; cat $H/id_rsa","bm","block:floor-secret-path"],
@@ -1546,7 +1544,7 @@ test("shellvars-win32-escape", posixOnly, () => {
   ]);
 });
 
-test("shellvars-win32", posixOnly, () => {
+test("shellvars-win32", { skip: posixOnly }, () => {
   run([
     // shellvars-win32.test.ts:62 
     [61,"bash","H=C:/Profiles/u/.ssh; cat $H/id_rsa","bm","block:floor-secret-path"],
@@ -1569,14 +1567,14 @@ test("shellvars-win32", posixOnly, () => {
   ]);
 });
 
-test("switch-regression-win32", posixOnly, () => {
+test("switch-regression-win32", { skip: posixOnly }, () => {
   run([
     // switch-regression-win32.test.ts:22 
     [25,"bash","findstr /in:C:/Profiles/u/.ssh/id_ed25519 x","m","block:floor-secret-path"],
   ]);
 });
 
-test("win32-bashpath-shapes", posixOnly, () => {
+test("win32-bashpath-shapes", { skip: posixOnly }, () => {
   run([
     // win32-bashpath-shapes.test.ts:45 
     [61,"bash","node C:\\t\\pfs\\s1/probe/probe.mjs > C:\\t\\pfs\\s1/out.log 2>&1","b","block:child-write-outside"],
@@ -1587,7 +1585,7 @@ test("win32-bashpath-shapes", posixOnly, () => {
   ]);
 });
 
-test("winpaths", posixOnly, () => {
+test("winpaths", { skip: posixOnly }, () => {
   run([
     // winpaths.test.ts:24 
     [25,"write",{"path":".git.\\config"},"b","block:child-write-outside"],
@@ -1623,7 +1621,7 @@ test("winpaths", posixOnly, () => {
   ]);
 });
 
-test("worktree-root-consumers", posixOnly, () => {
+test("worktree-root-consumers", { skip: posixOnly }, () => {
   run([
     // worktree-root-consumers.test.ts:49 
     [63,"write",{"path":"/Users/r2fx/elsewhere/trees/other/round/x.ts"},"b","block:child-write-outside"],
@@ -1631,7 +1629,7 @@ test("worktree-root-consumers", posixOnly, () => {
   ]);
 });
 
-test("worktree-root-pending", posixOnly, () => {
+test("worktree-root-pending", { skip: posixOnly }, () => {
   run([
     // worktree-root-pending.test.ts:33 
     [65,"write",{"path":"/Users/r2fx/elsewhere/trees/other/round/x.ts"},"b","block:child-write-outside"],

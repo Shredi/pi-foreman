@@ -13,6 +13,7 @@ import type { ReviewRecord } from "../reviews.ts";
 import { sharedWorld, tick, world } from "./_r46world.ts";
 import { lightSpawner } from "./_light-spawner.ts";
 import { codeReview, loopRefused } from "./_loopstop.ts";
+import type { RecSpec } from "./_verdict-rig.ts";
 
 const standard = { ceremony: { default: "standard" } };
 const round = (state: string, work: number | undefined, ...sig: string[]): LoopRound => ({ verdict: "fail", state, sig, ...(work === undefined ? {} : { work }) });
@@ -64,7 +65,10 @@ function repo(dir: string): void {
 // answers allow, the config CLI runs once (nothing changes the config between the cases) and the reports name no file, so the findings record has none.
 const shared = sharedWorld({ ...standard, spawner: lightSpawner({ memoConfig: true, noFindings: true }) }, async (w) => repo(w.project));
 
-const reportItem = (n: number, note: string): string => `${n}. FAIL: ${note}\nOverall verdict: FAIL`;
+// the record call of a FAIL on item `n` with a finding that names no file (a text report no longer carries the item: the record does)
+// the items a record may fail are the launch's items, so the ledger holds them open
+const LEDGER = "# Loop\n\n- [ ] 1. one\n- [ ] 2. two\n- [ ] 3. three\n- [ ] 4. four\n- [ ] V. verify\n";
+const reportItem = (n: number, note: string): RecSpec => ({ verdict: "fail", items: [{ id: n, result: "fail" }], findings: [{ kind: "defect", text: note }] });
 const loopStops = async (w: ReturnType<typeof world>): Promise<number> => (await w.traceEvents()).filter((r) => r.event === "review_loop").length;
 let edits = 0;
 const change = (w: ReturnType<typeof world>): void => fs.writeFileSync(path.join(w.project, "a.txt"), `a${++edits}\n`);
@@ -72,6 +76,7 @@ const change = (w: ReturnType<typeof world>): void => fs.writeFileSync(path.join
 test("page 7: FAIL item 2, a builder run changes the tree, FAIL item 2 with other findings: the next builder is accepted", async () => {
   const w = await shared();
   const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(2, "the guard is missing"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
   change(w);
@@ -83,6 +88,7 @@ test("page 7: FAIL item 2, a builder run changes the tree, FAIL item 2 with othe
 test("a builder run that changes nothing between two FAILs of the same item still stops the loop", async () => {
   const w = await shared();
   const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(2, "x"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
   assert.equal(await codeReview(a, reportItem(2, "y"), 2), null);
@@ -93,6 +99,7 @@ test("a builder run that changes nothing between two FAILs of the same item stil
 test("a changed tree with no builder run or edit in between still stops the loop", async () => {
   const w = await shared();
   const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(2, "x"), 1), null);
   change(w);
   assert.equal(await codeReview(a, reportItem(2, "y"), 2), null);
@@ -102,6 +109,7 @@ test("a changed tree with no builder run or edit in between still stops the loop
 test("page 8: a stop lifted by an owner prompt, then a builder changes the tree and the same item fails again: the next builder is accepted", async () => {
   const w = await shared();
   const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(4, "first"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
   assert.equal(await codeReview(a, reportItem(4, "second"), 2), null);
@@ -118,6 +126,7 @@ test("page 8: a stop lifted by an owner prompt, then a builder changes the tree 
 test("page 8: a stop lifted by a parent brief, then new code lands: the next builder is accepted", async () => {
   const w = await shared();
   const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(4, "first"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
   assert.equal(await codeReview(a, reportItem(4, "second"), 2), null);
@@ -133,6 +142,7 @@ test("page 8: a stop lifted by a parent brief, then new code lands: the next bui
 test("reload: the round's work and the foreman's work count survive, and the rule still applies", async () => {
   const w = await shared();
   const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(2, "x"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
   change(w);

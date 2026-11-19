@@ -8,8 +8,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-a9-"));
 const checkout = path.join(base, "checkout");
 const wt = path.join(base, "wt");
@@ -25,39 +25,39 @@ const rule = (command: string, o: { worktree?: string; co?: string | null } = {}
 };
 const FENCE = "child-write-foreman-checkout";
 
-test("a child redirect into the parent checkout and into its .workflow is the checkout fence", { skip: !posix }, () => {
+test("a child redirect into the parent checkout and into its .workflow is the checkout fence", { skip: posixOnly }, () => {
   assert.equal(rule(`echo x > ${checkout}/notes.md`), FENCE);
   assert.equal(rule(`echo x > ${checkout}/.workflow/plan.md`), FENCE);
   assert.equal(rule(`cat ${wt}/a >> ${checkout}/.workflow/result.md`), FENCE);
   assert.equal(rule(`cp ${wt}/a ${checkout}/.workflow/scratch/a`), FENCE);
 });
 
-test("git -C <checkout> write verbs, git clone into it and git run from it are the checkout fence", { skip: !posix }, () => {
+test("git -C <checkout> write verbs, git clone into it and git run from it are the checkout fence", { skip: posixOnly }, () => {
   for (const l of [`git -C ${checkout} commit -m x`, `git -C ${checkout} add .`, `git -C ../checkout stash`, `git clone https://example.org/r.git ${checkout}/sub`, `cd ${checkout} && git add .`, `git --git-dir=${checkout}/.git --work-tree=${checkout} add .`]) assert.equal(rule(l), FENCE, l);
 });
 
-test("reads are never fenced, and git read verbs on the checkout are no write", { skip: !posix }, () => {
+test("reads are never fenced, and git read verbs on the checkout are no write", { skip: posixOnly }, () => {
   for (const l of [`cat ${checkout}/.workflow/plan.md`, `ls ${checkout}`, `git -C ${checkout} status`, `git -C ${checkout} log --oneline`, `grep -r x ${checkout}/.workflow`]) assert.notEqual(rule(l), FENCE, l);
 });
 
-test("a heredoc or redirect into the child's own scratch and a write in its worktree are plain write-ins", { skip: !posix }, () => {
+test("a heredoc or redirect into the child's own scratch and a write in its worktree are plain write-ins", { skip: posixOnly }, () => {
   for (const l of [`cat > ${scr}/m.txt <<EOF\nhi\nEOF`, `echo x > ${scr}/a.txt`, `echo x > ${wt}/a.txt`, "git add .", `git -C ${wt} add .`]) assert.equal(rule(l), undefined, l);
 });
 
-test("a worktree nested in the checkout is the child's own: its writes are no write into the checkout", { skip: !posix }, () => {
+test("a worktree nested in the checkout is the child's own: its writes are no write into the checkout", { skip: posixOnly }, () => {
   const nested = path.join(checkout, "nested-wt");
   assert.equal(rule(`echo x > ${nested}/a.txt`, { worktree: nested }), undefined);
   assert.equal(rule("git add .", { worktree: nested }), undefined);
   assert.equal(rule(`echo x > ${checkout}/a.txt`, { worktree: nested }), FENCE);
 });
 
-test("the checkout given through a symlink is the same checkout", { skip: !posix }, () => {
+test("the checkout given through a symlink is the same checkout", { skip: posixOnly }, () => {
   const link = path.join(base, "lnk");
   fs.symlinkSync(checkout, link);
   assert.equal(rule(`echo x > ${link}/a.txt`), FENCE);
   assert.equal(rule(`echo x > ${checkout}/a.txt`, { co: link }), FENCE);
 });
 
-test("without the launch binding (tasks / chain) there is no checkout fence: the write is still outside", { skip: !posix }, () => {
+test("without the launch binding (tasks / chain) there is no checkout fence: the write is still outside", { skip: posixOnly }, () => {
   assert.equal(rule(`echo x > ${checkout}/notes.md`, { co: null }), "child-write-outside");
 });

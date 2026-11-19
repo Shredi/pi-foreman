@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { countingView, entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd } from "../occasion.ts";
+import { entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd } from "../occasion.ts";
 import { composePanelBlock, parseShadowMarker, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type PendingView } from "../panel.ts";
-import { onReviewRunEnd, type RecordRunner } from "../findings.ts";
+import { findingId, onReviewRunEnd, type RecordRunner } from "../findings.ts";
 import { sanitizeTrace } from "../trace.ts";
 import { reviewVerdictsOfRunEnd } from "../bound.ts";
-import { reviewsOfRunEnd } from "../reviews.ts";
-import { reviewerPassOfRunEnd } from "../reviewmarks.ts";
+import { reviewsWithOutput } from "../reviews.ts";
+import { recordFrom, type RecSpec } from "./_verdict-rig.ts";
 
 const PANEL = { ladder: { reviewPanel: { shadows: ["p/m-a:high", "p/m-b"], gates: ["pre-pr"], visible: true } } };
 const shadowOpts = (config: Record<string, unknown> = PANEL) => ({ config, isChild: false, maxThinking: "medium", childMaxThinking: undefined, refused: (m: string) => (m.startsWith("p/m-b") ? "rank says no" : null) });
@@ -25,63 +25,75 @@ test("occasionOf: markers select the occasion; second-opinion wins; none is item
   assert.equal(occasionOf(undefined), "item");
 });
 
-test("second-opinion and shadow verdicts do not count: no item marks, gate verdicts or PR heads", () => {
-  const [a, b] = [{ agent: "reviewer", task: "branch [pre-pr]", model: "p/m-a:medium" }, { agent: "reviewer", task: "branch [pre-pr]", model: "p/m-b" }];
-  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "branch [pre-pr]", model: "p/m-haiku" }, a, b] };
-  const occ = entryOccasions(input);
-  const launch = reviewLaunchOf(input, occ, new Map([[a, "p/m-a:high"], [b, "p/m-b"]]), { started: 0, files: ["a.ts"], panel: { gate: "pre-pr", primary: "p/m-haiku", shadows: ["p/m-a", "p/m-b"] } })!;
+const PASS_SPEC: RecSpec = { verdict: "pass" };
+const FAIL_SPEC: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "leaks", file: "a.ts", line: 3 }] };
 
-  const data = { runId: "r1", results: [ok("reviewer", "1. PASS\nVerdict: PASS", "p/m-haiku"), ok("reviewer", "1. FAIL a.ts:3\nVerdict: FAIL"), ok("reviewer", "1. FAIL\nVerdict: FAIL")] };
-  const results = reviewResultsOfRunEnd(data, launch);
-  assert.deepEqual(results.map((r) => [r.primary, r.counts, r.occasion, r.shadow]), [[true, true, "pre-pr", null], [false, false, "pre-pr", "p/m-a:high"], [false, false, "pre-pr", "p/m-b"]]);
-  const view = countingView(data, results);
-  assert.deepEqual(reviewVerdictsOfRunEnd(view), ["pass"]);
-  assert.equal(reviewsOfRunEnd(view).length, 1);
-  // a single second-opinion run: nothing is left for the consumers, not even the event itself
-  const so: Record<string, unknown> = { agent: "reviewer", task: "again [second-opinion]" };
-  const soLaunch = reviewLaunchOf(so, entryOccasions(so), new Map(), { started: 0, files: [], panel: null });
-  const single = { runId: "r2", agent: "reviewer", status: "completed", success: true, output: "1. PASS\nVerdict: PASS" };
-  const soView = countingView(single, reviewResultsOfRunEnd(single, soLaunch));
-  assert.deepEqual(reviewVerdictsOfRunEnd(soView), []);
-  assert.equal(reviewerPassOfRunEnd(soView), "");
-  assert.equal(reviewsOfRunEnd(soView).length, 0);
+test("second-opinion and shadow verdicts do not count: no item marks, gate verdicts or PR heads", () => {
+  // a primary, a shadow and a second-opinion review are each a single launch with its own record (a group launch of reviewers is refused)
+  const panel = { gate: "pre-pr" as const, primary: "p/m-haiku", shadows: ["p/m-a", "p/m-b"] };
+  const endOf = (input: Record<string, unknown>, shadows: Map<Record<string, unknown>, string>, spec: RecSpec, model?: string) => {
+    const launch = reviewLaunchOf(input, entryOccasions(input), shadows, { started: 0, files: ["a.ts"], panel })!;
+    const data = { runId: "r1", agent: "reviewer", status: "completed", success: true, output: "report", ...(model ? { model } : {}) };
+    const results = reviewResultsOfRunEnd(data, launch, recordFrom(spec));
+    return { data, results };
+  };
+  const primary = endOf({ agent: "reviewer", task: "branch [pre-pr]", model: "p/m-haiku" }, new Map(), PASS_SPEC, "p/m-haiku");
+  assert.deepEqual(primary.results.map((r) => [r.primary, r.counts, r.occasion, r.shadow, r.verdict]), [[true, true, "pre-pr", null, "pass"]]);
+  assert.deepEqual(reviewVerdictsOfRunEnd(primary.results), ["pass"]);
+  assert.equal(reviewsWithOutput(primary.data, primary.results).length, 1);
+  const shadow: Record<string, unknown> = { agent: "reviewer", task: "branch [pre-pr]", model: "p/m-a:medium" };
+  const shadowEnd = endOf(shadow, new Map([[shadow, "p/m-a:high"]]), FAIL_SPEC);
+  assert.deepEqual(shadowEnd.results.map((r) => [r.primary, r.counts, r.occasion, r.shadow]), [[false, false, "pre-pr", "p/m-a:high"]]);
+  assert.deepEqual(reviewVerdictsOfRunEnd(shadowEnd.results), [], "a shadow's verdict reaches no gate");
+  // a second-opinion run: nothing is left for the gate consumers
+  const so = endOf({ agent: "reviewer", task: "again [second-opinion]" }, new Map(), PASS_SPEC);
+  assert.deepEqual(so.results.map((r) => [r.counts, r.occasion]), [[false, "second-opinion"]]);
+  assert.deepEqual(reviewVerdictsOfRunEnd(so.results), []);
+  // one record belongs to a run end of one result: with more results it reads as no verdict
+  const many = reviewResultsOfRunEnd({ runId: "r3", results: [ok("reviewer", "a"), ok("reviewer", "b")] }, null, recordFrom(PASS_SPEC));
+  assert.deepEqual(many.map((r) => r.verdict), [null, null]);
 });
 
 const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-occ-"));
 const ctx = (runId: string) => ({ session: "S", agentDir: "/agent", runId, cwd: "/repo", head: "abc", live: "p/m-haiku", now: 5000 });
 
-test("run end: the record call gets the report on stdin and a file list; a finding is traced; a climbed launch records rung 1", async () => {
+test("run end: the record call gets the report on stdin and a file list; a finding of the verdict record is traced; a climbed launch records rung 1", async () => {
   const dir = tmp();
   const input: Record<string, unknown> = { agent: "reviewer", task: "items 1", model: "p/m-haiku" };
   const launch = reviewLaunchOf(input, entryOccasions(input), new Map(), { started: 1000, files: ["src/a.ts", "src/b.ts"], panel: null })!;
-  const data = { runId: "r1", results: [ok("reviewer", "1. PASS\nVerdict: PASS but src/a.ts:12 leaks", "p/m-haiku")] };
+  const data = { runId: "r1", results: [ok("reviewer", "src/a.ts:12 leaks", "p/m-haiku")] };
+  const rec = recordFrom({ verdict: "fail", findings: [{ kind: "defect", text: "n", file: "src/deep/a.ts", line: 12, class: "resource-leak" }] });
   const calls: { args: string[]; input: string; files: string }[] = [];
   const run: RecordRunner = async (args, stdin) => {
     calls.push({ args, input: stdin, files: fs.readFileSync(args[args.indexOf("--files-from") + 1], "utf8") });
-    return { ok: true, text: JSON.stringify({ verdict: "pass", findings: [{ id: "abc123", file: "src/deep/a.ts", line: 12, class: "leak", note: "n" }] }) };
+    return { ok: true, text: "{}" };
   };
-  const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch), launch, context: ctx("r1"), tmpDir: dir }, run);
+  const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch, rec), launch, context: ctx("r1"), tmpDir: dir }, run);
   const a = calls[0].args;
-  for (const [k, v] of [["--gate", "item"], ["--model", "p/m-haiku"], ["--rung", "0"], ["--primary", "1"], ["--source", "live"], ["--role", "reviewer"], ["--run-id", "r1"], ["--verdict", "PASS"], ["--head", "abc"], ["--secs", "4.0"], ["--session", "S"]]) assert.equal(a[a.indexOf(k) + 1], v, k);
-  assert.match(calls[0].input, /leaks/);
+  for (const [k, v] of [["--gate", "item"], ["--model", "p/m-haiku"], ["--rung", "0"], ["--primary", "1"], ["--source", "live"], ["--role", "reviewer"], ["--run-id", "r1"], ["--verdict", "FAIL"], ["--head", "abc"], ["--secs", "4.0"], ["--session", "S"]]) assert.equal(a[a.indexOf(k) + 1], v, k);
+  assert.deepEqual(JSON.parse(calls[0].input), { items: [], findings: [{ file: "src/deep/a.ts", line: 12, class: "resource-leak", note: "n" }] });
   assert.equal(calls[0].files, "src/a.ts\nsrc/b.ts\n");
   assert.deepEqual(fs.readdirSync(dir), []); // the list is removed
   const finding = out.traces.find((t) => t.event === "finding")!;
-  assert.deepEqual(sanitizeTrace(finding), { event: "finding", role: "reviewer", findingId: "abc123", model: "p/m-haiku", gate: "item", class: "leak", file: "a.ts", line: 12, primary: true });
+  assert.deepEqual(sanitizeTrace(finding), { event: "finding", role: "reviewer", findingId: findingId("src/deep/a.ts", 12, "resource-leak"), model: "p/m-haiku", gate: "item", class: "resource-leak", file: "a.ts", line: 12, primary: true });
   // raised to the strong rung by repeat-fail or security: --rung 1
   const climbed = reviewLaunchOf(input, entryOccasions(input), new Map(), { started: 1000, files: [], panel: null, climbed: new Set([input]) })!;
-  await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, climbed), launch: climbed, context: ctx("r2"), tmpDir: dir }, run);
+  await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, climbed, rec), launch: climbed, context: ctx("r2"), tmpDir: dir }, run);
   assert.equal(calls[1].args[calls[1].args.indexOf("--rung") + 1], "1");
 });
 
-test("run end fail-soft: a failed or garbled record call is zero findings, no throw, no extra trace", async () => {
+test("run end fail-soft: a failed or garbled record call does not throw; a record without a located finding gives no trace", async () => {
   const input: Record<string, unknown> = { agent: "reviewer", task: "items 1", model: "p/m-haiku" };
   const launch = reviewLaunchOf(input, entryOccasions(input), new Map(), { started: 0, files: [], panel: null })!;
-  const data = { runId: "r1", results: [ok("reviewer", "1. PASS\nVerdict: PASS")] };
+  const data = { runId: "r1", results: [ok("reviewer", "report")] };
   for (const run of [async () => ({ ok: false, text: "timed out" }), async () => ({ ok: true, text: "not json" }), async () => { throw new Error("boom"); }] as RecordRunner[]) {
-    const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch), launch, context: ctx("r1"), tmpDir: tmp() }, run);
+    const out = await onReviewRunEnd({ results: reviewResultsOfRunEnd(data, launch, recordFrom(PASS_SPEC)), launch, context: ctx("r1"), tmpDir: tmp() }, run);
     assert.deepEqual(out.traces, []);
   }
+  // the located finding comes from the record, so a failed call does not lose it
+  const located = reviewResultsOfRunEnd(data, launch, recordFrom(FAIL_SPEC));
+  const out = await onReviewRunEnd({ results: located, launch, context: ctx("r1"), tmpDir: tmp() }, async () => ({ ok: false, text: "timed out" }));
+  assert.equal(out.traces.length, 1);
 });
 
 test("composePanelBlock: primary first, shadows by model, dedupe within 3 lines with also-found-by; visible:false hides shadows", () => {

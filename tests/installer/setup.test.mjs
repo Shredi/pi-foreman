@@ -181,6 +181,31 @@ test("a user-level npm: copy of the bundled ask package is removed (pinned or no
   assert.equal(installs(env).filter((a) => a[0] === "remove").length, 2);
 });
 
+test("a user-level npm: copy of the bundled background-tasks package is removed (pinned or not); a git install of it stays", () => {
+  const env = fresh();
+  const git = "git:github.com/x/pi-background-tasks";
+  seed(env, { packages: ["npm:pi-background-tasks@2.6.9", "npm:pi-background-tasks", git, FOREMAN] });
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /would run: pi remove npm:pi-background-tasks@2\.6\.9/);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readSettings(env).packages, [git, FOREMAN]);
+  assert.equal(installs(env).filter((a) => a[0] === "remove").length, 2);
+});
+
+test("--addon and --skip-addon background-tasks print that it ships with pi-foreman and exit 0", () => {
+  const env = fresh();
+  seed(env);
+  const only = run(env, ["--addon", "background-tasks"], NO_PICKER);
+  assert.equal(only.code, 0, only.out);
+  assert.match(only.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
+  assert.deepEqual(installs(env), []);
+  const skip = run(env, ["--skip-addon", "background-tasks"], NO_PICKER);
+  assert.equal(skip.code, 0, skip.out);
+  assert.match(skip.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
+});
+
 test("without a pi-foreman package entry setup prints the install line and fails", () => {
   const env = fresh();
   seed(env, { packages: ["npm:some-provider@1.2.3"] });
@@ -1202,7 +1227,7 @@ test("profile flags: every exit-2 combination names the rule and writes nothing"
     [["--disable", "codemode,nope"], /unknown feature id nope/],
     [["--enable", "setup"], /setup is not toggleable.*docs\/features\.md/],
     [["--enable", "codemode", "--disable", "codemode"], /codemode is in both enable and disable/],
-    [["--addon", "nope"], /unknown add-on nope; valid: polish, background-tasks/],
+    [["--addon", "nope"], /unknown add-on nope; valid: polish, quiver, memory/],
     [["--pick", "--profile", "standard"], /--pick cannot be combined with --profile/],
     [["--pick", "--enable", "codemode"], /--pick cannot be combined with --enable/],
     [["--pick", "--addon", "polish"], /--pick cannot be combined with --addon/],
@@ -1342,24 +1367,23 @@ test("a recorded unknown profile warns and skips the picker", () => {
   assert.equal(foremanJson(env).profile, "bogus");
 });
 
-test("--addon background-tasks runs the exact pi install, records managed.addons and prints the shell-profile env hint", () => {
+test("--addon polish runs the exact pi install and records managed.addons", () => {
   const env = fresh();
   seed(env);
-  const r = run(env, ["--addon", "background-tasks"], { ...NO_PICKER, PI_FOREMAN_HOME: undefined, HOME: env.base, USERPROFILE: env.base, PI_FOREMAN_TEST_PS_DOCUMENTS: path.join(env.base, "Documents") });
+  const r = run(env, ["--addon", "polish"], NO_PICKER);
   assert.equal(r.code, 0, r.out);
-  assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
-  assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself, Pi reads it when it starts/);
+  assert.deepEqual(installs(env), [["install", "npm:pi-polish@0.1.2"]]);
   const s = readSettings(env);
-  assert.ok(s.packages.includes("npm:pi-background-tasks@2.6.10"));
+  assert.ok(s.packages.includes("npm:pi-polish@0.1.2"));
   assert.ok(s.subagents.agentOverrides, "the settings write kept the generated block next to the new package");
   const managed = JSON.parse(fs.readFileSync(managedFile(env), "utf8"));
-  assert.equal(managed.addons["background-tasks"].spec, "npm:pi-background-tasks@2.6.10");
-  assert.match(managed.addons["background-tasks"].installedAt, /^\d{4}-\d\d-\d\dT/);
-  assert.doesNotMatch(r.out, /optional add-on background-tasks/);
+  assert.equal(managed.addons.polish.spec, "npm:pi-polish@0.1.2");
+  assert.match(managed.addons.polish.installedAt, /^\d{4}-\d\d-\d\dT/);
+  assert.doesNotMatch(r.out, /optional add-on polish/);
   // installed now: a second consent installs nothing
   fs.rmSync(env.log);
-  const again = run(env, ["--addon", "background-tasks"], NO_PICKER);
-  assert.match(again.out, /add-on background-tasks: already installed \(npm:pi-background-tasks@2\.6\.10\), no command/);
+  const again = run(env, ["--addon", "polish"], NO_PICKER);
+  assert.match(again.out, /add-on polish: already installed \(npm:pi-polish@0\.1\.2\), no command/);
   assert.deepEqual(installs(env), []);
 });
 
@@ -1370,19 +1394,18 @@ test("with --no-addons (the harness default) nothing is installed and the hint l
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), []);
   assert.match(r.out, /optional add-on polish: .*npm:pi-polish@0\.1\.2.*foreman setup --addon polish/);
-  assert.match(r.out, /optional add-on background-tasks: .*npm:pi-background-tasks@2\.6\.10.*PI_BG_FEATURES=process.*foreman setup --addon background-tasks/);
-  assert.doesNotMatch(r.out, /pi install npm:pi-background-tasks\)/);
+  assert.doesNotMatch(r.out, /optional add-on background-tasks/);
 });
 
 test("--project --addon installs nothing when the add-on is installed globally", () => {
   const env = fresh();
-  seed(env, { packages: [FOREMAN, "npm:pi-background-tasks@2.5.0"] });
+  seed(env, { packages: [FOREMAN, "npm:pi-polish@0.1.0"] });
   const projFile = path.join(env.cwd, ".pi", "settings.json");
   fs.mkdirSync(path.dirname(projFile));
   fs.writeFileSync(projFile, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
-  const r = run(env, ["--project", "--addon", "background-tasks"], NO_PICKER);
+  const r = run(env, ["--project", "--addon", "polish"], NO_PICKER);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /add-on background-tasks: already installed \(npm:pi-background-tasks@2\.5\.0\), no command/);
+  assert.match(r.out, /add-on polish: already installed \(npm:pi-polish@0\.1\.0\), no command/);
   assert.deepEqual(installs(env), []);
   assert.deepEqual(JSON.parse(fs.readFileSync(projFile, "utf8")).packages, [FOREMAN]);
   // not installed anywhere: the project run installs with -l

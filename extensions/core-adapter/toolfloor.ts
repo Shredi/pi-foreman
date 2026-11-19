@@ -6,7 +6,7 @@ import { DEFERRED_FLOOR } from "./deferred.ts";
 const OWNER_CHOICE: readonly string[] = ["tool_search", "codemode", "read", "bash", "ask_user_question"];
 
 /** The tools a top-level foreman needs active: the routing part of the deferred floor plus the session, wait, checkpoint and background tools and intercom. */
-export const TOOL_FLOOR: readonly string[] = [...DEFERRED_FLOOR.filter((n) => !OWNER_CHOICE.includes(n)), "foreman_session_open", "foreman_wait", "foreman_checkpoint", "foreman_bg", "intercom"];
+export const TOOL_FLOOR: readonly string[] = [...DEFERRED_FLOOR.filter((n) => !OWNER_CHOICE.includes(n)), "foreman_session_open", "foreman_wait", "foreman_checkpoint", "bg_run", "intercom"];
 
 export interface FloorInput {
   /** Names of every registered tool. */

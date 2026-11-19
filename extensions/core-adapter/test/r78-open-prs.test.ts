@@ -5,6 +5,7 @@ import path from "node:path";
 import { OpenPrsRefresher, openPrsConfig, openPrsFile, openPrsQueries, parseSearch, realGh, refreshOpenPrs } from "../openprs.ts";
 import type { GhRunner, OpenPrsFile } from "../openprs.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
 const node = (n: number, over: Record<string, unknown> = {}) => ({
   number: n, title: `PR ${n}`, url: `https://example.test/acme/widgets/pull/${n}`, isDraft: false, updatedAt: "2026-10-31T10:00:00Z",
@@ -161,7 +162,7 @@ test("the refresher ticks on a timer, skips a non-gh host and stops cleanly", as
   rmTestTmp(dir);
 });
 
-test("realGh runs the gh found on PATH and reports its stderr", { skip: process.platform === "win32" }, async () => {
+test("realGh runs the gh found on PATH and reports its stderr", { skip: posixOnly }, async () => {
   const bin = mkTestTmp("r78b-");
   const cwd = mkTestTmp("r78w-");
   fs.writeFileSync(path.join(bin, "gh"), "#!/bin/sh\nif [ \"$2\" = fail ]; then echo 'not logged in' >&2; exit 4; fi\necho '{\"ok\":true}'\n", { mode: 0o755 });

@@ -19,7 +19,8 @@ import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import foreman_config as fc  # noqa: E402
 import foreman_findings as ff  # noqa: E402
 
-REPORT = "VERDICT: FAIL\n1. FAIL app/client.py:38 logs the bearer token\nOverall: FAIL\n"
+# stdin of a `record` call: the item numbers and defect findings of the reviewer's verdict record
+REPORT = json.dumps({"items": [1], "findings": [{"file": "app/client.py", "line": 38, "class": "secret-log", "note": "logs the bearer token"}]})
 SCHEMA = json.loads((ROOT / "config" / "foreman.schema.json").read_text(encoding="utf-8"))
 DEFAULTS = json.loads((ROOT / "config" / "foreman.defaults.json").read_text(encoding="utf-8"))
 

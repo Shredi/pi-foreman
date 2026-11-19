@@ -50,10 +50,10 @@ test("builder budget texts say write the code, never return the report; reviewer
   for (const text of [warnText, reason]) assert.doesNotMatch(text, /return your report/i);
   const r = new ChildReads();
   const rl = { warn: 1, deny: 1, role: "reviewer" };
-  assert.match((r.check("read", "1", {}, rl) as { text: string }).text, /Wrap up and return your report/);
+  assert.match((r.check("read", "1", {}, rl) as { text: string }).text, /Continue the task/);
   assert.match((r.check("read", "2", {}, rl) as { reason: string }).reason, /return your report now with what you have/);
   const plain = new ChildReads();
-  assert.match((plain.check("read", "1", {}, { warn: 1, deny: 1 }) as { text: string }).text, /Wrap up and return your report/);
+  assert.match((plain.check("read", "1", {}, { warn: 1, deny: 1 }) as { text: string }).text, /Continue the task/);
 });
 
 // ------------------------------------------------------------------ cap lookup and child side

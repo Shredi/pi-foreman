@@ -15,7 +15,7 @@ test("scanFence: indent, ~~~ fences, backtick info strings and the closing line"
 
 test("a `##` inside a fence is no section for the fold loop; an indented fence is stripped", () => {
   const html = renderMarkdown("## A\n~~~\n## Not a heading\n~~~\n\n## B\n  ```\n  code\n  ```\n", { fold: () => true });
-  assert.equal((html.match(/<details>/g) ?? []).length, 2);
+  assert.equal((html.match(/<details[ >]/g) ?? []).length, 2);
   assert.match(html, /<pre><code>## Not a heading<\/code><\/pre>/);
   assert.match(html, /<pre><code>code<\/code><\/pre>/);
   assert.equal(foldPlanSection("A"), true);

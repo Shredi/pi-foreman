@@ -11,10 +11,15 @@ const sleepSync = (ms: number): void => void Atomics.wait(new Int32Array(new Sha
 
 /** Writes `doc` as JSON to `file`: a tmp file, then a rename (retried 5 times, 50 ms apart, on EPERM, EBUSY or EACCES). Throws on failure. */
 export function writeAtomic(file: string, doc: unknown): void {
+  writeTextAtomic(file, JSON.stringify(doc));
+}
+
+/** Writes `text` to `file` the same way (temporary file in the same directory, then rename); the old file stays when the write or the rename fails. */
+export function writeTextAtomic(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(doc), { mode: 0o600 });
+    fs.writeFileSync(tmp, text, { mode: 0o600 });
     for (let i = 0; ; i++) {
       try {
         fs.renameSync(tmp, file);
@@ -64,4 +69,27 @@ export function dropLock(lock: string, token: string): void {
   try {
     if (ownsLock(lock, token)) fs.unlinkSync(lock);
   } catch { /* already gone */ }
+}
+
+export const LOCK_WAIT_MS = 5000;
+export const LOCK_STALE_MS = 60_000;
+const LOCK_POLL_MS = 50;
+
+/**
+ * Runs `fn` while holding `lockPath` (the lock file of the Python stores: `<file>.lock`, exclusive create, so a Python writer and this one exclude each other).
+ * Waits up to `waitMs` (5 s), breaks a lock older than `staleMs` (60 s), releases on a thrown error. Throws when the lock stays held.
+ */
+export function withFileLock<T>(lockPath: string, fn: () => T, waitMs = LOCK_WAIT_MS, staleMs = LOCK_STALE_MS): T {
+  const start = Date.now();
+  let token = takeLock(lockPath, Date.now(), staleMs);
+  while (token === null) {
+    if (Date.now() - start >= waitMs) throw new Error(`locked: ${path.basename(lockPath)}`);
+    sleepSync(LOCK_POLL_MS);
+    token = takeLock(lockPath, Date.now(), staleMs);
+  }
+  try {
+    return fn();
+  } finally {
+    dropLock(lockPath, token);
+  }
 }

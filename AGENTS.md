@@ -18,8 +18,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
 ## Constraints
 
 - Must run on Linux, macOS and Windows.
-- Python (standard library only, 3.13+) for all scripts. TypeScript only for Pi extensions.
-- No new Python outside `core/guards`; new harness code is TypeScript. The Python half is ported module by module later.
+- Python (standard library only, 3.13+) runs the existing scripts; new harness code is TypeScript, and the goal is Node only. Existing Python may be changed. A new `.py` file is allowed only as a test (`tests/**/test_*.py`), bench task data or vendored `core/`; `python-files.test.ts` enforces this.
 - Pi's file formats are the single source: `AGENTS.md`, skills under `.agents/skills/`,
   role definitions in the package's `agents/` folder. `.claude/agents/` exists only for the
   Claude Code sessions that build this repo. Checked 2026-10-03 (Claude Code 2.1.288): Claude
@@ -37,6 +36,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
   proposing or implementing anything, ask: would a stranger's installation need this? If not,
   it is overlay material.
 - Permissions are default allow: code refuses only a short fixed list of dangerous commands, and for the few risky ones the permission judge looks first and the owner is asked when the judge does not clear the call. Code that parses command text blocked harmless calls one case at a time, so add no tokenizer, no regex over a command line, no list of program names and no pinned shape for one more combination. To react to an event, use a Pi hook or a structured field (tool name, a tool input field, a launch field, an exit code, a tool result). Fix a false block by narrowing or removing the rule that misfired; a new entry on the dangerous list needs the owner's decision. The clean-up towards this is in progress; until it lands, the existing checks stay as they are.
+  The same holds for text one model writes for another (a report, a message, a plan): a gate reads no meaning from it. When the harness needs a fact from a model, the model gets a tool or a launch field with fields, and models read the prose. A heading or file format the harness defines is a format, not meaning.
 
 ## Public-repo rule
 

@@ -20,9 +20,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, wait_until  # noqa: E402
-from test_replay_idle_cache import BRIDGE, CONFIG, ENV, SETTINGS  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import load_fixture, wait_until
+from test_replay_idle_cache import BRIDGE, CONFIG, ENV, SETTINGS
+from test_replay import REASON, ReplayCase
 
 # The cache must still count as warm when the settle check lands (15 s after the settle at a 60 s TTL): a 60 s TTL instead of idle_cache's 20 s.
 WARM_CONFIG = json.loads(json.dumps(CONFIG))

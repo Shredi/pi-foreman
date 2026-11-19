@@ -10,8 +10,8 @@ import type { ScratchHost } from "../childscratch.ts";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { LaunchBinding } from "../usage.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync.native(mkTestTmp("pf-childout-"));
 const tmp = path.join(base, "tmp");
 const agentDir = path.join(base, "agent");
@@ -68,7 +68,7 @@ const allowed = (tool: string, inp: Record<string, unknown>): boolean => {
 };
 const refused = (tool: string, inp: Record<string, unknown>): boolean => !!(decide(tool, inp).result as { block?: boolean } | undefined)?.block;
 
-test("a child's bash redirect and rm below $FOREMAN_OUT are allowed; a sibling outside the worktree is refused", { skip: !posix }, () => {
+test("a child's bash redirect and rm below $FOREMAN_OUT are allowed; a sibling outside the worktree is refused", { skip: posixOnly }, () => {
   for (const command of ['npm test > "$FOREMAN_OUT/log.txt" 2>&1', "npm test > ${FOREMAN_OUT}/log.txt", 'rm -rf "$FOREMAN_OUT/sub"']) assert.equal(allowed("bash", { command }), true, command);
   assert.equal(refused("bash", { command: `npm test > ${path.join(base, "sibling", "log.txt")}` }), true);
   assert.equal(refused("bash", { command: 'npm test > "$FOREMAN_OUT/../log.txt"' }), true);
@@ -80,7 +80,7 @@ test("the write tool to the kept dir is allowed, to a sibling it is refused", ()
   assert.equal(refused("write", { path: path.join(base, "sibling", "x.log"), content: "x" }), true);
 });
 
-test("a line that rebinds FOREMAN_OUT is not read as the kept dir", { skip: !posix }, () => {
+test("a line that rebinds FOREMAN_OUT is not read as the kept dir", { skip: posixOnly }, () => {
   for (const command of ["FOREMAN_OUT=/etc; echo x > $FOREMAN_OUT/f", "export FOREMAN_OUT=/etc && echo x > $FOREMAN_OUT/f", "env FOREMAN_OUT=/etc sh -c 'echo x > $FOREMAN_OUT/f'"]) {
     assert.equal(allowed("bash", { command }), false, command);
   }
@@ -101,7 +101,7 @@ test("expandOutVar reads only plain references", () => {
   assert.equal(expandOutVar("ls $FOREMAN_OUT", `${o} p`), "ls $FOREMAN_OUT", "a dir with a shell character is never put in");
 });
 
-test("an apostrophe in a heredoc body or a comment never lets a quoted $FOREMAN_OUT through", { skip: !posix }, () => {
+test("an apostrophe in a heredoc body or a comment never lets a quoted $FOREMAN_OUT through", { skip: posixOnly }, () => {
   const outside = path.join(base, "elsewhere");
   for (const command of [
     `cat <<EOF > /dev/null\nit's\nEOF\ncd ${outside} && echo x > '$FOREMAN_OUT/y'`,
@@ -113,7 +113,7 @@ test("an apostrophe in a heredoc body or a comment never lets a quoted $FOREMAN_
   assert.equal(expandOutVar('cat > "$FOREMAN_OUT/a" <<EOF\nplain\nEOF', "/o"), 'cat > "/o/a" <<EOF\nplain\nEOF', "a heredoc without an apostrophe still resolves");
 });
 
-test("an apostrophe anywhere leaves $FOREMAN_OUT unresolved: nested-quote bypasses are refused", { skip: !posix }, () => {
+test("an apostrophe anywhere leaves $FOREMAN_OUT unresolved: nested-quote bypasses are refused", { skip: posixOnly }, () => {
   const outside = path.join(base, "elsewhere2");
   for (const command of [
     `cd ${outside} && case "$(mkdir -p '$FOREMAN_OUT' && touch '$FOREMAN_OUT/y')" in *) ;; esac`,
@@ -150,7 +150,7 @@ test("the sweep removes launch folders older than 7 days (any session), keeps ne
   assert.equal(fs.existsSync(out), true, "this run's folder is new");
 });
 
-test("the sweep never follows a link: one inside an old folder goes as a link, one at the launch level stays", { skip: !posix }, () => {
+test("the sweep never follows a link: one inside an old folder goes as a link, one at the launch level stays", { skip: posixOnly }, () => {
   const target = path.join(base, "precious");
   fs.mkdirSync(target);
   fs.writeFileSync(path.join(target, "keep.txt"), "k");

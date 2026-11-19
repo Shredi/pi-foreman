@@ -42,12 +42,19 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: core pin check
         run: python scripts/pull_core.py --check
+      # one leg is enough: ruff is pinned, so every leg would report the same findings
+      - name: python lint (ruff)
+        if: runner.os == 'Linux' && matrix.node == '22'
+        run: |
+          python -m pip install -q -r .github/lint-requirements.txt
+          ruff --version
+          ruff check .
       - name: core conformance (upstream tests at the pinned sha, summary only)
         run: |
           python -m pip install -q -r .github/test-requirements.txt
           python scripts/pull_core.py --conformance
-      # The spawn budget (DEFAULT_SPAWN_BUDGET in scripts/foreman_test_run.mjs) was measured on macOS, where the guard matters; spawn counts differ per OS, so only the macOS leg enforces it.
-      - name: node tests under the child-process budget guard (adapter and herdr-app mods)
+      # The spawn guard (no npm, no titled node process; scripts/foreman_test_run.mjs) matters on macOS, so only the macOS leg runs it.
+      - name: node tests under the spawn guard (adapter and herdr-app mods)
         if: runner.os == 'macOS'
         run: npm run test:node
       - name: adapter tests

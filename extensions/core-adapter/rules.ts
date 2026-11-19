@@ -1,7 +1,7 @@
 // r79 pattern rules: the Claude-Code-style syntax of permissions.json `allow` / `ask` / `deny`, and the per-segment evaluation of a call against them.
 //
 // Syntax: `Tool` (every call of the tool) or `Tool(pattern)`.
-//   Bash(<glob>)        shell tools (bash, foreman_bg, bg_run, powershell); the glob meets the normalised text of EACH segment of the line
+//   Bash(<glob>)        shell tools (bash, bg_run, powershell); the glob meets the normalised text of EACH segment of the line
 //                       (`program arg arg`, single spaces, quotes stripped). `*` is any run of characters, `?` one; the whole text must match.
 //                       A trailing ` *` (or the old `:*`) also matches the bare prefix: `Bash(git status *)` matches `git status`. A segment that
 //                       redirects output (except to /dev/null) is matched by an allow rule only when the pattern names the redirect (`>`).
@@ -33,7 +33,7 @@ export interface ParsedRule {
 
 export type ParseResult = { ok: true; rule: ParsedRule } | { ok: false; error: string };
 
-export const BASH_TOOLS: ReadonlySet<string> = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+export const BASH_TOOLS: ReadonlySet<string> = new Set(["bash", "bg_run", "powershell"]);
 export const READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
 /** `gate.readTools`: extension tool name -> its path field (null: no path field, the tool reads the cwd). */
 export type ReadToolMap = Readonly<Record<string, string | null>>;

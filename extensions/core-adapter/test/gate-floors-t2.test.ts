@@ -104,12 +104,15 @@ test("O4: PowerShell and cmd deletes of the home, the root or a system folder ar
 
 test("O4: any other recursive PowerShell or cmd delete is judge-first, not refused; so are -EncodedCommand and iex of a computed string", () => {
   const winEnv: FloorEnv = { ...env, home: "C:\\Users\\me" };
-  for (const l of ["Remove-Item -Recurse $p", "Remove-Item -Recurse C:\\Users\\me\\proj\\build", "rd /s /q build", "Get-ChildItem | Remove-Item -Recurse -Force", "Remove-Item @args -Recurse", "pwsh -EncodedCommand abc", "iex $s", "Invoke-Expression $s"]) {
-    assert.equal(lineFloors(l, segsOf(l, "powershell"), winEnv), null, `ps tool floor: ${l}`);
+  for (const l of ["Remove-Item -Recurse C:\\Users\\me\\proj\\build", "rd /s /q build", "Get-ChildItem | Remove-Item -Recurse -Force", "Remove-Item @args -Recurse", "pwsh -EncodedCommand abc", "iex $s", "Invoke-Expression $s"]) {
+    // the old Python check asked for all but the relative `rd` (PR B2): an ask-kind floor, which the judge replaces
+    assert.equal(lineFloors(l, segsOf(l, "powershell"), winEnv)?.kind ?? null, l === "rd /s /q build" ? null : "ask", `ps tool floor: ${l}`);
     assert.equal(unknownTargetDelete(l, segsOf(l, "powershell"), winEnv)?.name, LABEL, `ps tool: ${l}`);
   }
+  // a variable operand is a floor until the permission modes go (PR B2); the label is read as well
   const viaBash = `pwsh -c "Remove-Item -Recurse $p"`;
-  assert.equal(lineFloors(viaBash, segsOf(viaBash), winEnv), null);
+  assert.equal(lineFloors("Remove-Item -Recurse $p", segsOf("Remove-Item -Recurse $p", "powershell"), winEnv)?.rule, "floor-delete-unknown-target");
+  assert.equal(unknownTargetDelete("Remove-Item -Recurse $p", segsOf("Remove-Item -Recurse $p", "powershell"), winEnv)?.name, LABEL);
   assert.equal(unknownTargetDelete(viaBash, segsOf(viaBash), winEnv)?.name, LABEL);
   assert.equal(unknownTargetDelete("cmd /c rd /s /q build", segsOf("cmd /c rd /s /q build"), winEnv)?.name, LABEL);
   for (const l of ["Remove-Item x.txt", "Get-ChildItem -Recurse", "Write-Output 'Remove-Item -Recurse'", "iex 'Get-Date'"]) assert.equal(unknownTargetDelete(l, segsOf(l, "powershell"), winEnv), null, l);
@@ -157,11 +160,17 @@ const gate = (tool: string, command: string, child = false) => gateEvaluate(tool
 
 test("gate: an unknown-target delete is the danger label; a child's own-scratch delete is not; a floor line is refused first", () => {
   // an opaque line (a variable, xargs input) is asked as danger-opaque, which comes first; the label shows where the line parses clean
-  for (const l of ['rm -rf "$X"/*', "cd $D && rm -rf *", "ls | xargs rm -rf"]) assert.ok(gate("bash", l).danger, l);
-  assert.equal(gate("bash", "find build -exec rm -rf {} +").danger?.name, LABEL);
-  assert.ok(gate("powershell", "Remove-Item -Recurse $p").danger, "the powershell tool is one opaque segment: asked as danger-opaque until the judge-first list reads the label");
-  assert.notEqual(gate("bash", "S=$FOREMAN_SCRATCH; rm -rf $S/p", true).danger?.name, LABEL);
-  assert.notEqual(gate("bash", "rm -rf $FOREMAN_SCRATCH/p", true).danger?.name, LABEL);
+  // (until the permission modes go these forms are also the floor `floor-delete-unknown-target`, refused first; the label shows for the forms the floor leaves)
+  const ruleOf = (o: ReturnType<typeof gate>): string | undefined => (o.result as { rule?: string } | undefined)?.rule;
+  for (const l of ['rm -rf "$X"/*', "cd $D && rm -rf *", "ls | xargs rm -rf", "find build -exec rm -rf {} +"]) assert.equal(ruleOf(gate("bash", l)), "floor-delete-unknown-target", l);
+  // git clean with a variable operand is a floor again (PR B2: the old Python check denied it), so no label shows
+  assert.equal(ruleOf(gate("bash", "git clean -fd $X")), "floor-delete-unknown-target");
+  assert.equal(ruleOf(gate("powershell", "Remove-Item -Recurse $p")), "floor-delete-unknown-target");
+  for (const l of ["S=$FOREMAN_SCRATCH; rm -rf $S/p", "rm -rf $FOREMAN_SCRATCH/p"]) {
+    const o = gate("bash", l, true);
+    assert.equal(o.danger?.name ?? null, null, l);
+    assert.ok(!(o.result as { block?: boolean; ask?: boolean } | undefined)?.block && !(o.result as { ask?: boolean } | undefined)?.ask, `${l}: not blocked or asked: ${JSON.stringify(o.result)}`);
+  }
   const refused = gate("bash", "rm -rf ~");
   assert.equal((refused.result as { rule?: string } | undefined)?.rule, "floor-rm-system");
 });

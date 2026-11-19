@@ -12,8 +12,8 @@ from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import _isolation  # noqa: E402,F401  (agent dir -> temp)
-import foreman_retro as fr  # noqa: E402
+import _isolation  # agent dir -> temp
+import foreman_retro as fr
 
 SECRET = "super-secret-token-xyz"
 USER = {"kind": "user", "via": "dialog"}
@@ -234,7 +234,9 @@ class RetroTest(unittest.TestCase):
         asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["cat src/a.py"] for sess in ("a", "b", "c")]
         self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [], prot)], ["cat src/a.py *"])
         # Windows: expanduser yields backslashes and a drive; both sides must normalise the same way.
-        win = lambda p: "C:\\Users\\T" + p[1:].replace("/", "\\") if p.startswith("~") else p
+        def win(p):
+            return "C:\\Users\\T" + p[1:].replace("/", "\\") if p.startswith("~") else p
+
         with mock.patch.object(fr.os.path, "expanduser", win):
             wprot = fr.load_protect_patterns(str(self.tmp / "agent"))
             self.assertEqual(fr.norm_word("~\\.GitConfig"), "c:/users/t/.gitconfig")
@@ -324,7 +326,6 @@ class RetroTest(unittest.TestCase):
 
     def test_default_agent_dir_is_the_suite_temp_dir(self):
         import os
-        import _isolation
         self.assertEqual(os.environ["PI_CODING_AGENT_DIR"], _isolation.AGENT_DIR)
         self.assertNotEqual(Path(_isolation.AGENT_DIR), Path.home() / ".pi" / "agent")
         trace = self.write("trace.jsonl", [{"event": "ask", "role": "builder", "runId": "r", "toolFamily": "bash", "decision": "child"}] * 2)
@@ -428,7 +429,9 @@ class ToolUsageRetroTest(unittest.TestCase):
         self.write_sessions(lines)
         text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
         self.assertIn("example_extra, example_tool (example-package) -> pi remove npm:example-package", text)
-        self.assertIn("fusion_reason (pi-background-tasks) -> pi remove npm:pi-background-tasks", text)
+        # pi-background-tasks is bundled: never a pi remove line, the source switch instead
+        self.assertNotIn("pi remove npm:pi-background-tasks", text)
+        self.assertIn("fusion_reason (pi-background-tasks) -> PI_BG_FEATURES=process", text)
         # a package with one used tool is not removed: the add-on's optional tool points at the source switch instead
         lines = [tool_usage_line(i, used=["example_used", "bg_run"], declared=["example_used", "bg_run", "fusion_reason"]) for i in range(20)]
         lines = [dict(l, sources={"example_used": "pi-foreman", "bg_run": "pi-background-tasks", "fusion_reason": "pi-background-tasks"}) for l in lines]

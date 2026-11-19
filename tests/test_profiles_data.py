@@ -1,10 +1,8 @@
 """Setup profiles, feature toggles and add-ons: the shipped data in config/ (features.json toggles,
 profiles.json, addons.json), the `profile` key and `foreman_config.py --user-file`."""
 import contextlib
-import copy
 import io
 import json
-import re
 import sys
 import tempfile
 import unittest
@@ -19,7 +17,7 @@ import foreman_docs as fd  # noqa: E402
 AREAS = {"install", "models", "review", "ceremony", "safety", "tools", "sessions", "ui", "retro", "ops"}
 TOGGLEABLE = {"codemode", "reviewer-climb", "plan-review", "orientation", "git-tools", "pr-ops", "review-required",
               "workflow-scripts", "remote-intercom", "idle-cache", "idle-downshift", "herdr",
-              "footer-ui", "retro", "trace"}
+              "footer-ui", "retro", "reports", "trace"}
 RELAXATIONS = {"workflow-scripts", "remote-intercom", "git-tools"}
 SAFETY_FLOOR = ["safety.permissions", "safety.git", "safety.ops", "safety.requiredChildExtensions",
                 "safety.preconditionOps", "ceremony.foremanEdits", "ceremony.required", "ceremony.reviewBeforePr",
@@ -193,9 +191,9 @@ class ProfilesData(unittest.TestCase):
     def test_addons_exact_versions_and_no_recommended(self):
         self.assertEqual(self.addons["version"], 1)
         entries = self.addons["addons"]
-        self.assertEqual([a["id"] for a in entries], ["polish", "background-tasks", "quiver", "memory"])
+        self.assertEqual([a["id"] for a in entries], ["polish", "quiver", "memory"])
         self.assertEqual({a["id"]: (a["package"], a["version"]) for a in entries},
-                         {"polish": ("pi-polish", "0.1.2"), "background-tasks": ("pi-background-tasks", "2.6.10"),
+                         {"polish": ("pi-polish", "0.1.2"),
                           "quiver": ("pi-quiver", "6.14.2"), "memory": ("pi-memory", "0.4.2")})
         for a in entries:
             self.assertNotIn("recommended", a)
@@ -203,8 +201,7 @@ class ProfilesData(unittest.TestCase):
             self.assertRegex(a["version"], r"^\d+\.\d+\.\d+$")
             self.assertRegex(a["package"], r"^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$")
             self.assertTrue(a["purpose"] and isinstance(a["clashes"], list))
-        env = {a["id"]: a.get("env") for a in entries}
-        self.assertEqual(env["background-tasks"], {"PI_BG_FEATURES": "process"})
+        self.assertNotIn("background-tasks", [a["id"] for a in entries], "it ships with pi-foreman")
 
     def test_profiles_feature_and_generated_tables(self):
         f = next(x for x in self.features if x["id"] == "profiles")

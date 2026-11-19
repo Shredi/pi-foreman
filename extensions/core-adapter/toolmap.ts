@@ -16,9 +16,7 @@ export interface ToolMapping {
   post: GuardName[];
 }
 
-/** The foreman's detached shell run (bg.ts): guarded exactly like `bash`. */
-export const FOREMAN_BG_TOOL = "foreman_bg";
-/** The optional pi-background-tasks add-on's shell tool (command in `command`): guarded exactly like `bash` too. */
+/** The bundled pi-background-tasks add-on's shell tool (command in `command`): guarded exactly like `bash` too. */
 export const ADDON_BG_TOOL = "bg_run";
 
 const NONE: ToolMapping = Object.freeze({ coreName: null, pre: [], post: [] }) as ToolMapping;
@@ -30,7 +28,6 @@ const TABLE: Record<string, ToolMapping> = {
   // Shell tools run no core script: the dangerous list is the gate's floors (floors.ts).
   bash: { coreName: "Bash", pre: [], post: [] },
   powershell: { coreName: "Bash", pre: [], post: [] },
-  [FOREMAN_BG_TOOL]: { coreName: "Bash", pre: [], post: [] },
   [ADDON_BG_TOOL]: { coreName: "Bash", pre: [], post: [] },
   write: { coreName: "Write", pre: ["ledger_guard_write"], post: ["ledger_bind"] },
   edit: { coreName: "Edit", pre: [], post: ["ledger_bind"] },
@@ -47,5 +44,5 @@ export function mapTool(piTool: string): ToolMapping {
 }
 
 export function isShellTool(piTool: string): boolean {
-  return piTool === "bash" || piTool === "powershell" || piTool === FOREMAN_BG_TOOL || piTool === ADDON_BG_TOOL;
+  return piTool === "bash" || piTool === "powershell" || piTool === ADDON_BG_TOOL;
 }

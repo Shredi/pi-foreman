@@ -1,4 +1,4 @@
-// Owner-readable text (docs/ceremony.md "Owner summary"): the `## For the owner` section every plan opens with, the
+// Owner-readable text (docs/ceremony.md "Owner summary"): the `## Summary` section every plan opens with (the older `## For the owner` is still accepted), the
 // deterministic jargon rule shared by the plan-review facts and the question hint, and the context prefix of
 // ask_user_question questions. Jargon is advice only; the plan form (planFormIssues: presence, position) is what a
 // `[plan-review]` launch is refused for (index.ts).
@@ -7,59 +7,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { clean, planBody, readPlan } from "./checkpoint.ts";
 import type { PlanOpts } from "./checkpoint.ts";
-import { scanFence } from "./pages.ts";
+import { alertOf, quoteBlockAt, scanFence } from "./pages.ts";
+import { fencedMask, flat, goalParagraph, ownerSectionOf, topHeading } from "./plansection.ts";
+import type { OwnerSection } from "./plansection.ts";
 import { workspaceOf } from "./python.ts";
 
-const OWNER_HEADING = /^##[ \t]+for the owner[ \t]*$/i;
-const LEVEL2 = /^##[ \t]+\S/;
-const LEVEL12 = /^#{1,2}[ \t]+\S/;
+export type { OwnerSection } from "./plansection.ts";
 
-/** The lines without their indent, so a fence nested in a list item (4+ spaces or a tab, which `blocks` in pages.ts renders) is found by the same scanner. */
-const flat = (lines: readonly string[]): string[] => lines.map((l) => l.trimStart());
-
-/** Per line: whether it belongs to a fenced block, nested ones included (its opening and closing lines included). */
-function fencedMask(lines: readonly string[]): boolean[] {
-  const mask: boolean[] = new Array(lines.length).fill(false);
-  const flatLines = flat(lines);
-  for (let i = 0; i < lines.length; i++) {
-    const f = scanFence(flatLines, i);
-    if (!f) continue;
-    mask.fill(true, i, f.next);
-    i = f.next - 1;
-  }
-  return mask;
-}
-
-export interface OwnerSection {
-  /** The body lines, without leading and trailing blank lines. */
-  lines: string[];
-  /** Whether it is the first `##` section of the plan body. */
-  first: boolean;
-}
-
-/** The first `## For the owner` section of the plan body above any appendix (planBody), or null. */
+/** The first `## Summary` or `## For the owner` section of the plan body above any appendix (planBody), or null; a later heading of either name is an ordinary section. */
 export function ownerSection(text: string): OwnerSection | null {
-  const all = planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/);
-  const fenced = fencedMask(all);
-  let at = -1;
-  let firstLevel2 = -1;
-  for (let i = 0; i < all.length; i++) {
-    if (fenced[i]) continue;
-    if (firstLevel2 < 0 && LEVEL2.test(all[i])) firstLevel2 = i;
-    if (OWNER_HEADING.test(all[i])) {
-      at = i;
-      break;
-    }
-  }
-  if (at < 0) return null;
-  const lines: string[] = [];
-  for (let i = at + 1; i < all.length; i++) {
-    if (!fenced[i] && LEVEL12.test(all[i])) break;
-    lines.push(all[i]);
-  }
-  while (lines.length && !lines[0].trim()) lines.shift();
-  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-  return { lines, first: at === firstLevel2 };
+  return ownerSectionOf(planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/));
 }
 
 const EXT = /\.(?:ts|tsx|js|mjs|cjs|py|md|json|ya?ml|toml|sh|css|html|lock|txt)$/i;
@@ -117,12 +74,40 @@ export function ownerSectionIssues(text: string): string[] {
   return issues;
 }
 
+/**
+ * The form hints of a plan's owner section (advice only, never a refusal; not part of ownerSectionIssues): no `**Goal:**` paragraph first, no numbered steps,
+ * a box (alert quote) followed by other content. Empty for a missing section or a complete one.
+ */
+export function ownerFormHints(text: string): string[] {
+  const sec = ownerSection(text);
+  if (!sec) return [];
+  const hints: string[] = [];
+  const fenced = fencedMask(sec.lines);
+  if (!goalParagraph(sec.lines)) hints.push("no **Goal:** paragraph");
+  if (!sec.lines.some((l, i) => !fenced[i] && /^ {0,3}\d{1,9}[.)][ \t]/.test(l))) hints.push("no numbered steps");
+  let boxSeen = false;
+  let late = false;
+  for (let i = 0; i < sec.lines.length; i++) {
+    if (fenced[i] || !sec.lines[i].trim()) {
+      if (fenced[i] && boxSeen) late = true;
+      continue;
+    }
+    const q = quoteBlockAt(sec.lines, i);
+    if (q && alertOf(q.body)) {
+      boxSeen = true;
+      i = q.next - 1;
+    } else if (boxSeen) late = true;
+  }
+  if (late) hints.push("a box is not at the end");
+  return hints;
+}
+
 /** The form faults a `[plan-review]` launch is refused for: the owner section's presence and position (not jargon), and each missing `opts.requiredHeadings` heading. */
 export function planFormIssues(text: string, opts: { requiredHeadings?: readonly string[] }): string[] {
   const issues = ownerSectionIssues(text).filter((i) => !i.startsWith("jargon:"));
   const lines = planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/);
   const fenced = fencedMask(lines);
-  const headings = new Set(lines.flatMap((l, i) => (fenced[i] ? [] : ((/^##[ \t]+(\S.*?)[ \t]*$/.exec(l) ?? [])[1]?.toLowerCase() ?? []))));
+  const headings = new Set(lines.flatMap((l, i) => { const h = fenced[i] ? null : topHeading(l); return h?.level === 2 && h.text ? [h.text.toLowerCase()] : []; }));
   for (const h of opts.requiredHeadings ?? []) if (!headings.has(h.toLowerCase())) issues.push(`missing heading: ${h}`);
   return issues;
 }
@@ -142,27 +127,62 @@ function ownerFactLine(p: string, cwd: string, opts?: PlanOpts): string {
     const r = opts ? readPlan(abs, opts) : null;
     // a markdown file readPlan refuses (outside the scratch dir) and with no page beside it: the direct read, as without opts
     const lone = abs.endsWith(".md") && !fs.existsSync(abs.replace(/\.md$/, ".html"));
-    if (r && "error" in r && !lone) return `Owner section (${p}): plan not readable`;
+    if (r && "error" in r && !lone) return `Summary section (${p}): plan not readable`;
     text = r && "plan" in r ? r.plan.markdown : fs.readFileSync(path.resolve(cwd, p), "utf8");
   } catch {
-    return `Owner section (${p}): plan not readable`;
+    return `Summary section (${p}): plan not readable`;
   }
   const sec = ownerSection(text);
   const issues = ownerSectionIssues(text);
-  return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
+  const hints = ownerFormHints(text);
+  return `Summary section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}${hints.length ? `; form hints: ${hints.join("; ")}` : ""}`;
 }
 
-/** The whole owner section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
+/** A quote block as the page renders it: an alert's marker line is dropped and its body shown with the prefix stripped, recursively (depth 8 as the page); a plain quote keeps its lines and quote prefix, but an alert inside it drops its marker the same way. */
+function quoteLines(lines: readonly string[], at: number, q: { body: string[]; next: number }, depth: number): string[] {
+  if (depth >= 8) return lines.slice(at, q.next);
+  const alert = alertOf(q.body) !== null;
+  const body = alert ? q.body.slice(1) : q.body;
+  const fenced = fencedMask(body);
+  const out: string[] = [];
+  for (let i = 0; i < body.length; i++) {
+    const inner = fenced[i] ? null : quoteBlockAt(body, i);
+    if (inner) {
+      out.push(...quoteLines(body, i, inner, depth + 1));
+      i = inner.next - 1;
+    } else out.push(body[i]);
+  }
+  if (alert) return out;
+  return out.length === body.length && out.every((l, i) => l === body[i]) ? lines.slice(at, q.next) : out.map((l) => `> ${l}`);
+}
+
+/** The whole Summary section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
 export function ownerSummary(text: string): string {
   const sec = ownerSection(text);
-  if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "For the owner" summary in this plan.';
+  if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "Summary" section in this plan.';
   const spans = diagramSpans(sec.lines);
-  const shown = sec.lines.flatMap((l, i) => {
+  const fenced = fencedMask(sec.lines);
+  const shown: string[] = [];
+  for (let i = 0; i < sec.lines.length; i++) {
     const span = spans.find(([a, b]) => i >= a && i <= b);
-    return span ? (i === span[0] ? ["(diagram: see the plan page)"] : []) : [l];
-  });
+    if (span) {
+      if (i === span[0]) shown.push("(diagram: see the plan page)");
+      continue;
+    }
+    if (fenced[i]) {
+      shown.push(sec.lines[i]);
+      continue;
+    }
+    const q = quoteBlockAt(sec.lines, i);
+    if (q) {
+      shown.push(...quoteLines(sec.lines, i, q, 0));
+      i = q.next - 1;
+      continue;
+    }
+    shown.push(sec.lines[i]);
+  }
   const lines = shown.filter((l) => l.trim());
-  return ["For the owner", ...lines.map((l) => `  ${clean(l)}`)].join("\n");
+  return ["Summary", ...lines.map((l) => `  ${clean(l)}`)].join("\n");
 }
 
 /** The project name for question prefixes: the folder above the git common dir (so a worktree shows the repository), else the workspace folder. */

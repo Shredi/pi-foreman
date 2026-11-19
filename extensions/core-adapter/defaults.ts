@@ -43,7 +43,7 @@ export interface DefaultCtx {
 
 /** pi-foreman's own tools that carry no file path and no shell or message payload (plan Addendum 2, "B, own-tools default"). */
 export const OWN_TOOLS: ReadonlySet<string> = new Set([
-  "plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_script", "foreman_wait", "foreman_protect",
+  "plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "review_verdict", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_script", "foreman_wait", "foreman_protect", "foreman_report", "foreman_reports",
   "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill",
   "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch",
   "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable",
@@ -523,7 +523,7 @@ function positionals(argv: string[], valued: ReadonlySet<string> = new Set()): s
 }
 
 const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
-const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "bg_run", "powershell"]);
 
 /** An operand that names another machine: `host:path`, `user@host:path`, `ssh://`, `rsync://`. */
 const remoteOperand = (w: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(w) || (!w.startsWith("-") && !/^[A-Za-z]:[\\/]/.test(w) && /^(?:[^@\s/:]+@)?[^\s/:@]+:/.test(w));
@@ -1264,7 +1264,7 @@ export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
 
 const MCP_READ = /^(?:list|get|search|read|take|find|describe)_/;
 
-const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && c.tool !== "foreman_bg" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
+const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
 /**
  * The judge-first list: calls the judge reads before they run (a clear runs, anything else asks the owner, or a child's parent). A call this list and the

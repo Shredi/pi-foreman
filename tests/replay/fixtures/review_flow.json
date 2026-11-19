@@ -63,11 +63,12 @@
   "b-h6": [{"text": "[[replay:h6]] fixed"}],
   "r-s3": [
    {"tools": [{"name": "edit", "arguments": {"path": "a.txt", "edits": [{"oldText": "alpha", "newText": "reviewer was here"}]}}]},
-   {"text": "[[replay:s3]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]},
+   {"text": "[[replay:s3]] reviewed"}
   ],
-  "r-s5": [{"text": "[[replay:s5]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}],
-  "r-h3": [{"text": "[[replay:h3]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}],
-  "r-h5": [{"text": "[[replay:h5]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}],
-  "r-h7": [{"text": "[[replay:h7]] 1. FAIL a.txt:1\nOverall verdict: FAIL"}]
+  "r-s5": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:s5]] reviewed"}],
+  "r-h3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:h3]] reviewed"}],
+  "r-h5": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:h5]] reviewed"}],
+  "r-h7": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "items": [{"id": 1, "result": "fail"}], "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:h7]] reviewed"}]
  }
 }

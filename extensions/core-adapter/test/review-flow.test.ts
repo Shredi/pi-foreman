@@ -8,24 +8,18 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { changedFileOf, escalate, initialCeremony, onFileChanged, userOverride } from "../ceremony.ts";
 import { roundSteps } from "../actions.ts";
-import { completedAgents, initialRounds, launchSteps, onReviewDone, verdictOf, walkLaunch } from "../rounds.ts";
+import { completedAgents, initialRounds, launchSteps, onReviewDone, walkLaunch } from "../rounds.ts";
 import type { RoundState } from "../rounds.ts";
 import { foremanTriage, isTriaged, stripVerbatim, triageGateBlock, workspaceTarget, OUTWARD_TOOLS } from "../triage.ts";
 import { familyWarnings, modelFamily, modelGaps } from "../modelcheck.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-test("completion notices: completed agents and the review verdict", () => {
+test("completion notices: completed agents (the verdict is read from the record, not the text)", () => {
   assert.deepEqual(completedAgents("Background task completed: **reviewer**\n\nreviewer:\n1. FAIL x"), ["reviewer"]);
   assert.deepEqual(completedAgents("Background task failed: **reviewer**\n\nboom"), []);
   assert.deepEqual(completedAgents("Background tasks completed (2): **builder**, **reviewer** (1/2)\n"), ["builder", "reviewer"]);
   assert.deepEqual(completedAgents("reviewer said Background task completed: **reviewer**"), []);
-  assert.equal(verdictOf("1. PASS a\n3. Overall verdict: FAIL"), "fail");
-  assert.equal(verdictOf("**Overall verdict:** PASS"), "pass");
-  assert.equal(verdictOf("1. Verdict: BLOCK"), "fail");
-  assert.equal(verdictOf("Verdict: APPROVE"), "pass");
-  assert.equal(verdictOf("Overall verdict: PASS\nOverall verdict: FAIL"), "fail");
-  assert.equal(verdictOf("1. PASS everything"), null);
 });
 
 const B = [["builder"]];
@@ -179,7 +173,7 @@ test("model map checks: registry gaps, auth gaps and the reviewer family warning
 });
 
 test("H4 pin: the reviewer role is read-only with a shell", () => {
-  const base = ["read", "ls", "grep", "find", "bash"];
+  const base = ["read", "ls", "grep", "find", "bash", "foreman_report"];
   const wants: Record<string, string[]> = { reviewer: base };
   const defaults = JSON.parse(fs.readFileSync(path.join(PKG, "config", "foreman.defaults.json"), "utf8"));
   for (const [role, want] of Object.entries(wants)) {

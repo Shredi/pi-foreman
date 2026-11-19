@@ -1,43 +1,10 @@
-// remote-windows-2 item 4: on win32 foreman_bg runs through Pi's shell config (Git Bash, -c); cmd.exe only when it throws or
-// wants stdin.
+// remote-windows-2 item 4: Pi's `shellPath` setting (the project's `.pi/settings.json` over the agent dir's) feeds the win32 shell resolution at index.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { shellFor, shellPathSetting } from "../bg.ts";
-
-const bash = { shell: "C:\\Program Files\\Git\\bin\\bash.exe", args: ["-c"] };
-
-test("shellFor win32: Git Bash from getShellConfig, command as the last arg, not verbatim", () => {
-  let seen: string | undefined = "unset";
-  const sh = shellFor("echo x", "win32", { getShellConfig: (p) => ((seen = p), bash), shellPath: "D:\\bash.exe" });
-  assert.deepEqual(sh, { file: bash.shell, args: ["-c", "echo x"], verbatim: false });
-  assert.equal(seen, "D:\\bash.exe");
-});
-
-test("shellFor win32: no shellPath passes undefined", () => {
-  let seen: string | undefined = "unset";
-  shellFor("x", "win32", { getShellConfig: (p) => ((seen = p), bash) });
-  assert.equal(seen, undefined);
-});
-
-test("shellFor win32: a throwing getShellConfig falls back to cmd.exe", () => {
-  const sh = shellFor("echo x", "win32", { getShellConfig: () => { throw new Error("no bash"); } });
-  assert.match(sh.file, /cmd(\.exe)?$/i);
-  assert.deepEqual(sh.args, ["/d", "/s", "/c", '"echo x"']);
-  assert.equal(sh.verbatim, true);
-});
-
-test("shellFor win32: a stdin command transport falls back to cmd.exe", () => {
-  const sh = shellFor("echo x", "win32", { getShellConfig: () => ({ ...bash, commandTransport: "stdin" }) });
-  assert.equal(sh.verbatim, true);
-});
-
-test("shellFor linux ignores getShellConfig", () => {
-  const sh = shellFor("echo x", "linux", { getShellConfig: () => { throw new Error("never"); } });
-  assert.deepEqual(sh.args, ["-c", "echo x"]);
-});
+import { shellPathSetting } from "../bg.ts";
 
 test("shellPathSetting: project .pi/settings.json wins over the agent dir", () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "pf-shellpath-"));

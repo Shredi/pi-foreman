@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-noguard-"));
 const wt = path.join(base, "wt");
 fs.mkdirSync(wt, { recursive: true });
@@ -23,7 +23,7 @@ const GUARD = /git[ -]?guard/i;
 for (const child of [false, true]) {
   const who = child ? "child" : "main";
 
-  test(`${who}: the unreadable lines sh -c "$X" and python3 -c naming git are no allow and not on the judge-first list (they run), with no guard text`, { skip: !posix }, () => {
+  test(`${who}: the unreadable lines sh -c "$X" and python3 -c naming git are no allow and not on the judge-first list (they run), with no guard text`, { skip: posixOnly }, () => {
     for (const l of ['sh -c "$X"', "python3 -c \"import subprocess; subprocess.run(['git','status'])\""]) {
       const o = run(l, child);
       assert.equal(res(o).block, undefined, `${l}: ${JSON.stringify(o.result)}`);
@@ -34,13 +34,13 @@ for (const child of [false, true]) {
     }
   });
 
-  test(`${who}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls has no floor, no deny and no ask (opaque, not on the judge-first list: it runs)`, { skip: !posix }, () => {
+  test(`${who}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls has no floor, no deny and no ask (opaque, not on the judge-first list: it runs)`, { skip: posixOnly }, () => {
     const o = run('echo "wall $(( $(date +%s) - start ))s"; ls', child);
     assert.deepEqual(res(o), {}, JSON.stringify(o.result));
     assert.equal(o.danger, null, JSON.stringify(o.danger));
   });
 
-  test(`${who}: git commit -m with any message gets the same gate decision whatever the message (messages are not read)`, { skip: !posix }, () => {
+  test(`${who}: git commit -m with any message gets the same gate decision whatever the message (messages are not read)`, { skip: posixOnly }, () => {
     const a = run('git commit -m "anything"', child);
     const b = run('git commit -m "WIP fixup! no trailer, not a conventional subject"', child);
     assert.deepEqual(res(a), res(b));
@@ -49,7 +49,7 @@ for (const child of [false, true]) {
   });
 }
 
-test("child PR forms: hub pull-request and tea pr create are not refused by a PR rule", { skip: !posix }, () => {
+test("child PR forms: hub pull-request and tea pr create are not refused by a PR rule", { skip: posixOnly }, () => {
   for (const l of ["hub pull-request -m x", "tea pr create --title x"]) {
     const o = run(l, true);
     assert.equal(res(o).block, undefined, `${l}: ${JSON.stringify(o.result)}`);
@@ -57,14 +57,14 @@ test("child PR forms: hub pull-request and tea pr create are not refused by a PR
   }
 });
 
-test("child PR forms: gh api repos/o/r/pulls is no built-in allow and (PR C) not on the judge-first list: it runs", { skip: !posix }, () => {
+test("child PR forms: gh api repos/o/r/pulls is no built-in allow and (PR C) not on the judge-first list: it runs", { skip: posixOnly }, () => {
   const o = run("gh api repos/o/r/pulls -f title=x", true);
   assert.equal(res(o).block, undefined, JSON.stringify(o.result));
   assert.equal(res(o).allow, undefined, "no rule allowed it");
   assert.equal(o.danger, null, JSON.stringify(o.danger));
 });
 
-test("child PR forms: gh pr create and glab mr create are refused by child-pr-create", { skip: !posix }, () => {
+test("child PR forms: gh pr create and glab mr create are refused by child-pr-create", { skip: posixOnly }, () => {
   for (const l of ["gh pr create --title t --body b", "glab mr create --title t"]) {
     const o = run(l, true);
     assert.equal(res(o).block, true, l);
@@ -72,7 +72,7 @@ test("child PR forms: gh pr create and glab mr create are refused by child-pr-cr
   }
 });
 
-test("drop 3: gh pr create in the main session is not refused for a missing review; the same line from a child is refused", { skip: !posix }, () => {
+test("drop 3: gh pr create in the main session is not refused for a missing review; the same line from a child is refused", { skip: posixOnly }, () => {
   for (const l of ["gh pr create --title t --body b", "glab mr create --title t"]) {
     const m = run(l, false);
     assert.equal(res(m).block, undefined, `${l}: ${JSON.stringify(m.result)}`);

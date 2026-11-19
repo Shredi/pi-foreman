@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
+from test_foreman_config import render_prompt, review_loop_rewrite
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
@@ -35,7 +35,9 @@ ROLE_PAIRS = [
      "while the findings are defects or gaps. Before the first review, read the plan once against the reviewer's list: every claim about the code checked against the code; callers, consumers and pinning tests of every changed symbol, text or default; failure paths and modes (resume, reload, feature off, child session, remote); doc, config and schema follow-ups; a test for every named condition; parts of the plan that agree with each other and with the ledger. State a code fact only when it was read (by an explorer or by you), else mark it an assumption. On a finding, fix its class across the whole plan and re-read the changed text against that list before the next review. A finding needs a decision when"),
     ("Call it only after the planner's completion notice (refused while a planner runs) and change nothing", "Change nothing"),
     ("re-plan (relaunch `planner` or edit the plan yourself), then checkpoint again.", "revise the plan yourself, then checkpoint again."),
-    ("closed by a fresh `reviewer` or `senior-reviewer` that marks it", "closed by a fresh `reviewer` that marks it"),
+    ("closed by a fresh `reviewer` or `senior-reviewer` that marks it", "closed by a fresh `reviewer` launched with `items` naming V (it gives V a `pass` result in its `review_verdict` call after its own check)"),
+    ("If the reviewer reports FAIL, you may relaunch", "If the reviewer records FAIL, you may relaunch"),
+    ("(it gives V a `pass` result in its `review_verdict` call after its own check) after its own check, or by you", "(it gives V a `pass` result in its `review_verdict` call after its own check), or by you"),
     ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
     ("- Launch only the roles `explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`. Other agents are refused. `planner` only as a single launch, never in `tasks`, `chain` or `resume`; it writes only under `.workflow/`.",
      "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
@@ -48,7 +50,8 @@ ROLE_PAIRS = [
     # rules diet: prohibitions with exceptions or plain preferences read as the wanted behaviour
     ("notice; do not rely on that.", "notice."),
     ("`write` tool, never through the shell. Writing it", "`write` tool. Writing it"),
-    ("(never V); do not mark those by hand. Mark yourself", "(never V). Mark yourself"),
+    ("every item its `N. PASS` lines name (never V); do not mark those by hand. Mark yourself only items",
+     "every item the reviewer's `review_verdict` call gives a `pass` result. Name the items to review in the launch's `items` field (`items: [1, 4, \"V\"]`, beside `agent` and `task`); without it the review takes every open item except V. Mark yourself only items"),
     ("turn. Never poll with bash.", "turn."),
     ("change workspace files yourself (`write`, `edit`, `foreman_move`, `foreman_copy`), and then only", "change workspace files yourself, and then only"),
     ("launch a builder instead. `.workflow/` (ledger, notes) stays writable. Do not work", "launch a builder instead. Do not work"),
@@ -127,7 +130,10 @@ class SizingPromptTest(unittest.TestCase):
             new_fin = "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."
             old_rep = "after a PASS with nothing changed, a second reviewer launch is refused."
             new_rep = "after a PASS with nothing changed in that checkout, a second reviewer launch there is refused."
-            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own), (old_fin, new_fin), (old_rep, new_rep)):
+            # plan-form-readers: the dash forms of an appendix heading
+            old_dash = "`## Addendum` heading: append rulings"
+            new_dash = "`## Addendum` heading (a colon, a dash (-, \u2013 or \u2014), a bracket or a number may follow the word): append rulings"
+            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own), (old_fin, new_fin), (old_rep, new_rep), (old_dash, new_dash)):
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
             # roles-slim: the planner, finalizer and senior-reviewer roles are gone (one old/new pair per changed rendered line)

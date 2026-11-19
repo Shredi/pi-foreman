@@ -315,11 +315,11 @@ test("critical: a management call (status) is not a launch and is not deferred",
   assert.deepEqual(events(a, "launch_deferred"), []);
 });
 
-test("critical and high do not gate foreman_bg or bash", async (t) => {
+test("critical and high do not gate bg_run or bash", async (t) => {
   const a = await rig(t);
   for (const level of ["high", "critical"] as const) {
     a.setLevel(level);
-    for (const toolName of ["foreman_bg", "bash"]) {
+    for (const toolName of ["bg_run", "bash"]) {
       const d = await a.handlers.get("tool_call")!({ toolName, toolCallId: `x-${level}-${toolName}`, input: { command: "ls" } }, a.ctx);
       assert.equal(d, undefined, `${toolName} under ${level}`);
     }

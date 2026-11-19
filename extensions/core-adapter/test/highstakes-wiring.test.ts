@@ -116,7 +116,7 @@ test("item 2/5: the launch refusals: no model, not single, resume of a run, earl
   await normal(f.a, "PASS");
   f.w.state.answer = "allow once";
   const group = await launch(f.a, "reviewer", "ignored", { tasks: [{ agent: "reviewer", task: "[high-stakes] one" }, { agent: "reviewer", task: "two" }] });
-  assert.match(group.blocked ?? "", /\[high_stakes_single\]/, "refused inside a multi-child launch");
+  assert.match(group.blocked ?? "", /\[review_single_launch\]/, "refused inside a multi-child launch (a reviewer in a group never launches)");
   const first = await launch(f.a, "reviewer", "[high-stakes] review");
   assert.equal(first.blocked, null);
   const concurrent = await launch(f.a, "reviewer", "[high-stakes] review again");
@@ -288,13 +288,17 @@ test("item 7: a high-stakes run whose completion notice arrives after a reload i
   const { w, a } = await setup(t);
   await built(w, a);
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [ ] 2. second\n- [ ] 3. third\n- [x] V. fresh-eyes verification passed\n");
+  const other = await launch(a, "reviewer", "[pre-pr] review the items");
+  assert.equal(other.blocked, null, String(other.blocked));
   const run = await launch(a, "reviewer", "[high-stakes] review");
   assert.equal(run.blocked, null, String(run.blocked));
+  assert.ok(a.record(run.id, { verdict: "pass" }));
+  assert.ok(a.record(other.id, { verdict: "pass", items: [{ id: 3, result: "pass" }] }));
   const b = await w.adapter("reload");
-  const notice = (id: string, item: string) => `Background task completed: **reviewer**\n\nOverall verdict: PASS\n${item}. PASS fine\n\nRetention-managed async directory: /x/async/${id}\n`;
+  const notice = (id: string) => `Background task completed: **reviewer**\n\nRetention-managed async directory: /x/async/${id}\n`;
   const ledger = () => fs.readFileSync(path.join(w.project, ".workflow", "LEDGER-x.md"), "utf8");
-  await b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: notice(`run-${run.id}`, "2") } });
-  await b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: notice("run-other", "3") } });
+  await b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: notice(`run-${run.id}`) } });
+  await b.fire("message_end", { message: { role: "custom", customType: "subagent-notify", content: notice(`run-${other.id}`) } });
   // the control's mark is awaited; the high-stakes notice is refused before any mark is queued, so it can only have been queued ahead of the control
   await until(() => /- \[x\] 3\. third/.test(ledger()));
   assert.match(ledger(), /- \[ \] 2\. second/, "the high-stakes run marked nothing");

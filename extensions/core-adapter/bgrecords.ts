@@ -27,7 +27,6 @@ const BG_TERMINAL_SCHEMA = "pi-background-tasks.extension-terminal.v1";
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function encode(text: string, maxBytes: number): string {
-  // eslint-disable-next-line no-control-regex
   let bytes = Buffer.from(text.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim(), "utf-8");
   if (bytes.length > maxBytes) {
     let end = maxBytes;
@@ -165,7 +164,7 @@ const requestId = (): string => `pi-foreman-bgrecords-${Date.now().toString(36)}
 
 /**
  * Wire the records into `pi`: the add-on's terminal frames and bg_run results, a `status` request at session_start, retried on the first agent_start and after a short timer until it is answered (tasks that
- * survived a reload), every record cleared on session_shutdown. `recorder` serves foreman_bg (wait.ts), which has its own hooks.
+ * survived a reload), every record cleared on session_shutdown.
  */
 export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: { env?: Env; platform?: string; write?: (data: string) => void; isTTY?: boolean; trace?: (rec: Record<string, unknown>) => void; setTimeout?: (fn: () => void, ms: number) => unknown; clearTimeout?: (h: unknown) => void } = {}): { recorder: BgRecords } {
   let mode: string | undefined;

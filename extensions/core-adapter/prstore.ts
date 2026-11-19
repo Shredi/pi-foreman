@@ -1,5 +1,5 @@
 // The shared PR tracker store (docs/herdr.md#open-prs), four JSON files under <agent dir>/pi-foreman/state/:
-//   tracked-prs.json           {v:1, prs:[{repo, number, addedAt}]}   Pi adds (addTracked), `foreman prs poll` drops
+//   tracked-prs.json           {v:1, prs:[{repo, number, addedAt, host}]}   Pi adds (addTracked), `foreman prs poll` drops
 //   tracked-prs-state.json     {v:1, trackedAt, off?, prs:{<k>:{repo, number, snap?, meta?, okAt?, error?, errorAt?, gone?, endedAt?, at}}}
 //   tracked-prs-comments.json  {v:1, prs:{<k>:{updatedAt, comments}}}
 //   open-prs.json              the search feed (openprs.ts)
@@ -64,6 +64,8 @@ export interface StateEntry {
   passSince?: { head: string; sig: string; at: number };
   /** Set only while a pass is not settled (the watch's settle rule), or while expected checks are still to come: the checks seen may be a partial set. */
   unsettled?: true;
+  /** The required checks with no run while every check that ran passed, for a learned merge-time check (a pass at once) or after the settle hold of a base that is not learnable (at most 10 names of 120 characters): the host reports them only at merge time. Absent: none. */
+  waiting?: string[];
   /** The expected-set state of the current head (prwatch.ts expectStep); its presence marks an entry written with these facts. */
   exp?: ExpectState;
   error?: string;
@@ -80,6 +82,8 @@ export interface StateEntry {
 export interface BaselineEntry {
   names: string[];
   at: number;
+  /** Every check name that ran before the merge on the merged PRs read, and how many were read; present only when that list is complete (scripts/pr_ops.py baseline_names); absent: the base is not learnable. */
+  learn?: { ran: string[]; merged: number };
 }
 export interface StateDoc {
   v: 1;
@@ -88,6 +92,8 @@ export interface StateDoc {
   prs: Record<string, StateEntry>;
   /** Per `<host>|<repo>|<base>` (repository lowercased): the baseline of the expected checks, asked again when older than 10 minutes. */
   baselines?: Record<string, BaselineEntry>;
+  /** When the poll removed the lines without a `host` from the tracked list (once, with more than one host configured); absent: not done. */
+  hostlessDroppedAt?: number;
 }
 /** A PR source's comments for one PR, kept only for the head they were taken on. */
 export interface SourceComments {
@@ -157,6 +163,18 @@ export async function withTrackedLock<T>(agentDir: string, fn: () => T, now: () 
   return null;
 }
 
+/** The hosts of the list lines for `repo#n` (case-insensitive repo) that carry an explicit host on one of `hosts`, in list order without repeats; host-less lines never count. Read-only, no lock. */
+export function trackedHostOf(agentDir: string, repo: string, n: number, hosts: string[]): string[] {
+  const cur = readTracked(agentDir);
+  if (cur.kind !== "ok") return [];
+  const out = new Set<string>();
+  for (const l of cur.lines) {
+    const u = usableLine(l);
+    if (u?.host && u.number === n && u.repo.toLowerCase() === repo.toLowerCase() && hosts.includes(u.host)) out.add(u.host);
+  }
+  return [...out];
+}
+
 export type AddOutcome = "added" | "present" | "full" | "unavailable";
 
 /** Adds `repo#n` to the tracked list (idempotent, case-insensitive). No network call. A list that exists but does not parse is never overwritten. */
@@ -167,10 +185,16 @@ export async function addTracked(agentDir: string, repo: string, n: number, now:
       if (cur.kind === "bad") return "unavailable";
       const lines = cur.kind === "ok" ? cur.lines : [];
       const k = storeKey(repo, n, host);
-      if (lines.some((l) => { const u = usableLine(l); return u !== null && storeKey(u.repo, u.number, u.host) === k; })) return "present";
-      if (lines.length >= MAX_TRACKED) return "full";
       const h = host?.toLowerCase();
-      writeTracked(agentDir, [...lines, { repo, number: n, addedAt: now(), ...(h && h !== "github.com" ? { host: h } : {}) }]);
+      const at = lines.findIndex((l) => { const u = usableLine(l); return u !== null && storeKey(u.repo, u.number, u.host) === k; });
+      if (at >= 0) {
+        // a host-less line of the same key is github.com's: it gets the host written, so a later drop of host-less lines does not lose it
+        const l = lines[at];
+        if (h && isObj(l) && !("host" in l)) writeTracked(agentDir, lines.map((x, i) => (i === at ? { ...l, host: h } : x)));
+        return "present";
+      }
+      if (lines.length >= MAX_TRACKED) return "full";
+      writeTracked(agentDir, [...lines, { repo, number: n, addedAt: now(), ...(h ? { host: h } : {}) }]);
       return "added";
     }, now);
     return r ? r.value : "unavailable";
@@ -217,7 +241,7 @@ function parseSnap(v: unknown): StoredSnap | null {
   const mergeable: Mergeable = v.mergeable === "mergeable" || v.mergeable === "conflicting" ? v.mergeable : "unknown";
   const str = (x: unknown): string => (typeof x === "string" ? x : "");
   const required = Array.isArray(v.required) ? v.required.filter((n): n is string => typeof n === "string") : v.required === null ? null : undefined;
-  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
+  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.learn === "merge-time" || v.learn === "pre-merge" ? { learn: v.learn } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
 }
 
 /** The per-source state of a state entry (`sources.<name>`), invalid entries dropped; undefined when none is left. */

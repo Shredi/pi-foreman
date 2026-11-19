@@ -134,14 +134,12 @@
    }
   ],
   "r-pass": [
-   {
-    "text": "[[replay:rc3]] no findings\nOverall verdict: PASS"
-   }
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]},
+   {"text": "[[replay:rc3]] no findings"}
   ],
   "r-fail": [
-   {
-    "text": "[[replay:rc4]] one finding\nOverall verdict: FAIL"
-   }
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "one finding"}]}}]},
+   {"text": "[[replay:rc4]] one finding"}
   ],
   "b-built2": [
    {
@@ -149,9 +147,8 @@
    }
   ],
   "r-pass2": [
-   {
-    "text": "[[replay:ed3]] no findings\nOverall verdict: PASS"
-   }
+   {"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]},
+   {"text": "[[replay:ed3]] no findings"}
   ]
  },
  "explorer": {

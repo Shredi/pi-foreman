@@ -1,5 +1,5 @@
-// More real adapter signals into the self-warm's tier choice (warmtiers-wiring.test.ts has the first set): a foreman_wait, a foreman_bg
-// wait, a bg_run add-on task, an open dialog (live-state blocker) and a bash command in flight. Same rig: an 11 s TTL and a tiny
+// More real adapter signals into the self-warm's tier choice (warmtiers-wiring.test.ts has the first set): a foreman_wait,
+// a bg_run add-on task, an open dialog (live-state blocker) and a bash command in flight. Same rig: an 11 s TTL and a tiny
 // budgetShare make the first warm refuse, and the `keepalive skipped budget` record names the tier that held and its activity reason.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -47,27 +47,6 @@ test("a foreman_wait (timer) holds the half tier, reason wait", async (t) => {
   assert.equal(hit.tier, "half");
   assert.equal(hit.activity, "wait");
   await wait.execute("c2", { action: "cancel", id: String(res.details.id) }, undefined, undefined, r.ctx);
-});
-
-test("a foreman_bg wait holds the half tier, reason bg_task", async (t) => {
-  const tools = new Map<string, Tool>();
-  const r = await settled(t, tools);
-  const bg = tools.get("foreman_bg");
-  assert.ok(bg, "foreman_bg is registered");
-  const res = await bg.execute("c1", { command: `node -e "setTimeout(()=>{},9000)"`, note: "slow" }, undefined, undefined, r.ctx);
-  assert.ok(!res.isError, res.content[0].text);
-  const pid = Number(res.details.pid);
-  try {
-    const hit = await skipped(r);
-    assert.equal(hit.tier, "half");
-    assert.equal(hit.activity, "bg_task");
-  } finally {
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
 });
 
 test("a running bg_run add-on task (readOwnAddonTasks) holds the half tier, reason bg_task", async (t) => {

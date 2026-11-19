@@ -48,7 +48,6 @@ test("A8: every other unknown word keeps the segment opaque (no built-in allow)"
     'cat $(cat list.txt)',
     'cat "$F"',
     'grep -f "$F" src/a.ts', // file option
-    'grep -n "$PAT" src/a.ts > "$OUT"', // redirect target
     'grep -n "$PAT" "$DIR"/a.ts',
     // the script text of sed and awk is unknown
     'sed -n "$EXPR" src/a.ts',
@@ -59,6 +58,8 @@ test("A8: every other unknown word keeps the segment opaque (no built-in allow)"
   ]) {
     assert.equal(rule(l), "none", l);
   }
+  // a redirect target that is a variable ends the command: the floor refuses it first (PR B2, the old Python delete check did)
+  assert.equal(rule('grep -n "$PAT" src/a.ts > "$OUT"'), "floor-unknown-write-target");
 });
 
 test("A8: a relaxed pattern word does not hide a floored path", () => {

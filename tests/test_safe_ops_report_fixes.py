@@ -4,16 +4,15 @@ from __future__ import annotations
 import contextlib
 import io
 import os
-import shutil
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_safe_ops as base  # noqa: E402
-import foreman_close as fcl  # noqa: E402
-import foreman_worktree as fw  # noqa: E402
-import safe_ops  # noqa: E402
+import test_safe_ops as base
+import foreman_close as fcl
+import foreman_worktree as fw
+import safe_ops
 
 
 class WorktreeCase(base.SafeOpsCase):

@@ -9,6 +9,7 @@ import { cleanDialogText, dialogStyle, fileUrl, ownerDialog, shapedConfirm, shap
 import type { DialogSpec, DialogStyle } from "../ownerdialog.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { posixOnly } from "./_platform.ts";
 
 initTheme("dark");
 
@@ -110,7 +111,7 @@ test("link rule: a plan page links; a brief links only when its real path is .md
   assert.match(ownerDialog(brief(path.join(d, "plan.html"), "page"), styled).body, OSC8);
 });
 
-test("link rule: a brief.md that is a symlink to a .command file is not linked", { skip: process.platform === "win32" }, (t) => {
+test("link rule: a brief.md that is a symlink to a .command file is not linked", { skip: posixOnly }, (t) => {
   const d = briefDir(t);
   fs.writeFileSync(path.join(d, "run.command"), "#!/bin/sh\n");
   fs.symlinkSync(path.join(d, "run.command"), path.join(d, "brief.md"));
@@ -126,7 +127,7 @@ test("cleanDialogText: zero-width, Arabic letter mark, BOM and line/paragraph se
   assert.ok(![...out].some((ch) => cps.includes(ch.charCodeAt(0))));
 });
 
-test("link rule: a text link through a symlink names the resolved real file in the url", { skip: process.platform === "win32" }, (t) => {
+test("link rule: a text link through a symlink names the resolved real file in the url", { skip: posixOnly }, (t) => {
   const d = briefDir(t);
   fs.writeFileSync(path.join(d, "real.md"), "# x\n");
   fs.symlinkSync(path.join(d, "real.md"), path.join(d, "brief.md"));

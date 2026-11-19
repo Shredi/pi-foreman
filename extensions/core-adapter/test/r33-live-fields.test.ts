@@ -55,7 +55,7 @@ test("readOwnAddonTasks lists only <sessionId>-<digits> dirs, with no log tails;
   assert.deepEqual(readOwnAddonTasks(dotted, "a.b").map((x) => x.id), ["x"], "the id is matched literally");
 });
 
-test("live file: waits keep bg, the pr_watch entry carries prs, tasks come from this session's dir, an own ask.md adds no asks field", () => {
+test("live file: waits carry no bg field, the pr_watch entry carries prs, tasks come from this session's dir, an own ask.md adds no asks field", () => {
   const agent = tmp();
   const cwd = tmp();
   task(cwd, "s1-100", "t1");
@@ -64,7 +64,7 @@ test("live file: waits keep bg, the pr_watch entry carries prs, tasks come from 
   fs.mkdirSync(hand, { recursive: true });
   fs.writeFileSync(path.join(hand, "child"), "s1\n");
   const waits = [
-    { id: "w1", kind: "pid", note: "make", ageSeconds: 3.4, leftSeconds: 10, bg: true },
+    { id: "w1", kind: "pid", note: "make", ageSeconds: 3.4, leftSeconds: 10 },
     { id: "w2", kind: "timer", note: "", ageSeconds: 1, leftSeconds: 9 },
     { id: "pr_watch", kind: "pr", note: "2 pr watch", ageSeconds: 0, leftSeconds: 0, prs: [12, 14] },
   ];
@@ -73,7 +73,7 @@ test("live file: waits keep bg, the pr_watch entry carries prs, tasks come from 
   const read = () => JSON.parse(fs.readFileSync(path.join(liveDir(agent), "s1.json"), "utf8"));
   l.flush();
   const a = read();
-  assert.equal(a.waits[0].bg, true);
+  assert.equal("bg" in a.waits[0], false);
   assert.equal("bg" in a.waits[1], false);
   assert.deepEqual(a.waits[2].prs, [12, 14]);
   assert.deepEqual(a.tasks.map((x: { id: string; tail: string[] }) => [x.id, x.tail]), [["t1", []]]);

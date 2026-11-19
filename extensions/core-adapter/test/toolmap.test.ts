@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mapTool } from "../toolmap.ts";
 
 test("shell tools map to Bash and run no core script", () => {
-  for (const t of ["bash", "powershell", "foreman_bg", "bg_run"]) {
+  for (const t of ["bash", "powershell", "bg_run"]) {
     assert.deepEqual(mapTool(t), { coreName: "Bash", pre: [], post: [] });
   }
 });

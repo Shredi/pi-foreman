@@ -8,7 +8,7 @@
   @inquirer/prompts                       8.7.4      8.7.4      8.7.4    yes
   unbash                                  6.0.1      6.0.1      6.0.1    yes
   pi-polish                               –          0.1.2      0.1.2    yes
-  pi-background-tasks                     2.6.9      2.6.10     2.6.9    yes
+  pi-quiver                               6.14.1     6.14.2     6.14.1   yes
   pi-notes                                0.3.0      0.2.4      0.2.4    yes
   herdr                                   0.5.1      –          –        no
   herdr-app                               –          –          –        no

@@ -1,14 +1,16 @@
 // Runs a test suite behind a machine-wide lock so parallel sessions queue instead of overloading the host.
-// Usage: node scripts/foreman_test_run.mjs <node args and globs...>      -> node <leading options> --test --test-concurrency=N <globs>
-//        node scripts/foreman_test_run.mjs --exec -- <command> [args...]  -> the command, lock only (no concurrency flag)
+// Usage: node scripts/foreman_test_run.mjs [--timeout <s>] <node args and globs...>      -> node <leading options> --test --test-concurrency=N <globs>
+//        node scripts/foreman_test_run.mjs [--timeout <s>] --exec -- <command> [args...]  -> the command, lock only (no concurrency flag)
+// Time limit: a leading `--timeout <s>` or env FOREMAN_TEST_TIMEOUT=<s> (flag wins; positive number, fractions allowed) is one deadline
+// for the lock wait plus the run, also with the lock off. When it passes, the run and its descendants are stopped (SIGTERM, after 5 s
+// SIGKILL; Windows taskkill /T /F), the lock is released, one stderr line names limit, elapsed time and the holder waited on; exit 124.
+// A bad value exits 2 with nothing run. The wait for the lock ends after FOREMAN_TEST_LOCK_WAIT_MINUTES (default 20): exit 75, nothing run.
 // Leading node options (`--import ./x.mjs`, other `-x` flags) stay before `--test`; the first plain argument starts the globs.
-// A leading `--write-spawn-baseline` (npm run test:node:baseline) writes scripts/foreman_test_spawn_baseline.json, the child-process count per test file, when the run exits 0;
-// a run over the budget names the files that grew most against it. Refresh it only when the limit changes.
 // Env: FOREMAN_TEST_LOCK=0 (or a truthy CI) skips the lock; FOREMAN_TEST_CONCURRENCY=N sets --test-concurrency (default
 // half the cores); FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) is the age after which a lock counts as stale;
 // FOREMAN_TEST_LOCK_DIR overrides the lock directory (default <agentDir>/pi-foreman/state, else the temp dir).
 // The command's env has the running-session variables of extensions/core-adapter/test/session-env.json removed (the lock reads its own env first).
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,16 +18,11 @@ import { fileURLToPath } from "node:url";
 import { withoutSessionEnv } from "./session_env.mjs";
 
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
-// (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process. A run that passed
-// but started any npm, or more child processes than the budget, fails. FOREMAN_TEST_SPAWN_BUDGET overrides the budget.
-// Measured 2026-11-18 on macOS: 21515 child processes in a full `npm run test:node` run (git 16813, python 4509, node 62, npm 0, other 131).
-// The limit 25000 is the owner's decision of 2026-11-18: the branch measurement plus about 1500 headroom, rounded, one number for the whole node run (runs vary by several hundred).
-// The per-file counts are committed in scripts/foreman_test_spawn_baseline.json; `npm run test:node:baseline` refreshes it, only when the limit changes. On a run over the budget the runner lists the files that grew most against it.
-// The permission clean-up round is expected to lower the limit (about 6,500 starts sit in the code it removes or rewrites).
-export const DEFAULT_SPAWN_BUDGET = 25000;
-
-export const SPAWN_BASELINE_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "foreman_test_spawn_baseline.json");
-export const BASELINE_COMMAND = "npm run test:node:baseline";
+// (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process, and the CJS preload
+// _proc-watch.cjs (put in the run's NODE_OPTIONS) writes a title record for a node process that changed its process title and
+// stops a process whose wrapper died. A run that passed but started any npm, or had a titled node process, fails; there is no
+// limit on the total count. Async children still running when a test process ended are listed as a warning only.
+const PROC_WATCH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "extensions", "core-adapter", "test", "_proc-watch.cjs");
 
 const OPTIONS_WITH_VALUE = new Set(["--import", "--require", "-r", "--loader", "--env-file"]);
 const POLL_MS = 2000;
@@ -37,18 +34,27 @@ export function testConcurrency({ env = process.env, cores = os.availableParalle
   return Math.max(1, Math.floor(cores / 2));
 }
 
-/** The child-process budget: FOREMAN_TEST_SPAWN_BUDGET when a non-negative integer, else the default. */
-export function spawnBudget(env = process.env) {
-  const v = env.FOREMAN_TEST_SPAWN_BUDGET;
-  return v !== undefined && /^\s*\d+\s*$/.test(v) ? Number(v) : DEFAULT_SPAWN_BUDGET;
+/** NODE_OPTIONS for a node-mode run: the existing value kept, then `--require=<preload>`; JSON quoting escapes `\` and `"` the way node's parser reads them. */
+export function nodeOptionsWithWatch(existing, preload = PROC_WATCH) {
+  const req = `--require=${JSON.stringify(path.resolve(preload))}`;
+  if (!existing) return req;
+  return existing.includes(req) ? existing : `${existing} ${req}`;
 }
+
+/** The env of a node-mode run: the count dir, the watch preload in NODE_OPTIONS and this process as the wrapper pid. */
+export function nodeRunEnv(env, countDir, wrapperPid = process.pid) {
+  return { ...withoutSessionEnv(env), FOREMAN_SPAWN_COUNT_DIR: countDir, NODE_OPTIONS: nodeOptionsWithWatch(env.NODE_OPTIONS), FOREMAN_TEST_WRAPPER_PID: String(wrapperPid) };
+}
+
+/** Record fields that are not child counts. */
+const NON_COUNT_FIELDS = new Set(["titled", "leftovers", "file"]);
 
 /** Sums per-process count objects ({ git: 2, npm: 1, ... }) into totals by git, python, node, npm and other. */
 export function sumSpawnCounts(records) {
   const t = { git: 0, python: 0, node: 0, npm: 0, other: 0, total: 0 };
   for (const r of records) {
     for (const [k, n] of Object.entries(r ?? {})) {
-      if (!Number.isInteger(n) || n < 0) continue;
+      if (NON_COUNT_FIELDS.has(k) || !Number.isInteger(n) || n < 0) continue;
       t[k in t && k !== "total" ? k : "other"] += n;
       t.total += n;
     }
@@ -83,74 +89,44 @@ export function spawnSummaryLine(t) {
   return `child processes: ${t.total} (git ${t.git}, python ${t.python}, node ${t.node}, npm ${t.npm}, other ${t.other})`;
 }
 
-/** Why a run that exited with `code` fails the guard: a list of reasons, empty when it passes (or the run failed already). `npmFiles` is npmCountsByFile's list. */
-export function spawnGuardFailures(code, t, budget, npmFiles = []) {
+/** The files that had a node process with a changed process title, sorted, without repeats. */
+export function titledFiles(records) {
+  const files = new Set();
+  for (const r of records) if (r?.titled === true) files.add(typeof r.file === "string" ? r.file : "(no file)");
+  return [...files].sort();
+}
+
+/** Why a run that exited with `code` fails the guard: a list of reasons, empty when it passes (or the run failed already). `npmFiles` is npmCountsByFile's list, `titled` is titledFiles' list. */
+export function spawnGuardFailures(code, t, npmFiles = [], titled = []) {
   if (code !== 0) return [];
   const out = [];
   if (t.npm > 0) {
     out.push(`the test run started npm ${t.npm} time(s); tests must not start npm (see docs/development.md)`);
     for (const [file, n] of npmFiles) out.push(`  npm ${n} in ${file}`);
   }
-  if (t.total > budget) out.push(`the test run started ${t.total} child processes, over the budget of ${budget}`);
+  if (titled.length > 0) {
+    out.push(`the test run had ${titled.length} file(s) with a node process that changed its process title; tests must not (see docs/development.md)`);
+    for (const file of titled) out.push(`  titled node process in ${file}`);
+  }
   return out;
 }
 
-/** Takes the runner's own flag off argv: only a leading `--write-spawn-baseline`; anywhere else it is left for node. */
-export function splitRunnerFlags(argv) {
-  if (argv[0] === "--write-spawn-baseline") return { writeBaseline: true, rest: argv.slice(1) };
-  return { writeBaseline: false, rest: argv };
-}
-
-/** A count record's file label with `/` separators (a baseline written on one OS compares on another). */
-const normalizeLabel = (file) => String(file).replace(/\\/g, "/");
-
-/** The child-process total per test file: { label: n }; records without a file (older shape) are "(no file)". */
-export function spawnCountsByFile(records) {
-  const byFile = {};
+/** The warning lines for async children still running when a test process ended: empty when none, else a header and one line per file with count and kinds. */
+export function leftoverLines(records) {
+  const byFile = new Map();
   for (const r of records) {
-    const label = typeof r?.file === "string" ? normalizeLabel(r.file) : "(no file)";
-    let n = 0;
-    for (const [k, v] of Object.entries(r ?? {})) if (k !== "file" && Number.isInteger(v) && v >= 0) n += v;
-    if (n > 0) byFile[label] = (byFile[label] ?? 0) + n;
+    if (!Array.isArray(r?.leftovers) || r.leftovers.length === 0) continue;
+    const file = typeof r.file === "string" ? r.file : "(no file)";
+    const e = byFile.get(file) ?? { n: 0, kinds: new Set() };
+    for (const k of r.leftovers) {
+      e.n += 1;
+      e.kinds.add(String(k));
+    }
+    byFile.set(file, e);
   }
-  return byFile;
-}
-
-/** The files whose count grew against the baseline, largest growth first, at most `n`: [{ file, now, baseline, delta, isNew }]. Files missing from the baseline count fully and are new; equal or shrunk files are left out. */
-export function spawnGrowth(byFile, baseline, n = 10) {
-  const out = [];
-  for (const [file, now] of Object.entries(byFile)) {
-    const isNew = !Object.hasOwn(baseline, file);
-    const base = isNew ? 0 : baseline[file];
-    if (now > base) out.push({ file, now, baseline: base, delta: now - base, isNew });
-  }
-  out.sort((a, b) => b.delta - a.delta || (a.file < b.file ? -1 : 1));
-  return out.slice(0, n);
-}
-
-/** The baseline's `files` map from `file`, or null when it is missing, unparsable or of the wrong shape (a `files` that is not a plain object, or a count that is not a non-negative integer). */
-export function readSpawnBaseline(file) {
-  try {
-    const files = JSON.parse(fs.readFileSync(file, "utf8"))?.files;
-    if (files === null || typeof files !== "object" || Array.isArray(files)) return null;
-    for (const v of Object.values(files)) if (!Number.isInteger(v) || v < 0) return null;
-    return files;
-  } catch {
-    return null;
-  }
-}
-
-/** The text printed after a budget failure: the growth list (or why there is none) and how to refresh the baseline. `baseline` is readSpawnBaseline's result. */
-export function spawnGrowthLines(growth, baseline) {
-  if (baseline === null) return ["the per-file baseline is missing or unreadable, so no growth list (scripts/foreman_test_spawn_baseline.json)"];
-  const lines = growth.map((g) => (g.isNew ? `  +${g.delta} ${g.file} (new)` : `  +${g.delta} ${g.file} (now ${g.now}, baseline ${g.baseline})`));
-  lines.push(`refresh the list with: ${BASELINE_COMMAND} (only when the limit changes)`);
-  return lines;
-}
-
-/** Whether a run writes the baseline: it exited 0 (also when over the budget) and the flag was given. */
-export function shouldWriteBaseline(code, flag) {
-  return flag === true && code === 0;
+  if (byFile.size === 0) return [];
+  const lines = [...byFile].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([file, e]) => `  ${file}: ${e.n} (${[...e.kinds].sort().join(", ")})`);
+  return ["warning: child processes still running when a test process ended:", ...lines];
 }
 
 /** The node argv for a test run: leading options, then `--test --test-concurrency=N`, then the globs. */
@@ -189,7 +165,7 @@ function readLock(file) {
   try {
     const info = JSON.parse(fs.readFileSync(file, "utf8"));
     const started = Date.parse(info?.started);
-    if (Number.isInteger(info?.pid) && info.pid > 0 && !Number.isNaN(started)) return { pid: info.pid, started };
+    if (Number.isInteger(info?.pid) && info.pid > 0 && !Number.isNaN(started)) return { pid: info.pid, started, cwd: typeof info.cwd === "string" ? info.cwd : undefined };
   } catch {}
   return undefined;
 }
@@ -211,12 +187,40 @@ function staleReason(file, maxMs, now = Date.now()) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Takes the lock (waiting while another live run holds it) and returns a release function. */
-export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, stderr = process.stderr } = {}) {
+/** Thrown by acquireLock when `maxWaitMs` passed while a live run held the lock; `holder` is {pid, started, cwd} or undefined. */
+export class LockWaitTimeout extends Error {
+  constructor(holder, waitedMs) {
+    super("timed out waiting for the test lock");
+    this.name = "LockWaitTimeout";
+    this.holder = holder;
+    this.waitedMs = waitedMs;
+  }
+}
+
+const hhmm = (ms) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+/** `pid N (cwd X), started HH:MM` for a lock holder. */
+export function holderText(h) {
+  return `pid ${h.pid} (cwd ${h.cwd ?? "unknown"}), started ${hhmm(h.started)}`;
+}
+
+const minutes = (ms) => Number((ms / 60_000).toFixed(1));
+
+/**
+ * Takes the lock (waiting while another live run holds it) and returns a release function. A wait line names the holder at
+ * the start and again every `announceMs`; `onHolder(holder)` gets each holder waited on; after `maxWaitMs` (unbounded when unset)
+ * it throws LockWaitTimeout.
+ */
+export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, stderr = process.stderr, maxWaitMs, announceMs = 60_000, onHolder } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const maxMs = maxMinutes * 60_000;
   const body = JSON.stringify({ pid: process.pid, started: new Date().toISOString(), cwd: process.cwd(), host: os.hostname() });
-  let announced = false;
+  let waitStart;
+  let lastAnnounce;
+  let holder;
   for (;;) {
     try {
       fs.writeFileSync(file, body, { flag: "wx" });
@@ -251,27 +255,120 @@ export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, std
       await sleep(Math.min(pollMs, 50));
       continue;
     }
-    if (!announced) {
-      const info = readLock(file);
-      if (info) {
-        const d = new Date(info.started);
-        const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-        stderr.write(`waiting for the test lock held by pid ${info.pid}, started ${hhmm}\n`);
-        announced = true;
+    const now = Date.now();
+    waitStart ??= now;
+    const info = readLock(file);
+    if (info) {
+      holder = info;
+      onHolder?.(info);
+      if (lastAnnounce === undefined) {
+        stderr.write(`waiting for the test lock held by ${holderText(info)}\n`);
+        lastAnnounce = now;
+      } else if (now - lastAnnounce >= announceMs) {
+        stderr.write(`still waiting for the test lock held by ${holderText(info)}; waited ${minutes(now - waitStart)} min\n`);
+        lastAnnounce = now;
       }
     }
-    await sleep(pollMs);
+    const left = maxWaitMs === undefined ? Infinity : maxWaitMs - (now - waitStart);
+    if (left <= 0) throw new LockWaitTimeout(holder, now - waitStart);
+    await sleep(Math.min(pollMs, left));
   }
 }
 
+/** Positive finite seconds from a string, else undefined. */
+function positiveNumber(v) {
+  if (typeof v !== "string" || v.trim() === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** The pid and parent pid of every process, [{pid, ppid}, ...], from `ps -A -o pid= -o ppid=`; undefined when ps fails. */
+export function listProcesses(run = spawnSync) {
+  try {
+    const r = run("ps", ["-A", "-o", "pid=", "-o", "ppid="], { encoding: "utf8" });
+    if (r.error || r.status !== 0 || typeof r.stdout !== "string") return undefined;
+    const out = [];
+    for (const line of r.stdout.split("\n")) {
+      const m = line.trim().split(/\s+/).map(Number);
+      if (m.length === 2 && Number.isInteger(m[0]) && Number.isInteger(m[1])) out.push({ pid: m[0], ppid: m[1] });
+    }
+    return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The pids of `root` and all its descendants in a process listing. */
+function treeOf(root, procs) {
+  const set = new Set([root]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const { pid, ppid } of procs) {
+      if (set.has(ppid) && !set.has(pid)) {
+        set.add(pid);
+        grew = true;
+      }
+    }
+  }
+  return set;
+}
+
+/**
+ * Stops `pid` and its descendants without a process group. POSIX: list processes, SIGTERM the tree, wait `graceMs`, list again
+ * and SIGKILL the union of both listings unconditionally (a ps failure: the child only, with a note). Windows: taskkill /T /F.
+ */
+export async function killTree(pid, { platform = process.platform, spawnSync: run = spawnSync, kill = process.kill.bind(process), list = () => listProcesses(run), graceMs = 5000, stderr = process.stderr, env = process.env } = {}) {
+  if (platform === "win32") {
+    const taskkill = env.SystemRoot ? path.win32.join(env.SystemRoot, "System32", "taskkill.exe") : "taskkill";
+    try {
+      run(taskkill, ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" });
+    } catch {}
+    return;
+  }
+  const signal = (pids, sig) => {
+    for (const p of pids) {
+      try {
+        kill(p, sig);
+      } catch {}
+    }
+  };
+  const first = list();
+  if (!first) stderr.write("foreman_test_run: could not list processes; stopping the main test process only\n");
+  const targets = first ? treeOf(pid, first) : new Set([pid]);
+  signal(targets, "SIGTERM");
+  await sleep(graceMs);
+  const second = list();
+  const all = new Set(targets);
+  if (second) for (const p of treeOf(pid, second)) all.add(p);
+  signal(all, "SIGKILL");
+}
+
 async function main(rawArgv, env = process.env) {
-  const { writeBaseline, rest: argv } = splitRunnerFlags(rawArgv);
+  const started = Date.now();
+  let argv = rawArgv;
+  let limitS;
+  if (argv[0] === "--timeout") {
+    limitS = positiveNumber(argv[1]);
+    if (limitS === undefined) {
+      process.stderr.write("foreman_test_run: --timeout needs a positive number of seconds\n");
+      return 2;
+    }
+    argv = argv.slice(2);
+  } else if (env.FOREMAN_TEST_TIMEOUT !== undefined && env.FOREMAN_TEST_TIMEOUT.trim() !== "") {
+    limitS = positiveNumber(env.FOREMAN_TEST_TIMEOUT);
+    if (limitS === undefined) {
+      process.stderr.write("foreman_test_run: FOREMAN_TEST_TIMEOUT needs a positive number of seconds\n");
+      return 2;
+    }
+  }
+  const limitMs = limitS === undefined ? undefined : limitS * 1000;
+  const elapsedS = () => ((Date.now() - started) / 1000).toFixed(1);
   let cmd;
   let args;
   if (argv[0] === "--exec") {
     const rest = argv[1] === "--" ? argv.slice(2) : argv.slice(1);
     if (!rest.length) {
-      process.stderr.write("usage: foreman_test_run.mjs --exec -- <command> [args...]\n");
+      process.stderr.write("usage: foreman_test_run.mjs [--timeout <s>] --exec -- <command> [args...]\n");
       return 2;
     }
     [cmd, ...args] = rest;
@@ -280,20 +377,49 @@ async function main(rawArgv, env = process.env) {
     args = nodeTestArgs(argv, testConcurrency({ env }));
   }
   let release = () => {};
+  let holder;
+  const limitLine = () =>
+    `foreman_test_run: time limit of ${limitS} s reached after ${elapsedS()} s; stopped the run${holder ? `; waited for the lock held by ${holderText(holder)}` : ""}\n`;
   if (!lockDisabled(env)) {
-    release = await acquireLock(lockPath(env), { maxMinutes: Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) : 30 });
+    const waitMin = Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) : 20;
+    const maxWaitMs = Math.min(waitMin * 60_000, limitMs === undefined ? Infinity : limitMs - (Date.now() - started));
+    try {
+      release = await acquireLock(lockPath(env), {
+        maxMinutes: Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) : 30,
+        maxWaitMs,
+        onHolder: (h) => (holder = h),
+      });
+    } catch (e) {
+      if (!(e instanceof LockWaitTimeout)) throw e;
+      if (limitMs !== undefined && Date.now() - started >= limitMs) {
+        process.stderr.write(limitLine());
+        return 124;
+      }
+      process.stderr.write(`foreman_test_run: gave up waiting for the test lock after ${minutes(e.waitedMs)} min; held by ${e.holder ? holderText(e.holder) : "an unknown run"}\n`);
+      return 75;
+    }
   }
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "pf-spawn-count-"));
   const code = await new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? { ...withoutSessionEnv(env), FOREMAN_SPAWN_COUNT_DIR: countDir } : withoutSessionEnv(env), shell: false });
+    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(env, countDir) : withoutSessionEnv(env), shell: false });
     const forward = (sig) => () => child.kill(sig);
     const handlers = ["SIGINT", "SIGTERM"].map((s) => [s, forward(s)]);
     for (const [s, h] of handlers) process.on(s, h);
-    const done = (code) => {
+    let timer;
+    let killing; // the kill step of a fired time limit; the lock is released only after it
+    const done = async (code) => {
+      clearTimeout(timer);
+      if (killing) await killing;
       for (const [s, h] of handlers) process.off(s, h);
       release();
-      resolve(code);
+      resolve(killing ? 124 : code);
     };
+    if (limitMs !== undefined) {
+      timer = setTimeout(() => {
+        process.stderr.write(limitLine());
+        killing = killTree(child.pid);
+      }, Math.max(0, limitMs - (Date.now() - started)));
+    }
     child.on("error", (e) => {
       process.stderr.write(`foreman_test_run: ${e.message}\n`);
       done(127);
@@ -305,18 +431,9 @@ async function main(rawArgv, env = process.env) {
     const records = readSpawnCounts(countDir);
     const totals = sumSpawnCounts(records);
     process.stdout.write(`${spawnSummaryLine(totals)}\n`);
-    const failures = spawnGuardFailures(code, totals, spawnBudget(env), npmCountsByFile(records));
+    const failures = spawnGuardFailures(code, totals, npmCountsByFile(records), titledFiles(records));
     for (const f of failures) process.stderr.write(`foreman_test_run: ${f}\n`);
-    const byFile = spawnCountsByFile(records);
-    if (code === 0 && totals.total > spawnBudget(env)) {
-      const baseline = readSpawnBaseline(SPAWN_BASELINE_FILE);
-      for (const l of spawnGrowthLines(baseline ? spawnGrowth(byFile, baseline) : [], baseline)) process.stderr.write(`foreman_test_run: ${l}\n`);
-    }
-    if (shouldWriteBaseline(code, writeBaseline)) {
-      const sorted = Object.fromEntries(Object.entries(byFile).sort((a, b) => (a[0] < b[0] ? -1 : 1)));
-      fs.writeFileSync(SPAWN_BASELINE_FILE, `${JSON.stringify({ measured: new Date().toISOString().slice(0, 10), files: sorted }, null, 2)}\n`);
-      process.stdout.write(`wrote ${SPAWN_BASELINE_FILE}\n`);
-    }
+    for (const l of leftoverLines(records)) process.stderr.write(`foreman_test_run: ${l}\n`);
     return failures.length ? 1 : code;
   } finally {
     fs.rmSync(countDir, { recursive: true, force: true });

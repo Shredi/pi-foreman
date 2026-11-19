@@ -7,9 +7,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { world } from "./_r46world.ts";
 import { IDENTITY_ENTRY_TYPE, buildSpawnEnv, readNoteRaw, readSessionFile } from "../paneresume-core.ts";
+import { posixOnly } from "./_platform.ts";
 
 const SLOT = Symbol.for("pi-foreman.paneresume");
-const posix = process.platform !== "win32";
 type Sent = { message: { customType: string; content: string }; options: unknown }[];
 
 /** The adapter installs process signal listeners once per process: take them out again after the test. */
@@ -35,7 +35,7 @@ const until = async (pred: () => boolean, ms = 3000): Promise<void> => {
   }
 };
 
-test("the adapter writes the pane note at session_start; a shutdown without reason quit keeps it", { skip: !posix }, async (t) => {
+test("the adapter writes the pane note at session_start; a shutdown without reason quit keeps it", { skip: posixOnly }, async (t) => {
   cleanupSignals(t);
   const w = world(t);
   const agentDir = path.join(path.dirname(w.project), "agent");
@@ -57,7 +57,7 @@ test("the adapter writes the pane note at session_start; a shutdown without reas
   assert.equal("endedBy" in live, false, "a normal end carries no endedBy");
 });
 
-test("a subagent child (PI_SUBAGENT_CHILD=1) writes no note and keeps no signal listener of its own", { skip: !posix }, async (t) => {
+test("a subagent child (PI_SUBAGENT_CHILD=1) writes no note and keeps no signal listener of its own", { skip: posixOnly }, async (t) => {
   cleanupSignals(t);
   const w = world(t);
   const agentDir = path.join(path.dirname(w.project), "agent");
@@ -73,7 +73,7 @@ test("a subagent child (PI_SUBAGENT_CHILD=1) writes no note and keeps no signal 
   await a.down();
 });
 
-test("a start with PI_FOREMAN_RESUMED: the variable leaves process.env, one message at 10 s with no turn; a shutdown inside the window sends nothing", { skip: !posix }, async (t) => {
+test("a start with PI_FOREMAN_RESUMED: the variable leaves process.env, one message at 10 s with no turn; a shutdown inside the window sends nothing", { skip: posixOnly }, async (t) => {
   cleanupSignals(t);
   const sent: Sent = [];
   const w = world(t, { sent });
@@ -93,7 +93,7 @@ test("a start with PI_FOREMAN_RESUMED: the variable leaves process.env, one mess
   await y.down();
 });
 
-test("a resumed opened child keeps its identity, plan phase and approval; the identity entry is not appended again", { skip: !posix }, async (t) => {
+test("a resumed opened child keeps its identity, plan phase and approval; the identity entry is not appended again", { skip: posixOnly }, async (t) => {
   cleanupSignals(t);
   const w = world(t, { handoff: true });
   const agentDir = path.join(path.dirname(w.project), "agent");

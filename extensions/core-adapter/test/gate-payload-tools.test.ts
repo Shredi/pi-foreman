@@ -106,7 +106,7 @@ test("own-tool floors are per field: prose is free, paths and commands are floor
   const deps = { env: (cwd: string) => baseFloorEnv(cwd, { home: "/Users/someone" }) };
   const call = (tool: string, input: unknown) => gateDecide(tool, input, process.cwd(), deps) as { block?: true; allow?: true; rule?: string } | undefined;
   const key = "/Users/someone/.ssh/id_rsa";
-  for (const tool of ["foreman_bg", "bg_run"]) assert.ok(call(tool, { command: "git push --force origin x" })?.block, tool);
+  for (const tool of ["bg_run"]) assert.ok(call(tool, { command: "git push --force origin x" })?.block, tool);
   for (const [tool, input] of [["foreman_move", { src: key, dst: "x" }], ["foreman_move", { src: "a", dst: key }], ["foreman_copy", { src: "a", dst: key }], ["foreman_copy", { src: "a", dst: ".env" }], ["foreman_move", { src: ".env", dst: "y" }]] as const) {
     assert.ok(call(tool, input)?.block, `${tool} ${JSON.stringify(input)}`);
   }

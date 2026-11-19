@@ -5,9 +5,8 @@
 // completion to the foreman as a custom message `subagent-notify` (runs/background/notify.js
 // sendCompletion), before the run that message triggers. Its first line is
 // `Background task <status>: **<agent>**` (grouped: `Background tasks completed (n): **a**, **b**`),
-// followed by the child's output preview. The verdict is read from that text: the reviewer's
-// `Overall verdict: PASS|FAIL` (agents/reviewer.md output contract). FAIL opens a round, PASS does not; with no
-// verdict in the text (preview cut, contract not followed) the order alone counts.
+// followed by the child's output preview. The verdict is not read from that text: it comes from the reviewer's `review_verdict`
+// record (verdict.ts). FAIL opens a round, PASS does not; with no record the order alone counts.
 //
 // A builder run started while a review of built work is open is a revision round (the ladder's revision climb reads it).
 // Every launch call is walked step by step (`launchSteps`): in a `chain`, each builder entry after a reviewer step is one
@@ -85,33 +84,9 @@ export function completedAgents(content: string): string[] {
   return [...grouped[1].matchAll(/\*\*(.+?)\*\*/g)].map((m) => m[1]);
 }
 
-// The reviewer's CRITIQUE block (agents/reviewer.md): a `CRITIQUE:` line (`CRITIQUE: none`
-// when empty), then `- [now] <text>` / `- [later] <text>` lines. It is advice and never part of a verdict.
-const CRITIQUE_HEAD = /^\s*(?:[-*]\s+|\d+[.)]\s+)?\**CRITIQUE\**\s*:/i;
-const CRITIQUE_LINE = /^\s*[-*]\s+\[(now|later)\]/i;
-
-/** `text` without its CRITIQUE blocks (the head line and the `- [now|later]` lines and blank lines after it). */
-export function withoutCritique(text: string): string {
-  const out: string[] = [];
-  let inBlock = false;
-  for (const line of text.split(/\r?\n/)) {
-    if (CRITIQUE_HEAD.test(line)) inBlock = true;
-    else if (!(inBlock && (CRITIQUE_LINE.test(line) || !line.trim()))) inBlock = false;
-    if (!inBlock) out.push(line);
-  }
-  return out.join("\n");
-}
-
-/** Counts of the `- [now]` and `- [later]` lines of a review's CRITIQUE blocks. */
-export function critiqueOf(text: string): { now: number; later: number } {
-  const c = { now: 0, later: 0 };
-  let inBlock = false;
-  for (const line of text.split(/\r?\n/)) {
-    if (CRITIQUE_HEAD.test(line)) inBlock = true;
-    else if (inBlock && CRITIQUE_LINE.test(line)) c[CRITIQUE_LINE.exec(line)![1].toLowerCase() as "now" | "later"]++;
-    else if (line.trim()) inBlock = false;
-  }
-  return c;
+/** Counts of the findings of kind `now` and `later` in a review's verdict record (advice; it never makes a FAIL). */
+export function critiqueOf(findings: readonly { kind: string }[]): { now: number; later: number } {
+  return { now: findings.filter((f) => f.kind === "now").length, later: findings.filter((f) => f.kind === "later").length };
 }
 
 /**
@@ -124,8 +99,8 @@ export class CritiqueCounter {
   private now = 0;
 
   /** A counted review run ended: its `raised` record. */
-  onReview(text: string, role: string, runId: string, lines?: number): Record<string, string | number> {
-    const c = critiqueOf(text);
+  onReview(findings: readonly { kind: string }[], role: string, runId: string, lines?: number): Record<string, string | number> {
+    const c = critiqueOf(findings);
     this.now = c.now;
     return { event: "critique", kind: "raised", role, runId, count: c.now + c.later, ...(lines !== undefined ? { lines } : {}) };
   }
@@ -136,19 +111,6 @@ export class CritiqueCounter {
     this.now = 0;
     return count > 0 ? { event: "critique", kind: "applied", role: "builder", count } : null;
   }
-}
-
-/** Verdict in a review's text: any FAIL/BLOCK wins, else PASS/APPROVE, else null. The CRITIQUE block does not count. */
-export function verdictOf(text: string): Verdict | null {
-  const all = [...withoutCritique(text).matchAll(/\b(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*(pass|fail|approve|block)\b/gi)].map((m) => m[1].toLowerCase());
-  if (all.some((v) => v === "fail" || v === "block")) return "fail";
-  return all.length > 0 ? "pass" : null;
-}
-
-/** True when the first non-empty line of the report is the verdict line `FAIL INCOMPLETE` (the reviewer stopped early and found no defect). No other line is read. */
-export function incompleteOf(text: string): boolean {
-  const first = text.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
-  return /^\**(?:overall\s+)?verdict\s*\**\s*:\s*\**\s*fail[ \t]+incomplete[\s.!*]*$/i.test(first.trim());
 }
 
 /**

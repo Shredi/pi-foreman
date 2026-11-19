@@ -5,15 +5,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from test_foreman_config import render_prompt  # noqa: E402
-import test_foreman_session as base  # noqa: E402
+from test_foreman_config import render_prompt
+import test_foreman_session as base
 
 fsn = base.fsn
 ROOT = Path(__file__).resolve().parent.parent
 KNOBS = {"ledgerhelper": "tool", "heavythreshold": "strict", "reviewperrevision": "on", "trivialpath": "builder",
          "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on",
          "planreview": "on", "tools.pr": "on", "sizing": "on", "show": "on", "multisession": "on"}
-DECISION = "write `DECISION:` after the verdict word of its item line (`3. FAIL: DECISION: ...`)"
+DECISION = "record it as a `defect` finding whose text starts `DECISION:` (`DECISION: <the question for the owner>`)"
 
 
 class ForemanTextTest(unittest.TestCase):
@@ -63,9 +63,8 @@ class ReviewerTextTest(unittest.TestCase):
 class ReviewerIncompleteRuleTest(unittest.TestCase):
     def test_reviewer_names_the_incomplete_verdict(self):
         text = (ROOT / "agents" / "reviewer.md").read_text(encoding="utf-8")
-        self.assertIn("`VERDICT: FAIL INCOMPLETE`", text)
-        self.assertIn("found no defect", text)
-        self.assertIn("a defect found gives a plain FAIL", text)
+        self.assertIn("`incomplete` (the checks could not run; give a `reason`)", text)
+        self.assertIn("A fail needs a failed item or a `defect`", text)
         self.assertLessEqual(len(text.splitlines()), 30)
 
 

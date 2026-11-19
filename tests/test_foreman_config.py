@@ -327,7 +327,7 @@ class ConfigTest(unittest.TestCase):
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role in ("explorer", "reviewer"), role)
         self.assertEqual(sub["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
+                         ["read", "ls", "grep", "find", "bash", "foreman_report", "review_verdict"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -339,17 +339,19 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("intercom", fc.resolve_role(cfg, "builder", "p1")["tools"])
         self.assertIn("intercom", fc.resolve_role(cfg, "foreman", "p1")["tools"])
 
-    def test_ledger_helper_reviewer_tool_only_in_tool_mode(self):
+    def test_ledger_helper_reviewer_has_review_verdict_and_no_ledger_tool_in_every_mode(self):
         self.l2({"providers": PROV})
         cfg = self.load()["config"]
         self.assertEqual(cfg["ceremony"]["ledgerHelper"], "tool")
-        sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
-        for role in fc.CHILD_ROLES:
-            self.assertEqual("foreman_ledger" in sub[role]["tools"], role == "reviewer", role)
-        self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
-        cfg["ceremony"]["ledgerHelper"] = "off"
-        self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search", "codemode"])
+        for mode in ("tool", "bash", "off"):
+            cfg["ceremony"]["ledgerHelper"] = mode
+            sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
+            for role in fc.CHILD_ROLES:
+                self.assertEqual("review_verdict" in sub[role]["tools"], role == "reviewer", (mode, role))
+                self.assertNotIn("foreman_ledger", sub[role]["tools"], (mode, role))
+            tools = fc.resolve_role(cfg, "reviewer", "p1")["tools"]
+            self.assertIn("review_verdict", tools, mode)
+            self.assertNotIn("foreman_ledger", tools, mode)
 
     def test_git_pack_tools_for_bash_roles_only_when_on(self):
         self.l2({"providers": PROV, "tools": {"git": True}})
@@ -607,6 +609,8 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_pr, expected)
         # roles-slim: the planner, finalizer and senior-reviewer roles are gone; one (old, new) pair per changed rendered line
         role_pairs = [
+            # structured verdicts: V is closed by a `review_verdict` result for the item (listed first: the next pairs rewrite the same line)
+            ("Item V is closed only by a fresh `reviewer` or `senior-reviewer` launch that runs `ledger mark V --verifier` after its own check.", "Item V is closed only by a fresh `reviewer` launched with `items` naming V: it gives V a `pass` result in its `review_verdict` call after its own check."),
             ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),
             ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
             ("a `reviewer` (or `senior-reviewer`) PASS.", "a `reviewer` PASS."),
@@ -639,6 +643,8 @@ class PackageFilesTest(unittest.TestCase):
              "- Children run detached with a strict tool allowlist. A builder from a single launch pushes its own branch; other children never push, and a builder from a `tasks` or `chain` launch does not either (the foreman pushes for it, or launches a builder that must push on its own). No child opens or merges a PR."),
             # D71 addendum: a refused shell write keeps the tier; only a refused tool edit raises it
             ("A refused project edit makes the task standard: write the ledger and delegate.", "A refused `write`, `edit`, `foreman_move` or `foreman_copy` on a project file makes the task standard: write the ledger and delegate. A refused shell write keeps the tier, and the change still goes to a builder."),
+            # structured verdicts: V is closed by a `review_verdict` result for the item, a FAIL is recorded by the tool
+            ("If the reviewer reports FAIL, you may relaunch", "If the reviewer records FAIL, you may relaunch"),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)

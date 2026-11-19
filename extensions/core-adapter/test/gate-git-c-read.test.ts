@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-gitc-"));
 const checkout = path.join(base, "checkout");
 const other = path.join(base, "other");
@@ -24,7 +24,7 @@ const rule = (command: string): string | undefined => {
 };
 const FENCES = ["child-write-outside", "child-write-foreman-checkout"];
 
-test("read-only git -C <outside> verbs are no write outside nor into the checkout", { skip: !posix }, () => {
+test("read-only git -C <outside> verbs are no write outside nor into the checkout", { skip: posixOnly }, () => {
   for (const d of [other, checkout]) {
     for (const v of ["branch --show-current", "branch", "branch -vv", "stash list", "stash list --format=%gd", "stash show", "log --oneline -1", "status"]) {
       const l = `git -C ${d} ${v}`;
@@ -35,7 +35,7 @@ test("read-only git -C <outside> verbs are no write outside nor into the checkou
   }
 });
 
-test("git -C <outside> stash show|list --output=<file> is still a write outside", { skip: !posix }, () => {
+test("git -C <outside> stash show|list --output=<file> is still a write outside", { skip: posixOnly }, () => {
   for (const v of ["stash show", "stash list"]) {
     for (const o of [`--output=${other}/x`, `--output ${other}/x`]) {
       const l = `git -C ${other} ${v} ${o}`;
@@ -46,7 +46,7 @@ test("git -C <outside> stash show|list --output=<file> is still a write outside"
   }
 });
 
-test("git -C <outside> stash/branch writes are still a write outside", { skip: !posix }, () => {
+test("git -C <outside> stash/branch writes are still a write outside", { skip: posixOnly }, () => {
   for (const v of ["stash", "stash push", "stash pop", "stash drop", "branch -D x", "branch new-name"]) {
     const l = `git -C ${other} ${v}`;
     assert.equal(rule(l), "child-write-outside", l);
