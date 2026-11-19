@@ -355,8 +355,8 @@ function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<stri
   });
 }
 
-/** The working tree of `cwd` as a git tree (index + non-ignored worktree files) via a temporary index; null on any failure. */
-export async function worktreeTree(cwd: string): Promise<string | null> {
+/** The working tree of `cwd` as a git tree (index + non-ignored worktree files) via a temporary index; null on any failure. `skipWorkflow`: the tree leaves out `.workflow/` (ledger, notes, scratch), as `treeChangedSince` does. */
+export async function worktreeTree(cwd: string, skipWorkflow = false): Promise<string | null> {
   // one call, two lines: the toplevel, then the index path (relative to `cwd`, resolved below)
   const [top, idx] = ((await git(cwd, ["rev-parse", "--show-toplevel", "--git-path", "index"])) ?? "").split("\n").map((l) => l.trim());
   if (!top || !idx) return null;
@@ -368,6 +368,7 @@ export async function worktreeTree(cwd: string): Promise<string | null> {
     if (fs.existsSync(real)) fs.copyFileSync(real, tmp);
     const env = { ...process.env, GIT_INDEX_FILE: tmp };
     if ((await git(top, ["add", "-A"], env)) === null) return null;
+    if (skipWorkflow && (await git(top, ["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", ".workflow"], env)) === null) return null;
     const tree = (await git(top, ["write-tree"], env))?.trim() ?? "";
     return /^[0-9a-f]{40,64}$/.test(tree) ? tree : null;
   } catch {

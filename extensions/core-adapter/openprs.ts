@@ -152,6 +152,25 @@ export function remarkOpenPrs(file: string, globs: string[], now: number): void 
   }
 }
 
+/** The search is off: drop the entries of `file` under its lock, once. Returns how many were dropped (0: nothing was written). Never throws. */
+export function clearOpenPrs(file: string, now: number): number {
+  try {
+    const lock = `${file}.lock`;
+    const token = takeLock(lock, now, LOCK_STALE_MS);
+    if (!token) return 0;
+    try {
+      const cur = readFile(file);
+      if (!cur || cur.openPrs.length === 0) return 0;
+      writeAtomic(file, { v: 1, checkedAt: new Date(now).toISOString(), openPrs: [] });
+      return cur.openPrs.length;
+    } finally {
+      dropLock(lock, token);
+    }
+  } catch {
+    return 0; // unwritable: the next poll retries
+  }
+}
+
 /** The search strings: mine (author and review requested), and each bot author inside each scope entry (never unscoped). */
 export function openPrsQueries(c: OpenPrsConfig): string[] {
   const q: string[] = [];

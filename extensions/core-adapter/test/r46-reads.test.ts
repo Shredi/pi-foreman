@@ -20,11 +20,12 @@ test("up to 3 files and no reads leave the limits as configured", () => {
   assert.deepEqual(childReadLimits(c, "builder"), { warn: 20, deny: 40 });
 });
 
-test("the coded defaults: builder perFile 5, reviewer perFile 2, max 120", () => {
-  assert.equal(launchReadAllowance({}, "builder", { files: 10 }).allowance, 75);
+test("the coded defaults: builder none (D70), reviewer perFile 2, max 120", () => {
+  assert.equal(launchReadAllowance({}, "builder", { files: 10 }).allowance, undefined);
   assert.equal(launchReadAllowance({}, "reviewer", { files: 10 }).allowance, 30 + 2 * 7);
-  assert.equal(launchReadAllowance({}, "builder", { files: 100 }).allowance, 120);
-  assert.equal(childReadLimits({}, "builder", 500)?.deny, 120);
+  assert.equal(launchReadAllowance({}, "reviewer", { files: 100 }).allowance, 120);
+  assert.equal(childReadLimits({}, "builder", 500), null);
+  assert.equal(childReadLimits({}, "reviewer", 500)?.deny, 120);
 });
 
 test("perFile and max come from ceremony.childReads.<role>", () => {

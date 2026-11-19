@@ -311,6 +311,14 @@ def _tracked_entries(adir):
     return out
 
 
+def _join_key(p):
+    """The join key of a feed entry: host without the https default port `:443`, lowercased repo, number."""
+    host = p.get("host", "github.com")
+    if host.endswith(":443"):
+        host = host[:-4]
+    return (host, p["repo"].lower(), p["number"])
+
+
 def read_pr_feed(adir, now):
     """(entries, search fetched-at stamp or None), or None when neither source has anything.
     All search entries are listed; a tracked entry replaces its search twin only while display-fresh (okAt within 15 min), keeping the twin's
@@ -321,9 +329,9 @@ def read_pr_feed(adir, now):
         return None
     entries = list(search[0]) if search else []
     at = search[1] if search else None
-    index = {(p.get("host", "github.com"), p["repo"].lower(), p["number"]): i for i, p in enumerate(entries)}
+    index = {_join_key(p): i for i, p in enumerate(entries)}
     for ent, ok in tracked:
-        k = (ent.get("host", "github.com"), ent["repo"].lower(), ent["number"])
+        k = _join_key(ent)
         i = index.get(k)
         if i is None:
             ent["tracked"] = True

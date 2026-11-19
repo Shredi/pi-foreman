@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadMergedConfig, get, pythonPathHint } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { piAgentDir } from "./env.ts";
-import { hiddenRepo, openPrsConfig, openPrsFile, realGh, refreshOpenPrs, remarkOpenPrs, MAX_BODY } from "./openprs.ts";
+import { clearOpenPrs, hiddenRepo, openPrsConfig, openPrsFile, realGh, refreshOpenPrs, remarkOpenPrs, MAX_BODY } from "./openprs.ts";
 import type { OpenPrsConfig, RefreshResult } from "./openprs.ts";
 import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
@@ -49,6 +49,8 @@ export interface PollResult {
   tracked: number;
   dropped: number;
   searched: boolean;
+  /** Search entries dropped from open-prs.json by this poll (the search or the feature is off); absent when none. */
+  cleared?: number;
   skipped?: "off" | "not_due" | "busy" | "list_unreadable";
   error?: string;
 }
@@ -174,7 +176,8 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
     const oc = openPrsConfig(get(config.config, "radar.openPrs"));
     if (!oc.enabled || !hostOkOf(config.config)) {
       setOff(deps.agentDir, deps.now(), true);
-      return { ...res, skipped: "off" };
+      const dropped = clearOpenPrs(openPrsFile(deps.agentDir), deps.now());
+      return { ...res, skipped: "off", ...(dropped > 0 ? { cleared: dropped } : {}) };
     }
     setOff(deps.agentDir, deps.now(), false);
     const hosts = deps.githubHosts ? deps.githubHosts(config.config) : DEFAULT_HOSTS;
@@ -194,7 +197,12 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
       }
     }
     try {
-      res.searched = (await deps.refresh(oc, hosts)) === "refreshed";
+      const refreshed = await deps.refresh(oc, hosts);
+      res.searched = refreshed === "refreshed";
+      if (refreshed === "off") {
+        const dropped = clearOpenPrs(openPrsFile(deps.agentDir), deps.now());
+        if (dropped > 0) res.cleared = dropped;
+      }
     } catch (err) {
       res.error ??= msg(err);
     }
@@ -559,7 +567,7 @@ export function realDeps(env: NodeJS.ProcessEnv = process.env): PollDeps {
 }
 
 export function line(r: PollResult): string {
-  return `prs poll: tracked ${r.tracked}, dropped ${r.dropped}, searched ${r.searched ? "yes" : "no"}${r.skipped ? `, skipped ${r.skipped}` : ""}${r.error ? `, error ${r.error}` : ""}`;
+  return `prs poll: tracked ${r.tracked}, dropped ${r.dropped}, searched ${r.searched ? "yes" : "no"}${r.skipped ? `, skipped ${r.skipped}` : ""}${r.cleared ? `, search off, cleared ${r.cleared} ${r.cleared === 1 ? "entry" : "entries"}` : ""}${r.error ? `, error ${r.error}` : ""}`;
 }
 
 /** The CLI: argv after `prs`. Returns the exit code. */
@@ -569,8 +577,8 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
     return 2;
   }
   const r = await pollPrs(deps());
-  const { tracked, dropped, searched, skipped, error } = r;
-  out(argv.includes("--json") ? `${JSON.stringify({ tracked, dropped, searched, ...(skipped ? { skipped } : {}), ...(error ? { error } : {}) })}\n` : `${line(r)}\n`);
+  const { tracked, dropped, searched, skipped, error, cleared } = r;
+  out(argv.includes("--json") ? `${JSON.stringify({ tracked, dropped, searched, ...(cleared ? { cleared } : {}), ...(skipped ? { skipped } : {}), ...(error ? { error } : {}) })}\n` : `${line(r)}\n`);
   return 0;
 }
 

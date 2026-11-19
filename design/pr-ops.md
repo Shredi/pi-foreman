@@ -88,7 +88,7 @@ def with_pr_pack(cfg, role, tools):
 3. On win32, try every extension of `PATHEXT` (default `.COM;.EXE;.BAT;.CMD`, compared case-insensitively). On other platforms, try the bare name and require `os.access(X_OK)`.
 4. Return the first regular file found, else None.
 
-`root = workspace_root(req["cwd"])`, and every host call runs with `cwd=root`. Exception: `pr_comments` with a top-level request key `repoless: true` and a `repo` uses `_repoless_root(req)` instead, like `pr_batch`; the poll CLI (`foreman prs poll`) sends it, the tools never do, and it is never part of `config`.
+`root = workspace_root(req["cwd"])`, and every host call runs with `cwd=root`. Exception: `pr_status`, `pr_checks` and `pr_comments` with a top-level request key `repoless: true` and a `repo` use `_repoless_root(req)` instead, like `pr_batch`; the three tools send it when `repo` is given and the session folder is outside any git checkout, the poll CLI (`foreman prs poll`) still sends it for `pr_comments`, and it is never part of `config`.
 
 | `prHost` | Program |
 |---|---|
