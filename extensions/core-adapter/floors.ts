@@ -1320,8 +1320,22 @@ function psRemoteKind(text: string): string | null {
 
 const withFragment = (h: FloorHit, seg: ShellSegment): FloorHit => (h.fragment ? h : { ...h, fragment: cutFragment([seg.program, ...seg.argv].join(" ")) });
 
+/** The command behind `sudo`/`doas` and the like (`_strip_wrappers`): the privilege program's own options, `-u user` included, are taken off; the segment is otherwise as it was. */
+function behindPrivilege(seg: ShellSegment): ShellSegment {
+  let s = seg;
+  while (PRIVILEGE.has(base(s.program))) {
+    let i = 0;
+    while (i < s.argv.length && s.argv[i].startsWith("-")) i += /^-[ugpCUhrt]$/.test(s.argv[i]) ? 2 : 1;
+    if (i >= s.argv.length) return s;
+    s = { ...s, program: s.argv[i], argv: s.argv.slice(i + 1) };
+  }
+  return s;
+}
+
 /** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, an applet's words). */
-function localKind(seg: ShellSegment, prog: string, env: FloorEnv, rmAsks: boolean): FloorHit | null {
+function localKind(seg0: ShellSegment, prog0: string, env: FloorEnv, rmAsks: boolean): FloorHit | null {
+  const seg = behindPrivilege(seg0);
+  const prog = seg === seg0 ? prog0 : base(seg.program);
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
   // a recursive rm outside the roots was an `ask` of the old check (a dialog for the owner, a refusal for a child) where the rm stood as a command; the home, root and system
   // targets, shred, and an rm inside a string run as code (`-c`, eval) were denies
@@ -1365,7 +1379,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     const seg = appletOf(s);
     const prog = base(seg.program);
     const applet = seg !== s;
-    eff.push(seg);
+    // a body or string is read behind `sudo`/`doas` as the old check read it; a line's own `sudo` is the privilege floor's
+    eff.push(top ? seg : behindPrivilege(seg));
     // the applet behind `busybox` or `toybox` is checked as the plain command is (`busybox xargs sh -c ...` is `xargs sh -c ...`)
     if (applet) {
       const appletText = [seg.program, ...seg.argv].map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
