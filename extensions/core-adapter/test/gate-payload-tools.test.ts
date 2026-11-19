@@ -37,10 +37,10 @@ async function rig(t: Parameters<typeof r11Rig>[0], replies: Reply[]) {
   return { ...r, reg, log };
 }
 
-test("fetch POST is dangerous: with an empty whitelist the classifier escalates without a model call, and an unanswered dialog is a deny", async (t) => {
+test("fetch POST runs with no judge call (the net-write entry is gone, PR C)", async (t) => {
   const r = await rig(t, [V("allow", "A1")]);
   const res = await r.call("fetch", { url: "https://example.org/api", method: "POST", body: "x" });
-  assert.ok(res && res.block);
+  assert.equal(res, undefined);
   assert.equal(r.reg.calls.length, 0);
 });
 
@@ -140,11 +140,11 @@ test("a payload tool with no review model and no UI denies within 1 s", async (t
   assert.ok(Date.now() - t0 < 1000);
 });
 
-// An unusable classifier reply escalates; a headless session denies with the no-pane text.
-test("an invalid classifier reply in a headless session denies with the no-pane text", async (t) => {
+// An unusable judge reply is no clear; a headless session denies with the no-pane text.
+test("an invalid judge reply in a headless session denies with the no-pane text", async (t) => {
   const reg = fakeRegistry(["not json"]);
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: reg.registry }, config });
-  const res = await r.call("bash", { command: "pip install requests" });
+  const res = await r.call("bash", { command: "git branch -D old-branch" });
   assert.ok(res && res.block);
   assert.match(res.reason ?? "", /nobody is at this session/);
 });

@@ -58,17 +58,18 @@ test("A2: push, remote and config matches need git at a command position", () =>
   assert.equal(rule(opaquePush("git push --force origin $b"), env), "floor-git-push-force");
   assert.equal(rule(opaquePush("git push origin main"), env), "floor-git-push-protected");
   assert.equal(rule(opaquePush("git status; echo main $b"), env), null);
-  assert.equal(rule(opaquePush("git remote add o $u"), env), "floor-git-config");
+  assert.equal(rule(opaquePush("git remote add o $u"), env), "danger-git-config");
   assert.equal(rule(opaquePush("git remote -v; echo add $u"), env), null);
 });
 
-test("A3: a text-only hit is a deterministic deny for a child, a dialog for an owner", () => {
+test("A3: a text-only push hit is a deterministic deny for a child, a dialog for an owner; a text-only git-config hit goes to the judge for both", () => {
   const l = "for b in $L; do git push origin $b; done";
   assert.equal(hitOf(l, kid)?.kind, "deny");
   assert.match(hitOf(l, kid)?.reason ?? "", /Rephrase without a variable or loop/);
   assert.equal(hitOf("$(echo git) push origin main", env)?.kind, "ask");
   const cfg = "$(echo git) config core.hooksPath x";
-  assert.equal(hitOf(cfg, kid)?.kind, "deny");
+  assert.equal(hitOf(cfg, kid)?.kind, "judge");
+  assert.equal(hitOf(cfg, env)?.kind, "judge");
 });
 
 test("A3: read-looking lines fall through the policy-file and config-keys text floors", () => {

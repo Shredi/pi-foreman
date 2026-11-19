@@ -168,8 +168,8 @@ test("gate: an unknown-target delete is the danger label; a child's own-scratch 
 
 // ------------------------------------------------------------------ pins: fs-scan (judge-first in PR C) and a builder in its own checkout
 
-test("pin: floor-fs-scan fires on `/`, `~` and `find ~`; a relative root and a subdirectory pass", () => {
-  for (const l of ["grep -r x /", "grep -r x ~", "find ~ -name x"]) assert.equal(floor(l), "floor-fs-scan", l);
+test("pin: danger-fs-scan (judge-first) fires on `/`, `~` and `find ~`; a relative root and a subdirectory pass", () => {
+  for (const l of ["grep -r x /", "grep -r x ~", "find ~ -name x"]) assert.equal(floor(l), "danger-fs-scan", l);
   for (const l of ["grep -n x -r docs | head", "grep -rl x docs", "find docs -name x", "grep -r x sub/dir", "grep -rn x ."]) assert.equal(floor(l), null, l);
 });
 

@@ -23,7 +23,7 @@ test("bash: a relative or in-worktree search root is no scan hit", () => {
 });
 
 test("bash: `/`, `~`, and the home dir still hit", () => {
-  for (const l of ["grep -r x /", "grep -r x ~", `grep -r x ${home}`]) assert.equal(bash(l), "floor-fs-scan", l);
+  for (const l of ["grep -r x /", "grep -r x ~", `grep -r x ${home}`]) assert.equal(bash(l), "danger-fs-scan", l);
 });
 
 test("grep, find tools: a relative path field is checked as a path; the pattern and glob are text", () => {
@@ -32,8 +32,8 @@ test("grep, find tools: a relative path field is checked as a path; the pattern 
       assert.equal(scanToolFloor(tool, input, work, env), null, `${tool} ${JSON.stringify(input)}`);
     }
   }
-  assert.equal(scanToolFloor("grep", { pattern: "x", path: "/" }, work, env)?.rule, "floor-fs-scan");
-  assert.equal(scanToolFloor("find", { pattern: "x", path: home }, work, env)?.rule, "floor-fs-scan");
+  assert.equal(scanToolFloor("grep", { pattern: "x", path: "/" }, work, env)?.rule, "danger-fs-scan");
+  assert.equal(scanToolFloor("find", { pattern: "x", path: home }, work, env)?.rule, "danger-fs-scan");
 });
 
 test("gate: the grep tool with a repo-relative path is not denied by fs-scan or secret-path", () => {

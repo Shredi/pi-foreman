@@ -821,6 +821,10 @@ function sanctionedHarnessPath(abs: string, env: DangerEnv): boolean {
 }
 
 const DETACH = new Set(["nohup", "setsid", "disown"]);
+function injectSeg(s: ShellSegment): boolean {
+  return injection(s, progOf(s)) !== null;
+}
+
 const segs = (test: (s: ShellSegment, env: DangerEnv) => boolean) => (c: DangerCall, env: DangerEnv): boolean => live(c).some((s) => test(s, env));
 
 /** A path tool that writes where no path rule allows (`pathDecide` found no root that covers it): the path it names (absolute when it resolves), else null. */
@@ -1270,6 +1274,7 @@ const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.t
 export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, rebase, amend of published work, stash drop, worktree removal, history rewrite) or runs a program or moves credentials through git", test: segs(gitSeg) },
+  { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
   { name: "danger-delete-unknown-target", reason: "a delete whose target the harness cannot read (a variable, a glob without a readable directory, a changed directory, input from another command, a PowerShell or cmd recursive delete)", test: (c, e) => !!c.segments && BASH_TOOL_NAMES.has(c.tool) && unknownTargetDelete(c.text ?? "", c.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null },
 ];
 

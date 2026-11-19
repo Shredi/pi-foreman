@@ -1,5 +1,5 @@
 // With the git guard gone, these shell lines meet only the gate: the PR forms of drop 15 and drop 3, the unreadable and false-alarm lines
-// (dangerous class "opaque", no floor, no guard text), and `git commit` with any message. Gate level, main session and child as the gate sees them.
+// (no floor, no guard text, and since PR C not on the judge-first list: they run), and `git commit` with any message. Gate level, main session and child as the gate sees them.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -23,20 +23,21 @@ const GUARD = /git[ -]?guard/i;
 for (const child of [false, true]) {
   const who = child ? "child" : "main";
 
-  test(`${who}: the unreadable lines sh -c "$X" and python3 -c naming git reach the mode step in the dangerous class, with no guard text`, { skip: !posix }, () => {
+  test(`${who}: the unreadable lines sh -c "$X" and python3 -c naming git are no allow and not on the judge-first list (they run), with no guard text`, { skip: !posix }, () => {
     for (const l of ['sh -c "$X"', "python3 -c \"import subprocess; subprocess.run(['git','status'])\""]) {
       const o = run(l, child);
       assert.equal(res(o).block, undefined, `${l}: ${JSON.stringify(o.result)}`);
       assert.equal(res(o).ask, undefined, l);
-      assert.equal(o.danger?.name, "danger-opaque", `${l}: ${JSON.stringify(o.danger)}`);
+      assert.equal(o.result, undefined, l);
+      assert.equal(o.danger, null, `${l}: ${JSON.stringify(o.danger)}`);
       assert.doesNotMatch(JSON.stringify(o), GUARD, l);
     }
   });
 
-  test(`${who}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls has no floor, no deny and no ask (class opaque, left to the mode step)`, { skip: !posix }, () => {
+  test(`${who}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls has no floor, no deny and no ask (opaque, not on the judge-first list: it runs)`, { skip: !posix }, () => {
     const o = run('echo "wall $(( $(date +%s) - start ))s"; ls', child);
     assert.deepEqual(res(o), {}, JSON.stringify(o.result));
-    assert.equal(o.danger?.name, "danger-opaque", JSON.stringify(o.danger));
+    assert.equal(o.danger, null, JSON.stringify(o.danger));
   });
 
   test(`${who}: git commit -m with any message gets the same gate decision whatever the message (messages are not read)`, { skip: !posix }, () => {
@@ -56,11 +57,11 @@ test("child PR forms: hub pull-request and tea pr create are not refused by a PR
   }
 });
 
-test("child PR forms: gh api repos/o/r/pulls is in the dangerous class (reaches the mode step, no silent allow)", { skip: !posix }, () => {
+test("child PR forms: gh api repos/o/r/pulls is no built-in allow and (PR C) not on the judge-first list: it runs", { skip: !posix }, () => {
   const o = run("gh api repos/o/r/pulls -f title=x", true);
   assert.equal(res(o).block, undefined, JSON.stringify(o.result));
   assert.equal(res(o).allow, undefined, "no rule allowed it");
-  assert.equal(o.danger?.name, "danger-forge", JSON.stringify(o.danger));
+  assert.equal(o.danger, null, JSON.stringify(o.danger));
 });
 
 test("child PR forms: gh pr create and glab mr create are refused by child-pr-create", { skip: !posix }, () => {

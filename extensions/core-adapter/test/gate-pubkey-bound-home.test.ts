@@ -27,8 +27,10 @@ test("wait -p HOME rebinds HOME: the line is not allowed as a public-key read", 
   assert.equal(allowedByPubkey(decide("sleep 1 & wait -p HOME; cat $HOME/.ssh/k.pub")), false);
 });
 
-test("without a rebinding the same read is allowed as a public-key read", () => {
-  assert.equal(allowedByPubkey(decide("sleep 1 & wait; cat $HOME/.ssh/k.pub")), true);
+test("without a rebinding the same read is no floor deny (the lone read is the pubkey allow; a multi-segment line just runs, PR C)", () => {
+  assert.equal(allowedByPubkey(decide("cat $HOME/.ssh/k.pub")), true);
+  const r = decide("sleep 1 & wait; cat $HOME/.ssh/k.pub");
+  assert.equal(!!r && "block" in r && !!r.block, false);
 });
 
 const decide2 = (command: string): GateResult =>

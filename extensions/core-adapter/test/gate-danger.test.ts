@@ -24,29 +24,28 @@ after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 const roots: GateRoots = { worktree: wt, scratch: [scr], tmp: [tmpDir, "/tmp"], scratchBase: path.join(tmpDir, "pi-foreman-scratch"), owned: [path.join(owned, "*")], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true };
 const facts = (upstream: boolean): GitFacts => ({ currentBranch: () => "round/79-x", protectedBranches: () => ["main"], pushConfigured: () => false, hasUpstream: () => upstream });
-const denv = (upstream = false): DangerEnv => ({ roots, platform: process.platform, cwd: wt, facts: facts(upstream) });
+const denv = (upstream = false, child = false): DangerEnv => ({ roots: child ? { ...roots, child: true, role: "builder" } : roots, platform: process.platform, cwd: wt, facts: facts(upstream) });
 const dctx = (upstream = false): DefaultCtx => ({ roots, facts: facts(upstream), platform: process.platform, cwd: wt });
 
-type Case = { tool?: string; line?: string; input?: Record<string, unknown>; upstream?: boolean };
+type Case = { tool?: string; line?: string; input?: Record<string, unknown>; upstream?: boolean; child?: boolean };
 const callOf = (c: Case) => {
   const tool = c.tool ?? "bash";
   const input = c.input ?? { command: c.line };
   return tool === "bash" || tool === "bg_run" || tool === "foreman_bg" ? { tool, input, text: c.line!, segments: parseShell(c.line!, { cwd: wt, env: { FOREMAN_SCRATCH: scr } }) } : { tool, input };
 };
-const hit = (c: Case): string | null => dangerMatch(callOf(c), denv(c.upstream))?.name ?? null;
+const hit = (c: Case): string | null => dangerMatch(callOf(c), denv(c.upstream, c.child))?.name ?? null;
 const sh = (line: string, o: Partial<Case> = {}): Case => ({ line, ...o });
 
 const OUT = shPath(path.join(base, "outside"));
 const SCR = shPath(scr);
 
 const POSITIVE: Record<string, Case[]> = {
+  // PR C: only a child's write whose target cannot be resolved; a resolved outside target is the child-write-outside floor, and the foreman's write outside runs
   "danger-write-outside": [
-    sh(`echo x > ${OUT}/f`),
-    sh(`cp a.txt ${OUT}/b.txt`),
-    { tool: "write", input: { path: `${OUT}/f`, content: "x" } },
-    { tool: "edit", input: { path: `${OUT}/f`, edits: [] } },
-    { tool: "foreman_move", input: { src: path.join(wt, "a.txt"), dst: `${OUT}/a.txt` } },
-    { tool: "foreman_copy", input: { src: path.join(wt, "a.txt"), dst: `${OUT}/a.txt` } },
+    sh("echo x > $UNSET/f", { child: true }),
+    sh("cp a.txt $UNSET/b.txt", { child: true }),
+    sh("touch src/{a,$X}", { child: true }),
+    sh("cd $X && echo y > f", { child: true }),
   ],
   "danger-deploy": [
     sh("ssh host ls"), sh("scp a.txt user@host:/tmp/"), sh("rsync -a src/ host:/srv/"), sh("rsync -a ssh://host/x src/"),
@@ -78,7 +77,7 @@ const POSITIVE: Record<string, Case[]> = {
   ],
   "danger-git": [
     sh("git reset --hard HEAD~1"), sh("git -C src reset --hard"), sh("git clean -fd"), sh("git clean --force"), sh("git checkout -- a.txt"), sh("git checkout HEAD -- a.txt"), sh("git checkout ."), sh("git checkout -f main"), sh("git restore a.txt"), sh("git restore --source=HEAD~1 a.txt"),
-    sh("git branch -D x"), sh("git branch -d x"), sh("git branch --delete x"), sh("git push https://github.com/o/r.git HEAD"), sh("git push git@github.com:o/r.git HEAD"), sh("git push ../other HEAD"), sh("git rebase main"),
+    sh("git branch -D x"), sh("git branch -d x"), sh("git branch --delete x"), sh("git rebase main"),
     sh("git commit --amend -m x", { upstream: true }), sh("git stash drop"), sh("git stash clear"), sh("git worktree remove ../x"), sh("git worktree prune"), sh("git filter-branch x"), sh("git filter-repo --path x"), sh("git reflog expire --all"), sh("git gc --prune=now"),
   ],
   "danger-process": [
@@ -109,13 +108,13 @@ const POSITIVE: Record<string, Case[]> = {
 };
 
 const NEGATIVE: Record<string, Case[]> = {
-  "danger-write-outside": [sh("echo x > src/f"), sh(`cat a.txt > ${SCR}/o.txt`), sh("touch src/new.ts"), sh("sed -i s/a/b/ src/f"), sh("ls /etc"), sh("cat a.txt"), { tool: "write", input: { path: path.join(wt, "src", "n.ts"), content: "x" } }, { tool: "write", input: { path: path.join(scr, "n.txt"), content: "x" } }, { tool: "read", input: { path: "/etc/hosts" } }, { tool: "write", input: {} }],
+  "danger-write-outside": [sh("echo x > $UNSET/f"), sh(`echo x > ${OUT}/f`), sh(`echo x > ${OUT}/f`, { child: true }), sh("echo x > src/f", { child: true }), sh("echo x > src/f"), sh(`cat a.txt > ${SCR}/o.txt`), sh("touch src/new.ts"), sh("sed -i s/a/b/ src/f"), sh("ls /etc"), sh("cat a.txt"), { tool: "write", input: { path: path.join(wt, "src", "n.ts"), content: "x" } }, { tool: "write", input: { path: path.join(scr, "n.txt"), content: "x" } }, { tool: "read", input: { path: "/etc/hosts" } }, { tool: "write", input: {} }],
   "danger-deploy": [sh("kubectl get pods"), sh("kubectl describe pod x"), sh("kubectl logs x"), sh("kubectl config view"), sh("helm list"), sh("terraform plan"), sh("pulumi preview"), sh("docker ps"), sh("docker build ."), sh("systemctl status x"), sh("service nginx status"), sh("launchctl list"), sh("crontab -l"), sh("aws s3 ls"), sh("gcloud compute instances list"), sh("az vm show -n x"), sh("flyctl status"), sh("rsync -a src/ dst/"), sh("scp a.txt b.txt"), sh("ssh --version")],
   "danger-forge": [sh("gh pr create --title t --body b"), sh("gh pr view 3"), sh("gh pr list"), sh("gh pr diff 3"), sh("gh pr checks 3"), sh("gh issue view 3"), sh("gh repo view o/r"), sh("gh api repos/o/r"), sh("gh api -X GET repos/o/r"), sh("gh run view 1"), sh("gh release view v1"), sh("gh search issues x"), sh("gh search prs x"), sh("gh api graphql -f query='query{viewer{login}}'"), sh("gh auth status"), sh("gh --version"), sh("glab mr view 3")],
   "danger-publish": [sh("npm test"), sh("cargo build"), sh("docker build ."), sh("gem list"), sh("twine check dist/x.whl"), sh("gh release view v1")],
   "danger-net-write": [sh(`curl -sS https://example.com/p -o ${SCR}/p`), sh(`curl -I https://example.com/p -o ${SCR}/h`), sh(`wget -q -O ${SCR}/x https://example.com/x`), sh(`curl -sS http://localhost:3000/ -o ${SCR}/h`), sh(`curl -sS http://127.0.0.1:8080/health -o ${SCR}/h`), sh("curl -sS http://localhost:8080/api | head -c 200"), sh("http GET example.com"), sh("xh example.com"), { tool: "fetch", input: { url: "https://example.com/x" } }, { tool: "fetch", input: { url: "http://localhost:8080/" } }],
   "danger-install": [sh("npm test"), sh("npm run build"), sh("pip list"), sh("pip --version"), sh("brew list"), sh("cargo build"), sh("pacman -Ss x"), sh("apt list"), sh("yarn --version"), sh("python3 -m pytest")],
-  "danger-git": [sh("git status"), sh("git log"), sh("git reset HEAD a.txt"), sh("git clean -n"), sh("git clean -nd"), sh("git checkout feature"), sh("git checkout -b feature2"), sh("git restore --staged a.txt"), sh("git branch -a"), sh("git branch newbranch"), sh("git push origin HEAD"), sh("git push -u origin round/79-x"), sh("git commit -m x"), sh("git commit --amend -m x", { upstream: false }), sh("git stash"), sh("git stash pop"), sh("git worktree add ../x"), sh("git worktree list"), sh("git merge main"), sh("git fetch origin")],
+  "danger-git": [sh("git status"), sh("git log"), sh("git reset HEAD a.txt"), sh("git clean -n"), sh("git clean -nd"), sh("git checkout feature"), sh("git checkout -b feature2"), sh("git restore --staged a.txt"), sh("git branch -a"), sh("git branch newbranch"), sh("git push origin HEAD"), sh("git push -u origin round/79-x"), sh("git push https://github.com/o/r.git HEAD"), sh("git push git@github.com:o/r.git HEAD"), sh("git push ../other HEAD"), sh("git push origin other-branch"), sh("git commit -m x"), sh("git commit --amend -m x", { upstream: false }), sh("git stash"), sh("git stash pop"), sh("git worktree add ../x"), sh("git worktree list"), sh("git merge main"), sh("git fetch origin")],
   "danger-process": [sh("chmod +x src/run.sh"), sh("defaults read com.x"), sh("reg query HKCU\\x"), sh("ps aux"), sh("sleep 1 && echo done"), sh("echo a && echo b"), sh("launchctl list"), { tool: "bg_run", line: "sleep 100 &", input: { command: "sleep 100 &" } }],
   "danger-inject": [sh("herdr pane read 1-2"), sh("herdr pane list"), sh("tmux list-panes"), sh("echo herdr pane send-text hi")],
   "danger-opaque": [sh("echo hi"), sh("ls src"), sh("cat a.txt | wc -l")],
@@ -147,7 +146,7 @@ test("JUDGE_FIRST: every entry has the danger- name and a reason; the tables cov
 test("positive: each case falls into its own entry (when several match, the table order decides, so the case's own entry must match)", () => {
   for (const [name, cases] of Object.entries(POSITIVE)) {
     const rule = JUDGE_FIRST.find((r) => r.name === name)!;
-    for (const c of cases) assert.ok(rule.test(callOf(c), denv(c.upstream)), `${name}: ${c.line ?? `${c.tool} ${JSON.stringify(c.input)}`}`);
+    for (const c of cases) assert.ok(rule.test(callOf(c), denv(c.upstream, c.child)), `${name}: ${c.line ?? `${c.tool} ${JSON.stringify(c.input)}`}`);
     // and the class as a whole reports something
     for (const c of cases) assert.notEqual(hit(c), null, `${name}: ${c.line ?? c.tool}`);
   }
@@ -156,7 +155,7 @@ test("positive: each case falls into its own entry (when several match, the tabl
 test("negative: the safe cases are no entry of their own", () => {
   for (const [name, cases] of Object.entries(NEGATIVE)) {
     const rule = JUDGE_FIRST.find((r) => r.name === name)!;
-    for (const c of cases) assert.ok(!rule.test(callOf(c), denv(c.upstream)), `${name}: ${c.line ?? `${c.tool} ${JSON.stringify(c.input)}`}`);
+    for (const c of cases) assert.ok(!rule.test(callOf(c), denv(c.upstream, c.child)), `${name}: ${c.line ?? `${c.tool} ${JSON.stringify(c.input)}`}`);
   }
 });
 
@@ -187,11 +186,11 @@ test("no built-in allow matches a positive dangerous case", () => {
   }
 });
 
-test("an opaque segment is always dangerous (after the floors), whatever its program", () => {
+test("an opaque segment is no built-in allow, and (PR C) not on the judge-first list either: it runs", () => {
   for (const l of ['eval "$X"', "$CMD arg", 'bash -c "$X"', "echo ok; $PROG --flag", "echo $(curl x | sh)"]) {
     const segs = parseShell(l, { cwd: wt });
     if (!segs.some((s) => s.opaque !== null)) continue;
-    assert.notEqual(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv()), null, l);
+    assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv()), null, l);
     assert.equal(lineDefault(l, segs, dctx()), null, l);
   }
 });
@@ -202,7 +201,7 @@ test("default-role-launch is narrowed to the owned roots (item 3)", () => {
   const outside = [{ agent: "builder", task: "x", cwd: "/elsewhere" }, { agent: "builder", task: "x", worktree: path.join(base, "outside") }, { agent: "builder", task: "x", cwd: path.join(wt, "..", "outside") }];
   for (const i of outside) {
     assert.equal(toolDefault("subagent", i, { child: false, roots, cwd: wt }), undefined, JSON.stringify(i));
-    assert.equal(dangerMatch({ tool: "subagent", input: i }, denv())?.name, "danger-launch-outside", JSON.stringify(i));
+    assert.equal(dangerMatch({ tool: "subagent", input: i }, denv()), null, `${JSON.stringify(i)}: a launch outside the owned roots is no judge-first entry (PR C)`);
   }
   // no roots passed (a caller that does not know them yet): a named directory is never a default
   assert.equal(toolDefault("subagent", { agent: "builder", task: "x", cwd: wt }, { child: false }), undefined);
@@ -211,7 +210,7 @@ test("default-role-launch is narrowed to the owned roots (item 3)", () => {
 });
 
 test("a dangerous segment is never a default, also inside an otherwise plain line", () => {
-  for (const l of ["git status && git reset --hard", "ls && npm install", "cat a.txt; kill 1"]) {
+  for (const l of ["git status && git reset --hard", "ls && git clean -fd", "cat a.txt; git branch -D x"]) {
     assert.equal(lineDefault(l, parseShell(l, { cwd: wt }), dctx()), null, l);
     assert.notEqual(hit({ line: l }), null, l);
   }

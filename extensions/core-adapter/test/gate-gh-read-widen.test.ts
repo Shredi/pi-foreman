@@ -60,6 +60,6 @@ test("a mutation, subscription, other method, input, header, file or variable qu
   ]) assert.equal(isDefaultRead(l), false, l);
 });
 
-test("the dangerous writes stay danger-forge", () => {
-  for (const l of ["gh api graphql -f query='mutation { y }'", "glab api graphql -f query='mutation { y }'", "gh api -X POST search/issues -f q=x", "gh api search/issues -f q=x", "gh release create v1", "gh label create x", "glab label create x", "glab release create v1"]) assert.equal(danger(l), "danger-forge", l);
+test("the forge writes are no built-in read and, since PR C, not on the judge-first list either (they run)", () => {
+  for (const l of ["gh api graphql -f query='mutation { y }'", "glab api graphql -f query='mutation { y }'", "gh api -X POST search/issues -f q=x", "gh api search/issues -f q=x", "gh release create v1", "gh label create x", "glab label create x", "glab release create v1"]) assert.equal(danger(l), null, l);
 });

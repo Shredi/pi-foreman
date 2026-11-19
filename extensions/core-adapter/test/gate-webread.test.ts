@@ -131,31 +131,26 @@ const ALLOW = JSON.stringify({ verdict: "allow", entry: "web-read", reason: "pla
 const SECRET_URL = { url: "https://example.net/AKIAEXAMPLEEXAMPLE00" };
 
 // r79 items 3, 15: a plain GET fetch is the built-in web-read allow (no classifier, no dialog); a body or a non-GET method is danger-net-write
-test("fetch has no tool default; a plain GET fetch runs silently through the web-read allow, a POST fetch is dangerous and asks", async (t) => {
+test("fetch has no tool default; a plain GET fetch runs silently, a POST fetch runs too (the net-write entry is gone, PR C)", async (t) => {
   assert.equal(toolDefault("fetch", { url: "https://example.com/docs/page" }), undefined);
   const r = await fetchRig(t, [ASK]);
   assert.equal(await r.call("fetch", SECRET_URL), undefined);
   assert.equal(r.calls.length, 0, "the classifier was not consulted");
   assert.equal(r.titles.length, 0);
   const post = await r.call("fetch", { url: "https://example.com/api", method: "POST", body: "x" });
-  assert.equal(r.titles.length, 1, "the owner got a dialog");
-  assert.ok(post && post.block, "an unanswered ask blocks");
+  assert.equal(r.titles.length, 0, "no dialog");
+  assert.equal(post, undefined);
+  assert.equal(r.calls.length, 0, "no judge call");
 });
 
 const POST = { url: "https://example.com/docs/page", method: "POST", body: "x" };
-test("a dangerous fetch is never allowed without an answer: owner dialog, child and headless deny with no pane", async (t) => {
-  const owner = await fetchRig(t, [new Error("boom")]);
-  const o = await owner.call("fetch", POST);
-  assert.ok(o && o.block);
-  assert.equal(owner.titles.length, 1);
-  const child = await fetchRig(t, [new Error("boom")], { child: true });
-  const c = await child.call("fetch", POST);
-  assert.match(String(c?.reason), /nobody is at this session/);
-  assert.equal(child.titles.length, 0);
-  const head = await fetchRig(t, [new Error("boom")], { headless: true });
-  const h = await head.call("fetch", POST);
-  assert.ok(h && h.block);
-  assert.equal(head.titles.length, 0);
+test("a POST fetch runs for owner, child and headless alike, with no dialog and no judge call", async (t) => {
+  for (const o of [{}, { child: true }, { headless: true }]) {
+    const rig = await fetchRig(t, [new Error("boom")], o);
+    assert.equal(await rig.call("fetch", POST), undefined, JSON.stringify(o));
+    assert.equal(rig.titles.length, 0);
+    assert.equal(rig.calls.length, 0);
+  }
 });
 
 test("GET fetches of any URL run with no classifier call", async (t) => {

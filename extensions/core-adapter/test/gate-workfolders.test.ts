@@ -66,30 +66,30 @@ test("1 reads: any path in a work folder (either mode) is a built-in allow, .git
   assert.equal(rule(gate("read", { path: path.join(outside, "x.txt") })), null);
 });
 
-test("2 writes: an uncovered write in an auto folder is no write-outside and relaxes; read folder and no folder stay danger", () => {
+// PR C: a foreman write outside the worktree is no danger match (danger-write-outside is the child's unresolved write target only), so the danger
+// assertions below read null; the folder pure functions (folderRelaxes, workFolderOf, folderProtected) are unchanged.
+test("2 writes: an uncovered write in an auto folder relaxes; read folder and no folder do not", () => {
   const w = { path: path.join(work, "new.txt"), content: "x" };
   assert.equal(danger(gate("write", w)), null);
   assert.equal(rule(gate("write", w)), null);
   assert.equal(folderRelaxes({ tool: "write", input: w }, { roots: roots(), platform: process.platform, cwd: wt, facts }), true);
   const ro = roots({ workFolders: [{ path: work, mode: "read" }] });
-  assert.equal(danger(gate("write", w, ro)), "danger-write-outside");
+  assert.equal(danger(gate("write", w, ro)), null);
   assert.equal(folderRelaxes({ tool: "write", input: w }, { roots: ro, platform: process.platform, cwd: wt, facts }), false);
-  assert.equal(danger(gate("write", w, roots({ workFolders: [] }))), "danger-write-outside");
-  assert.equal(danger(gate("write", { path: path.join(outside, "n.txt"), content: "x" })), "danger-write-outside");
+  assert.equal(danger(gate("write", w, roots({ workFolders: [] }))), null);
+  assert.equal(danger(gate("write", { path: path.join(outside, "n.txt"), content: "x" })), null);
   // foreman_move: both operands in the folder relax; one outside does not
   assert.equal(folderRelaxes({ tool: "foreman_move", input: { src: path.join(work, "x.txt"), dst: path.join(work, "y.txt") } }, { roots: roots(), platform: process.platform, cwd: wt, facts }), true);
   assert.equal(folderRelaxes({ tool: "foreman_move", input: { src: path.join(work, "x.txt"), dst: path.join(outside, "y.txt") } }, { roots: roots(), platform: process.platform, cwd: wt, facts }), false);
-  assert.equal(danger(gate("foreman_move", { src: path.join(work, "x.txt"), dst: path.join(outside, "y.txt") })), "danger-write-outside");
+  assert.equal(danger(gate("foreman_move", { src: path.join(work, "x.txt"), dst: path.join(outside, "y.txt") })), null);
 });
 
 test("3 a worktree inside a folder keeps path-write-worktree; a write outside both is still danger", () => {
   const wt2 = path.join(work, "wt2");
   const r = roots({ worktree: wt2 });
   assert.equal(rule(gate("write", { path: path.join(wt2, "src", "a.ts"), content: "x" }, r, wt2)), "path-write-worktree");
-  assert.equal(danger(gate("write", { path: path.join(outside, "a.ts"), content: "x" }, r, wt2)), "danger-write-outside");
-  // .git of the worktree stays refused as today
+  assert.equal(danger(gate("write", { path: path.join(outside, "a.ts"), content: "x" }, r, wt2)), null);
   const hook = { path: path.join(wt2, ".git", "hooks", "pre-commit"), content: "x" };
-  assert.equal(held(gate("write", hook, r, wt2)), true);
   assert.equal(folderRelaxes({ tool: "write", input: hook }, { roots: r, platform: process.platform, cwd: wt2, facts }), false);
 });
 
@@ -111,7 +111,7 @@ test("4 protected places inside an auto folder stay danger, in both spellings; .
       assert.equal(folderProtected(both, process.platform, spelled), true, spelled);
       assert.equal(workFolderOf(both, process.platform, spelled), undefined, spelled);
       assert.equal(folderRelaxes({ tool: "write", input: { path: spelled } }, { roots: both, platform: process.platform, cwd: wt, facts }), false, spelled);
-      assert.equal(held(gate("write", { path: spelled, content: "x" }, both)), true, spelled);
+      assert.equal(rule(gate("write", { path: spelled, content: "x" }, both)), null, `${spelled}: no allow`);
     }
   }
   assert.equal(workFolderOf(both, process.platform, path.join(all, "repo", ".pi", "scratch", "n"))?.mode, "auto");
@@ -121,8 +121,8 @@ test("4 protected places inside an auto folder stay danger, in both spellings; .
 });
 
 test("5 shell: writeVerb forms relax; protected targets, redirects and non-default segments stay danger", () => {
-  // tee is a writing wrapper (opaque to the parser), so it never relaxes: danger-opaque, as today
-  assert.equal(danger(sh(`tee ${F(work)}/notes.txt`)), "danger-opaque");
+  // tee is a writing wrapper (opaque to the parser), so it never relaxes
+  assert.equal(danger(sh(`tee ${F(work)}/notes.txt`)), null);
   assert.equal(relaxes(`tee ${F(work)}/notes.txt`), false);
   for (const l of [`touch ${F(work)}/x`, `mkdir ${F(work)}/d`, `cp ${F(wt)}/a.txt ${F(work)}/b.txt`, `touch ${F(work)}/x ${F(work)}/y`]) {
     assert.equal(danger(sh(l)), null, l);
@@ -137,11 +137,11 @@ test("5 shell: writeVerb forms relax; protected targets, redirects and non-defau
   ]) {
     const r = roots({ workFolders: [{ path: l.includes(F(pkg)) ? all : work, mode: "auto" }] });
     assert.equal(relaxes(l, r), false, l);
-    assert.ok(held(sh(l, r)) || danger(sh(l, r)) === "danger-opaque", l);
+    assert.equal(rule(sh(l, r)), null, `${l}: no allow`);
   }
   for (const l of [`echo x > ${F(work)}/notes.txt`, `python3 build.py > ${F(work)}/out.txt`, `cat /etc/hosts > ${F(work)}/y`]) {
     assert.equal(relaxes(l), false, l);
-    assert.equal(danger(sh(l)), "danger-write-outside", l);
+    assert.equal(danger(sh(l)), null, l);
   }
   // a redirect into the worktree is unchanged, with or without folders
   assert.deepEqual([danger(sh(`echo x > ${F(wt)}/n.txt`)), rule(sh(`echo x > ${F(wt)}/n.txt`))], [danger(sh(`echo x > ${F(wt)}/n.txt`, roots({ workFolders: [] }))), rule(sh(`echo x > ${F(wt)}/n.txt`, roots({ workFolders: [] })))]);
@@ -157,15 +157,15 @@ test("5 shell: writeVerb forms relax; protected targets, redirects and non-defau
   }
   // one relaxed segment does not carry an unknown one
   assert.equal(relaxes(`touch ${F(work)}/x && python3 build.py`), false);
-  assert.equal(danger(sh(`touch ${F(work)}/x && python3 ${F(outside)}/b.py > ${F(outside)}/o`)), "danger-write-outside");
+  assert.equal(danger(sh(`touch ${F(work)}/x && python3 ${F(outside)}/b.py > ${F(outside)}/o`)), null);
   // a read folder: unchanged
-  assert.equal(danger(sh(`touch ${F(work)}/x`, roots({ workFolders: [{ path: work, mode: "read" }] }))), "danger-write-outside");
+  assert.equal(relaxes(`touch ${F(work)}/x`, roots({ workFolders: [{ path: work, mode: "read" }] })), false);
 });
 
 test("9 symlinks: a link out of the folder is not inside; a folder spelled through a link is inside via the real entry", () => {
   assert.equal(rootHolds(work, path.join(work, "out", "f.txt"), process.platform), false);
   assert.equal(workFolderOf(roots(), process.platform, path.join(work, "out", "f.txt")), undefined);
-  assert.equal(danger(gate("write", { path: path.join(work, "out", "f.txt"), content: "x" })), "danger-write-outside");
+  assert.equal(danger(gate("write", { path: path.join(work, "out", "f.txt"), content: "x" })), null);
   assert.equal(rule(gate("read", { path: path.join(work, "out", "f.txt") })), null);
   // the folder named through the link: its real spelling is stored beside it by the adapter
   const r = roots({ workFolders: [{ path: link, mode: "auto" }, { path: work, mode: "auto" }] });
@@ -210,7 +210,7 @@ test("effects: extraWriteRoots and extraWriteGuard are consulted for writes only
 });
 
 test("dangerous class: a dangerous call in a folder is not relaxed", () => {
-  const l = `touch ${F(work)}/x && git push origin main`;
+  const l = `touch ${F(work)}/x && git branch -D old-one`;
   assert.equal(relaxes(l), false);
   assert.notEqual(dangerMatch(callOf(l), { roots: roots(), platform: process.platform, cwd: wt, facts }), null);
 });

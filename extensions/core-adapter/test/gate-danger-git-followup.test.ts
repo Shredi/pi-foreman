@@ -12,7 +12,7 @@ import { lineFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
-import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
+import { r11Rig } from "./_r11rig.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf-gfu-"));
 const wt = path.join(base, "wt");
@@ -114,27 +114,27 @@ test("floors keep precedence: a subagent's push and a protected push stay refuse
 });
 
 type T = Parameters<typeof r11Rig>[0];
-const ALLOW = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
+const verdictText = (verdict: string): string => JSON.stringify({ verdict, reason: "stub" });
 const ROLES = ["explorer", "builder", "reviewer"];
 const E2E_BOTH = ["git fetch --upload-pack=./x origin", `git clone -u ./x ${U}`, "git send-pack origin feature", "git credential fill"];
 const E2E_CHILD = ["git switch -C main", "git update-ref -d refs/heads/main", "git tag -d v1"];
 
 for (const kind of ["main", "child"] as const) {
-  for (const mode of ["auto", "allow"] as const) {
-    test(`end to end: ${kind} in mode ${mode}: the class is judged in auto and runs as mode:allow:danger-git in allow`, async (t: T) => {
+  for (const verdict of ["clear", "unsure"] as const) {
+    test(`end to end: ${kind}, judge says ${verdict}: the class is judged and ${verdict === "clear" ? "runs as judge:danger-git" : "is not run"}`, async (t: T) => {
       const saved = { b: process.env[BINDINGS_ENV], c: process.env.FOREMAN_CHECKOUT };
       t.after(() => {
         if (saved.b === undefined) delete process.env[BINDINGS_ENV]; else process.env[BINDINGS_ENV] = saved.b;
         if (saved.c === undefined) delete process.env.FOREMAN_CHECKOUT; else process.env.FOREMAN_CHECKOUT = saved.c;
       });
-      if (kind === "child") process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "builder", launchId: "l1", kind: "first", workspace: "", perms: { mode, childDeny: true } } });
+      if (kind === "child") process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "builder", launchId: "l1", kind: "first", workspace: "" } });
       else delete process.env[BINDINGS_ENV];
       delete process.env.FOREMAN_CHECKOUT;
       let judged = 0;
-      const modelRegistry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => { judged++; return { content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }; } };
+      const modelRegistry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => { judged++; return { content: [{ type: "text", text: verdictText(verdict) }], stopReason: "stop", usage: { input: 1, output: 1 } }; } };
       const ui = { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined };
       const config = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } } };
-      const c = await r11Rig(t, {}, { ctx: { modelRegistry, ui, [RIG_PERMISSIONS]: { mode, allow: ["Write", "Edit"], classifier: { allow: ["Anything at all."] } } }, config, child: kind === "child" });
+      const c = await r11Rig(t, {}, { ctx: { modelRegistry, ui }, config, child: kind === "child" });
       const g = (...a: string[]) => execFileSync("git", ["-C", c.project, "-c", "user.name=p", "-c", "user.email=p@x", ...a], { stdio: "ignore" });
       g("init", "-q", "-b", "feature");
       fs.writeFileSync(path.join(c.project, "f.txt"), "x");
@@ -142,23 +142,24 @@ for (const kind of ["main", "child"] as const) {
       g("commit", "-q", "-m", "init");
       g("branch", "main");
       if (kind === "child") process.env.FOREMAN_CHECKOUT = path.join(c.project, "..", "main");
-      const run = async (command: string): Promise<{ judged: boolean; rule?: string }> => {
+      const run = async (command: string): Promise<{ judged: boolean; blocked: boolean; rule?: string }> => {
         const j0 = judged;
         const n0 = c.trace().length;
-        await c.call("bash", { command });
+        const res = (await c.call("bash", { command })) as { block?: boolean } | undefined;
         const recs = c.trace().slice(n0).filter((x) => x.event === "guard" && x.guard === "gate");
-        return { judged: judged > j0, rule: (recs[recs.length - 1] as { rule?: string } | undefined)?.rule };
+        return { judged: judged > j0, blocked: res?.block === true, rule: (recs[recs.length - 1] as { rule?: string } | undefined)?.rule };
       };
       for (const l of kind === "child" ? [...E2E_BOTH, ...E2E_CHILD] : E2E_BOTH) {
         const r = await run(l);
-        if (mode === "auto") assert.equal(r.judged, true, l);
-        else assert.equal(r.rule, "mode:allow:danger-git", l);
+        assert.equal(r.judged, true, l);
+        assert.equal(r.blocked, verdict === "unsure", l);
+        if (verdict === "clear") assert.equal(r.rule, "judge:danger-git", l);
       }
       if (kind === "main") {
-        // a subagent-only line is not judged for the main session in auto
+        // a subagent-only line is not judged for the main session
         const r = await run("git tag -d v1");
         assert.equal(r.judged, false);
-        assert.notEqual(r.rule, "mode:allow:danger-git");
+        assert.notEqual(r.rule, "judge:danger-git");
       }
     });
   }

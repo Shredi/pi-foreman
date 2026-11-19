@@ -38,7 +38,9 @@ for (const line of [
 }
 
 for (const line of ["echo 'cost $5'; cat ~/.ssh/k.pub", "echo '$(date)'; cat ~/.ssh/k.pub", "echo 'a `b`'; cat ~/.ssh/k.pub"]) {
-  test(`${line}: allowed as a public-key read`, () => {
-    assert.equal(allowedByPubkey(decide(line)), true);
+  // since PR C the pubkey allow names a lone read; a multi-segment line has no allow rule engine any more and just runs (no floor deny)
+  test(`${line}: no floor deny (the quoted $ is no expansion)`, () => {
+    const r = decide(line);
+    assert.equal(!!r && "block" in r && !!r.block, false);
   });
 }
