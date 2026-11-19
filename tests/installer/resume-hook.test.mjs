@@ -53,7 +53,6 @@ test("zsh: the block goes into ~/.zshrc once, next to the env block, with the ab
   assert.equal(count(text), 1);
   assert.ok(text.includes(`'${BIN}' pane-resume --shell-pid`));
   assert.ok(text.includes("add-zsh-hook precmd __pi_foreman_resume"));
-  assert.match(text, /export PI_BG_FEATURES=/, "the env block is still there");
   assert.match(r.out, /wrote the pi-foreman resume block to .*\.zshrc/);
   const again = run(env, [], { PI_BG_FEATURES: "process" });
   assert.equal(again.code, 0, again.out);
@@ -119,7 +118,6 @@ test("--no-resume-hook writes no block and removes an existing one; --remove rem
   assert.equal(r.code, 0, r.out);
   assert.equal(count(read(rc)), 0);
   assert.match(r.out, /removed the pi-foreman block from .*\.zshrc/);
-  assert.match(read(rc), /PI_BG_FEATURES/, "the env block stays");
   const fresh2 = fresh();
   assert.equal(run(fresh2, ["--no-resume-hook"]).code, 0);
   assert.equal(count(fs.existsSync(path.join(fresh2.home, ".zshrc")) ? read(path.join(fresh2.home, ".zshrc")) : ""), 0, "never written");

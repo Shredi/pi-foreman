@@ -1,8 +1,7 @@
-// foreman_bg (ledger item 5) and the background-tasks add-on (item 6). Temp dirs only; the only command run is
-// a short `node -e` / `echo` through foreman_bg; guard cases pass command STRINGS that are refused before any spawn.
+// The background-tasks add-on beside the core adapter (readers, `/foreman waits`, doctor lines, guard parity of bg_run). Temp dirs only;
+// guard cases pass command STRINGS that are refused before any spawn.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -11,8 +10,8 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { mapTool, isShellTool } from "../toolmap.ts";
-import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
-import { checkLogPath, parseStart, processAlive, registerWait } from "../wait.ts";
+import { addonPresent, formatWaits, lastLines, readAddonTasks } from "../bg.ts";
+import { checkLogPath, parseStart, registerWait } from "../wait.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -25,15 +24,6 @@ const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir
   return dir;
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-/**
- * Stop a foreman_bg run before its temp dir is removed. POSIX: signal its process group (as before). win32: the pid
- * is cmd.exe, whose node child would keep the cwd busy (EBUSY on cleanup), so kill the whole tree and wait for exit.
- */
-async function stopDetached(pid: number, posix: () => void): Promise<void> {
-  if (process.platform !== "win32") return posix();
-  spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
-  for (let i = 0; i < 50 && processAlive(pid); i++) await sleep(100);
-}
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
@@ -63,62 +53,17 @@ function waitHarness(t: { after(fn: () => void): void }, opts: { toolNames?: str
   return { root, agentDir, cwd, tools, wakes, handle, ctx, session };
 }
 
-test("foreman_bg: detached run, log under state/scratch/<session>/wait-<id>.log, pid wait with note and log", async (t) => {
+test("foreman_bg is not registered: foreman_wait is the only tool registerWait adds", (t) => {
   const h = waitHarness(t);
-  const bg = h.tools.get("foreman_bg")!;
-  assert.ok(bg, "foreman_bg is registered for the foreman");
-  const r = await bg.execute("c1", { command: `node -e "console.log('one');console.log('two');setTimeout(()=>{},700)"`, note: "build it" }, undefined, undefined, h.ctx);
-  assert.ok(!r.isError, r.content[0].text);
-  const id = String(r.details.id);
-  const log = bgLogPath(path.join(h.agentDir, "pi-foreman", "state"), "s1", id);
-  assert.equal(r.details.log, log);
-  assert.equal(path.basename(log), `wait-${id}.log`);
-  assert.ok(log.includes(path.join("state", "scratch", "s1")));
-  assert.match(r.content[0].text, new RegExp(`${id}.*pid ${r.details.pid}`));
-  const [w] = h.handle.active("s1");
-  assert.deepEqual([w.id, w.kind, w.note, w.log], [id, "pid", "build it", log]);
-  // the process is detached: its own process group leader
-  if (process.platform !== "win32") assert.doesNotThrow(() => process.kill(-Number(r.details.pid), 0));
-  for (let i = 0; i < 50 && !h.wakes.length; i++) await sleep(100);
-  assert.equal(h.handle.active("s1").length, 0, "the wait resolved when the process exited");
-  assert.match(fs.readFileSync(log, "utf8"), /one\r?\ntwo/);
-  assert.equal(h.wakes.length, 1);
-  assert.match(h.wakes[0].content, new RegExp(`foreman_wait ${id} \\(pid\\) "build it": exited.*log ${log.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}`));
+  assert.deepEqual([...h.tools.keys()], ["foreman_wait"]);
 });
 
-test("foreman_bg: note defaults to the command; empty command, child and print mode are refused; maxActive is checked before a spawn", async (t) => {
-  const h = waitHarness(t);
-  const bg = h.tools.get("foreman_bg")!;
-  const empty = await bg.execute("c", { command: "  " }, undefined, undefined, h.ctx);
-  assert.equal(empty.isError, true);
-  const print = await bg.execute("c", { command: "true" }, undefined, undefined, { ...h.ctx, mode: "print" });
-  assert.equal(print.isError, true);
-  assert.match(print.content[0].text, /needs a TUI or RPC session/);
-  const one = await bg.execute("c", { command: `node -e "setTimeout(()=>{},3000)"` }, undefined, undefined, h.ctx);
-  assert.equal(h.handle.active("s1")[0].note, `node -e "setTimeout(()=>{},3000)"`);
-  await stopDetached(Number(one.details.pid), () => process.kill(-Number(one.details.pid), "SIGTERM"));
-  const c = waitHarness(t, { isChild: true });
-  const refused = await c.tools.get("foreman_bg")!.execute("c", { command: "true" }, undefined, undefined, c.ctx);
-  assert.equal(refused.isError, true);
-  assert.match(refused.content[0].text, /foreman only/);
-  assert.equal(fs.existsSync(path.join(c.agentDir, "pi-foreman", "state", "scratch")), false, "nothing was spawned");
-});
-
-test("foreman_bg is not registered in a child session", (t) => {
+test("registerWait registers no tool in a child session", (t) => {
   process.env.PI_SUBAGENT_CHILD = "1";
   t.after(() => delete process.env.PI_SUBAGENT_CHILD);
   const tools: string[] = [];
   registerWait({ on: () => undefined, registerTool: (x: Tool) => void tools.push(x.name) } as never, { session: async () => ({}) as never, home: "/h", platform: process.platform });
   assert.deepEqual(tools, []);
-});
-
-test("foreman_bg with the add-on present is refused with a pointer to bg_run; nothing is spawned", async (t) => {
-  const h = waitHarness(t, { toolNames: ["bash", "bg_run"] });
-  const r = await h.tools.get("foreman_bg")!.execute("c", { command: "echo hi" }, undefined, undefined, h.ctx);
-  assert.equal(r.isError, true);
-  assert.match(r.content[0].text, /pi-background-tasks add-on is installed.*bg_run/);
-  assert.equal(h.handle.active("s1").length, 0);
-  assert.equal(fs.existsSync(path.join(h.agentDir, "pi-foreman", "state", "scratch")), false);
 });
 
 test("foreman_wait pid and ci accept log; a log outside the bound is refused", (t) => {
@@ -148,32 +93,12 @@ test("a pid wait with a log lists it; the wake line names it", async (t) => {
   assert.equal(h.handle.active("s1")[0].log, log);
 });
 
-const noBash = (): never => {
-  throw new Error("no bash");
-};
-
-test("shellFor, spawnDetached and lastLines", async (t) => {
-  assert.deepEqual(shellFor("echo x", "win32", { getShellConfig: noBash }).args.slice(0, 3), ["/d", "/s", "/c"]);
-  const sh = shellFor("echo x", "linux");
-  assert.deepEqual(sh.args, ["-c", "echo x"]);
+test("lastLines: the last 5 non-empty lines of a log; a missing file gives none", (t) => {
   const dir = tmp(t, "pf-bgsp-");
-  const log = path.join(dir, "a", "b.log");
-  const r = spawnDetached(`node -e "for(let i=1;i<=9;i++)console.log('l'+i)"`, dir, log);
-  assert.ok("pid" in r, JSON.stringify(r));
-  for (let i = 0; i < 50 && lastLines(log).length < 5; i++) await sleep(100);
+  const log = path.join(dir, "b.log");
+  fs.writeFileSync(log, `${Array.from({ length: 9 }, (_, i) => `l${i + 1}`).join("\n")}\n`);
   assert.deepEqual(lastLines(log), ["l5", "l6", "l7", "l8", "l9"]);
   assert.deepEqual(lastLines(path.join(dir, "missing.log")), []);
-  const bad = spawnDetached("true", path.join(dir, "no-such-dir"), path.join(dir, "c.log"));
-  if ("pid" in bad) await sleep(50);
-});
-
-test("shellFor win32 without Git Bash: cmd /d /s /c with the command wrapped in one more pair of quotes, verbatim; POSIX unchanged", () => {
-  const win32 = (c: string) => shellFor(c, "win32", { getShellConfig: noBash });
-  const command = `node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y"`;
-  assert.deepEqual(win32(command), { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y""`], verbatim: true });
-  assert.deepEqual(win32("echo x").args, ["/d", "/s", "/c", '"echo x"']);
-  assert.deepEqual(shellFor(command, "linux").args, ["-c", command]);
-  assert.equal(shellFor(command, "linux").verbatim, false);
 });
 
 function fakeTasks(cwd: string): void {
@@ -277,47 +202,12 @@ function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Pro
   return { handlers, commands, tools, ctx, project, agentDir, notes, confirms, root };
 }
 
-test("guard parity: foreman_bg gets exactly the verdict a bash call with the same command gets (deny, allow)", async (t) => {
-  const a = adapter(t);
-  await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
-  const parent = path.dirname(a.agentDir);
-  const cases: [string, string][] = [
-    ["shell write into a project file", "echo x > src/a.txt"],
-    ["write into .git", "echo x > .git/config"],
-    ["destructive", 'rm -rf -- "$1"/*'],
-    ["git guard", "git push --force origin main"],
-    ["empty command", " "],
-    ["floor: agent dir parent", `trash ${parent}`],
-    ["agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
-    ["allow", "echo hi"],
-  ];
-  let denied = 0;
-  for (const [what, command] of cases) {
-    const before = a.confirms.length;
-    const viaBash = await a.handlers.get("tool_call")!({ toolName: "bash", toolCallId: "b", input: { command } }, a.ctx);
-    const bashConfirms = a.confirms.length - before;
-    const viaBg = await a.handlers.get("tool_call")!({ toolName: "foreman_bg", toolCallId: "g", input: { command, note: "n" } }, a.ctx);
-    const bgConfirms = a.confirms.length - before - bashConfirms;
-    // the same verdict and reason; only the empty-command text names the tool called
-    const named = viaBg && typeof (viaBg as { reason?: unknown }).reason === "string" ? { ...(viaBg as object), reason: (viaBg as { reason: string }).reason.replace("the foreman_bg call", "the bash call") } : viaBg;
-    assert.deepEqual(named, viaBash, `${what}: ${command}`);
-    assert.equal(bgConfirms, bashConfirms, `${what}: asks`);
-    if (viaBash) denied++;
-  }
-  assert.ok(denied >= 4, `denials seen: ${denied}`); // the python case is no denial now (HEAD: 5, when it was an overlay ask that the rig denied); only parity is checked on it
-  const ok = await a.handlers.get("tool_call")!({ toolName: "foreman_bg", toolCallId: "g", input: { command: "echo hi" } }, a.ctx);
-  assert.equal(ok, undefined);
-});
-
-test("foreman_bg is guarded by every shell tool table: toolmap and git-guard shell check", () => {
-  assert.deepEqual(mapTool("foreman_bg"), mapTool("bash"));
-  assert.equal(isShellTool("foreman_bg"), true);
-});
-
-test("the permission baseline maps foreman_bg to the bash rules (shellTools alias, like powershell)", () => {
-  const base = JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { shellTools: Record<string, { commandArgument: string }>; tools: Record<string, string> };
-  assert.deepEqual(base.shellTools.foreman_bg, { commandArgument: "command" });
-  assert.equal(base.tools.foreman_bg, undefined, "no own tool rule: the bash rules decide");
+test("foreman_bg is gone: no shell-tool table, no permission baseline alias, no registered tool", () => {
+  assert.deepEqual(mapTool("foreman_bg"), mapTool("unknown_tool"));
+  assert.equal(isShellTool("foreman_bg"), false);
+  const base = JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { shellTools: Record<string, unknown>; tools: Record<string, string> };
+  assert.equal(base.shellTools.foreman_bg, undefined);
+  assert.equal(base.tools.foreman_bg, undefined);
 });
 
 test("/foreman waits: lists waits with note, age, left and the last 5 log lines; includes the add-on's tasks when present", async (t) => {
@@ -419,9 +309,9 @@ test("foreman_wait tool: a log outside the bound or of the wrong type is rejecte
   assert.equal(h.handle.active("s1").length, 0);
 });
 
-test("sidebar: a foreman_bg pid wait with note `suites` shows up in the presence waits[] with that note", async (t) => {
+test("sidebar: a foreman_wait pid wait with note `suites` shows up in the presence waits[] with that note", async (t) => {
   const h = waitHarness(t);
-  const r = await h.tools.get("foreman_bg")!.execute("c", { command: `node -e "setTimeout(()=>{},3000)"`, note: "suites" }, undefined, undefined, h.ctx);
+  const r = await h.tools.get("foreman_wait")!.execute("c", { action: "start", kind: "pid", pid: process.pid, note: "suites" }, undefined, undefined, h.ctx);
   assert.ok(!r.isError, r.content[0].text);
   const live = LiveState.start({ agentDir: h.agentDir, sessionId: "s1", cwd: h.cwd, mode: "rpc", env: {} }, () => [], undefined, () => h.handle.active("s1"));
   assert.ok(live);
@@ -430,5 +320,4 @@ test("sidebar: a foreman_bg pid wait with note `suites` shows up in the presence
   assert.equal(file.state, "working"); // a pending wait is work in progress (lane 7a)
   assert.equal(file.waits.length, 1);
   assert.deepEqual([file.waits[0].id, file.waits[0].kind, file.waits[0].note], [String(r.details.id), "pid", "suites"]);
-  await stopDetached(Number(r.details.pid), () => process.kill(Number(r.details.pid), "SIGTERM"));
 });

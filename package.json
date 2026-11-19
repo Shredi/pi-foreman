@@ -14,6 +14,8 @@
   "pi": {
     "extensions": [
       "./extensions/core-adapter/index.ts",
+      "./node_modules/pi-background-tasks/dist/extensions/anthropic-attribution.js",
+      "./node_modules/pi-background-tasks/dist/extensions/background-tasks.js",
       "./node_modules/pi-subagents/index.js",
       "./node_modules/pi-intercom/index.ts",
       "./node_modules/@juicesharp/rpiv-ask-user-question/index.ts"
@@ -43,6 +45,7 @@
   "dependencies": {
     "@inquirer/prompts": "8.8.0",
     "@juicesharp/rpiv-ask-user-question": "git+https://github.com/Shredi/rpiv-ask-user-question.git#62ad77de8ba3b7dc1b407bfab7be4fac8a69fa41",
+    "pi-background-tasks": "2.6.10",
     "pi-intercom": "git+https://github.com/Shredi/pi-intercom.git#5f184cce7e2811a130dc44ebac745db7562a1543",
     "pi-subagents": "0.89.0",
     "unbash": "6.0.4"

@@ -17,8 +17,8 @@ test("checkpoint dialog: the owner section comes before the plan summary", async
   await a.checkpoint();
   const n = w.notes.find((m) => /Plan: Widget/.test(m))!;
   assert.ok(n, "the summary note exists");
-  assert.ok(n.startsWith("For the owner\n  We ship the widget."), n);
-  assert.ok(n.indexOf("For the owner") < n.indexOf("Plan: Widget"));
+  assert.ok(n.startsWith("Summary\n  We ship the widget."), n);
+  assert.ok(n.indexOf("Summary") < n.indexOf("Plan: Widget"));
 });
 
 test("checkpoint dialog: a plan without the section gets the warning line first and is not refused", async (t) => {
@@ -33,7 +33,7 @@ test("checkpoint dialog: a plan without the section gets the warning line first 
   const r = await a.checkpoint();
   assert.equal(r.decision, "approve");
   const n = w.notes.find((m) => /Plan: Widget/.test(m))!;
-  assert.ok(n.startsWith('⚠ No "For the owner" summary'), n);
+  assert.ok(n.startsWith('⚠ No "Summary" section'), n);
 });
 
 test("ask_user_question: project prefix once, hint on a jargon result, main session has no label", async (t) => {

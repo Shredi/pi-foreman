@@ -47,7 +47,7 @@ class BenchStartupTest(unittest.TestCase):
         pkgs = ha._BenchPi.packages(types.SimpleNamespace(KIND="foreman", fake=True))
         repo = [p for p in pkgs if isinstance(p, dict)][0]
         self.assertEqual(repo["source"], ha.R_REPO)
-        self.assertEqual(sorted(repo["extensions"]), ["!node_modules/pi-intercom/**", "!node_modules/pi-subagents/**"])
+        self.assertEqual(sorted(repo["extensions"]), ["!node_modules/pi-background-tasks/**", "!node_modules/pi-intercom/**", "!node_modules/pi-subagents/**"])
         json.dumps(pkgs)  # lands in settings.json
         self.assertFalse(any("permission" in str(p) for p in pkgs))
 

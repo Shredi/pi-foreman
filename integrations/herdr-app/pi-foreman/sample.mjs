@@ -37,6 +37,7 @@ export const ROWS = [
   { key: "pr-no-checks", pr: 108 },
   { key: "pr-draft-failed", pr: 109 },
   { key: "pr-merge-blocked", pr: 110 },
+  { key: "pr-required-wait", pr: 116 },
 ];
 
 export const SAMPLE = {
@@ -98,6 +99,8 @@ export const SAMPLE = {
       pr(113, { checks: [{ n: "ci", state: "fail" }] }),
       pr(114),
       pr(115, { mergeState: "blocked" }),
+      // checks passed, the merge waits on two required checks the tracker names: the still ring and the card's waiting group
+      pr(116, { repo: "acme/tools", mergeState: "blocked", waiting: ["security-scan", "license-check"] }),
     ],
   },
 };

@@ -27,7 +27,7 @@ test("post: agent true keys background-agents/, false or missing keys background
   assert.match(out[3], /state=working:id=background-tasks\/n1:/);
 });
 
-test("a foreman_bg-style post (no flag) stays background-tasks/", () => {
+test("a shell-task post (no agent flag) stays background-tasks/", () => {
   const { r, out } = setup();
   r.post("fb-7", "working", "sleep 60", "Running");
   r.post("fb-7", "done", "sleep 60", "Killed");

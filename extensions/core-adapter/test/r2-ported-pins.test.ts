@@ -123,8 +123,6 @@ test("bg", posixOnly, () => {
     [1,"bash","echo x > .git/config","m","block:floor-secret-path"],
     [1,"bash","trash /Users/r2fx/x","m","block:floor-delete-outside"],
     // bg.test.ts:300 
-    [1,"foreman_bg",{"command":"echo x > .git/config"},"m","block:floor-secret-path"],
-    [1,"foreman_bg",{"command":"trash /Users/r2fx/x"},"m","block:floor-delete-outside"],
     // bg.test.ts:393 
     [1,"bg_run",{"command":"echo x > .git/config"},"m","block:floor-secret-path"],
     [1,"bg_run",{"command":"trash /Users/r2fx/x"},"m","block:floor-delete-outside"],

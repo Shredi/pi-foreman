@@ -428,7 +428,9 @@ class ToolUsageRetroTest(unittest.TestCase):
         self.write_sessions(lines)
         text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
         self.assertIn("example_extra, example_tool (example-package) -> pi remove npm:example-package", text)
-        self.assertIn("fusion_reason (pi-background-tasks) -> pi remove npm:pi-background-tasks", text)
+        # pi-background-tasks is bundled: never a pi remove line, the source switch instead
+        self.assertNotIn("pi remove npm:pi-background-tasks", text)
+        self.assertIn("fusion_reason (pi-background-tasks) -> PI_BG_FEATURES=process", text)
         # a package with one used tool is not removed: the add-on's optional tool points at the source switch instead
         lines = [tool_usage_line(i, used=["example_used", "bg_run"], declared=["example_used", "bg_run", "fusion_reason"]) for i in range(20)]
         lines = [dict(l, sources={"example_used": "pi-foreman", "bg_run": "pi-background-tasks", "fusion_reason": "pi-background-tasks"}) for l in lines]

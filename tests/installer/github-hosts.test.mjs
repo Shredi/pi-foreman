@@ -58,8 +58,8 @@ function writeOverlay(env, hosts) {
   fs.writeFileSync(path.join(dir, "foreman.json"), JSON.stringify({ version: 1, tools: { prGithubHosts: hosts } }));
 }
 
-// Prompt order as in picker.test.mjs, with the add-on answers: profile, adjust, two add-ons, apply.
-const PICK = ["", "n", "n", "n", "n", "n", "y"];
+// Prompt order as in picker.test.mjs, with the add-on answers: profile, adjust, the three add-ons, apply.
+const PICK = ["", "n", "n", "n", "n", "y"];
 
 test("(e) --github-hosts writes the list lowercased and deduped; a bad value exits non-zero", () => {
   const env = fresh();

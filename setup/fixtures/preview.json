@@ -17,7 +17,7 @@
     { "id": "inquirer-prompts", "name": "@inquirer/prompts", "kind": "pi-package", "installed": "8.7.4", "available": "8.7.4", "pin": "8.7.4", "source": "npm:@inquirer/prompts", "managed": true },
     { "id": "unbash", "name": "unbash", "kind": "pi-package", "installed": "6.0.1", "available": "6.0.1", "pin": "6.0.1", "source": "npm:unbash", "managed": true },
     { "id": "pi-polish", "name": "pi-polish", "kind": "pi-package", "available": "0.1.2", "pin": "0.1.2", "source": "npm:pi-polish", "managed": true, "note": "optional add-on" },
-    { "id": "pi-background-tasks", "name": "pi-background-tasks", "kind": "pi-package", "installed": "2.6.9", "available": "2.6.10", "pin": "2.6.9", "source": "npm:pi-background-tasks", "managed": true, "note": "optional add-on" },
+    { "id": "pi-quiver", "name": "pi-quiver", "kind": "pi-package", "installed": "6.14.1", "available": "6.14.2", "pin": "6.14.1", "source": "npm:pi-quiver", "managed": true, "note": "optional add-on" },
     { "id": "pi-notes", "name": "pi-notes", "kind": "pi-package", "installed": "0.3.0", "available": "0.2.4", "pin": "0.2.4", "source": "npm:pi-notes", "managed": true, "note": "optional add-on" },
     { "id": "herdr", "name": "herdr", "kind": "external", "installed": "0.5.1", "source": "official installer", "managed": false, "note": "you update it yourself" },
     { "id": "herdr-app", "name": "herdr-app", "kind": "external", "source": "official installer", "managed": false, "note": "not installed" }

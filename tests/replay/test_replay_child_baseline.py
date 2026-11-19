@@ -22,7 +22,7 @@ class TestChildBaseline(ReplayCase):
         (rig.project / "sub").mkdir()
         return rig
 
-    def test_foreman_bg_wait_allowed(self):
+    def test_bg_wait_allowed(self):
         pi = self.baseline_rig("cb-main").start()
         res = tool_results(pi.prompt("[[replay:f1]] go", timeout=60))
         pi.close()

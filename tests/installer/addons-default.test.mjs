@@ -14,7 +14,7 @@ const FAKE_PI = path.join(HERE, "fixtures", "fake-pi.mjs");
 const FOREMAN = "git:github.com/Shredi/pi-foreman";
 const { envTarget, mergeBlock, renderBlock, persistEnv, BLOCK_START, BLOCK_END } = await import(pathToFileURL(path.join(ROOT, "setup", "persist-env.mjs")).href);
 
-const DEFAULTS = ["polish", "background-tasks", "quiver", "memory"];
+const DEFAULTS = ["polish", "quiver", "memory"];
 
 function fresh() {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-addons-default-")));
@@ -47,14 +47,14 @@ const installs = (env) => {
   }
 };
 const managed = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
-const specs = DEFAULTS.map((id) => ({ polish: "npm:pi-polish@0.1.2", "background-tasks": "npm:pi-background-tasks@2.6.10", quiver: "npm:pi-quiver@6.14.2", memory: "npm:pi-memory@0.4.2" })[id]);
+const specs = DEFAULTS.map((id) => ({ polish: "npm:pi-polish@0.1.2", quiver: "npm:pi-quiver@6.14.2", memory: "npm:pi-memory@0.4.2" })[id]);
 
 test("a plain non-interactive run installs the default add-ons, says so, and records them as offered", () => {
   const env = fresh();
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), specs);
-  assert.match(r.out, /installing the default add-ons: polish, background-tasks, quiver, memory/);
+  assert.match(r.out, /installing the default add-ons: polish, quiver, memory/);
   const m = managed(env);
   assert.deepEqual(Object.keys(m.addons), DEFAULTS);
   assert.deepEqual(m.addonsOffered, DEFAULTS);
@@ -72,7 +72,7 @@ test("--no-addons installs none, --skip-addon leaves one out, --addon names exac
   assert.deepEqual(installs(none), []);
   const skip = fresh();
   assert.equal(run(skip, ["--skip-addon", "memory,quiver"]).code, 0);
-  assert.deepEqual(installs(skip), specs.slice(0, 2));
+  assert.deepEqual(installs(skip), specs.slice(0, 1));
   const only = fresh();
   assert.equal(run(only, ["--addon", "polish"]).code, 0);
   assert.deepEqual(installs(only), [specs[0]]);
@@ -81,7 +81,7 @@ test("--no-addons installs none, --skip-addon leaves one out, --addon names exac
 test("add-on flag conflicts and unknown ids exit 2 and run nothing", () => {
   const env = fresh();
   for (const [args, re] of [
-    [["--skip-addon", "nope"], /unknown add-on nope in --skip-addon; valid: polish, background-tasks, quiver, memory/],
+    [["--skip-addon", "nope"], /unknown add-on nope in --skip-addon; valid: polish, quiver, memory/],
     [["--addon", "polish", "--no-addons"], /cannot be combined with --no-addons or --skip-addon/],
     [["--no-addons", "--skip-addon", "polish"], /--no-addons already skips every add-on/],
   ]) {
@@ -99,7 +99,7 @@ test("a re-run without addonsOffered installs the newly default add-ons once, ne
   fs.writeFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), `${JSON.stringify({ addons: { polish: { spec: "npm:pi-polish@0.1.0", installedAt: "2026-01-01T00:00:00.000Z" } } })}\n`);
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /installing newly default add-ons: background-tasks, quiver, memory/);
+  assert.match(r.out, /installing newly default add-ons: quiver, memory/);
   assert.deepEqual(installs(env), specs.slice(1));
   assert.deepEqual(managed(env).addonsOffered, DEFAULTS.slice(1));
   fs.rmSync(env.log);
@@ -107,48 +107,44 @@ test("a re-run without addonsOffered installs the newly default add-ons once, ne
   assert.deepEqual(installs(env), []);
 });
 
-test("--dry-run prints the add-on installs and the env block target and writes nothing", () => {
+test("--dry-run prints the add-on installs and writes nothing", () => {
   const env = fresh();
   const before = fs.readdirSync(env.base).sort();
   const r = run(env, ["--dry-run"]);
   assert.equal(r.code, 0, r.out);
   for (const s of specs) assert.ok(r.out.includes(`would run: pi install ${s}`), s);
-  assert.match(r.out, /would write the pi-foreman block to .*\.zshrc/);
   assert.deepEqual(installs(env), []);
   assert.equal(fs.existsSync(path.join(env.home, ".zshrc")), false);
   assert.deepEqual(fs.readdirSync(env.base).sort(), before);
 });
 
-test("background-tasks writes PI_BG_FEATURES=process once into the shell profile; --no-env and a custom agent dir without PI_FOREMAN_HOME leave it alone", () => {
+test("background-tasks ships with pi-foreman: --addon and --skip-addon background-tasks print the line, install nothing and write no env block", () => {
   const env = fresh();
-  fs.writeFileSync(path.join(env.home, ".zshrc"), "alias x=y\n");
-  assert.equal(run(env, ["--addon", "background-tasks"]).code, 0);
-  const text = fs.readFileSync(path.join(env.home, ".zshrc"), "utf8");
-  assert.ok(text.startsWith("alias x=y\n"));
-  assert.equal(text.split(BLOCK_START).length, 2);
-  assert.match(text, /export PI_BG_FEATURES='process'/);
-  // unchanged block is not rewritten on re-run
-  assert.equal(run(env, ["--addon", "background-tasks"], { PI_BG_FEATURES: "process" }).code, 0);
-  assert.equal(fs.readFileSync(path.join(env.home, ".zshrc"), "utf8"), text);
-  const off = fresh();
-  const r = run(off, ["--addon", "background-tasks", "--no-env"]);
-  assert.match(r.out, /not written \(--no-env\)/);
-  assert.equal(fs.existsSync(path.join(off.home, ".zshrc")), false);
-  const sandboxed = fresh();
-  const s = run(sandboxed, ["--addon", "background-tasks"], { PI_FOREMAN_HOME: undefined, HOME: sandboxed.home, USERPROFILE: sandboxed.home });
-  assert.match(s.out, /custom agent dir, your shell profile is left alone/);
-  const rc = path.join(sandboxed.home, ".zshrc"); // the resume block is written for a custom dir now (D34); the env block is not
-  assert.equal(fs.existsSync(rc) && fs.readFileSync(rc, "utf8").includes(BLOCK_START), false);
+  const only = run(env, ["--addon", "background-tasks"]);
+  assert.equal(only.code, 0, only.out);
+  assert.match(only.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
+  assert.deepEqual(installs(env), []);
+  const skip = fresh();
+  const r = run(skip, ["--skip-addon", "background-tasks"]);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /background-tasks ships with pi-foreman; nothing to install or skip/);
+  assert.deepEqual(installs(skip), specs, "the other defaults still install");
+  const rc = path.join(env.home, ".zshrc");
+  assert.equal(fs.existsSync(rc) && fs.readFileSync(rc, "utf8").includes("PI_BG_FEATURES"), false);
 });
 
-test("on Windows the variable goes through the injected setx runner", () => {
+test("--addon background-tasks alone declines nothing: a later plain run still offers polish, quiver and memory", () => {
   const env = fresh();
-  const setx = path.join(env.base, "setx.mjs");
-  fs.writeFileSync(setx, `import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(path.join(env.base, "setx.log"))}, JSON.stringify(process.argv.slice(2)) + "\\n");\n`);
-  const r = run(env, ["--addon", "background-tasks"], { PI_FOREMAN_PLATFORM: "win32", PI_FOREMAN_SETX_BIN: setx });
-  assert.equal(r.code, 0, r.out);
-  assert.deepEqual(fs.readFileSync(path.join(env.base, "setx.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l)), [["PI_BG_FEATURES", "process"]]);
-  assert.equal(fs.existsSync(path.join(env.home, ".zshrc")), false);
+  const only = run(env, ["--addon", "background-tasks"]);
+  assert.equal(only.code, 0, only.out);
+  assert.deepEqual(installs(env), []);
+  const m = fs.existsSync(path.join(env.agentDir, "pi-foreman", "managed.json")) ? managed(env) : {};
+  assert.deepEqual(m.addonsOffered ?? [], [], "nothing recorded as offered or declined");
+  assert.deepEqual(Object.keys(m.addons ?? {}), []);
+  const plain = run(env, []);
+  assert.equal(plain.code, 0, plain.out);
+  assert.deepEqual(installs(env), specs);
+  assert.deepEqual(managed(env).addonsOffered, DEFAULTS);
 });
 
 test("envTarget picks the profile by shell and platform; mergeBlock replaces in place and is idempotent", () => {
@@ -182,7 +178,7 @@ test("persistEnv reports a failing setx and an unwritable profile as WARN withou
 test("--skip-addon is remembered: a later plain run installs nothing new", () => {
   const env = fresh();
   assert.equal(run(env, ["--skip-addon", "memory"]).code, 0);
-  assert.deepEqual(installs(env), specs.slice(0, 3));
+  assert.deepEqual(installs(env), specs.slice(0, 2));
   fs.rmSync(env.log);
   const again = run(env, []);
   assert.equal(again.code, 0, again.out);

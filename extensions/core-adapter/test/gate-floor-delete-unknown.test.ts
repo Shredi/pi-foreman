@@ -108,10 +108,10 @@ test(`${FLOOR}: a literal recursive PowerShell or cmd delete outside the worktre
   await runs(t, "pwsh -c 'Remove-Item -Recurse build'");
 });
 
-test(`${FLOOR}: foreman_bg gets the same refusal as bash (guard parity of rm -rf -- "$1"/*)`, async (t) => {
+test(`${FLOOR}: bg_run gets the same refusal as bash (guard parity of rm -rf -- "$1"/*)`, async (t) => {
   for (const mode of MODES) {
     const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode } } });
-    const res = await r.call("foreman_bg", { command: 'rm -rf -- "$1"/*' });
+    const res = await r.call("bg_run", { command: 'rm -rf -- "$1"/*' });
     assert.equal(res?.block, true, mode);
     assert.match(String(res?.reason), /permission floor \(delete-unknown-target\)/, mode);
   }

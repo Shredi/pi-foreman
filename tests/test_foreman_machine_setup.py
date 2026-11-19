@@ -28,10 +28,10 @@ class MachineSetupTest(unittest.TestCase):
         (self.adir / "settings.json").write_text(json.dumps({"packages": packages}), "utf-8")
 
     def test_installed_addon_ids_match_packages_by_source(self):
-        self.settings(["npm:pi-polish@0.1.2", {"source": "git:github.com/x/pi-background-tasks"}, "npm:pi-polish-extra"])
+        self.settings(["npm:pi-polish@0.1.2", {"source": "git:github.com/x/pi-quiver"}, "npm:pi-polish-extra"])
         ids = fsn.installed_addon_ids(self.adir)
         self.assertIn("polish", ids)
-        self.assertIn("background-tasks", ids)
+        self.assertIn("quiver", ids)
         self.assertEqual(ids, sorted(ids))
         self.assertEqual(len(ids), 2)
 

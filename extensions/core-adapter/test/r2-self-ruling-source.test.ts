@@ -62,13 +62,13 @@ const REFUSED: Row[] = [
   ["substitution target on a line naming a ruling file", () => `echo x > $(pwd)/ruling.md`],
   ["unresolved cp destination, line names the dir", (r) => `cp x "$X"; ls ${r.H}`],
   ["brace list in the file name", (r) => `echo x > ${r.H}/ruling{,-1}.md`],
-  ["foreman_bg", (r) => `echo x > ${r.H}/ruling.md`],
+  ["bg_run", (r) => `echo x > ${r.H}/ruling.md`],
 ];
 
 for (const [name, line] of REFUSED) {
   test(`refused: ${name}`, { skip: !posix }, () => {
     const r = rig();
-    const tool = name === "foreman_bg" ? "foreman_bg" : "bash";
+    const tool = name === "bg_run" ? "bg_run" : "bash";
     assert.equal(run(r, line(r), tool), SELF_RULING_REASON, line(r));
   });
 }

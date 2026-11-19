@@ -33,7 +33,7 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
   A `tasks` call keeps its first task and queues the rest. Pressure delays a launch, it never downgrades one: every climb (explicit strong, RUNG_UP handoff, revision after a FAIL, sizing) keeps its strong or top rung.
 - `critical`: a launch is deferred (refused with a reason). A `pressure` wait wakes the foreman with the launch arguments when the
   level drops, or after 10 minutes at the latest. The refusal tells the session how to ask the owner for one launch (below).
-- `foreman_bg` and the add-on's `bg_run` are not gated: they are your own shell commands.
+- The add-on's `bg_run` is not gated: it is your own shell command.
 
 ## Owner approval at critical
 

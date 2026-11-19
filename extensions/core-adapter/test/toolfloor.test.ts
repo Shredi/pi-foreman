@@ -7,7 +7,7 @@ import { r11Rig } from "./_r11rig.ts";
 type T = { after(fn: () => void | Promise<void>): void };
 
 test("the floor holds the deferred floor and the top-level foreman tools", () => {
-  for (const n of ["foreman_triage", "subagent", "foreman_session_open", "foreman_wait", "foreman_checkpoint", "foreman_bg", "intercom"]) assert.ok(TOOL_FLOOR.includes(n), n);
+  for (const n of ["foreman_triage", "subagent", "foreman_session_open", "foreman_wait", "foreman_checkpoint", "bg_run", "intercom"]) assert.ok(TOOL_FLOOR.includes(n), n);
 });
 
 test("only registered, inactive floor tools are returned, in floor order", () => {

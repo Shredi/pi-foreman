@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { readTraceFiles } from "./_trace-walk.ts";
 import { preBashConfigOf, runPreBashHooks } from "../prebash.ts";
 import type { PreBashInput } from "../prebash.ts";
 import type { Spawner } from "../spawn.ts";
@@ -100,17 +101,7 @@ function adapter(t: import("node:test").TestContext, cfg: unknown) {
     ui: { notify: () => undefined, confirm: async () => false, setStatus: () => undefined, setWidget: () => undefined },
   };
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
-  const traces = (): string => {
-    const out: string[] = [];
-    const walk = (d: string): void => {
-      for (const e of fs.existsSync(d) ? fs.readdirSync(d, { withFileTypes: true }) : []) {
-        if (e.isDirectory()) walk(path.join(d, e.name));
-        else out.push(fs.readFileSync(path.join(d, e.name), "utf8"));
-      }
-    };
-    walk(root);
-    return out.join("\n");
-  };
+  const traces = (): string => readTraceFiles(root).join("\n");
   return { root, handlers, ctx, traces, call: (command: string) => handlers.get("tool_call")!({ toolName: "bash", toolCallId: "x", input: { command } }, ctx) as Promise<{ block?: boolean; reason?: string } | undefined> };
 }
 

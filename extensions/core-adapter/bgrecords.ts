@@ -165,7 +165,7 @@ const requestId = (): string => `pi-foreman-bgrecords-${Date.now().toString(36)}
 
 /**
  * Wire the records into `pi`: the add-on's terminal frames and bg_run results, a `status` request at session_start, retried on the first agent_start and after a short timer until it is answered (tasks that
- * survived a reload), every record cleared on session_shutdown. `recorder` serves foreman_bg (wait.ts), which has its own hooks.
+ * survived a reload), every record cleared on session_shutdown.
  */
 export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: { env?: Env; platform?: string; write?: (data: string) => void; isTTY?: boolean; trace?: (rec: Record<string, unknown>) => void; setTimeout?: (fn: () => void, ms: number) => unknown; clearTimeout?: (h: unknown) => void } = {}): { recorder: BgRecords } {
   let mode: string | undefined;
