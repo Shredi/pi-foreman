@@ -52,7 +52,8 @@ for (const c of FX.reviewable) {
 for (const c of FX.selfMod) {
   test(`r17 selfMod ${c.name}: the shell write refusal, no dialog, no model call`, async () => {
     const r = await bash(c.line, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["pass", 0, 0]);
+    // C: an unresolvable target is no longer danger-opaque, so the gate has no rule and lets the call through (`allowed:mode:no-rule`) and the shell write refusal stops it
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], [/_dotdot$/.test(c.name) && c.name !== "scratch_dotdot_settings" ? "allowed:mode:no-rule" : "pass", 0, 0]);
     assert.ok(r.reason?.includes(SHELL_WRITE_REFUSAL), String(r.reason));
   });
 }

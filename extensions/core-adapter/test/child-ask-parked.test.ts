@@ -179,7 +179,7 @@ test("a child whose resume was not recognised gets the gone denial, no dialog, a
   await until(() => r.ofType(ANSWERED).length === 1);
   await r.resume("run-"); // shortened run id: not recognised, nothing re-creates the dir
   const c = await childRig(t, l.askDir, {});
-  const res = await c.call("bash", { command: "pip install requests" });
+  const res = await c.call("bash", { command: "git branch -D old-topic" });
   assert.equal(res?.block, true);
   assert.match(String(res?.reason), /the session that started this helper has ended or no longer watches it/);
   assert.equal(fs.existsSync(l.askDir), false);
@@ -289,7 +289,7 @@ async function childRig(t: T, askDir: string, ctx: Record<string, unknown>) {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const escalate = JSON.stringify({ verdict: "ask", entry: "package-install", reason: "because" });
+  const escalate = JSON.stringify({ verdict: "unsure", reason: "because" });
   const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: escalate }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   return r11Rig(t, {}, { ctx: { modelRegistry: reg, ...ctx }, config: cfg(), child: true });
 }
@@ -298,7 +298,7 @@ test("child gate: ask.md carries a hash of the whole tool input; another field o
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-ask-hash-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const hashes: (string | undefined)[] = [];
-  for (const input of [{ command: "pip install requests", timeout: 5 }, { timeout: 5, command: "pip install requests" }, { command: "pip install requests", timeout: 6 }]) {
+  for (const input of [{ command: "git branch -D old-topic", timeout: 5 }, { timeout: 5, command: "git branch -D old-topic" }, { command: "git branch -D old-topic", timeout: 6 }]) {
     const ac = new AbortController();
     const r = await childRig(t, dir, { signal: ac.signal });
     const p = r.call("bash", input);
