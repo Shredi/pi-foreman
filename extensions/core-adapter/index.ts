@@ -6406,6 +6406,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             delete process.env.PI_FOREMAN_PLAN_PHASE;
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
           }
+          s.live?.recordCheckpoint("approve");
           return done("approve", rec.by, `The owner approved ${name} (${hash8}). Builders may launch at tier heavy while the file stays unchanged; any edit needs a new ${CHECKPOINT_TOOL}.`);
         }
         if (answer === "revise") {
@@ -6418,11 +6419,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           rec.status = "revise";
           s.show?.planDecided("revise", rec.hash);
           if (note && note.trim()) rec.note = note.trim();
+          s.live?.recordCheckpoint("revise");
           return done("revise", null, `The owner asked for a revision of ${name}. The owner's words:\n${rec.note ?? "(no note given)"}\nChange the plan (edit it), then call ${CHECKPOINT_TOOL} again. Builders stay refused at tier heavy until the owner approves.`);
         }
         rec.status = "rejected";
         s.show?.planDecided("rejected", rec.hash);
         ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
+        s.live?.recordCheckpoint("reject");
         return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
       },
     } as never);
