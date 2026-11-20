@@ -104,7 +104,8 @@ import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPrefli
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
-import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
+import { extendSubagentDeclaration } from "./launchschema.ts";
+import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -141,7 +142,7 @@ import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from 
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
-import { budgetCap, budgetCheck, prependReReview } from "./costguard.ts";
+import { budgetCap, budgetCheck, prependReReview, prependReReviewScoped, wholeChangeSentence } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, takeBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
@@ -182,7 +183,7 @@ import { forcedProjection, replayable, subagentNoticeWrap } from "./warmreplay.t
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
-import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
+import { applyLedgerItems, criticOf, reReviewLine } from "./ledgerblock.ts";
 import { taskLedger } from "./ledgerpath.ts";
 import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
@@ -4066,16 +4067,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "launch_refused", reason: "review_single_launch", tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: "pi-foreman: launch refused [review_single_launch]: a reviewer records its verdict through a launch binding, which pi-subagents forwards only for a single launch. Launch each reviewer as its own subagent({agent, task}) call." };
         }
-        // T13: a reviewer whose record folder cannot be made could never give a verdict
-        const reviewRole = singleLaunchRole(input);
-        if (!s.isChild && actionOf(input) === null && reviewRole && REVIEW_ROLES.includes(reviewRole)) {
-          try {
-            makeRecordDir(recordSessionDir(s.agentDir, s.id));
-          } catch (err) {
-            s.trace?.emit({ event: "launch_refused", reason: "review_record_dir", tier: s.ceremony.tier, ...launchDeny(input) });
-            return { block: true, reason: `pi-foreman: launch refused [review_record_dir]: the reviewer's record folder cannot be made (${(err as Error).message}). Fix the folder or its permissions under the agent dir (pi-foreman/state/review-records), then launch again.` };
-          }
-        }
         launchMcp = mcpPlan.mcp;
         if (!mcpPlan.group && mcpPlan.entries[0]) {
           const mcpRole = mcpPlan.entries[0].role;
@@ -4331,7 +4322,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
             return { block: true, reason: (process.env.PI_FOREMAN_HANDOFF_DIR?.trim() && process.env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
           }
-          if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") { const r = launchItemsFor(e).r; const take = r && "items" in r ? allowedItems(r.items, hsLaunch !== null).map(String) : []; e.task = prependReReview(e.task, s.failItems.filter((f) => take.includes(f))); }
+          if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") {
+            // the line names only the failed items inside the launch's set (verdict.ts launchItemsOf: the given items, else the failed items still open); with an `items` field it also asks for a result on each
+            const { given, r } = launchItemsFor(e);
+            const take = r && "items" in r ? allowedItems(r.items, hsLaunch !== null) : [];
+            e.task = given && "items" in given ? prependReReviewScoped(e.task, s.failItems, take) : prependReReview(e.task, s.failItems.filter((f) => take.map(String).includes(f)));
+          }
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
           if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
         }
@@ -4669,10 +4665,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         agentEntries.forEach((e, i) => entryLedger.set(e, perEntry[i] ?? lf));
         if (actionOf(input) !== "resume") capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
         // The items of each review launch (verdict.ts): the `items` field, else every open item; after a FAIL the item occasion's default is the failed items still open.
+        const givenItems = new Map<Json, ItemId[]>();
         if (actionOf(input) === null) for (const e of agentEntries) {
           if (!REVIEW_ROLES.includes(e.agent as string)) continue;
           const { given, r } = launchItemsFor(e);
           if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
+          if (given && "items" in given) givenItems.set(e, given.items);
           if (!r) continue;
           if ("unknown" in r) {
             s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -4680,12 +4678,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           verdictItems.set(e, r.items);
         }
+        // T13: a reviewer whose record folder cannot be made could never give a verdict; made after the last refusal above, so a refused launch leaves no folder
+        const reviewRole = singleLaunchRole(input);
+        if (!s.isChild && actionOf(input) === null && reviewRole && REVIEW_ROLES.includes(reviewRole)) {
+          try {
+            makeRecordDir(recordSessionDir(s.agentDir, s.id));
+          } catch (err) {
+            s.trace?.emit({ event: "launch_refused", reason: "review_record_dir", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: launch refused [review_record_dir]: the reviewer's record folder cannot be made (${(err as Error).message}). Fix the folder or its permissions under the agent dir (pi-foreman/state/review-records), then launch again.` };
+          }
+        }
         // every review task of a single launch ends with the ids review_verdict takes (the set the tool and the binding use), after the facts the plan review added
         if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
         for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions)) s.trace?.emit(r);
+        // The re-review line tells a reviewer to check the revision diff; numbered items of its `items` beyond the failed set get one sentence: check them against the whole change.
+        if (reReview) {
+          const line = reReviewLine(reReview.sha);
+          for (const [e, ids] of givenItems) {
+            const extra = wholeChangeSentence(s.failItems, ids);
+            if (extra && typeof e.task === "string" && e.task.startsWith(line)) e.task = line + extra + e.task.slice(line.length);
+          }
+        }
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
@@ -6335,11 +6351,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       name: TRIAGE_TOOL,
       label: "Record the tier",
       // Bug fix (sizing): the `subagent` schema is upstream, so the foreman's tool description gets the sentence that places size/risk.
-      prepareLoadout: (loadout: { declared: readonly { name: string; description?: string }[] }) => {
+      prepareLoadout: (loadout: { declared: readonly { name: string; description?: string; parameters?: unknown }[] }) => {
         const sizingOn = [...sessions.values()].every((x) => sizingConfig(x.config.config).enabled);
         // sizing off: the MCP sentence alone, only where a role has an MCP ceiling (no ceiling, no launch field to explain)
         const hasMcpRole = (roles: unknown): boolean => typeof roles === "object" && roles !== null && Object.keys(roles).some((r) => roleMcpEntries(roles, r).length > 0);
         const mcpOn = [...sessions.values()].some((x) => hasMcpRole(get(x.config.config, "roles")));
+        // The launch fields the gates read get a typed, loose declaration on Pi's wrapper of the `subagent` tool (launchschema.ts), so a model that sends only declared keys can send them.
+        extendSubagentDeclaration(loadout.declared, { sizing: sizingOn, mcp: mcpOn });
         const description = sizingOn ? subagentDescription(loadout.declared, true) : mcpOn ? mcpDescription(loadout.declared) : null;
         return description ? { descriptions: { subagent: description } } : undefined;
       },
@@ -6382,8 +6400,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
         if (s.isChild) return refuse(`${SHOW_TOOL} is for the foreman only.`);
         const title = typeof params.title === "string" ? params.title.trim() : "";
-        const html = typeof params.html === "string" ? params.html : undefined;
-        const markdown = typeof params.markdown === "string" ? params.markdown : undefined;
+        // an empty text counts as the one not given (ledgercall.ts absent)
+        const html = typeof params.html === "string" && !absent(params.html) ? params.html : undefined;
+        const markdown = typeof params.markdown === "string" && !absent(params.markdown) ? params.markdown : undefined;
         if (!title) return refuse(`${SHOW_TOOL}: title is required.`);
         if (title.length > NOTE_TITLE_MAX) return refuse(`${SHOW_TOOL}: the title is ${title.length} characters, the limit is ${NOTE_TITLE_MAX}. Shorten it.`);
         if ((html === undefined) === (markdown === undefined)) return refuse(`${SHOW_TOOL}: give exactly one of markdown or html.`);
@@ -6512,7 +6531,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     defaultActive: false,
     executionMode: "sequential",
     description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v", ""] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6650,7 +6669,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (n) added.push({ id: n[1], text: c[1] ?? "" });
       }
       // A texts add traces every new number; each one is annotated with its own text below.
-      if (Array.isArray(params.texts)) traceItems = added.map((a) => a.id).join(",");
+      if (!absent(params.texts)) traceItems = added.map((a) => a.id).join(",");
       if (!ok && unapplied.length > 0 && applied.length + unapplied.length > 1) out.push(`${LEDGER_TOOL}: stopped; applied: ${applied.join(", ") || "none"}; not applied: ${unapplied.join(", ")}.`);
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
@@ -6660,7 +6679,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (unbound) out.push(`Note: the reviewer PASS carries no commit (${unbound}), so the PR gate will refuse; run a reviewer again on the head before pr_create.`);
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
       // ledgerHint reads one item and no text from a list, so a texts add gives each new item its own hint.
-      const hints = Array.isArray(params.texts) ? added.map((a) => ledgerHint(kind, a.id, "", a.text)) : [ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null];
+      const hints = !absent(params.texts) ? added.map((a) => ledgerHint(kind, a.id, "", a.text)) : [ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null];
       for (const hint of hints) if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
       return { content: [{ type: "text" as const, text: out.join("\n") }], details: { decision: ok ? "done" : "failed" }, ...(ok ? {} : { isError: true }) };
     },
