@@ -1038,6 +1038,12 @@ export function scratchGitConfigRead(word: string, env: FloorEnv): boolean {
 /** `read`: the word is only read (a read tool's path, a read-only program's operand, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
 export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+  // curl's `@file` forms: `@.env`, `-d@.env`, `--data=@.env`, `f=@.env`, `name@.env` read the file after the first `@` (a prefix with a `/` is a path itself)
+  const at = /^([^@/\s]*)@(.+)$/.exec(w);
+  if (at) {
+    const h = secretPath(at[2], env, read);
+    if (h) return h;
+  }
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
