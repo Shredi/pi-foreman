@@ -2308,7 +2308,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let bridgeAuthShown = false;
   pi.on("after_provider_response", (event, ctx) => {
     if (bridgeAuthShown) return;
-    const text = bridgeAuthNotice(ctx.model?.provider, event.status, isolationDir(sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir())));
+    const text = bridgeAuthNotice(ctx.model?.provider, event.status, isolationOn(isoSetting, ctx.model?.provider) ? isolationDir(sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir())) : null);
     if (!text) return;
     bridgeAuthShown = true;
     ctx.ui.notify(text, "error");

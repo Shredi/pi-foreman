@@ -247,7 +247,7 @@ export default class ForemanAgents extends View {
             this.execT(radarBinary(this.foremanProp, machine), ["radar", "--json"], { on: machine }, T_RADAR),
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
-          const doc = r.code === 0 ? parseRadarDoc(r.stdout) : null;
+          const doc = r.code === 0 ? parseRadarDoc(r.stdout, machine) : null;
           next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : null;
         } catch {
           next = null;

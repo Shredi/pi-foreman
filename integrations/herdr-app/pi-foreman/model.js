@@ -237,7 +237,7 @@ export function dropClosedPrs(nodes, feed, at, now, depth = 0) {
 }
 
 /** `{nodes, openPrs}` from the text of `foreman radar --json`, or null when the text is not a radar document. */
-export function parseRadarDoc(text) {
+export function parseRadarDoc(text, machine = null) {
   let doc;
   try { doc = JSON.parse(text); } catch { return null; }
   if (!isObj(doc) || !Array.isArray(doc.roots)) return null;
@@ -245,6 +245,10 @@ export function parseRadarDoc(text) {
   const nodes = doc.roots.map((r) => normNode(r, 0, budget)).filter(Boolean);
   const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
   const openPrs = normOpenPrs(doc.openPrs);
+  if (machine) { // a remote machine's own tree: its nodes are that machine's local sessions (no Restart from here)
+    const mark = (n) => { n.remoteTree = true; n.children.forEach(mark); };
+    nodes.forEach(mark);
+  }
   matchPrs(nodes, openPrs);
   dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
   return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
@@ -469,9 +473,9 @@ export function totalCost(node) {
  *  A lost or stale one (heartbeat long silent) with a live hc terminal (`liveHc`, set by the render) or an open registry entry
  *  (`regOpen`) is only late, not over. */
 export const isEnded = (n) => n.state === "closed" || n.state === "finished" || ((n.state === "lost" || n.state === "stale") && !n.liveHc && !n.regOpen);
-/** The child id that `foreman session restart` takes for an ended node radar flagged `restartable` (radar decides; the mod only
+/** The child id that `foreman session restart` takes for an ended node radar flagged `restartable` (radar decides; never a node of a remote machine's own tree, `remoteTree`; the mod only
  *  checks the node is drawn as ended), else "". A lost remote node with a live terminal or an open entry is not ended. */
-export const restartChild = (n) => (isObj(n) && n.restartable === true && n.child && isEnded(n) ? n.child : "");
+export const restartChild = (n) => (isObj(n) && n.restartable === true && !n.remoteTree && n.child && isEnded(n) ? n.child : "");
 
 export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;

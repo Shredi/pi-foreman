@@ -9,10 +9,10 @@ export { isolationDir, keychainService, macKeychainProbe };
 
 export const BRIDGE_PROVIDER = "claude-bridge";
 
-/** Notice for a claude-bridge request the provider refused for its login (HTTP 401/403, a structured field; never message text), else undefined. The login lives in the isolated folder, on a remote machine too. */
-export function bridgeAuthNotice(provider: string | undefined, status: unknown, dir: string): string | undefined {
+/** Notice for a claude-bridge request the provider refused for its login (HTTP 401/403, a structured field; never message text), else undefined. The login lives in the isolated folder (`dir`, null when isolation is off: then plain `claude auth login`), on a remote machine too. */
+export function bridgeAuthNotice(provider: string | undefined, status: unknown, dir: string | null): string | undefined {
   if (provider !== BRIDGE_PROVIDER || (status !== 401 && status !== 403)) return undefined;
-  return `pi-foreman: the claude-bridge login was refused (HTTP ${status}); an OAuth login expires. Renew it on the machine this session runs on, also a remote one: CLAUDE_CONFIG_DIR=${dir} claude auth login`;
+  return `pi-foreman: the claude-bridge login was refused (HTTP ${status}); an OAuth login expires. Renew it on the machine this session runs on, also a remote one: ${dir ? `CLAUDE_CONFIG_DIR=${dir} ` : ""}claude auth login`;
 }
 
 /** The doctor's `providers:` line: the providers the model registry holds in this session, sorted. */

@@ -3020,34 +3020,49 @@ def read_identity(file, sid):
     return found
 
 
-def lock_fresh(path):
+def lock_fresh(path, stale=None):
     try:
-        return time.time() - os.stat(path).st_mtime <= RESTART_LOCK_STALE
+        return time.time() - os.stat(path).st_mtime <= (RESTART_LOCK_STALE if stale is None else stale)
     except OSError:
         return False
 
 
-class RestartLock:
-    """`<state>/restart/<child>.lock`, created exclusively: two restarts of one child never race. A lock older than
-    RESTART_LOCK_STALE seconds is replaced."""
+class FileLock:
+    """A lock file created exclusively (`O_EXCL`). A stale one (older than `stale` seconds) is taken over by renaming it
+    away (atomic: one run wins) and re-checking what was renamed: a fresh lock that another run created in between is put
+    back, never removed. `wait` seconds are spent polling a held lock; `busy` is raised when it stays held."""
 
-    def __init__(self, adir, child):
-        self.path = Path(adir) / "pi-foreman" / "state" / "restart" / ("%s.lock" % re.sub(r"[^A-Za-z0-9._-]", "_", child))
+    def __init__(self, path, stale=None, wait=0.0, busy=None):
+        self.path, self.stale, self.wait, self.busy = Path(path), stale, wait, busy
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        for _ in range(2):
+        end = time.time() + self.wait
+        while True:
             try:
                 os.close(os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
                 return self
             except FileExistsError:
-                if lock_fresh(self.path):
-                    break
+                pass
+            if lock_fresh(self.path, self.stale):
+                if time.time() >= end:
+                    raise self.busy or Refused("a lock is held: %s" % self.path.name, "busy")
+                time.sleep(0.05)
+                continue
+            tomb = self.path.with_name("%s.stale-%d-%s" % (self.path.name, os.getpid(), secrets.token_hex(4)))
+            try:
+                os.rename(str(self.path), str(tomb))
+            except OSError:
+                continue  # another run took it over first: try the exclusive create again
+            if lock_fresh(tomb, self.stale):  # a fresh lock was renamed by mistake: put it back
                 try:
-                    os.unlink(str(self.path))
+                    os.link(str(tomb), str(self.path))
                 except OSError:
-                    break
-        raise Refused("another restart of this session is running", "restart_busy")
+                    pass
+            try:
+                os.unlink(str(tomb))
+            except OSError:
+                pass
 
     def __exit__(self, *exc):
         try:
@@ -3056,14 +3071,45 @@ class RestartLock:
             pass
 
 
+REGISTRY_LOCK_STALE = 30  # seconds after which a registry lock counts as left behind
+
+
+def registry_lock(adir):
+    """The lock of a read-modify-write of sessions.json by a pass that must not overwrite a concurrent restart."""
+    return FileLock(registry_path(adir).with_name("sessions.lock"), REGISTRY_LOCK_STALE, wait=10.0,
+                    busy=Refused("the session registry is busy", "registry_busy"))
+
+
+class RestartLock(FileLock):
+    """`<state>/restart/<child>.lock`: two restarts of one child never race. A lock older than RESTART_LOCK_STALE seconds is
+    replaced."""
+
+    def __init__(self, adir, child):
+        super().__init__(Path(adir) / "pi-foreman" / "state" / "restart" / ("%s.lock" % re.sub(r"[^A-Za-z0-9._-]", "_", child)),
+                         busy=Refused("another restart of this session is running", "restart_busy"))
+
+
+RESTART_START_GRACE = 60  # seconds after a restart during which its Pi may not have written its live file yet
+
+
+def starting_refusal(entry, now=None):
+    """None, or the reason a restart is refused: the entry was restarted less than RESTART_START_GRACE seconds ago (`restartedEpoch`)."""
+    at = number_of(entry.get("restartedEpoch"))
+    now = time.time() if now is None else now
+    if at is not None and 0 <= now - at < RESTART_START_GRACE:
+        return "it was restarted %d s ago and is still starting: nothing was restarted" % (now - at)
+    return None
+
+
 def update_entry(adir, child, fields, drop=()):
-    reg = read_registry(adir)
-    for s in reg["sessions"]:
-        if isinstance(s, dict) and s.get("child") == child:
-            s.update(fields)
-            for k in drop:
-                s.pop(k, None)
-    write_registry(adir, reg)
+    with registry_lock(adir):
+        reg = read_registry(adir)
+        for s in reg["sessions"]:
+            if isinstance(s, dict) and s.get("child") == child:
+                s.update(fields)
+                for k in drop:
+                    s.pop(k, None)
+        write_registry(adir, reg)
 
 
 def retire_terminal(binary, entry, child):
@@ -3107,6 +3153,9 @@ def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
     if not sid:
         raise Refused("%s has no recorded Pi session id (live.json in its handoff folder): resume it by hand" % label, "no_session")
     live = read_live_files(adir)
+    wait = starting_refusal(entry)
+    if wait:
+        raise Refused("%s: %s" % (label, wait), "still_starting")
     if not _live_process_gone(entry, live, time.time()):
         raise Refused("%s still runs (its Pi process is alive): nothing was restarted" % label, "still_running")
     if lock_fresh(Path(adir) / "pi-foreman" / "state" / "panes" / ("%s.lock" % sid)):
@@ -3169,8 +3218,8 @@ def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
             raise Refused("%s was not restarted: %s" % (label, e), "restart_failed")
         hc_new = {"address": made["address"], "parent": made["parent"], "space": space}
         update_entry(adir, child, {"status": "open", "hc": hc_new, "backend": "hc",
-                                   "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "lastError": None},
-                     drop=("closedBy", "note", "reaped", "passRetryAt"))
+                                   "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "restartedEpoch": time.time(), "lastError": None},
+                     drop=("closedBy", "note", "reaped", "passRetryAt", "worktreePending"))
     say("restarted %s under herdr-core: %s (%s)" % (label, made["address"], "parent %s" % made["parent"] if made["parent"]
                                                     else "not nested: no parent terminal"))
     return {"child": child, "label": label, "status": "open", "address": made["address"], "parent": made["parent"], "hc": hc_new}
@@ -3219,6 +3268,9 @@ def restart_remote_child(adir, entry, dry_run, say):
     why = restart_refusal(entry)
     if why:
         raise Refused("%s@%s is not restarted: %s" % (label, name, why), "not_restartable")
+    wait = starting_refusal(entry)
+    if wait:
+        raise Refused("%s@%s: %s" % (label, name, wait), "still_starting")
     address = entry.get("parentAddress")
     m = ADDRESS_RE.match(address) if isinstance(address, str) else None
     if not m or not isinstance(entry.get("handoffName"), str):
@@ -3246,7 +3298,7 @@ def restart_remote_child(adir, entry, dry_run, say):
             raise Refused("%s on %s was not restarted: the remote started no terminal (%s)" % (label, name, reply.get("status")), "restart_failed")
         kill_attach(entry)
         fields = {"status": "open", "hc": {"address": stored, "space": hc_at.get("space"), "tab": None},
-                  "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "lastError": None, "closeTriedAt": None,
+                  "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "restartedEpoch": time.time(), "lastError": None, "closeTriedAt": None,
                   "closeExpiredAt": None}
         local = open_attach(adir, binary, name, child, stored)
         fields["attach"] = {"address": local} if local else None
@@ -3298,7 +3350,8 @@ def inside_path(root, path):
 
 def remove_closed_worktree(adir, entry, live):
     """After the kept terminal is gone: remove the child's linked worktree (under the managed root) and its local branch the
-    safe way (`safe_ops`: never --force; clean apart from an untracked `.workflow/`; branch merged). None when there is nothing
+    safe way (`safe_ops`: never --force; clean apart from an untracked `.workflow/`; branch merged; no other registry entry or live
+    file, restartable ones included, uses the folder). None when there is nothing
     to remove or it went, else the reason it stays (a later pass tries again)."""
     cwd = entry.get("cwd")
     if not isinstance(cwd, str) or not os.path.isdir(cwd):
@@ -3309,6 +3362,17 @@ def remove_closed_worktree(adir, entry, live):
         if isinstance(d, dict) and isinstance(d.get("cwd"), str) and isinstance(d.get("pid"), int) and not isinstance(d["pid"], bool) \
                 and inside_path(cwd, d["cwd"]) and process_alive(d["pid"]):
             return "a running session uses the folder"
+    try:
+        import foreman_close
+        user = foreman_close.in_use_by(str(Path(adir) / "pi-foreman" / "state"), (handoff_session_id(entry["handoff"]) if isinstance(entry.get("handoff"), str) else None) or "", cwd)
+    except Exception as e:  # noqa: BLE001 - an unreadable check keeps the worktree
+        return strip_control(e)[:120]
+    if user:
+        return "another session uses the folder (%s)" % user
+    for o in read_registry(adir)["sessions"]:  # a child that may be restarted (`prune` closed it) still holds its folder
+        if isinstance(o, dict) and o.get("child") != entry.get("child") and not o.get("machine") and pruned_closed(o) \
+                and isinstance(o.get("cwd"), str) and inside_path(cwd, o["cwd"]):
+            return "a restartable session uses the folder (%s)" % (o.get("child") or o.get("label"))
     try:
         import foreman_config
         import safe_ops
@@ -3327,7 +3391,8 @@ def remove_closed_worktree(adir, entry, live):
 def reap_local_closed(adir, out=None):
     """The list/prune pass for `closed` local entries: end and remove the child's kept terminal (never by closing a tab or
     pane; see reap_local_terminal), then, for an entry a close flow closed (not one `prune` closed: that child may be
-    restarted), remove its worktree and branch. Marks `reaped` and `worktreeDone`; a failure is retried after REAP_RETRY_PAUSE."""
+    restarted), remove its worktree and branch, only when the close flow marked the entry `worktreePending` (an older closed
+    entry keeps its worktree). Marks `reaped` and `worktreeDone`; a failure is retried after REAP_RETRY_PAUSE."""
     out = out or sys.stdout
     binary = hc_bin()
     now = time.time()
@@ -3335,7 +3400,8 @@ def reap_local_closed(adir, out=None):
     for s in read_registry(adir)["sessions"]:
         if not isinstance(s, dict) or s.get("machine") or s.get("status") != "closed" or not isinstance(s.get("child"), str):
             continue
-        if s.get("reaped") and (s.get("worktreeDone") or pruned_closed(s)):
+        want_worktree = bool(s.get("worktreePending")) and not s.get("worktreeDone") and not pruned_closed(s)
+        if s.get("reaped") and not want_worktree:
             continue
         retry = number_of(s.get("reapRetryAt"))
         if retry is not None and now - retry < REAP_RETRY_PAUSE:
@@ -3349,16 +3415,23 @@ def reap_local_closed(adir, out=None):
                 print("reaped %s  %s" % (s.get("label"), s.get("child")), file=out)
             elif result == "failed":
                 fields["reapRetryAt"] = now
-        if (s.get("reaped") or fields.get("reaped")) and not pruned_closed(s) and not s.get("worktreeDone"):
+        if (s.get("reaped") or fields.get("reaped")) and want_worktree:
             live = read_live_files(adir) if live is None else live
             why = remove_closed_worktree(adir, s, live)
             if why is None:
                 fields["worktreeDone"] = True
+                fields["worktreePending"] = False
             else:
                 fields["reapRetryAt"] = now
                 fields["lastError"] = "worktree kept: %s" % why
         if fields:
-            mark_entry(adir, s, **fields)
+            with registry_lock(adir):  # a restart that reopened the entry meanwhile is not marked from the stale copy
+                reg = read_registry(adir)
+                for cur in reg["sessions"]:
+                    if isinstance(cur, dict) and cur.get("child") == s.get("child") and cur.get("status") == "closed" \
+                            and cur.get("restartedEpoch") == s.get("restartedEpoch"):
+                        cur.update(fields)
+                write_registry(adir, reg)
 
 
 def resolve_child(adir, target):

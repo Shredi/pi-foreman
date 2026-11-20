@@ -55,7 +55,11 @@ export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
     const sent = open.filter((s) => outcome.get(s.child) === "sent");
     if (sent.length > 0) {
       const reg = readRegistry(d.agentDir);
-      for (const e of reg.sessions) if (outcome.get(e.child) === "sent" && e.status !== "closed" && !isRemote(e)) e.status = "closing"; // close-remote marked the remote ones
+      for (const e of reg.sessions) {
+        if (outcome.get(e.child) !== "sent" || isRemote(e)) continue; // close-remote marked the remote ones
+        if (e.status !== "closed") e.status = "closing";
+        e.worktreePending = true; // the list pass removes the worktree of this child only (D120), until it went
+      }
       writeRegistry(d.agentDir, reg);
     }
     let waited = 0;

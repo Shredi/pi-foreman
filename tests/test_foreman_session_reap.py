@@ -77,6 +77,7 @@ class ReapTest(LocalRestartBase):
         self.assertTrue(self.stored()["reaped"])
 
     def test_close_flow_entry_retries_the_worktree_after_the_reap(self):
+        self.write_entry(worktreePending=True)  # the mark the close flow sets (changed on purpose: an unmarked entry keeps its worktree)
         wt = self.reap(worktree="a running session uses the folder")
         wt.assert_called_once()
         stored = self.stored()
