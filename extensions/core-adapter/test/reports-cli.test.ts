@@ -1,4 +1,4 @@
-// `foreman reports list|show|set|expire` (reports-cli.ts): output, exit codes and the store it works on; no import command.
+// `foreman reports list|show|set|expire` (reports-cli.ts): output, exit codes and the store it works on; the import command is not covered here.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

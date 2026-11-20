@@ -1,5 +1,5 @@
 // A child whose launch role is an overlay-style name (not a built-in role): its `foreman_report` row is stored with that role, and the row passes the import
-// (the role is checked by shape, reports.ts, not by a list). The rig is the one of reports-tool.test.ts; the temp project has no repository, so the stored
+// (the role is checked by shape, reportsimport.ts, not by a list). The rig is the one of reports-tool.test.ts; the temp project has no repository, so the stored
 // row gets one before it goes through the import, as a remote child's row would carry its own.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
