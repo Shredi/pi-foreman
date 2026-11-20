@@ -91,7 +91,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, uncleared, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -133,12 +133,13 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsWithOutput } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, PR_BRANCH_ARGS } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { hasOpenLedgerLine, markPassItems, MARK_NOTE, openItemsOf } from "./reviewmarks.ts";
-import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
+import { commentOnlySince, commitTreeNoWorkflow, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
+import { coverAliases } from "./reviewcover.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
@@ -184,7 +185,7 @@ import { forcedProjection, replayable, subagentNoticeWrap } from "./warmreplay.t
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
-import { applyLedgerItems, criticOf, reReviewLine } from "./ledgerblock.ts";
+import { applyLedgerItems, criticOf, failFindingsText, reReviewLine } from "./ledgerblock.ts";
 import { taskLedger } from "./ledgerpath.ts";
 import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
@@ -475,6 +476,8 @@ interface Session {
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
+  /** The findings of the last normal-review FAIL, for the next re-review task (persisted; cleared by a PASS, replaced by the next FAIL). */
+  lastFailFindings: string | null;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
@@ -513,6 +516,9 @@ interface Session {
   /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
   launchTreesByCall: Map<string, Map<string, string | null>>;
   launchTrees: Map<string, Map<string, string | null>>;
+  /** Foreman only: the same snapshot without `.workflow/`, for the reviewed content of a record (reviews.ts reviewedTree). */
+  launchTreesWfByCall: Map<string, Map<string, string | null>>;
+  launchTreesWf: Map<string, Map<string, string | null>>;
   /** Foreman only: the run-end state hint's start entry (readonlystate.ts) by tool call id until the launch result names the run, then by run id until the run ends. */
   readonlyStartByCall: Map<string, StartEntry>;
   readonlyStart: Map<string, StartEntry>;
@@ -588,7 +594,7 @@ export interface AdapterDeps {
   /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
   /** Tests: the working-tree snapshot taken at a reviewer launch (default: commentonly.ts worktreeTree); the shared rigs pass a no-op, so the run end keeps head_moved. */
-  worktreeSnapshot?: (cwd: string) => Promise<string | null>;
+  worktreeSnapshot?: (cwd: string, skipWorkflow?: boolean) => Promise<string | null>;
   /** Tests: replaces Pi's shell resolution, used by the read question's entry condition (is the bash tool's shell a bash) and the win32 background-shell setup (default: Pi's getShellConfig). */
   getShellConfig?: ShellConfigFn;
   /** Tests: the environment the bundled add-on's start defaults (PI_BG_*) are written to (default: process.env). */
@@ -997,11 +1003,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);
         },
         reviewedHeads: () => passHeads(s.reviews),
+        cover: (head) => coverHead(s, head),
         reviewGate: () => get(s.config.config, "ceremony.reviewBeforePr") !== false,
         // the readiness rule (prready.ts)
         reviewFacts: (head) => {
-          // an open PR is not ready while a high-stakes pass is due or a FAIL stands (session-wide: the head alone does not name its checkout)
-          return holdFacts(reviewFactsForHead(s.reviews, head, s.sentBackHeads), hsModel(s) ? readyOverride(s.hs.state(), hsDue(s), head) : null);
+          // an open PR is not ready while a FAIL stands in a checkout its head was reviewed in (a head no record names holds on any FAIL)
+          return holdFacts(reviewFactsForHead(s.reviews, head, s.sentBackHeads), hsModel(s) ? readyOverride(s.hs.state(), hsDue(s), head, s.reviews.filter((r) => r.head === head && r.cwd).map((r) => r.cwd as string)) : null);
         },
         tick: () => reworkScan(s),
         draftFlow: () => draftFlowOn(s),
@@ -1126,6 +1133,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewFailOpen: false,
       hs: new HighStakes(),
       hsReminded: null,
+      lastFailFindings: null,
       ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
@@ -1146,6 +1154,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeads: new Map(),
       launchTreesByCall: new Map(),
       launchTrees: new Map(),
+      launchTreesWfByCall: new Map(),
+      launchTreesWf: new Map(),
       readonlyStartByCall: new Map(),
       readonlyStart: new Map(),
       readonlyRoots: new Map(),
@@ -1353,6 +1363,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       highStakes: s.hs.snapshot(),
       pause: s.pauseSaved,
       hsReminded: s.hsReminded,
+      lastFailFindings: s.lastFailFindings,
       ledgerRev: s.ledgerRev,
     });
     const json = JSON.stringify(data);
@@ -1455,11 +1466,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return hsRequiredOf(s.hs.state(), hsDue(s));
   };
 
-  /** The high-stakes test of the PR gate (reviews.ts prGateRefusal): session-wide, `scope` does not narrow it. */
-  const hsGate = (s: Session): HighStakesGate => async (_scope, heads) => {
+  /** The high-stakes test of the PR gate (reviews.ts prGateRefusal): a FAIL holds the PR's own checkout (`scope`, null: the session's) and the checkouts its heads were reviewed in. */
+  const hsGate = (s: Session): HighStakesGate => async (scope, heads) => {
     if (!hsModel(s)) return null;
     hsRefresh(s);
-    const r = prRefusal(s.hs.state(), hsDue(s), heads, await hsOwnRoot(s));
+    const own = await hsOwnRoot(s);
+    const scopes = [...new Set([scope ?? own, ...s.reviews.filter((r) => r.head && r.cwd && heads.includes(r.head)).map((r) => r.cwd as string)])];
+    const r = prRefusal(s.hs.state(), hsDue(s), heads, own, scopes);
     return r ? { reason: r.reason, message: r.message } : null;
   };
 
@@ -1627,6 +1640,52 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return finishNeeds(s.hs.state(), { due: hsDue(s), ledgerDone: done, own: await hsOwnRoot(s) });
   }
 
+  /** The tree of `head` in `checkout` (`.workflow/` left out), kept only when it resolved (a commit that is not there yet can still match after a fetch). */
+  const commitTrees = new Map<string, string>();
+  async function commitTreeOf(checkout: string, head: string): Promise<string | null> {
+    const key = `${checkout}\0${head}`;
+    const known = commitTrees.get(key);
+    if (known) return known;
+    const t = await commitTreeNoWorkflow(checkout, head);
+    if (t) commitTrees.set(key, t);
+    return t;
+  }
+
+  /** D117: alias records for `head` (reviewcover.ts), appended and persisted; `cwd` only orders the search. Runs inside the review sync (restoreGate) or through {@link coverHead}. */
+  async function coverNow(s: Session, head: string, cwd?: string): Promise<void> {
+    if (s.isChild || !/^[0-9a-f]{40,64}$/.test(head) || s.reviews.length === 0) return;
+    const first = cwd ? await rootOf(cwd) : null;
+    const hs = s.hs.state();
+    const failed = uncleared(hs) ? hs.runs[hs.runs.length - 1]?.cwd : undefined;
+    const made = await coverAliases(s.reviews, head, { first, blocked: (co) => co === failed, treeOf: commitTreeOf });
+    for (const { rec, from } of made) {
+      appendReview(s.reviews, rec);
+      if (from && s.sentBackHeads.includes(from)) s.sentBackHeads = [...new Set([...s.sentBackHeads, head])]; // a same-tree commit does not escape a send-back
+      s.trace?.emit({ event: "review_recorded", role: rec.role, verdict: rec.verdict, head, via: "same_tree" });
+    }
+    if (made.length > 0) {
+      s.live?.flush();
+      persistCeremonyState(s);
+    }
+  }
+
+  /** The commit a PR call names (a branch argument, else HEAD) resolved in `cwd`, then {@link coverHead} for each. */
+  async function coverFor(s: Session, cwd: string, input: Record<string, unknown>): Promise<void> {
+    const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
+    const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+    for (const ref of refs) {
+      const head = await commitOf(cwd, ref);
+      if (head) await coverHead(s, head, cwd);
+    }
+  }
+
+  /** {@link coverNow} in order with the run-end records of the review sync; never throws. */
+  async function coverHead(s: Session, head: string, cwd?: string): Promise<void> {
+    if (s.isChild) return;
+    s.reviewSync = s.reviewSync.then(() => coverNow(s, head, cwd)).catch(() => undefined);
+    await s.reviewSync;
+  }
+
   /**
    * The finish gate's progress of the same session (never a fork): the recorded `gate`, else, for an entry from before it was
    * recorded, rebuilt from the newest code review: a PASS counts as builder and reviewer done, and as revised when HEAD moved since.
@@ -1652,7 +1711,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.reviewGates = { [key]: { last: "pass", revised: false } };
     if (last.head) s.reviewSync = s.reviewSync.then(async () => {
       const cur = await headOf(last.cwd ?? s.cwd);
-      if (cur !== last.head && s.reviewGates[key]?.last === "pass") s.reviewGates = gatesRevise(s.reviewGates, key === SESSION_WIDE ? null : key);
+      if (cur && cur !== last.head) await coverNow(s, cur, last.cwd).catch(() => undefined); // a commit of exactly the reviewed content keeps the PASS
+      if (cur !== last.head && !s.reviews.some((r) => r.via === "same_tree" && r.head === cur) && s.reviewGates[key]?.last === "pass") s.reviewGates = gatesRevise(s.reviewGates, key === SESSION_WIDE ? null : key);
     });
   }
 
@@ -1733,6 +1793,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
+    if (reason !== "fork") s.lastFailFindings = e.lastFailFindings ?? null;
     if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
@@ -3040,6 +3101,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const items = failedItemIds(r.items);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
+              if (r.verdict === "fail" && (r.occasion === "item" || r.occasion === "pre-pr")) s.lastFailFindings = failFindingsText(r.findings, r.items) || null;
+              else if (r.verdict === "pass") s.lastFailFindings = null;
               if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
             }
             // Lane 3g: the real end of each role of the run, with the run's priced cost and duration from the presence row.
@@ -3067,6 +3130,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.launchHeads.delete(runId);
           const startTrees = s.launchTrees.get(runId);
           s.launchTrees.delete(runId);
+          const startTreesWf = s.launchTreesWf.get(runId);
+          s.launchTreesWf.delete(runId);
           const hsRoot = s.hs.ownerOf(runId);
           if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees);
           const counting = reviewResultsOfRun(s, runId, data).filter((x) => x.counts && x.verdict !== null);
@@ -3078,9 +3143,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
-              const prev = s.reviews.findLast((x) => x.kind === "code");
+              const prev = s.reviews.findLast((x) => x.kind === "code" && !x.via); // an alias (coverHead) is no review round
               const top = await rootOf(cwd);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd, true))) };
+              const endTree = await worktreeTree(cwd, true);
+              const tree = reviewedTree(startTreesWf, cwd, endTree);
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
@@ -3938,6 +4005,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       try {
         const s = await ensureSession(ctx);
         if (!s.isChild) await s.reviewSync;
+        if (!s.isChild) await coverFor(s, ctx.cwd, event.input as Record<string, unknown>);
         const refusal = await prGateRefusal({ tool: event.toolName, isChild: s.isChild, gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed: passHeads(s.reviews), headless: headlessPass(s.reviews), cwd: ctx.cwd, input: event.input as Record<string, unknown>, highStakes: hsGate(s) });
         if (refusal) {
           s.trace?.emit({ event: "pr_refused", reason: refusal.reason, toolFamily: event.toolName });
@@ -4617,9 +4685,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
           const cwds = launchCwds(input, ctx.cwd);
-          const [heads, trees] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot)]);
+          const [heads, trees, treesWf] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot), treesAt(cwds, (c) => launchSnapshot(c, true))]);
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
           capSet(s.launchTreesByCall, event.toolCallId, trees);
+          capSet(s.launchTreesWfByCall, event.toolCallId, treesWf);
           // the checkouts the verdict applies to (reviewgates.ts): each reviewer entry's own dir; a resume keeps its target's; one unresolved: unknown
           if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, (e) => { const o = occasions.get(e); return o !== undefined && countsForItems(o); })));
         }
@@ -4694,8 +4763,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
-        const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions)) s.trace?.emit(r);
+        const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null, ...(s.lastFailFindings && !(hsModel(s) && s.hs.findingsFor()) ? { findings: s.lastFailFindings } : {}) } : null;
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions, (e) => (givenItems.has(e) || (reReview && occasions.get(e) === "item") ? allowedItems(verdictItems.get(e), hsLaunch !== null) : []))) s.trace?.emit(r);
         // The re-review line tells a reviewer to check the revision diff; numbered items of its `items` beyond the failed set get one sentence: check them against the whole change.
         if (reReview) {
           const line = reReviewLine(reReview.sha);
@@ -5745,6 +5814,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.launchHeadsByCall.delete(event.toolCallId);
         const trees = s.launchTreesByCall.get(event.toolCallId);
         s.launchTreesByCall.delete(event.toolCallId);
+        const treesWf = s.launchTreesWfByCall.get(event.toolCallId);
+        s.launchTreesWfByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         if (runId && s.reviewRootsByCall.has(event.toolCallId)) capSet(s.reviewRoots, runId, s.reviewRootsByCall.get(event.toolCallId) ?? null);
         s.reviewRootsByCall.delete(event.toolCallId);
@@ -5766,6 +5837,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
         if (trees && runId) capSet(s.launchTrees, runId, trees);
+        if (treesWf && runId) capSet(s.launchTreesWf, runId, treesWf);
         const roStart = s.readonlyStartByCall.get(event.toolCallId);
         s.readonlyStartByCall.delete(event.toolCallId);
         if (roStart && runId) {
@@ -6214,6 +6286,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       packOn: s.prPack,
       config: prOpsConfig(s),
       gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false,
+      cover: (cwd, head) => coverHead(s, head, cwd),
       reviewed: async () => {
         await s.reviewSync;
         return passHeads(s.reviews);

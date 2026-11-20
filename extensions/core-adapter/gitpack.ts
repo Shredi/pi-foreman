@@ -280,6 +280,8 @@ export interface PrPackSession {
   headless?(): Promise<string | null>;
   /** Awaits the review sync, then every recorded verdict (for the `pr_create {cwd}` checkout test). Absent: none. */
   records?(): Promise<readonly ReviewRecord[]>;
+  /** Gives a commit whose tree equals the reviewed content its review record (index.ts coverHead), before the tools read the reviewed heads; `cwd` is the PR's checkout. Absent: the head rule as it was. */
+  cover?(cwd: string, head: string): Promise<void>;
   /** The high-stakes test of the PR gate (reviews.ts HighStakesGate); absent: none (no model set, or an older caller). */
   highStakes?: HighStakesGate;
   watches: PrWatches;
@@ -408,6 +410,12 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}` }], details: { decision: "ran" } };
         }
         if (t.op === "pr_create") {
+          if (s.cover && s.gateOn && !s.isChild) {
+            // the commit the pull request names (the head argument's branch, else HEAD), resolved in the PR's checkout
+            const named = headBranch(params.head);
+            const head = await commitOf(dir ?? ctx.cwd, named ?? "HEAD");
+            if (head) await s.cover(dir ?? ctx.cwd, head).catch(() => undefined);
+          }
           const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head }, ...(s.highStakes ? { highStakes: s.highStakes } : {}), ...(dir ? { checkout: { cwd: dir, records: (await s.records?.()) ?? [] } } : {}) });
           if (refusal) {
             s.trace({ event: "pr_refused", reason: refusal.reason, toolFamily: "pr_create" });
@@ -426,7 +434,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           refusedDraft = true;
           outcome = await run("pr_create", { ...params, draft: false });
         }
-        const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);
+        const res = report(t.op === "pr_status" ? await withReview(s, outcome, dir ?? ctx.cwd) : outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
         const openedOn = typeof params.head === "string" && params.head ? await commitOf(dir ?? ctx.cwd, params.head) : await headOf(dir ?? ctx.cwd);
@@ -535,13 +543,14 @@ type PrRun = (op: PrOp, args: Record<string, unknown>) => Promise<SafeOpOutcome>
 const CHILD_REVIEW = "not available in a child session (the review record lives with the session that launched it)";
 
 /** A `pr_status` answer with its `review` line (prwatch.ts reviewFact): the same rule and data as the watch. An answer without a head stays as it is. */
-async function withReview(s: PrPackSession, o: SafeOpOutcome): Promise<SafeOpOutcome> {
+async function withReview(s: PrPackSession, o: SafeOpOutcome, cwd: string): Promise<SafeOpOutcome> {
   if (o.kind !== "ran" || typeof o.result.headSha !== "string" || !o.result.headSha || !validNumber(o.result.number)) return o;
   if (s.isChild) return { ...o, result: { ...o.result, review: CHILD_REVIEW } };
   try {
     const key = parsePrUrl(o.result.url);
     // an address that does not parse names no repository: never look a watch up by number alone
     const last = key && key.n === o.result.number ? s.watches.reviewOf(key) : null;
+    await s.cover?.(cwd, o.result.headSha).catch(() => undefined);
     return { ...o, result: { ...o.result, review: reviewFact(o.result.headSha, new Set(await s.reviewed()), last ?? "") } };
   } catch {
     return o;
@@ -655,6 +664,7 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
+      if (createdHead) await s.cover?.(cwd ?? ctx.cwd, createdHead).catch(() => undefined);
       const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
       s.watches.startPending(key, undefined, seed, owned, created);
     }

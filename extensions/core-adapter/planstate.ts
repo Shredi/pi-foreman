@@ -110,6 +110,8 @@ export interface CeremonyStateEntry {
   pause?: PersistedWork;
   /** The sorted reason set the finish gate held once for with a high-stakes reminder (index.ts ceremonyFinishGate); absent: none. */
   hsReminded?: string[];
+  /** The findings of the last normal-review FAIL for the next re-review task (ledgerblock.ts failFindingsText); absent: none. */
+  lastFailFindings?: string;
   /** The count of subject changes to the bound ledger (index.ts ledgerRev, bound.ts PassMark.ledger); absent: 0. */
   ledgerRev?: number;
 }
@@ -141,7 +143,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hsReminded?: readonly string[] | null; ledgerRev?: number }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -152,7 +154,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
     ...(o.planPhase && o.planPhaseOrigin === "parent" ? { planPhaseOrigin: "parent" as const } : {}),
-    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.work !== undefined ? { work: r.work } : {}), ...(r.occasion ? { occasion: r.occasion } : {}) })),
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.work !== undefined ? { work: r.work } : {}), ...(r.occasion ? { occasion: r.occasion } : {}), ...(r.tree ? { tree: r.tree } : {}), ...(r.via ? { via: r.via } : {}) })),
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
     ...(o.gate ? { gate: o.gate } : {}),
     ...(o.sentBack ? { sentBack: true } : {}),
@@ -162,6 +164,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.pause && !pauseEmpty(o.pause) ? { pause: { work: { ...o.pause.work }, atPrompt: { ...o.pause.atPrompt }, refusals: o.pause.refusals ? { ...o.pause.refusals } : null } } : {}),
     ...(o.hsReminded && o.hsReminded.length > 0 ? { hsReminded: [...o.hsReminded] } : {}),
     ...(o.ledgerRev ? { ledgerRev: o.ledgerRev } : {}),
+    ...(o.lastFailFindings ? { lastFailFindings: o.lastFailFindings } : {}),
   };
 }
 
@@ -217,6 +220,7 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     }
     const rev = count(d.ledgerRev);
     if (rev) out.ledgerRev = rev;
+    if (typeof d.lastFailFindings === "string" && d.lastFailFindings !== "") out.lastFailFindings = d.lastFailFindings;
     return out;
   }
   return null;

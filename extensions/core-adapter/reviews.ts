@@ -30,6 +30,10 @@ export interface ReviewRecord {
   work?: number;
   /** The review's occasion when the verdict was recorded (`pre-pr` or `item`); absent in a record from before it: such a record is not a `[pre-pr]` PASS (prready.ts). */
   occasion?: "item" | "pre-pr";
+  /** The reviewed content: tree id of the work tree without `.workflow/` when it was the same at launch and at the verdict (a tree that changed while the reviewer ran is never recorded). A commit with exactly this tree gets an alias record (`via`); absent in a record from before it. */
+  tree?: string;
+  /** `same_tree`: an alias of a PASS for a later commit whose tree equals the reviewed `tree` (index.ts coverHead); it is no review round. */
+  via?: "same_tree";
 }
 
 export const MAX_REVIEWS = 50;
@@ -246,6 +250,16 @@ export async function reviewedHeadVia(
   }
 }
 
+/**
+ * The reviewed content of a run: `end` (work-tree id without `.workflow/` at the verdict) when the launch snapshot of the same checkout
+ * (`start`, taken the same way) equals it, else undefined: a tree that changed while the reviewer ran never counts.
+ */
+export function reviewedTree(start: ReadonlyMap<string, string | null> | undefined, cwd: string, end: string | null): string | undefined {
+  if (!start || !end) return undefined;
+  const at = startEntryOf(start, cwd);
+  return at && at.exact && at.head === end ? end : undefined;
+}
+
 /** Map set that drops the oldest entries past `max` (launch heads whose run end never arrives). */
 export function capSet<K, V>(m: Map<K, V>, k: K, v: V, max = MAX_REVIEWS): void {
   m.delete(k);
@@ -303,6 +317,8 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(sig ? { sig } : {}),
       ...(typeof r.work === "number" && Number.isInteger(r.work) && r.work >= 0 ? { work: r.work } : {}),
       ...(r.occasion === "item" || r.occasion === "pre-pr" ? { occasion: r.occasion } : {}),
+      ...(typeof r.tree === "string" && /^[0-9a-f]{40,64}$/.test(r.tree) ? { tree: r.tree } : {}),
+      ...(r.via === "same_tree" ? { via: "same_tree" as const } : {}),
     });
   }
   return out.slice(-MAX_REVIEWS);
@@ -373,7 +389,7 @@ export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn:
 
 /**
  * The high-stakes test of the PR gate (highstakes.ts prRefusal), run after the head test passed: `scope` is the checkout the pull request comes from
- * (a sibling `pr_create {cwd}`), null for every checkout of the session; `heads` are the commits the call opens from.
+ * (a sibling `pr_create {cwd}`), null for the session's own checkout; `heads` are the commits the call opens from.
  */
 export type HighStakesGate = (scope: string | null, heads: readonly string[]) => Promise<{ reason: string; message: string } | null>;
 

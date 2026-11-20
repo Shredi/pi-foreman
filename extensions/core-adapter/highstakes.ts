@@ -479,13 +479,14 @@ export function unrevisedRefusal(s: HsState, o: { resume: boolean; builder: bool
 export type HsPrReason = "high_stakes_required" | "high_stakes_failed";
 
 /**
- * The PR gate over the session: `high_stakes_failed` while a FAIL stands uncleared or a head is the head of a high-stakes FAIL. A due pass (`due`: the
- * counting reasons) is no refusal: it only reminds (`dueReminder`). Null when the PR may open.
+ * The PR gate: `high_stakes_failed` while a FAIL stands uncleared or a head is the head of a high-stakes FAIL. A due pass (`due`: the
+ * counting reasons) is no refusal: it only reminds (`dueReminder`). Null when the PR may open. `scopes` (the PR's checkout and the checkouts of its head)
+ * narrow the uncleared FAIL to the PR's own checkouts: a FAIL that ran elsewhere does not hold this PR; absent: the FAIL holds every PR of the session.
  */
-export function prRefusal(s: HsState, due: readonly string[], heads: readonly string[], own: string): { reason: HsPrReason; message: string } | null {
+export function prRefusal(s: HsState, due: readonly string[], heads: readonly string[], own: string, scopes?: readonly string[]): { reason: HsPrReason; message: string } | null {
   const refuse = (reason: HsPrReason, why: string): { reason: HsPrReason; message: string } => ({ reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}` });
   const r = lastRun(s);
-  if (r && uncleared(s)) return refuse("high_stakes_failed", `the high-stakes review${whereOf(r.cwd, own)} FAILED and no normal reviewer PASS that got its findings has cleared it${goneNote(r)}. Revise or answer the findings, pass the normal reviewer (it gets them), then retry.`);
+  if (r && uncleared(s) && (scopes === undefined || scopes.includes(r.cwd))) return refuse("high_stakes_failed", `the high-stakes review${whereOf(r.cwd, own)} FAILED and no normal reviewer PASS that got its findings has cleared it${goneNote(r)}. Revise or answer the findings, pass the normal reviewer (it gets them), then retry.`);
   const bad = s.runs.find((x) => x.verdict === "fail" && x.head !== null && heads.includes(x.head) && !(x.cleared && x.clearedAt === x.head));
   if (bad) return refuse("high_stakes_failed", `the head ${bad.head!.slice(0, 12)} is the head of a high-stakes FAIL${whereOf(bad.cwd, own)}; it never opens the gate. Revise, pass the normal reviewer on the new head, then retry.`);
   return null; // a due review only reminds (dueReminder), it never refuses
@@ -508,9 +509,13 @@ export function finishNeeds(s: HsState, o: { due: readonly string[]; ledgerDone:
 export const RUN_ENTRY = "a high-stakes review must run";
 export const FAIL_ENTRY = "revise or answer the high-stakes findings, then pass the normal reviewer";
 
-/** An open PR's readiness: `wip` while a FAIL stands or the head failed, else null (the normal rule decides; a due pass holds nothing). */
-export function readyOverride(s: HsState, _due: readonly string[], head: string): "wip" | "unreviewed" | null {
-  if (uncleared(s) || s.runs.some((r) => r.verdict === "fail" && r.head !== null && r.head === head && !(r.cleared && r.clearedAt === r.head))) return "wip";
+/**
+ * An open PR's readiness: `wip` while a FAIL stands in a checkout of the head or the head failed, else null (the normal rule decides; a due pass holds nothing).
+ * `headCheckouts`: the checkouts the session's review records name for the head; none (or absent): the checkout is unknown and any uncleared FAIL holds it.
+ */
+export function readyOverride(s: HsState, _due: readonly string[], head: string, headCheckouts?: readonly string[]): "wip" | "unreviewed" | null {
+  const r = lastRun(s);
+  if ((r && uncleared(s) && (!headCheckouts || headCheckouts.length === 0 || headCheckouts.includes(r.cwd))) || s.runs.some((r) => r.verdict === "fail" && r.head !== null && r.head === head && !(r.cleared && r.clearedAt === r.head))) return "wip";
   return null;
 }
 
