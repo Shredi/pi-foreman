@@ -150,7 +150,7 @@ import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
-import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, runReport, runReports, type ReportSession } from "./reportstool.ts";
+import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, emitPendingLessons, retroCounters, runReport, runReports, type ReportSession } from "./reportstool.ts";
 import { recordReport, reportContext } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
@@ -241,7 +241,9 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, contextCap, topClimbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
+import { topEntries, topRefusal } from "./topkeyword.ts";
+import { STEWARD_ENTRY, STEWARD_TEXT_TYPE, STEWARD_WAKE_TYPE, StewardWatch, stewardSettings } from "./steward.ts";
+import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel, topRoleEntry } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countsForItems, launchOccasion, occasionLinesOf, occasionOf, reviewLaunchOf, OCCASIONS, reviewResultsOfRunEnd, runEndChildren, withOccasionMarker, type LaunchOccasion, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -447,6 +449,8 @@ interface Session {
   loopStop: LoopStop | null;
   /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval, /foreman plan off, or below heavy in a phase a parent's launch started by the session's plan-review PASS. */
   planPhase: boolean;
+  /** The steward watch (steward.ts): `steward.active` is the one fact that lets a launch use `model: "top"`. Session state, never read from text. */
+  steward: StewardWatch;
   /** Who started the plan phase (persisted beside it): `parent` (a parent's launch, PI_FOREMAN_PLAN_PHASE=1 with a handoff dir) or `owner` (/foreman plan, or an entry without the field). */
   planPhaseOrigin: PlanPhaseOrigin;
   /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
@@ -1114,6 +1118,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewerFails: new ReviewerFails(),
       loopStop: null,
       planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
+      steward: new StewardWatch({
+        cwd: () => s.cwd,
+        settings: () => stewardSettings(s.config.config),
+        now: () => Date.now(),
+        piSessionId: () => s.id,
+        persist: (entry) => pi.appendEntry(STEWARD_ENTRY, entry),
+        sendText: (text) => pi.sendMessage({ customType: STEWARD_TEXT_TYPE, content: text, display: true }, { triggerTurn: false }),
+        sendWake: (text) => pi.sendMessage({ customType: STEWARD_WAKE_TYPE, content: text, display: true }, { triggerTurn: true }),
+        idle: () => (s.prCtx ?? s.idleCtx)?.isIdle() ?? false,
+        instruction: () => fs.readFileSync(path.join(PKG_ROOT, "instructions", "steward.md"), "utf8"),
+        trace: (r) => s.trace?.emit(r),
+        notice: (text) => (s.prCtx ?? s.idleCtx)?.ui.notify(text, "info"),
+      }),
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
@@ -2089,9 +2106,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.prCtx ??= ctx;
       s.prWatches.restore(latestWatches((ctx.sessionManager.getBranch?.() ?? []) as unknown[], ctx.sessionManager.getSessionId?.() ?? ""));
       await waits.restore(ctx); // foreman_wait waits do not survive a restart: one visible notice (waitstate.ts)
+      if (!process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) s.steward.restore((ctx.sessionManager.getBranch?.() ?? []) as unknown[]); // the steward watch and its lock (steward.ts)
     }
     if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
+    if (!s.isChild) emitPendingLessons(reportSession(s)); // lessons the CLI appended or an earlier crash left: after foreman:ready, once (reports.ts claimLessons)
     if (!s.isChild) {
       idleBind = { s, ctx };
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
@@ -2270,6 +2289,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.registration = undefined;
     s.panels.clear();
     s.prWatches.clear();
+    s.steward.clear();
     s.extStatus.clear();
     s.selfWarm.onShutdown();
     // a detached owner script does not outlive its session: killed, recorded as aborted
@@ -2380,6 +2400,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     compactionGate.reset(s.id);
     s.noticeVerdicts.clear(); // the prefix is rewritten anyway: the next request decides afresh
     s.selfWarm.onCompact();
+    s.steward.resend(); // the steward's instruction text and its proposal limit are lost with the compaction; a message, never system text
     if (!s.isChild) void onForemanCompact(s, ctx, event.compactionEntry.summary, event.reason);
   });
   pi.on("session_compact_failed", async (_event, ctx) => {
@@ -4201,6 +4222,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
+        // `model: "top"` (topkeyword.ts): the steward's explorer only; the rank check below skips its entries (the map's strongest model is the point).
+        const topLaunch = actionOf(input) === null ? topEntries(launchEntries(input), input) : [];
+        const topNo = actionOf(input) === null ? topRefusal(launchEntries(input), input, s.steward.active) : null;
+        if (topNo) {
+          s.trace?.emit({ event: "launch_refused", reason: "top_not_allowed", tier: s.ceremony.tier, ...launchDeny(input) });
+          return { block: true, reason: topNo };
+        }
         // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.
         // (the keyword, or the role's strong model itself)
         // D36: an explicit builder model equal to the strong rung's is the keyword `strong` (its `:level` kept; the default reason keeps `[strong_no_reason]` out of a launch that works today)
@@ -4404,8 +4432,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const foremanAt0 = foremanBaseModel(ctx);
         const unmodelled = new Set(launchEntries(input).filter((e) => typeof (e.model ?? input.model) !== "string" || String(e.model ?? input.model).trim() === ""));
         const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), top: topLaunch.length > 0 ? topRoleEntry(s.config.config, resolution.roles) : null, explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
         // A capped climb (RANK_CAPPED_REASON: skipped, or only carrying the pending handoff) names the model the launch runs on: the entry as applyLaunchModels wrote it (an explicit model the policy rejects was replaced by the mapped rung). A real rung_up or an above-strong climb that carries a handoff keeps its own from/to.
+        const topLines: string[] = [];
+        if (topLaunch.length > 0) {
+          const ranked = topRoleEntry(s.config.config, resolution.roles) !== null;
+          const model = typeof topLaunch[0].model === "string" ? splitLevel(topLaunch[0].model).base : null;
+          s.trace?.emit({ event: "launch_top", role: "explorer", model, ranked });
+          topLines.push(ranked ? `pi-foreman: top model ${model} for the explorer (steward launch).` : `pi-foreman: no ranks configured, so no top model is known; the explorer runs on ${model}, like strong.`);
+        }
         for (const c of climbs) if (c.reason === RANK_CAPPED_REASON && typeof c.entry.model === "string") c.from = c.to = splitLevel(c.entry.model).base;
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
         const strongB = (resolution.roles.builder as { strong?: { model?: unknown } } | undefined)?.strong?.model;
@@ -4456,10 +4491,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const foremanModel = foremanBaseModel(ctx);
           // An occasion model is used as set (like a pair): its entry skips the rank check, traced policy_override when the policy would refuse it; other entries sharing the model are still checked.
           for (const [e, rec] of occ.traceOf) if (occ.overrode.has(e) && typeof e.model === "string" && rankRefusalFor(s.config.config, foremanModel, e.model, ["reviewer"]) !== null) rec.policy_override = true;
-          const checked = (m: string): string[] => (occ.overrode.size === 0 ? rolesOfModel(input, m) : launchEntries(input).filter((e) => !occ.overrode.has(e) && typeof e.agent === "string" && e.model === m).map((e) => e.agent as string));
+          const checked = (m: string): string[] => (occ.overrode.size === 0 && topLaunch.length === 0 ? rolesOfModel(input, m) : launchEntries(input).filter((e) => !occ.overrode.has(e) && !topLaunch.includes(e) && typeof e.agent === "string" && e.model === m).map((e) => e.agent as string));
           for (const m of launchedModels(input)) {
             const roles = checked(m);
-            if (occ.overrode.size > 0 && roles.length === 0) continue;
+            if (occ.overrode.size + topLaunch.length > 0 && roles.length === 0) continue;
             const no = rankRefusalFor(s.config.config, foremanModel, m, roles);
             if (!no) continue;
             // ladder.equalOnStrongRisk (ranks.ts): a tie of the foreman's own model with the builder's strong model, for builder entries only whose risk tag sent them to the strong rung.
@@ -4504,7 +4539,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         });
         const handoffLines = climbs.filter((c) => c.handoffFor).map((c) => `pi-foreman: the earlier report of the ${c.role} run ${c.handoff!.runId} (${c.handoff!.cause}) was prepended to this launch because the strong rung ${c.handoffFor} is not allowed by the rank policy.`);
         const switchedLines = launched.overrides.map((o) => `model switched: ${o.requested} -> ${o.model} (${explicitModelReason(s.config.config, foremanAt0, o.requested, o.role) ?? "not honoured"})`);
-        notices = [...launched.notices.map((n) => n.text), ...switchedLines, ...equalLines, ...cappedLines, ...handoffLines];
+        notices = [...launched.notices.map((n) => n.text), ...switchedLines, ...equalLines, ...topLines, ...cappedLines, ...handoffLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
@@ -6317,7 +6352,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A main session without a parent only; sent once, recorded in a session entry. A message appended to the transcript, never system text.
   pi.on("before_agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
-    if (!s || s.isChild || s.startNoteDone || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) return;
+    if (!s || s.isChild || s.startNoteDone || s.steward.active || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) return;
     s.startNoteDone = true;
     if (get(s.config.config, "retro.startNote") === false || get(s.config.config, "retro.report") === false) return;
     if (startNoteRecorded((ctx.sessionManager.getBranch?.() ?? []) as unknown[])) return;
@@ -6508,6 +6543,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       enabled: get(s.config.config, "retro.report") !== false,
       expireDays: typeof expire === "number" && expire >= 1 ? expire : undefined,
       workspaceOverride: get(s.config.config, "retro.workspaceKey"),
+      emit: (event, payload) => pi.events?.emit(event, payload),
     };
   };
   /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
@@ -6540,7 +6576,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     description: REPORTS_DESCRIPTION,
     parameters: REPORTS_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      const r = runReports(reportSession(await ensureSession(ctx)), params);
+      const s = await ensureSession(ctx);
+      if (params.action === "retro") {
+        // The steward pass reads the retro counters of this session; the inputs are the ones `/retro` uses (retroInputs), so the model never has to name them.
+        if (s.isChild) return { content: [{ type: "text" as const, text: `${REPORTS_TOOL} is for the foreman session only.` }], details: { decision: "refused" }, isError: true };
+        if (!s.steward.active) return { content: [{ type: "text" as const, text: `${REPORTS_TOOL}: retro is for the steward session only (/foreman steward on).` }], details: { decision: "refused" }, isError: true };
+        const out = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session"), "--json"]);
+        return { content: [{ type: "text" as const, text: out.ok ? retroCounters(out.text) : `${REPORTS_TOOL}: retro failed: ${out.text.slice(0, 300)}` }], details: { decision: "retro" }, ...(out.ok ? {} : { isError: true }) };
+      }
+      const r = runReports({ ...reportSession(s), repo: params.action === "set" && params.lesson !== undefined ? (await reportContext(s.cwd)).repo : null }, params);
       return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
     },
   } as never);
@@ -7301,6 +7345,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("pi-foreman: the read budget only reminds; it never refuses a read, so there is nothing to lift.", "info");
         return;
       }
+      if (sub === "steward") {
+        const s = await ensureSession(ctx);
+        const arg = rest[0];
+        if (arg !== "on" && arg !== "off" && arg !== "status") {
+          ctx.ui.notify("Usage: /foreman steward on | off | status", "warning");
+          return;
+        }
+        if (arg === "status") {
+          ctx.ui.notify(s.steward.status(), "info");
+          return;
+        }
+        if (s.isChild || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) {
+          ctx.ui.notify("pi-foreman: the steward is a main session of the owner; a child or a session a parent opened cannot be it.", "warning");
+          return;
+        }
+        s.prCtx ??= ctx;
+        const r = arg === "on" ? s.steward.on() : s.steward.off();
+        ctx.ui.notify(r.text, r.ok ? "info" : "warning");
+        return;
+      }
       if (sub === "flag-ask") {
         const s = await ensureSession(ctx);
         const rec = askFlag.flag(s.id, rest.join(" "));
@@ -7374,7 +7438,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman steward on|off|status | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
         return;
       }
       if (rest.length === 1 && rest[0] === "warm") {

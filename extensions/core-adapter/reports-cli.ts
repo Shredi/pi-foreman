@@ -12,7 +12,7 @@ import { defaultSpawner } from "./spawn.ts";
 export const USAGE = [
   "usage: foreman reports list [--state open|planned|done|dropped|expired|all] [--json]",
   "       foreman reports show KEY [--json]",
-  "       foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT]",
+  "       foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT] [--lesson TEXT]",
   "       foreman reports expire [--days N] [--archive-days N]",
   "       foreman reports migrate [--from DIR] [--workspace GLOB]... [--all] [--exclude GLOB]... [--min-count 2] [--within-days 30] [--archive] [--apply]",
   "         --archive renames the whole folder named by --from (the old store by default) with all it holds, selected or not",
@@ -125,12 +125,12 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
       return 0;
     }
     if (cmd === "set") {
-      const a = parse(rest, ["label", "pr", "reason"]);
+      const a = parse(rest, ["label", "pr", "reason", "lesson"]);
       if (!a || a.pos.length !== 2 || !(SETTABLE as readonly string[]).includes(a.pos[1])) return usage(err);
       if (a.opt.pr !== undefined && positive(a.opt.pr) === null) return usage(err);
-      const r = setState(store, a.pos[0], { state: a.pos[1], label: a.opt.label, pr: a.opt.pr === undefined ? undefined : Number(a.opt.pr), reason: a.opt.reason }, "cli", d.now());
+      const r = setState(store, a.pos[0], { state: a.pos[1], label: a.opt.label, pr: a.opt.pr === undefined ? undefined : Number(a.opt.pr), reason: a.opt.reason, lesson: a.opt.lesson }, "cli", d.now());
       if ("error" in r) return (err(`foreman reports: ${r.error}\n`), 1);
-      out(`${r.key} is now ${r.state}\n`);
+      out(`${r.key} is now ${r.state}${r.lesson ? " (lesson kept; the next main session start emits it)" : ""}\n`);
       return 0;
     }
     if (cmd === "expire") {
