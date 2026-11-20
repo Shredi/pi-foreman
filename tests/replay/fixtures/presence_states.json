@@ -15,7 +15,7 @@
    {"text": "Builder reported."}
   ],
   "p_ask": [
-   {"tools": [{"name": "bash", "arguments": {"command": "true || find ./pf-replay-ask -delete"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "git branch -D old-topic"}}]},
    {"text": "Asked."}
   ],
   "p_wait": [

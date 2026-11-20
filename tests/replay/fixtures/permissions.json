@@ -30,7 +30,7 @@
    {"text": "child: secret read finished"}
   ],
   "needs-ask": [
-   {"tools": [{"name": "bash", "arguments": {"command": "pip install requests"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "git branch -D old-topic"}}]},
    {"text": "child: ask finished"}
   ]
  }

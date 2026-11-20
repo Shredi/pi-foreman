@@ -23,7 +23,7 @@
    { "text": "Files changed: none" }
   ],
   "r46npm": [
-   { "tools": [ { "name": "bash", "arguments": { "command": "npm ci" } } ] },
+   { "tools": [ { "name": "bash", "arguments": { "command": "git branch -D old-topic && npm ci" } } ] },
    { "text": "child: npm finished" }
   ]
  }
