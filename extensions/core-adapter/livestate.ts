@@ -113,6 +113,8 @@ export interface LiveFile {
   blockedOn?: BlockOn;
   /** The fixed kind word of the owner source that opened the episode (of the first parent source when none is owner); no dialog text. */
   blockedKind?: BlockKind;
+  /** `foreman_hold` only: the hold's note (one line: what the owner has to do or decide), capped; present while a hold stands. */
+  blockedNote?: string;
   /** ISO time the set of open owner sources went from empty to non-empty (an older dialog closing while a younger stays open keeps it); present only while an owner source is open. */
   ownerBlockedSince?: string;
   /** Host pressure (pressure.ts); present only when the level is high or critical. */
@@ -211,6 +213,7 @@ export class LiveState {
   private endedBy: "signal" | undefined;
   private lastCheckpoint: { decision: "approve" | "revise" | "reject"; at: string } | undefined;
   private lastAnswer: LiveAnswer | undefined;
+  private holdNote: string | undefined;
   private lastEventMs = this.startedMs;
   private working = false;
   /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
@@ -404,7 +407,8 @@ export class LiveState {
   }
 
   /** `foreman_hold` on or off: while on, the session waits on the owner (`blockedOn` owner, kind `hold`, presence needs-you) without a dialog. */
-  setHold(on: boolean): void {
+  setHold(on: boolean, note?: string): void {
+    this.holdNote = on && note ? short(note, 200) : undefined;
     if (on) this.classOf.set("hold", HOLD_CLASS);
     this.setBlocked(on, "hold");
   }
@@ -536,7 +540,7 @@ export class LiveState {
     }
     const blockedOn: BlockOn | undefined = this.ownerKinds.size > 0 ? "owner" : this.parentKinds.size > 0 ? "parent" : undefined;
     const blockedKind = blockedOn === "owner" ? this.ownerKind : blockedOn === "parent" ? [...this.parentKinds.values()][0] : null;
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.lastCheckpoint ? { lastCheckpoint: this.lastCheckpoint } : {}), ...(this.lastAnswer ? { lastAnswer: this.lastAnswer } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.holdNote && blockedKind === "hold" ? { blockedNote: this.holdNote } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.lastCheckpoint ? { lastCheckpoint: this.lastCheckpoint } : {}), ...(this.lastAnswer ? { lastAnswer: this.lastAnswer } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
   }
 
   private schedule(): void {

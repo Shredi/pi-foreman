@@ -441,6 +441,8 @@ interface Session {
   handoffWaits: Set<string>;
   /** Foreman only: `foreman_hold` is set: the session waits for the owner on purpose, so the finish gate lets a turn end (not the final finish). Cleared by owner input, a builder launch, a project edit or `{off:true}`; persisted in the ceremony-state entry. */
   hold: { note: string; since: string } | null;
+  /** The `since` of the hold the owner was last told about (the missing-steps notice, once per hold); not persisted. */
+  holdNoticeSince: string | null;
   /** Foreman only: in-memory state of the questions that travel as intercom messages (intercomcarry.ts): the parent's records of its children's questions. */
   carry: IntercomCarry;
   /** Foreman only: a run is in progress (agent_start .. agent_end); a child notice that came as an intercom message is then already in it (wait.ts). */
@@ -851,8 +853,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     questionBlocks.delete(id);
     release?.(outcome);
   };
-  /** The outcome of an `ask_user_question` call from its result; other tools say nothing. */
-  const questionOutcome = (toolName: string, details: unknown, isError: boolean): DialogOutcome | undefined => (toolName === ASK_USER_TOOL ? (askAnswered(details, isError) ? "answered" : "dismissed") : undefined);
+  /** The outcome of an `ask_user_question` or `plan_mode_question` call from its result (the plan-mode result has no `cancelled: false`: an error or `cancelled: true` is a dismissal, else an answer); other tools say nothing. */
+  const questionOutcome = (toolName: string, details: unknown, isError: boolean): DialogOutcome | undefined =>
+    toolName === ASK_USER_TOOL ? (askAnswered(details, isError) ? "answered" : "dismissed") : toolName === "plan_mode_question" ? (isError || (details as { cancelled?: unknown } | null | undefined)?.cancelled === true ? "dismissed" : "answered") : undefined;
   let bgTrace: (rec: Record<string, unknown>) => void = () => undefined;
   installBgRecords(pi, { platform: deps.platform ?? process.platform, trace: (r) => bgTrace(r) }); // hc records for the add-on's background tasks (bgrecords.ts)
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
@@ -1135,6 +1138,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       waitingForParent: false,
       handoffWaits: new Set(),
       hold: null,
+      holdNoticeSince: null,
       carry: new IntercomCarry(),
       inRun: false,
       customSeen: new CustomSeen(),
@@ -1688,7 +1692,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** `foreman_hold`: the session waits for the owner on purpose. The live file says `blockedOn` owner, kind `hold`; the entry keeps it across a reload. */
   function setHold(s: Session, hold: { note: string; since: string }): void {
     s.hold = hold;
-    s.live?.setHold(true);
+    s.live?.setHold(true, hold.note);
     persistCeremonyState(s);
   }
 
@@ -1778,7 +1782,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
-    if (reason !== "fork" && e.hold) (s.hold = e.hold), s.live?.setHold(true); // a hold survives the reload; the entry is written below
+    if (reason !== "fork" && e.hold) (s.hold = e.hold), s.live?.setHold(true, e.hold.note); // a hold survives the reload; the entry is written below
     if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
@@ -6115,6 +6119,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const held = !rejected && s.hold !== null;
     if (!rejected && (held || (openLedger && s.work.builders === s.workAtPrompt.builders && s.work.edits === s.workAtPrompt.edits))) {
       s.trace?.emit({ event: "ceremony_gate", reason: held ? "hold" : "pause", tier: s.ceremony.tier });
+      // the owner sees once per hold that the turn ends with steps missing (a UI notice, nothing for the model's context)
+      if (held && s.holdNoticeSince !== s.hold?.since) {
+        s.holdNoticeSince = s.hold?.since ?? null;
+        ctx.ui.notify(`pi-foreman: the turn ends on hold with steps missing: ${missing.join(", ")}. The final finish still needs them.`, "warning");
+      }
       // work from an earlier prompt that no PASS covers: one reminder with the next turn (appended, never system text)
       if (missing.includes("reviewer") && s.work.builders + s.work.edits > 0 && !s.reminderQueued) {
         s.reminderQueued = true;

@@ -1,7 +1,8 @@
 // `foreman_hold`: the foreman marks that it waits for the owner on purpose (D109). The finish gate then accepts a turn end that it would
 // refuse for a missing review (the pause branch, index.ts ceremonyFinishGate); the live file says `blockedOn` owner, kind `hold`, so the
 // sidebar shows "Needs you". The mark ends at the owner's next message, at a builder launch or a project edit, or with `{off:true}`.
-// The final finish after real work still needs the review: the hold is read only after the missing steps are computed.
+// The hold is no way past the review: owner input, a builder launch or a project edit ends it, so work done after the hold meets the gate again;
+// the final finish after real work still needs the review.
 export const HOLD_TOOL = "foreman_hold";
 export const HOLD_NOTE_MAX = 200;
 
