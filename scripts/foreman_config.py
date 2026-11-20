@@ -1646,7 +1646,6 @@ def resolve_rank_tiers(template, existing, foreman_model=None):
                           "(no wildcard) for that tier" % (tiers[idx], provider))
 
     out = {}
-    foreman_ref = None
     for role, spec in template.items():
         if spec.get("sameAs"):
             continue

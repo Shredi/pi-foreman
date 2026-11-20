@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_replay import REASON, ReplayCase  # noqa: E402
+from test_replay import REASON, ReplayCase
 
 REMOVED = ["foreman_triage", "subagent", "foreman_wait", "foreman_checkpoint", "foreman_session_open", "contact_supervisor", "subagent_supervisor", "foreman_ledger"]
 

@@ -6,6 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { insideWorkspace, resolvePython } from "../python.ts";
 import type { SpawnResult, Spawner } from "../spawn.ts";
+import { posixOnly } from "./_platform.ts";
 
 function tempDir(t: { after(fn: () => void): void }, repo: boolean): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-pyws-")));
@@ -63,7 +64,7 @@ test("outside a repo only a venv/.venv below the cwd is rejected", async (t) => 
 
 // Simulates a POSIX PATH (":"-separated); Windows temp paths carry a drive letter, so this one
 // runs on POSIX hosts only. The win32 variant below runs everywhere.
-test("a bare name found on PATH inside the workspace is not probed", { skip: process.platform === "win32" }, async (t) => {
+test("a bare name found on PATH inside the workspace is not probed", { skip: posixOnly }, async (t) => {
   const repo = tempDir(t, true);
   const bin = path.join(repo, ".venv", "bin");
   fs.mkdirSync(bin, { recursive: true });

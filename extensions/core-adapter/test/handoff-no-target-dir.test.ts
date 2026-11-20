@@ -8,8 +8,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hntd-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
@@ -44,7 +44,7 @@ const FORMS: Array<[string, string]> = [
   ["mv -T", "mv -T"], ["mv -fT", "mv -fT"], ["mv --no-target-directory", "mv --no-target-directory"],
 ];
 
-test("-T and --no-target-directory onto the handoff dir itself: refused as without the inference", { skip: !posix }, () => {
+test("-T and --no-target-directory onto the handoff dir itself: refused as without the inference", { skip: posixOnly }, () => {
   for (const kind of Object.keys(KINDS)) {
     for (const [name, prog] of FORMS) {
       const src = prog.startsWith("mv") ? `${wt}/a` : `${wt}/plan.md`;
@@ -54,13 +54,13 @@ test("-T and --no-target-directory onto the handoff dir itself: refused as witho
   }
 });
 
-test("-T onto work/ of a handoff dir: refused for the child kinds", { skip: !posix }, () => {
+test("-T onto work/ of a handoff dir: refused for the child kinds", { skip: posixOnly }, () => {
   for (const kind of ["sub", "own"]) {
     for (const [name, prog] of FORMS) assertRefused(kind, name, seen(kind, `${prog} ${wt}/a ${H}/work`));
   }
 });
 
-test("the plain into-dir forms still work for a subagent child", { skip: !posix }, () => {
+test("the plain into-dir forms still work for a subagent child", { skip: posixOnly }, () => {
   assert.equal(seen("sub", `mv ${wt}/a ${H}/work`), "allow:default-write-in");
   fs.writeFileSync(path.join(wt, "a"), "a");
   assert.equal(seen("sub", `mv -f ${wt}/a ${H}/work`), "allow:default-write-in");
@@ -68,7 +68,7 @@ test("the plain into-dir forms still work for a subagent child", { skip: !posix 
   assert.equal(seen("sub", `cp ${wt}/a ${H}/result.md`), "allow:default-write-in");
 });
 
-test("the plain into-the-handoff-dir form stays refused for the child kinds (a non-listed name)", { skip: !posix }, () => {
+test("the plain into-the-handoff-dir form stays refused for the child kinds (a non-listed name)", { skip: posixOnly }, () => {
   assert.equal(seen("sub", `cp ${wt}/a ${H}`), REFUSED.sub);
   assert.equal(seen("own", `cp ${wt}/a ${H}`), REFUSED.own);
 });

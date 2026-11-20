@@ -88,7 +88,7 @@ export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntr
   const cap = directMaxTools(opts.maxTools);
   if (!isObj(input) || input.action !== undefined) return { entries: [], group: false };
   if (isObj(input.options) && "mcp" in input.options) {
-    return refuse("mcp_launch", "pi-foreman: options.mcp is not a launch option; pass mcp as a field of subagent({agent, task, mcp}) or of a tasks/chain entry");
+    return refuse("mcp_launch", "pi-foreman: options.mcp is not a launch option; mcp is a top-level key of the call, beside agent and task (or a key of a tasks/chain entry), never inside options: subagent({agent, task, mcp})");
   }
   const single = singleLaunchRole(input);
   const group = Array.isArray(input.tasks) || Array.isArray(input.chain);

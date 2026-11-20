@@ -20,8 +20,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, notifications, tool_results, trace_of  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import load_fixture, notifications, tool_results, trace_of
+from test_replay import REASON, ReplayCase
 
 
 def script(scratch="notes"):

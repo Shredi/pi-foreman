@@ -14,10 +14,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import json  # noqa: E402
+import json
 
-from driver import DIALOGS, PROVIDER_A, PROVIDER_B, load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import DIALOGS, PROVIDER_A, PROVIDER_B, load_fixture, tool_results
+from test_replay import REASON, ReplayCase
 
 YES = [{"value": "allow once"}, {"value": "Yes"}]  # the gate dialog; then the permission package's own ask (it leaves with phase B)
 

@@ -8,8 +8,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
+from driver import PROVIDER_A, load_fixture, tool_results
+from test_replay import REASON, ReplayCase
 
 
 def is_dialog(rec):

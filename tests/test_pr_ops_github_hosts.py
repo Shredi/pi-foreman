@@ -2,15 +2,14 @@
 
 Only gh is affected; with the key unset or ["github.com"] every argv is today's.
 """
-import json
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
-from test_safe_ops import safe_ops  # noqa: E402
-from test_safe_ops_pr import GH_CHECKS, GH_STATUS, PrCase, argv_of, j, pair  # noqa: E402
+from test_safe_ops import safe_ops
+from test_safe_ops_pr import GH_CHECKS, GH_STATUS, PrCase, argv_of, j, pair
 
 GHE = "ghe.example.test"
 VIEW = {"comments": [], "reviews": []}

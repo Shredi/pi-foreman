@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import normalise_wake, wake_messages  # noqa: E402
+from driver import normalise_wake, wake_messages
 
 
 class TestWakeNormalise(unittest.TestCase):

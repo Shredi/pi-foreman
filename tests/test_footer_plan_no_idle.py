@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-import foreman_session as fsn  # noqa: E402
+import foreman_session as fsn
 
 
 def flat(text):

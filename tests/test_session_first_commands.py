@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_foreman_session as base  # noqa: E402
+import test_foreman_session as base
 
 fsn = base.fsn
 
@@ -116,7 +115,9 @@ class FirstCommandsTest(unittest.TestCase):
     def test_explicit_plan_command_equals_plan_mode(self):
         a = self.launch_line("--plan-mode")
         b = self.launch_line("--first-command", "/plan")
-        pick = lambda o: [l.strip().split("; ", 1)[1] for l in o.splitlines() if l.strip().startswith("printf ") and "; env " in l][0].split(" pi ", 1)[1].split("'/plan ", 1)[0]
+        def pick(o):
+            return [l.strip().split("; ", 1)[1] for l in o.splitlines() if l.strip().startswith("printf ") and "; env " in l][0].split(" pi ", 1)[1].split("'/plan ", 1)[0]
+
         self.assertEqual(pick(a), pick(b))
         self.assertIn(" pi '/plan Read the handoff", [l.strip().split("; ", 1)[1] for l in b.splitlines() if l.strip().startswith("printf ") and "; env " in l][0])
 

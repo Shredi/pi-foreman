@@ -18,8 +18,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import driver  # noqa: E402
-from driver import PROVIDER_A, PROVIDER_B, Rig, load_fixture, marker, notifications, shape, tool_results, trace_of  # noqa: E402
+import driver
+from driver import PROVIDER_A, PROVIDER_B, Rig, load_fixture, marker, notifications, shape, tool_results, trace_of
 
 
 def _unavailable():

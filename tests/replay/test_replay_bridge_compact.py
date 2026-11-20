@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_replay import REASON, ReplayCase  # noqa: E402
+from test_replay import REASON, ReplayCase
 
 BRIDGE = "claude-bridge"
 SCRIPT = {"*": {"p1": [{"text": "fake: first reply " + "x" * 400}], "p2": [{"text": "fake: second reply " + "y" * 400}]}}

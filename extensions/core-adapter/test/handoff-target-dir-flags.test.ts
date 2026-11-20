@@ -8,8 +8,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-htdf-"));
 const wt = path.join(base, "wt");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
@@ -36,7 +36,7 @@ const seen = (kind: string, command: string): string => {
 const REFUSED: Record<string, string> = { sub: "block:child-write-outside", own: "danger-write-outside", parent: "danger-write-outside" };
 const work = (kind: string): string => path.join(kind === "parent" ? O : H, "work");
 
-test("any option other than the known-safe flags gives main's result (the real write may land in X)", { skip: !posix }, () => {
+test("any option other than the known-safe flags gives main's result (the real write may land in X)", { skip: posixOnly }, () => {
   const forms = [
     `cp --target=${X} ${wt}/a W`, `cp --t=${X} ${wt}/a W`, `cp --targ ${X} ${wt}/a W`, `cp -t${X} ${wt}/a W`, `cp -vt${X} ${wt}/a W`, `cp -t../x ${wt}/a W`,
     `cp --target-directory=${X} ${wt}/a W`, `cp --target-directory ${X} ${wt}/a W`, `cp -t ${X} ${wt}/a W`, `cp --backup -S ${X} ${wt}/a W`, `cp -b ${wt}/a W`,
@@ -56,7 +56,7 @@ test("any option other than the known-safe flags gives main's result (the real w
 });
 
 // pinned as they were before the option whitelist: only an mv into work/ is an allow (a cp into the dir is judged by the write-effect check, as before)
-test("the plain into-dir forms keep their results", { skip: !posix }, () => {
+test("the plain into-dir forms keep their results", { skip: posixOnly }, () => {
   const want: Record<string, string> = { sub: "allow:default-write-in", own: "allow:default-write-in", parent: REFUSED.parent };
   for (const kind of Object.keys(KINDS)) {
     for (const l of [`mv -n ${wt}/a ${work(kind)}`, `mv -f ${wt}/a ${work(kind)}/`]) {

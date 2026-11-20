@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-hcw-"));
 const wt = path.join(base, "wt");
 const out = path.join(base, "elsewhere");
@@ -35,11 +35,11 @@ function named(r: Res, offender: string): void {
   for (const n of NAMES) assert.ok(t.includes(n), `${n} in: ${t}`);
 }
 
-test("a redirect outside names the target, the worktree root, the scratch dir and the handoff names", { skip: !posix }, () => {
+test("a redirect outside names the target, the worktree root, the scratch dir and the handoff names", { skip: posixOnly }, () => {
   named(call("bash", { command: `echo x > ${out}/f` }), path.join(out, "f"));
 });
 
-test("a cp and an mv outside name their destination", { skip: !posix }, () => {
+test("a cp and an mv outside name their destination", { skip: posixOnly }, () => {
   named(call("bash", { command: `cp ${wt}/a ${out}/g` }), path.join(out, "g"));
   named(call("bash", { command: `mv ${wt}/a ${out}/h` }), path.join(out, "h"));
 });
@@ -49,23 +49,23 @@ test("a path tool write outside names the path", () => {
   named(call("foreman_copy", { src: path.join(wt, "a"), dst: path.join(out, "c.txt") }), path.join(out, "c.txt"));
 });
 
-test("a git write run from a cwd outside the worktree names the cwd and the worktree root", { skip: !posix }, () => {
+test("a git write run from a cwd outside the worktree names the cwd and the worktree root", { skip: posixOnly }, () => {
   const r = call("bash", { command: "git pull --ff-only" }, out);
   named(r, out);
 });
 
-test("git pull --ff-only in the worktree stays allowed (pin)", { skip: !posix }, () => {
+test("git pull --ff-only in the worktree stays allowed (pin)", { skip: posixOnly }, () => {
   const r = call("bash", { command: "git pull --ff-only" }, wt);
   assert.equal(r?.block, undefined);
 });
 
-test("without a scratch dir and a handoff dir the text says so", { skip: !posix }, () => {
+test("without a scratch dir and a handoff dir the text says so", { skip: posixOnly }, () => {
   const r = call("bash", { command: `echo x > ${out}/f` }, wt, { scratch: [], childHandoff: undefined });
   assert.equal(r?.rule, "child-write-outside");
   assert.ok((r?.reason ?? "").includes("no scratch dir"), r?.reason);
   assert.ok((r?.reason ?? "").includes("no handoff dir"), r?.reason);
 });
 
-test("a write inside the worktree, the scratch dir and a handoff name is not refused (pin)", { skip: !posix }, () => {
+test("a write inside the worktree, the scratch dir and a handoff name is not refused (pin)", { skip: posixOnly }, () => {
   for (const l of [`echo x > ${wt}/f`, `echo x > ${scr}/f`, `echo x > ${H}/result.md`]) assert.equal(call("bash", { command: l })?.block, undefined, l);
 });

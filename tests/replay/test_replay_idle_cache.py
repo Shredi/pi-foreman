@@ -21,8 +21,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import shape  # noqa: E402
-from test_replay import GOLDEN, REASON, ReplayCase  # noqa: E402
+from driver import shape
+from test_replay import GOLDEN, REASON, ReplayCase
 
 BRIDGE = "claude-bridge"
 SCRIPT = {"*": {

@@ -10,7 +10,6 @@ import type { OwnerAsk, RememberStore } from "../gatedialog.ts";
 
 const RAW = "evil\u001b]52;c;QUJD\u0007x\u0000y\u009bz";
 const SHOWN = "evil?]52;c;QUJD?x?y?z";
-// eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/;
 
 function rig(select: (string | undefined)[], edited?: string) {

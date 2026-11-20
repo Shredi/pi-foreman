@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
+from test_foreman_config import render_prompt, review_loop_rewrite
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
@@ -130,13 +130,21 @@ class SizingPromptTest(unittest.TestCase):
             new_fin = "A FAIL, or a builder launch or project edit in a checkout after its review, leaves that checkout's reviewer step open until a re-review passes there; the finish needs a standing PASS in every checkout you worked in."
             old_rep = "after a PASS with nothing changed, a second reviewer launch is refused."
             new_rep = "after a PASS with nothing changed in that checkout, a second reviewer launch there is refused."
-            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own), (old_fin, new_fin), (old_rep, new_rep)):
+            # plan-form-readers: the dash forms of an appendix heading
+            old_dash = "`## Addendum` heading: append rulings"
+            new_dash = "`## Addendum` heading (a colon, a dash (-, \u2013 or \u2014), a bracket or a number may follow the word): append rulings"
+            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own), (old_fin, new_fin), (old_rep, new_rep), (old_dash, new_dash)):
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
             # roles-slim: the planner, finalizer and senior-reviewer roles are gone (one old/new pair per changed rendered line)
             for old_text, new_text in ROLE_PAIRS:
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
+            # launch fields: a numbered item beyond the failed ones is reviewed against the whole change
+            old_items = "a review did not cover, and only after you have checked the evidence on disk."
+            new_items = old_items + " A numbered item in `items` outside the current failed items is reviewed against the whole change."
+            self.assertIn(old_items, want)
+            want = want.replace(old_items, new_items)
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))

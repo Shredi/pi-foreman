@@ -24,9 +24,9 @@ const rule = (r: GateResult): string | null => (r && "block" in r && r.block ? (
 const answer = (r: GateResult): string => (r === null || r === undefined ? "none" : "block" in r && r.block ? `block:${r.rule}` : `allow:${(r as { rule?: string }).rule}`);
 const ask = (r: GateResult): string => (r && "ask" in r && r.ask ? `ask:${r.rule}` : answer(r));
 const ROLES = ["foreman", "builder"];
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 
-test("(A) exec cd does not move the cwd of the rest of the line", posixOnly, () => {
+test("(A) exec cd does not move the cwd of the rest of the line", { skip: posixOnly }, () => {
   const line = `bash -O execfail -c 'exec cd ${scr}/sub; rm -rf ../../work/../scr/x'`;
   assert.equal(rule(run("foreman", line)), "floor-delete-outside");
   assert.equal(rule(run("builder", line)), "floor-delete-outside");
@@ -34,7 +34,7 @@ test("(A) exec cd does not move the cwd of the rest of the line", posixOnly, () 
   assert.notEqual(rule(run("foreman", `bash -c 'cd ${scr}/sub; rm -rf ../../work/../scr/x'`)), "floor-delete-outside");
 });
 
-test("(B) pushd <dir> answers as cd <dir>", posixOnly, () => {
+test("(B) pushd <dir> answers as cd <dir>", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     assert.equal(answer(run(role, "pushd /etc && echo x > passwd")), answer(run(role, "cd /etc && echo x > passwd")), role);
     assert.equal(answer(run(role, "pushd /etc; echo x > passwd")), answer(run(role, "cd /etc; echo x > passwd")), role);
@@ -44,7 +44,7 @@ test("(B) pushd <dir> answers as cd <dir>", posixOnly, () => {
 });
 
 // `popd` does not restore anything: the cwd is unknown after it, so the write-target reader gives no decision on a relative target (as before pushd was tracked)
-test("(B) popd makes the cwd unknown", posixOnly, () => {
+test("(B) popd makes the cwd unknown", { skip: posixOnly }, () => {
   for (const role of ROLES) {
     for (const line of ["pushd sub; popd; echo y > ../outside", "pushd /etc; popd; echo x > f", "pushd /etc; pushd /var; popd; echo x > f"]) {
       assert.equal(answer(run(role, line)), answer(run(role, line.replace(/pushd [^;]*; /g, ""))), `${role}: ${line}`);
@@ -54,7 +54,7 @@ test("(B) popd makes the cwd unknown", posixOnly, () => {
 });
 
 // every shell construct in which a `pushd` leaves no entry the later `popd` could use: a builder still gets the refusal it got before pushd was tracked
-test("(B) a pushd that is not in effect for the later popd does not open the builder's relative write", posixOnly, () => {
+test("(B) a pushd that is not in effect for the later popd does not open the builder's relative write", { skip: posixOnly }, () => {
   const lines = [
     `cd /etc; (cd ${scr}/sub; pushd /etc); popd; touch x`,
     `cd /etc; if false; then cd ${scr}/sub; pushd /etc; fi; popd; touch x`,
@@ -69,7 +69,7 @@ test("(B) a pushd that is not in effect for the later popd does not open the bui
   for (const line of lines) assert.equal(rule(run("builder", line)), "child-write-outside", line);
 });
 
-test("(B) the forms that stay unknown answer as before", posixOnly, () => {
+test("(B) the forms that stay unknown answer as before", { skip: posixOnly }, () => {
   const unknown = ["pushd", "pushd +1", "pushd -n", "popd +1", "popd", "pushd /etc; popd; popd"];
   for (const role of ROLES) {
     for (const u of unknown) assert.equal(answer(run(role, `${u}; echo x > passwd`)), "none", `${role}: ${u}`);
@@ -78,7 +78,7 @@ test("(B) the forms that stay unknown answer as before", posixOnly, () => {
 
 const PI_FILES = [".pi/settings.json", ".pi/foreman.json", ".pi/claude-bridge.json", ".pi/agents/x.md", ".pi/extensions/x.ts"];
 
-test("(C) in-place and other writers on project .pi files ask for main, deny the builder, as the redirect form", posixOnly, () => {
+test("(C) in-place and other writers on project .pi files ask for main, deny the builder, as the redirect form", { skip: posixOnly }, () => {
   for (const f of PI_FILES) {
     const t = path.join(work, f);
     const redirect = run("foreman", `echo x > ${t}`);
@@ -91,7 +91,7 @@ test("(C) in-place and other writers on project .pi files ask for main, deny the
   }
 });
 
-test("(C) reads of project .pi files and sed -i on an ordinary file are not asked", posixOnly, () => {
+test("(C) reads of project .pi files and sed -i on an ordinary file are not asked", { skip: posixOnly }, () => {
   const t = path.join(work, ".pi", "settings.json");
   for (const line of [`cat ${t}`, `sed -n p ${t}`, `grep a ${t}`]) {
     for (const role of ROLES) assert.ok(!/selfmod/.test(ask(run(role, line)) + answer(run(role, line))), `${role}: ${line}`);

@@ -9,8 +9,8 @@ import type { GateRoots } from "../pathrules.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { shPath } from "./_shpath.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-rmlinkown-"));
 const wt = path.join(base, "wt");
 const outside = path.join(base, "outside");
@@ -26,6 +26,6 @@ const env: DangerEnv = { roots, platform: process.platform, cwd: wt, facts };
 const hit = (line: string): string | null => dangerMatch({ tool: "bash", input: { command: line }, text: line, segments: parseShell(line, { cwd: wt }) }, env)?.name ?? null;
 const OUT = shPath(outside);
 
-test("owner: rm / mv of an outside link that points into the worktree is a write outside", { skip: !posix }, () => {
+test("owner: rm / mv of an outside link that points into the worktree is a write outside", { skip: posixOnly }, () => {
   for (const l of [`rm ${OUT}/lnk`, `rm -f ${OUT}/lnk`, `mv ${OUT}/lnk moved`, `mv ${OUT}/lnk ${shPath(wt)}/moved`]) assert.equal(hit(l), "danger-write-outside", l);
 });

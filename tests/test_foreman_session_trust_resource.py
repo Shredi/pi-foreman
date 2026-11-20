@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_foreman_session_remote import RemoteBase, foreman_trust, fsn  # noqa: E402
+from test_foreman_session_remote import RemoteBase, foreman_trust, fsn
 
 
 class TrustResourceTest(RemoteBase):

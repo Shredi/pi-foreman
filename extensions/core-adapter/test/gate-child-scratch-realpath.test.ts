@@ -7,8 +7,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-scratchreal-"));
 const wt = path.join(base, "wt");
 const realTmp = path.join(base, "real");
@@ -25,7 +25,7 @@ const outside = (scratch: string, command: string): boolean => {
   return !!r?.block && r.rule === "child-write-outside";
 };
 
-test("scratch root through a symlink, literal target through the real path: write-in", { skip: !posix }, () => {
+test("scratch root through a symlink, literal target through the real path: write-in", { skip: posixOnly }, () => {
   const root = path.join(linkTmp, rel);
   const real = path.join(realTmp, rel);
   assert.equal(outside(root, `cd ${real}/sub && echo x > f.txt`), false);
@@ -33,7 +33,7 @@ test("scratch root through a symlink, literal target through the real path: writ
   assert.equal(outside(root, `mkdir -p ${real}/d`), false);
 });
 
-test("scratch root through the real path, literal target through the symlink: write-in", { skip: !posix }, () => {
+test("scratch root through the real path, literal target through the symlink: write-in", { skip: posixOnly }, () => {
   const root = path.join(realTmp, rel);
   const lit = path.join(linkTmp, rel);
   assert.equal(outside(root, `cd ${lit}/sub && echo x > f.txt`), false);
@@ -43,7 +43,7 @@ test("scratch root through the real path, literal target through the symlink: wr
   assert.equal(outside(root, `cd ${lit} && mkdir q`), false);
 });
 
-test("the same symlinked tmp does not widen the fence: a sibling dir stays outside", { skip: !posix }, () => {
+test("the same symlinked tmp does not widen the fence: a sibling dir stays outside", { skip: posixOnly }, () => {
   const root = path.join(linkTmp, rel);
   assert.equal(outside(root, `echo x > ${path.join(realTmp, "other")}/f.txt`), true);
   assert.equal(outside(root, `echo x > ${path.join(linkTmp, "other")}/f.txt`), true);
@@ -57,7 +57,7 @@ const clones = (spell: string): string[] => [
   `git clone https://example.invalid/r.git ${spell}/r`,
 ];
 
-test("git clone into the own scratch, root spelled through a link or the real path: write-in", { skip: !posix }, () => {
+test("git clone into the own scratch, root spelled through a link or the real path: write-in", { skip: posixOnly }, () => {
   for (const [root, lit] of [[path.join(linkTmp, rel), path.join(realTmp, rel)], [path.join(realTmp, rel), path.join(linkTmp, rel)]]) {
     for (const cmd of clones(lit)) {
       assert.equal(outside(root, cmd), false, cmd);

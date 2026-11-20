@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_foreman_session as base  # noqa: E402
+import test_foreman_session as base
 
 fsn = base.fsn
 
