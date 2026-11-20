@@ -48,9 +48,12 @@ export function scrubToBasenames(text: string): string {
   });
 }
 
-/** One stored text: secrets masked, paths cut to basenames, whitespace collapsed, cut to `cap` characters. */
+/** Bidirectional controls and tag characters: removed from every stored text (they reorder or hide what a reader sees). Other format characters (zero-width joiner, soft hyphen) stay. */
+export const HIDDEN_CHARS = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u{E0000}-\u{E007F}]/gu;
+
+/** One stored text: bidi controls and tag characters removed, secrets masked, paths cut to basenames, whitespace collapsed, cut to `cap` characters. */
 export function cleanText(text: string, cap: number): string {
-  return scrubToBasenames(redactCommand(text)).replace(/\s+/g, " ").trim().slice(0, cap).trim();
+  return scrubToBasenames(redactCommand(text.replace(HIDDEN_CHARS, ""))).replace(/\s+/g, " ").trim().slice(0, cap).trim();
 }
 
 /** The dedupe key: sha1(kind, stored subject trimmed and lowercased), first 12 hex. Taken from the stored (masked, scrubbed) subject. */
@@ -258,7 +261,7 @@ export interface ReportInput {
   suggest?: unknown;
 }
 
-export type RecordResult = { status: "recorded" | "seen"; id: string; key: string; kind: string; subject: string; effect: string } | { status: "limit" } | { status: "invalid"; error: string };
+export type RecordResult = { status: "recorded" | "seen"; id: string; key: string; kind: string; subject: string; effect: string; /** The stored row of a `recorded` result (the handoff copy appends it). */ row?: Json } | { status: "limit" } | { status: "invalid"; error: string };
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === "string" && (list as readonly string[]).includes(v);
 
@@ -289,7 +292,7 @@ export function recordReport(w: Writer, input: ReportInput, store: Store = store
     const id = crypto.randomBytes(5).toString("hex");
     const row = { row: "report", id, key, kind, subject, what, effect, suggest, repo: w.repo, workspace: w.workspace, branch: w.branch, role: w.role, session: w.session, runId: w.runId, version: harnessVersion(), ts: new Date(now).toISOString(), source: w.source };
     fs.appendFileSync(store.file, `${JSON.stringify(row)}\n`);
-    return { status: "recorded", id, key, kind, subject, effect };
+    return { status: "recorded", id, key, kind, subject, effect, row };
   });
 }
 
