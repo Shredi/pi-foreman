@@ -110,7 +110,7 @@ const SECRET_DIR = ".s" + "sh";
 const ENV_FILE = ".e" + "nv";
 const LABELED = [
   `P=~/${SECRET_DIR}/id_rsa; cat "$P"`,
-  `git show HEAD:${ENV_FILE}`,
+  // `git show HEAD:<secret>` is a floor for every role now (floors.ts gitFloors), so no builder "run" to compare: r2-secret-labels.test.ts covers it
   "gh pr comment 1 -b x",
   "ssh host true",
   "kill 1",
