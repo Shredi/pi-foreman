@@ -281,7 +281,8 @@ test("project-layer sidebar keys are ignored with a warning; the user layer appl
   assert.equal(a.warnings.filter((w) => /sidebar\.status(Command|Seconds)/.test(w)).length, 2, a.warnings.join("\n"));
   fs.writeFileSync(path.join(agent, "foreman.json"), JSON.stringify({ sidebar: { statusCommand: "/usr/bin/true", statusSeconds: 30 } }));
   const b = await load();
-  assert.deepEqual(b.config.sidebar, { statusCommand: "/usr/bin/true", statusSeconds: 30 });
+  const { strip: _strip, ...sidebar } = b.config.sidebar as Record<string, unknown>; // the strip block has its own defaults (strip.test.ts)
+  assert.deepEqual(sidebar, { statusCommand: "/usr/bin/true", statusSeconds: 30 });
   assert.deepEqual(b.errors, []);
   rmTestTmp(root);
 });

@@ -162,6 +162,37 @@ An overlay can feed the Herdr sidebar's dots row from a program it ships. Set `s
 kept. The items are display data only; they never reach the model. Run, limits, trace and doctor line:
 [herdr](herdr.md#external-status).
 
+### Usage sources
+
+An overlay can add rows to the status strip of the herdr-app Agents view ([herdr](herdr.md#status-strip)) for limits that
+Claude replies do not carry, such as a credit balance or a team subscription. pi-foreman ships no script and reads no login;
+it only runs the program you name, in the user or overlay config (a project or session value is ignored):
+
+```json
+{ "sidebar": { "strip": { "quotas": { "sources": { "credits": { "command": "example-usage --json", "seconds": 300 } } } } } }
+```
+
+Each source is `sidebar.strip.quotas.sources.<name>.command` (one command line) with an optional
+`sidebar.strip.quotas.sources.<name>.seconds` (seconds between runs, at least 60, default 300).
+
+The program follows the rules of the external sidebar status: found on `PATH` or by an absolute path, outside the workspace,
+no shell, its own process group, 10 s timeout, stdout up to 16 KB. It prints a JSON array on stdout and exits 0:
+
+```json
+[{"id": "credits-month", "label": "Team credits", "used": 0.41, "resetsAt": "2026-12-01T00:00:00Z", "period": "month"}]
+```
+
+- `used` is a fraction (0.41, not 41). Values from 0 to 2 are taken (above 1 is an overrun: a full red bar with the real
+  percent); anything else shows a dash.
+- `resetsAt` is optional (ISO text or unix seconds). `period` is optional: `5h`, `day`, `7d`, `month` (the calendar month before
+  `resetsAt`) or a number of seconds; `periodStart` (ISO) works instead. Without a reset and a period the row has no marker.
+- `id` matches `[a-z0-9._-]{1,40}`, `label` is cut to 24 characters and stripped of control characters, at most 8 rows are
+  kept per source. The row key is `<source>:<id>`. Output is display data only and never reaches the model.
+- Bad output keeps the last good rows for one more run, then they show dashes. A source that never printed a valid row
+  shows one dash row named after the source, so a broken script stays visible.
+- A weekly row your own script supplies can replace the built-in Claude rows: set `sidebar.strip.quotas.claude` to `false`,
+  or hide single rows with `sidebar.strip.quotas.hide`.
+
 ### Session model example
 
 Sessions opened by `foreman session open` run on the `session-foreman` role's model. An overlay for a provider such as `github-copilot` keeps child sessions on the foreman's own model by mapping both roles to it:

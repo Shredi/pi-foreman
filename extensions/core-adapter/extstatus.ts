@@ -93,7 +93,12 @@ export function resolveProgram(first: string, input: ResolveInput): string | nul
   return real;
 }
 
-const CONTROL = /[\p{Cc}\p{Cf}]/gu;
+export const CONTROL = /[\p{Cc}\p{Cf}]/gu;
+
+/** A display label: control characters and known secrets removed, cut to `max` characters. */
+export function cleanLabel(raw: string, max: number): string {
+  return Array.from(redactCommand(raw.replace(CONTROL, "")).replace(CONTROL, "").trim()).slice(0, max).join("").trim();
+}
 
 /** Items of an accepted stdout, or null when the whole output is rejected. */
 export function parseItems(stdout: string): StatusItem[] | null {
@@ -107,7 +112,7 @@ export function parseItems(stdout: string): StatusItem[] | null {
   for (const e of v) if (!e || typeof e !== "object" || Array.isArray(e) || typeof (e as { label?: unknown }).label !== "string") return null;
   const out: StatusItem[] = [];
   for (const e of (v as { label: string; state?: unknown }[]).slice(0, MAX_ITEMS)) {
-    const label = Array.from(redactCommand(e.label.replace(CONTROL, "")).replace(CONTROL, "").trim()).slice(0, MAX_LABEL).join("").trim();
+    const label = cleanLabel(e.label, MAX_LABEL);
     if (!label) continue;
     out.push({ label, state: STATES.includes(e.state as DotState) ? (e.state as DotState) : "none" });
   }

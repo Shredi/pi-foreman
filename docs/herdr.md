@@ -508,6 +508,62 @@ The dots row shows items from a program you run yourself, for example a deployme
 The items fill the dots row in this order (see Dots). Overlay authors: see
 [overlays](overlays.md#external-sidebar-status).
 
+## Status strip
+
+The herdr-app Agents view can show a small strip above the session list: how busy the computer is and how much of a usage
+limit is spent.
+
+```
+ cpu ▂▃▅▇▅▃▂▁▂▃▅▄  42%   mem ███████░░░ 71%   ● ok
+ disk /            ████████░░ 78%   52 GB free
+ Claude week       ██████░░░░│░░░░  41%   resets Thu 21:00
+```
+
+A timer in the main Pi session measures every `sidebar.strip.sampleSeconds` (10 s) and writes
+`<agent dir>/pi-foreman/state/strip.json`; `foreman radar --json` passes it on as the top-level `strip` field (without the
+forecast samples). It shows the computer where Pi runs: for a Windows host with Pi inside WSL, point the `local` entry of the
+mod's `foreman` prop at a command that runs foreman inside WSL, and CPU and memory are those of the WSL machine. Without a
+main session the strip is `{"stale": true}` and shows dashes. Child sessions never measure. When several main sessions share
+an agent dir, one holds a lease (`strip.lease`) and measures; the others stand by and take over when it stops renewing it.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sidebar.strip.enabled` | `true` | `false` starts no sampler and drops `strip` from the radar output |
+| `sidebar.strip.cpu` | `true` | CPU % with sparkline |
+| `sidebar.strip.memory` | `true` | memory used % |
+| `sidebar.strip.level` | `true` | the load guard's dot (reason shown at high or critical) |
+| `sidebar.strip.disks` | `null` | paths whose disk is shown; `null` = the workspace of the measuring session (it can change when another session takes over), `[]` = none |
+| `sidebar.strip.sampleSeconds` | `10` | seconds between measurements (at least 5) |
+| `sidebar.strip.sparkline` | `12` | CPU values kept for the sparkline |
+| `sidebar.strip.quotas.claude` | `true` | built-in Claude week and 5-hour rows |
+| `sidebar.strip.quotas.sources` | `{}` | usage scripts by name, each `{ "command": "...", "seconds": 300 }` (see [overlays](overlays.md#usage-sources)) |
+| `sidebar.strip.quotas.hide` | `[]` | row keys (`<source>:<id>`, built-in `claude:7d`, `claude:5h`) to hide |
+| `sidebar.strip.quotas.order` | `[]` | row keys shown first, in this order |
+
+```json
+{ "sidebar": { "strip": { "disks": ["/", "/data", "C:", "D:"], "quotas": { "hide": ["claude:5h"] } } } }
+```
+
+- **Where it may be set.** User config or an overlay only; the whole `sidebar.strip` block is ignored in the project and
+  session config, so a project can neither start a script nor shorten the interval.
+- **CPU and memory.** CPU is the busy share of all cores between two measurements (the first has no value). Memory used is
+  `1 - available/total`, where available is the load guard's own number when its sample is fresh, else the operating system's free memory.
+  Grey while the load guard is calm, amber past `resources.maxLoadPerCore`, red past twice that; memory and disks turn amber below
+  `resources.minFreeMemMB` / `minFreeDiskGB` and red below half of it.
+- **Disks.** The free space comes from the system's free-space call for each path (on Windows a bare drive letter such as `C:`
+  is read as `C:\`; on btrfs the figure is what the system reports). A path that does not exist shows a dash, never an error.
+- **Usage rows.** The fill is the share used; the marker `│` is the share of the period that has passed. Green up to 10
+  points ahead of that pace, amber further ahead, red when the recent rate would use the limit up before the reset (from
+  the row's own samples over the last seventh of the period) or at 100 % and beyond. A row without a reset has no marker.
+  A value whose reset has passed, a failed script and a value above 200 % show a dash.
+- **Claude rows.** Claude replies carry the subscription windows as `anthropic-ratelimit-unified-<window>-utilization` and
+  `-reset` headers. Every session notes them (at most every 30 s) in `strip-claude.json`; a row stays hidden until a
+  value has arrived on this computer. Only windows the reply reports appear (no per-model weekly row), and a window needs
+  both headers. Sessions share the file only when they share the agent dir. If the bridge changes the headers the rows show dashes.
+- **JSON.** `version`, `at`, `sampleSeconds`, then the parts that are on: `cpu` `{pct?, history, tone}`, `mem`
+  `{pct, usedMB, totalMB, tone}`, `level` `{level, reasons}`, `disks` `[{label, usedPct, freeGB, tone}` or `{label, missing: true}]`,
+  `quotas` `[{key, label, used, pace?, resetsAt?, tone}]` (`used: null` = dash; tone `neutral`, `green`, `amber` or `red`).
+
 ## Bundled add-on: background tasks
 
 `pi-background-tasks` ships with pi-foreman (exact pin in `package.json`, loaded from its `pi.extensions` list right after the core adapter), so there is nothing to install. It runs shell commands in the background with status, logs and kill (`bg_run`). When pi-foreman's extension loads it sets `PI_BG_FEATURES=process` and `PI_BG_DISABLE_UPDATE_CHECK=1` for the add-on, each only when you have not set it yourself; set `PI_BG_FEATURES` in your shell profile to change the features. On Windows it also sets `PI_BG_SHELL=bash` and `PI_BG_SHELL_PATH=<Git Bash>` unless you set either yourself, so `bg_run` runs under Git Bash instead of `cmd.exe`. The add-on reads these variables once when it loads, so the shell-policy section of its prompt guidance is fixed for the process. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider

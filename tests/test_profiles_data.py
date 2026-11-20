@@ -22,7 +22,7 @@ RELAXATIONS = {"workflow-scripts", "remote-intercom", "git-tools"}
 SAFETY_FLOOR = ["safety.permissions", "safety.git", "safety.ops", "safety.requiredChildExtensions",
                 "safety.preconditionOps", "ceremony.foremanEdits", "ceremony.required", "ceremony.reviewBeforePr",
                 "ceremony.reviewGate", "ceremony.requireTriage", "bridge", "python", "presence.command",
-                "sidebar.statusCommand", "tools.prHost", "roles.*.mcp", "roles.*.file", "paths.hubWorkflow"]
+                "sidebar.statusCommand", "sidebar.strip", "tools.prHost", "roles.*.mcp", "roles.*.file", "paths.hubWorkflow"]
 SAMPLE_USER = {"providers": {"sample": {"cache": {"ttlSeconds": 300, "billing": "token"}}}}
 
 
