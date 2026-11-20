@@ -397,8 +397,90 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
   }
 }
 
+/** Stats one file as `mtimeMs:size`, or "missing" (a missing file is its own state). */
+function statPrint(file: string): string {
+  try {
+    const st = fs.statSync(file);
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return "missing";
+  }
+}
+
+/**
+ * A stat fingerprint of the config layers that hold `radar.openPrs` and the PR host keys: the user layer `<agentDir>/foreman.json`
+ * and the overlay layer (`<agentDir>/npm/node_modules`, each scoped `@*` directory in it, every `package.json` with
+ * `pi.foreman.config` and the config file it points to, as scripts/foreman_config.py `discover_l3` finds them).
+ */
+export function configFingerprint(agentDir: string): string {
+  const parts = [`L2 ${statPrint(path.join(agentDir, "foreman.json"))}`];
+  const nm = path.join(agentDir, "npm", "node_modules");
+  parts.push(`nm ${statPrint(nm)}`);
+  const dirs: string[] = [];
+  const subdirs = (dir: string): string[] => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => path.join(dir, e.name)).sort();
+    } catch {
+      return [];
+    }
+  };
+  for (const d of subdirs(nm)) {
+    if (path.basename(d).startsWith("@")) {
+      parts.push(`scope ${d} ${statPrint(d)}`);
+      dirs.push(...subdirs(d));
+    } else dirs.push(d);
+  }
+  for (const d of dirs) {
+    const pj = path.join(d, "package.json");
+    let rel: unknown;
+    try {
+      rel = JSON.parse(fs.readFileSync(pj, "utf8"))?.pi?.foreman?.config;
+    } catch {
+      continue;
+    }
+    if (typeof rel !== "string") continue;
+    parts.push(`pj ${pj} ${statPrint(pj)}`, `cfg ${path.join(d, rel)} ${statPrint(path.join(d, rel))}`);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * The config the refresher reads: the session's merged config until the fingerprint of the user and overlay layers changes, then a
+ * reload through `load` (the session's provider and trusted flag). Only the refresher uses it; gates keep the session snapshot.
+ */
+export class ReloadingConfig<T> {
+  private value: T;
+  private print: string;
+  private readonly agentDir: string;
+  private readonly load: () => Promise<T>;
+  private readonly accept: (v: T) => boolean;
+  constructor(agentDir: string, initial: T, load: () => Promise<T>, accept: (v: T) => boolean = () => true) {
+    this.agentDir = agentDir;
+    this.load = load;
+    this.accept = accept;
+    this.value = initial;
+    this.print = configFingerprint(agentDir);
+  }
+  current(): T {
+    return this.value;
+  }
+  /** Reloads when the layers changed since the last look; a load that throws or that `accept` rejects (loadMergedConfig returns defaults instead of throwing) keeps the old value and is retried at the next call. */
+  async refresh(): Promise<void> {
+    const now = configFingerprint(this.agentDir);
+    if (now === this.print) return;
+    try {
+      const next = await this.load();
+      if (!this.accept(next)) return;
+      this.value = next;
+      this.print = now;
+    } catch {}
+  }
+}
+
 export interface OpenPrsDeps {
   agentDir: string;
+  /** Awaited before each tick reads `config()` and `hosts()`. */
+  prepare?(): Promise<void>;
   /** The `radar.openPrs` config value, read on every tick. */
   config(): unknown;
   /** False when `tools.prHost` names a host other than gh. */
@@ -442,6 +524,7 @@ export class OpenPrsRefresher {
     if (this.busy) return "locked";
     this.busy = true;
     try {
+      await this.deps.prepare?.();
       if (this.deps.ghHost && !this.deps.ghHost()) return "off";
       return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal, ...(this.deps.hosts ? { hosts: this.deps.hosts() } : {}) });
     } catch {

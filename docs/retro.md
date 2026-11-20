@@ -1,6 +1,6 @@
 # Retro and reports
 
-> Covers reporting a fault at the source (`foreman_report`, the report store, states, expiry, the start note, `foreman reports`, migrating the old backlog), what retro reads and prints, the report lines, the compaction retro section, bench and privacy.
+> Covers reporting a fault at the source (`foreman_report`, the report store, states, expiry, the start note, `foreman reports`, migrating the old backlog, the optional steward, lessons), what retro reads and prints, the report lines, the compaction retro section, bench and privacy.
 > Faults are written down by the session that hits them and kept in a local store; the trace counts, it creates no entries.
 > The harness never acts on the entries: you decide what to change.
 
@@ -80,6 +80,28 @@ foreman reports migrate [--from DIR] [--workspace GLOB]... [--all] [--exclude GL
 - It keeps entries with a count of at least `--min-count` (default 2) or of kind `harness-bug`, last seen within `--within-days` (default 30). Kind `flagged-ask` becomes `permission`; `review-model` entries are left. Their text passes the same masking as a new report.
 - With `--apply` the kept entries become `report` rows with `source: "migrated"`: the old id is the key, `count` is the old count (the fold honours it), the old dates are in `firstSeen` and `lastSeen` (`show` prints them), and `ts` is the time of the migration, so the expiry clock starts at the move and an entry last seen 20 days ago survives the next expiry run. A second run imports nothing new.
 - `--archive` (with `--apply`) renames the whole folder that `--from` names (the old central directory by default) to `backlog-archive-<date>` beside it, with every file in it, also the workspaces you did not select. It does not check which folder that is. Nothing is deleted.
+
+## Steward
+
+Off by default. Without a steward nobody groups reports that use different words for the same fault; the start note above is then the whole path to the main session. With `steward.enabled` true, `/foreman steward on` makes the current main session the steward of this repository's report list. The steward groups reports, starts one helper on the strongest ranked model to check each group, and proposes rounds. You confirm each round; the steward never starts one alone.
+
+```
+/foreman steward on | off | status
+```
+
+- `on` is refused with one line while `steward.enabled` is false, in a child, and in a session a parent opened. It takes a lock in the store folder (`.workflow/reports/steward.lock`): one steward per repository, whichever worktree the session works in. A second session is refused while the lock is live.
+- The harness sends `instructions/steward.md` once, as a message at that moment, with `steward.maxProposals` put into its text. It is never system text, so the cached prompt prefix only grows. A reload or resume does not send it again, but a compaction does: after each compaction of the steward session the filled-in text goes out again as a message (the limit is then still the configured one); a session that is not the steward gets nothing.
+- The steward lock lives for days. The watch refreshes it at every check, so the age break that frees a lock of a dead session (three missed checks, at least ten minutes) never hits a live steward. `off` and the end of the session give the lock back; a stale lock of a dead session can be taken.
+- A watch checks the report list every `steward.checkMinutes` (default 30). It wakes the session with a `pi-foreman-steward` message when at least `steward.minNew` (default 3) ungrouped open entries were seen since the last pass, or when `steward.maxWaitHours` (default 24) passed since the last pass and at least one such entry exists. With no new entry it never wakes. The wake text holds counts only, never report text. A check that throws is traced (`steward {action: tick_failed}`) and never stops the watch. A busy session is not woken: a pending question to you counts as busy, and the next check tries again. A wake counts as a pass; the same reports do not wake twice.
+- The watch is stored in the session like a PR watch, so it survives a reload or resume. If another session holds the lock by then, or `steward.enabled` is false, the watch is not restored and the session says so once.
+- The steward reads the retro counters of its own session with `foreman_reports` action `retro` (the JSON of `foreman retro --json` without the permission proposals, `session_tools` and `flagged_asks`: counters plus the tool and skill names of `tool_usage`; no report text and no command text), so it never has to name the trace and usage files. The action is steward-only: any other session, a child, and a session with `steward.enabled` false get a one-line refusal, and the tool otherwise acts as before. In every pass the steward first binds a standing ledger (`foreman_ledger`, topic `steward`: status first, `init` only when none exists) so the spawn gate lets the launch through.
+- Limits: a stale lock taken over by two sessions at the same moment can let both hold it until the next check, which corrects it. A lesson set from the shell carries no `repo`.
+- The steward session gets no start note. The `steward` permissions profile is a separate thing and stays as it is.
+- `model: "top"` is the launch keyword of the steward's analysis helper (see [ladder](ladder.md#the-keyword-top)); the harness allows it only while this session is the steward.
+
+## Lessons
+
+`foreman_reports` with `set`, state `done`, takes an optional `lesson` (300 characters at most, masked and cut to file names like any report text). Use it only for a lesson that stays true beyond this case. The harness appends the lesson to `.workflow/reports/lessons.md` and emits `foreman:lesson` on `pi.events` with `{id, text, group, repo, pr}`; nothing in this repository reads the event, an add-on does (see [overlays](overlays.md#lessons)). What leaves the store is the lesson text and the group's name (the report's subject, or the name the steward gave it); no other report text and no finding does. `foreman reports set KEY done --lesson TEXT` appends the lesson from the shell but cannot emit; the next main session emits every lesson that was not emitted yet at its start, after `foreman:ready`. Each lesson is emitted once per store. A crash between the append and the emit loses that emit; the lesson stays in `lessons.md`.
 
 ## Sources
 
@@ -206,6 +228,7 @@ entry is still written and says `(the compaction summary has no Retro section)`.
 - `retro.report` (default true): the `foreman_report` tool, the start note and the store writes. `false` turns them off.
 - `retro.startNote` (default true): the start note alone.
 - `retro.expireDays` (default 14): when an open entry expires (above).
+- `steward.enabled` (default false), `steward.minNew` (3), `steward.maxWaitHours` (24), `steward.checkMinutes` (30), `steward.maxProposals` (3): the [steward](#steward).
 - `retro.workspaceKey`: overrides the workspace key written on a report row (user or overlay config only).
 - `retro.enabled`: `null` (default) is on in `tui` and `rpc` sessions and off in `json` and `print` mode; an explicit
   `true` or `false` wins. It switches the retro run and, through `trace.enabled`, the trace.

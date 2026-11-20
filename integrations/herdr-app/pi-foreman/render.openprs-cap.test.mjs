@@ -41,7 +41,7 @@ const walk = (el, out = []) => {
   if (el.kind === "HoverCard") walk(el.props.trigger, out);
   return out;
 };
-const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard");
+const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const repoRows = (root) => walk(root).filter((e) => /^op-example-org\//.test(String(e.props?.id ?? "")));
 const unfoldAll = (m, repos) => { m.unfolded = new Set(Array.from({ length: repos }, (_, r) => `opg:example-org/repo-${r}`)); return m; };
 const noMore = (root) => !walk(root).some((e) => /^op-more-/.test(String(e.props?.id ?? "")) || texts(e).some((s) => /\+\d+ more/.test(s)));

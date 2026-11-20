@@ -29,7 +29,7 @@ const OCCASIONS = LAUNCH_OCCASIONS.join(", ");
 const RISK_TAGS = RISKS.join(", ");
 
 const ALWAYS: Record<string, Schema> = {
-  reason: loose("Why a launch with `model: \"strong\"`, or with a `model` below the rung that `size` and `risk` measure, is needed: one line of text, required for such a launch.", STRING),
+  reason: loose("Why a launch with `model: \"strong\"` or `model: \"top\"`, or with a `model` below the rung that `size` and `risk` measure, is needed: one line of text, required for such a launch.", STRING),
   items: loose("Reviewer launches: the ledger items this reviewer checks, a list of item numbers and \"V\" such as [2, 5, \"V\"], each open on the ledger; without it the reviewer takes every open item except V, and after a FAIL the failed items still open; after a FAIL, items beyond the failed ones are reviewed against the whole change.", { type: "array", items: { anyOf: [NUMBER, STRING, ANY] } }, NUMBER, STRING),
   occasion: loose(`Reviewer launches: the kind of review, one of ${OCCASIONS}; without it the launch is the review of the items.`, STRING),
   reads: loose("Builder and reviewer launches: the child's read allowance as a positive integer, capped by the configured maximum.", NUMBER, STRING),

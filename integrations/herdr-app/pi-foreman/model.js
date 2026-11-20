@@ -3,7 +3,7 @@
 
 const MAX_DEPTH = 40;
 const MAX_NODES = 2000;
-const INLINE_MAX = 2;
+const INLINE_MAX = 2; // the chips `chipPrs` gives
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const str = (v) => (typeof v === "string" ? v : "");
@@ -134,7 +134,7 @@ function normNode(raw, depth, budget) {
   return {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
-    hcTerminal: str(raw.hcTerminal), regOpen: raw.regOpen === true, pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
+    hcTerminal: str(raw.hcTerminal), attach: str(raw.attach), regOpen: raw.regOpen === true, pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
     repo: nameOf(raw.repo), branch: str(raw.branch),
@@ -402,6 +402,17 @@ export function fmtSince(ms) {
   return hit ? `${Math.floor(mins / hit[0])}${hit[1]}` : "<1m";
 }
 
+/** What a radar record shows, as a string: its parsed document with every age replaced by the label the sidebar draws for it (`fmtAge`), plus
+ *  `ok`, the open PRs and their time. Two polls with an equal key draw the same, so the second one needs no redraw. */
+export function radarKey(rec) {
+  if (!isObj(rec) || !rec.ok) return "off";
+  const age = (v) => (v === null || v === undefined ? null : fmtAge(v));
+  const strip = (n) => (isObj(n)
+    ? { ...n, blockedS: age(n.blockedS), waits: listOf(n.waits).map((w) => ({ ...w, ageS: age(w?.ageS) })), tasks: listOf(n.tasks).map((t) => ({ ...t, ageS: age(t?.ageS) })), children: listOf(n.children).map(strip) }
+    : n);
+  return JSON.stringify([listOf(rec.nodes).map(strip), rec.openPrs ?? null, rec.openPrsAt ?? null]);
+}
+
 /** Status shown for an hc child terminal: the agent list wins over the terminal's own status. */
 export function workerStatus(own, listed) {
   const map = { error: "blocked", done: "idle" };
@@ -516,10 +527,9 @@ export function prSummary(prs) {
   return [noun, ...rest].join(" · ");
 }
 
-/** Up to INLINE_MAX chips sit on a session row; more go on a line below. */
+/** A session's PRs are lines below its row, whatever their number (`inline` stays empty). */
 export function splitPrs(prs) {
-  const s = sortPrs(prs);
-  return s.length > INLINE_MAX ? { inline: [], below: s } : { inline: s, below: [] };
+  return { inline: [], below: sortPrs(prs) };
 }
 
 /** The chips of a session row's title row, the same for every row: up to INLINE_MAX PRs as chips; more are one chip of the most
@@ -541,6 +551,31 @@ export function prStateText(pr) {
   if (p.state === "waiting") return `${base.fill === "green" ? "CI passing" : "no CI checks"}, ${p.merge === "behind" ? "branch behind" : "merge blocked"}`;
   return d.fill === "red" ? (d.pulse ? "CI failing, still running" : "CI failing") : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
+
+const LEGEND_HEAD = "1111111111111111111111111111111111111111";
+const legendPr = (over = {}) => ({ number: 1, head: LEGEND_HEAD, mergeState: "clean", mergeable: "UNKNOWN", checks: ["ok"], ...over });
+const noChecks = { checks: [], review: { state: "ok", head: LEGEND_HEAD, noChecks: true } };
+
+/** Every state of a PR dot with its words, for the legend: `sample` is a PR whose `prDotState` is the dot and whose `prStateText` is `words`
+ *  (the conflict entry names the mark beside the dot instead). `key` is the row key of the legend table in docs/herdr.md where it has one. */
+export const PR_LEGEND = [
+  { key: "pr-running", sample: legendPr({ checks: ["run"] }), words: "CI running" },
+  { key: "pr-failed", sample: legendPr({ checks: ["fail"] }), words: "CI failing" },
+  { key: "pr-failed-running", sample: legendPr({ checks: ["fail", "run"] }), words: "CI failing, still running" },
+  { key: "pr-ci-passing", sample: legendPr(), words: "CI passing" },
+  { key: "pr-no-checks", sample: legendPr({ checks: [] }), words: "no CI checks" },
+  { key: "pr-draft", sample: legendPr({ state: "draft" }), words: "work in progress" },
+  { key: "pr-draft-running", sample: legendPr({ state: "draft", checks: ["run"] }), words: "work in progress, CI running" },
+  { key: "pr-merge-blocked", sample: legendPr({ mergeState: "blocked" }), words: "CI passing, merge blocked" },
+  { key: "pr-behind", sample: legendPr({ mergeState: "behind" }), words: "CI passing, branch behind" },
+  { key: "pr-no-checks-blocked", sample: legendPr({ ...noChecks, mergeState: "blocked" }), words: "no CI checks, merge blocked" },
+  { key: "pr-no-checks-behind", sample: legendPr({ ...noChecks, mergeState: "behind" }), words: "no CI checks, branch behind" },
+  { key: "pr-not-reviewed", sample: legendPr({ unreviewed: true }), words: "CI passing, not reviewed" },
+  { key: "pr-required-wait", sample: legendPr({ mergeState: "blocked", waiting: ["required-check"] }), words: "checks passed, waiting on required checks" },
+  { key: "pr-ready", sample: legendPr({ mergeable: "MERGEABLE", review: { state: "ok", head: LEGEND_HEAD } }), words: "ready to merge" },
+  { key: "pr-ready-unclaimed", sample: legendPr({ mergeable: "MERGEABLE" }), words: "ready to merge (CI passing, no review claim)" },
+  { key: "pr-conflict", sample: legendPr({ mergeable: "CONFLICTING", mergeState: "dirty" }), words: "conflicts with its base branch" },
+];
 
 /** The page of a PR: its own URL, else `<https repository URL>/pull/<number>`; "" when radar gives neither (not clickable). */
 export function prUrl(node, pr) {
@@ -580,6 +615,9 @@ export function parseRecords(text) {
     });
 }
 
+/** What is shown of parsed records, as a string to compare: the records and the `background-agents/` segment bgText reads from the record id. */
+export const recsKey = (recs) => JSON.stringify(listOf(recs).map((r) => [r, AGENT_SEGMENTS.get(r) ?? null]));
+
 /** The `<machine>/<terminal>` a hand-made `hc attach` terminal follows, from the text of `hc get <terminal> --json` (its `argv`
  *  `["sh","-c","hc attach m/t"]` or its foreground `argv` `["hc","attach","m/t"]`); "" for any other terminal. */
 export function parseAttachTarget(text) {
@@ -613,7 +651,10 @@ export function remoteClick(node, all, attachOf = () => "") {
   const target = node.hcTerminal.includes("/") ? node.hcTerminal : `${node.machine}/${node.hcTerminal}`;
   const shape = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._][A-Za-z0-9._-]*$/;
   if (typeof node.machine !== "string" || !shape.test(target) || !shape.test(`${node.machine}/${target.slice(target.indexOf("/") + 1)}`)) return null;
-  const have = (Array.isArray(all) ? all : []).find((k) => isObj(k) && k.state === "live" && typeof k.address === "string" && (parseAttachTarget(k) || attachOf(k.address, k) || "") === target);
+  const live = (Array.isArray(all) ? all : []).filter((k) => isObj(k) && k.state === "live" && typeof k.address === "string");
+  // the terminal the registry stored for this session (radar's `attach`) is its attach, whatever its name or argv
+  const have = live.find((k) => typeof node.attach === "string" && node.attach !== "" && k.address === node.attach)
+    ?? live.find((k) => (parseAttachTarget(k) || attachOf(k.address, k) || "") === target);
   return have ? { kind: "focus", address: have.address } : { kind: "open", target, name: attachName(node.machine, node.key || node.name) };
 }
 
@@ -656,7 +697,8 @@ export function nodeStatus(n, hcStatus = null, recs = []) {
   if (n.state === "done") return "hidden";
   if (n.sym === "needs-you" || n.state === "ask" || listOf(n.asks).length > 0 || hcStatus === "blocked" || extra.some((r) => r.state === "blocked")) return "blocked";
   const running = radarRuns(n).length > 0 || extra.length > 0;
-  if (hcStatus === "working") return "working";
+  // a remote child waiting on a person: the local attach terminal's own "working" (its pane never idles) does not hide that
+  if (hcStatus === "working") return n.machine && (n.state === "blocked" || n.sym === "blocked") ? "blocked" : "working";
   if (hcStatus === "done") return running ? "agents" : "done";
   if (hcStatus === null || hcStatus === undefined) {
     if (n.state === "blocked" || n.sym === "blocked") return "blocked";
@@ -901,9 +943,9 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
 }
 
-/** "updated 12m ago" for the Open PRs header from the `openPrsAt` time (ms) and now (ms); "" when the time is unknown. */
+/** "updated 12m ago" ("updated <1m ago" under a minute) for the Open PRs header from the `openPrsAt` time (ms) and now (ms); "" when the time is unknown. */
 export function openPrsAge(at, now) {
-  return Number.isFinite(at) && Number.isFinite(now) ? `updated ${fmtAge(Math.max(0, now - at) / 1000)} ago` : "";
+  return Number.isFinite(at) && Number.isFinite(now) ? `updated ${fmtSince(Math.max(0, now - at))} ago` : "";
 }
 
 /** Nodes displayed under joined agents: each joined node, its workers and its nested sessions. */
@@ -1056,13 +1098,17 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
   const seen = new Set([address]);
   // A named terminal (`hc run --name`) that follows the attach of a remote session in `list` (`remoteNodesOf` or `endedRemoteNodesOf`):
   // the entry of its target from its record (argv), else the polled one, else its `fm-<machine>-<slug>-<hex4>` name when exactly one
-  // entry has that name; null otherwise.
+  // entry has that name; null otherwise. An entry whose `attach` address is the terminal's own wins before any of that.
   const matchOf = (list, term, polled) => {
+    const exact = listOf(list).find((x) => typeof x?.attach === "string" && x.attach === term.address);
+    if (exact) return exact;
     const target = parseAttachTarget(term) || (typeof polled === "string" ? polled : "");
     const hits = listOf(list).filter((x) => (target ? x.target === target : x.name === term.name));
     return new Set(hits.map((x) => x.target)).size === 1 ? hits[0] : null;
   };
   const mirrorOf = (term, polled) => Boolean(matchOf(remoteNodes, term, polled));
+  // The exact local attach addresses the registry stored for the drawn remote sessions: the terminal at one is that card's, whatever its name or argv.
+  const attachAddresses = new Set(listOf(remoteNodes).map((x) => x?.attach).filter((x) => typeof x === "string" && x));
   // A nameless terminal that follows `hc attach <machine>/<t>`: the attach of that remote session (named in `all`), else hidden.
   const attachLabel = (target) => {
     const m = /^fm-(.+)-[0-9a-f]{4,6}$/.exec(all.find((k) => isObj(k) && k.address === target)?.name ?? "");
@@ -1076,6 +1122,7 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       const r = resolve(term) ?? {};
       const below = walk(term.address, depth + 1);
       const id = `hc:${term.address}`;
+      if (attachAddresses.has(term.address)) return below; // the attach terminal of a drawn remote session: its row is the registry node's, its children stay
       const nameless = !(typeof r.label === "string" && r.label) && !(typeof term.name === "string" && term.name);
       // The attach target comes from the terminal record itself (also for a listed agent, whose label is the remote title), else from `hc get`.
       const own = !(typeof term.name === "string" && term.name) && !isObj(r.node) ? parseAttachTarget(term) : "";
@@ -1112,12 +1159,16 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
   return walk(address, 0);
 }
 
+// `{attach}` for a node whose registry entry stored the address of its local `hc attach` terminal (`<t>` or `<machine>/<t>`); `{}` for none or a malformed one.
+const ATTACH_ADDRESS = /^(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const attachField = (n) => (typeof n?.attach === "string" && ATTACH_ADDRESS.test(n.attach) ? { attach: n.attach } : {});
+
 /** The live remote sessions a local registry tree draws as rows (`machine` set, an hc terminal, neither done nor ended), as
  *  `{target: "<machine>/<t>", name}`: `name` is the `hc run --name` of the attach terminal a click opens for it. */
 export function remoteNodesOf(tree) {
   return allSessions(tree)
     .filter((n) => n.machine && n.hcTerminal && n.state !== "done" && !isEnded(n))
-    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name) }));
+    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), ...attachField(n) }));
 }
 
 /** The ended remote sessions a local registry tree has (`machine` set, an hc terminal, `isEnded`), as `{target, name, label, machine}`:
@@ -1125,7 +1176,7 @@ export function remoteNodesOf(tree) {
 export function endedRemoteNodesOf(tree) {
   return allSessions(tree)
     .filter((n) => n.machine && n.hcTerminal && isEnded(n))
-    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine }));
+    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine, ...attachField(n) }));
 }
 
 /** `{root, items}` of an agent's tree (`items` are the children of `root`, or the bare items without one) without the ended mirror
@@ -1238,14 +1289,15 @@ function pillOf(pr, d) {
   const rev = isObj(pr?.review) && typeof pr.review.head === "string" ? pr.review : null;
   const head = str(pr?.head);
   const ms = str(pr?.mergeState).toLowerCase();
-  if (!head && !ms && !rev) return { state: null };
+  const flagged = pr?.unreviewed === true; // the session's watch reports the head past its last reviewer PASS
+  if (!head && !ms && !rev && !flagged) return { state: null };
   const mine = rev && head && rev.head === head ? rev : null;
   if (d.fill === "red") return { state: "red" };
   if (pr?.state === "draft" || mine?.state === "wip") return { state: "wip" };
   if (d.ring || d.fill === "amber") return { state: "running" };
   const settled = d.fill === "green" || (d.fill === "dim" && mine?.noChecks === true);
   if (!settled) return { state: null };
-  if (rev && (!mine || mine.state === "unreviewed")) return { state: "unreviewed" };
+  if (flagged || (rev && (!mine || mine.state === "unreviewed"))) return { state: "unreviewed" };
   if (pr?.mergeable === "MERGEABLE" && !["blocked", "behind", "dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
   if (waitingOf(pr).length && d.fill === "green" && ms !== "behind") return { state: "required" };
   if (ms === "blocked" || ms === "behind") return { state: "waiting", merge: ms };
@@ -1290,6 +1342,28 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
   });
 }
 
+/** The tooltip of a PR line, the first line of its hover card (`prCard(pr).state`): "#n · <state words>", with " · unreviewed head" for a flagged PR. */
+export function prTooltip(pr) {
+  return `#${pr?.number ?? "?"} · ${prStateText(pr)}${pr?.unreviewed === true ? ` · ${UNREVIEWED}` : ""}`;
+}
+
+/** A short key of what the hover card of `pr` shows: part of the card's id, so changed data is a new card without a JSON dump of the card per line.
+ *  The description counts by its length and first 40 characters. */
+export function prCardKey(pr) {
+  if (!isObj(pr)) return "";
+  const body = str(pr.bodyText);
+  const rev = isObj(pr.review) ? `${str(pr.review.state)}@${str(pr.review.head)}${pr.review.noChecks ? "!" : ""}` : "";
+  const jobs = (listOf(pr.jobs).length ? pr.jobs : listOf(pr.checks)).map(jobOf).filter(Boolean).map((j) => `${j.name}:${j.state}`).join(",");
+  return [pr.number, str(pr.title), body.length, body.slice(0, 40), str(pr.baseRef), str(pr.mergeable), str(pr.mergeState), str(pr.head), str(pr.state),
+    pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(",")].join("|");
+}
+
+/** Width in px of the number cell of a PR line: 52 for numbers up to 4 digits, 7 more for each further digit of the widest number in `prs`. */
+export function numberCellWidth(prs) {
+  const digits = Math.max(0, ...listOf(prs).map((p) => String(int(p?.number) ?? "").length));
+  return 52 + 7 * Math.max(0, digits - 4);
+}
+
 /** Data of the hover card: title, description excerpt, conflict line, counts, and the jobs grouped failed / running / waiting / passed,
  *  at most CARD_CAP names per group then `more`. The waiting group (the required checks a passed PR waits on) shows only in the `required` pill. */
 export function prCard(pr) {
@@ -1309,7 +1383,7 @@ export function prCard(pr) {
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
-    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}${pr?.unreviewed === true ? ` · ${UNREVIEWED}` : ""}`,
+    state: prTooltip(pr),
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[3].count },

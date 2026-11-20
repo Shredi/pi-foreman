@@ -97,6 +97,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | retro | toggle | on | `/retro` and `foreman retro` print the session's friction metrics and write permission-allow proposals; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it. | on by default | [retro](retro.md#switches) |
 | [reports](#reports) | retro | toggle | on | Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over. | `{"retro": {"report": true}}` | [retro](retro.md#reporting-at-the-source) |
+| [steward](#steward) | retro | toggle | off | Opt-in. `/foreman steward on` makes one main session the steward of the repository's report list: it groups the reports, starts one read-only helper on the strongest ranked model (`model: "top"`) to check each group, writes a steward report with the review-round numbers and proposes rounds, one question per round; it never starts a round without the owner's yes. A watch wakes it when enough new reports arrived or the oldest waited too long. Without a steward the main session is shown the repeated open reports at its start. | `{"steward": {"enabled": true}}` | [retro](retro.md#steward) |
 | [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens and list-price cost in the footer, and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
@@ -121,7 +122,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 |---|---|---|---|
 | `orchestration` | The ceremony, ladder and review machinery without the extra UI, PR tools, herdr integration, idle cache keepalive, idle downshift, retro and trace. | shipped states | `pr-ops`, `herdr`, `footer-ui`, `idle-cache`, `idle-downshift`, `retro`, `trace` |
 | `standard` | Every toggleable feature in its shipped state; the package defaults. | shipped states | none |
-| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `reports`, `trace` | none |
+| `full` | Every toggleable feature on, safety relaxations included (git tools, workflow scripts, remote intercom). | `codemode`, `reviewer-climb`, `plan-review`, `orientation`, `git-tools`, `pr-ops`, `review-required`, `workflow-scripts`, `remote-intercom`, `idle-cache`, `idle-downshift`, `herdr`, `footer-ui`, `retro`, `reports`, `steward`, `trace` | none |
 
 Toggleable features (`on` and `off` write these leaves into the user config; `*` = every provider present):
 
@@ -139,6 +140,7 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 | [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
 | [retro](#retro) | retro | `retro.enabled` = `null` | `retro.enabled` = `false` | on | no |
 | [reports](#reports) | retro | `retro.report` = `true` | `retro.report` = `false` | on | no |
+| [steward](#steward) | retro | `steward.enabled` = `true` | `steward.enabled` = `false` | off | no |
 | [trace](#trace) | ops | `trace.enabled` = `null` | `trace.enabled` = `false` | on | no |
 | [footer-ui](#footer-ui) | ui | `footer.usage` = `true` | `footer.usage` = `false` | on | no |
 | [herdr](#herdr) | ui | `herdr.blockedShim` = `true`, `herdr.groupTag` = `true` | `herdr.blockedShim` = `false`, `herdr.groupTag` = `false` | on | no |
@@ -771,6 +773,20 @@ Switch: `retro.report` is true.
 | `retro.expireDays` | `14` | any layer |
 | `retro.startNote` | `true` | any layer |
 
+### steward
+
+**Report steward.** Opt-in. `/foreman steward on` makes one main session the steward of the repository's report list: it groups the reports, starts one read-only helper on the strongest ranked model (`model: "top"`) to check each group, writes a steward report with the review-round numbers and proposes rounds, one question per round; it never starts a round without the owner's yes. A watch wakes it when enough new reports arrived or the oldest waited too long. Without a steward the main session is shown the repeated open reports at its start.
+
+Switch: `steward.enabled` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `steward.enabled` | `false` | any layer |
+| `steward.minNew` | `3` | any layer |
+| `steward.maxWaitHours` | `24` | any layer |
+| `steward.checkMinutes` | `30` | any layer |
+| `steward.maxProposals` | `3` | any layer |
+
 ### close
 
 **Session close and cleanup.** Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes.
@@ -958,6 +974,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `foreman retro` |
 | [reports](#reports) | `foreman reports`, `/foreman flag-ask` |
+| [steward](#steward) | `/foreman steward` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |

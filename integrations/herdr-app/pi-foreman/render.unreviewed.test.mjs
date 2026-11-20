@@ -34,10 +34,12 @@ const chipTexts = (el) => walk(el).filter((e) => e.kind === "HoverCard").flatMap
 const waits = (unreviewed) => [{ id: "pr_watch", kind: "pr", note: "1 pr watch", age_s: 0, left_s: 0, prs: [16], ...(unreviewed ? { unreviewed: [{ n: 16, repo: "", host: "" }] } : {}) }];
 const tree = (w) => treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5", dots: [dot(16, "ok")], waits: w }));
 
-test("the chip of a PR whose head the watch reports unreviewed shows the token", () => {
-  const shown = chipTexts(render(tree(waits(true))));
+test("the line of a PR whose head the watch reports unreviewed has no token: it shows the blue dot", () => {
+  const out = render(tree(waits(true)));
+  const shown = chipTexts(out);
   assert.ok(shown.includes("⎇ #16"));
-  assert.ok(shown.includes(UNREVIEWED));
+  assert.ok(!shown.includes(UNREVIEWED));
+  assert.ok(walk(out).some((e) => e.props?.bg === "#ansi4"), "the blue dot");
 });
 
 test("the chip of a followed-only PR, or one cleared by a PASS, has no token", () => {

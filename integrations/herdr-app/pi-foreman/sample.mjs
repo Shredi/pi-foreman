@@ -14,7 +14,7 @@ const pr = (number, over = {}) => ({
   mergeState: "clean", mergeable: "MERGEABLE", headRefName: `sample-${number}`, checks: [{ n: "ci", state: "ok" }], ...over,
 });
 
-/** `{key, label}` of an agent or session row (its name) and `{key, pr}` of a PR chip (its number): every key of the legend table appears once. */
+/** `{key, label}` of an agent or session row (its name), `{key, pr}` of a PR line (its number) and `{key, legend}` of the title bar's "?": every key of the legend table appears once. */
 export const ROWS = [
   { key: "agent-working", label: "sample working" },
   { key: "agent-needs-you", label: "sample needs you" },
@@ -38,6 +38,7 @@ export const ROWS = [
   { key: "pr-draft-failed", pr: 109 },
   { key: "pr-merge-blocked", pr: 110 },
   { key: "pr-required-wait", pr: 116 },
+  { key: "pr-legend", legend: true },
 ];
 
 export const SAMPLE = {
@@ -105,11 +106,11 @@ export const SAMPLE = {
   },
 };
 
-// The ~40-PR feed (props `{"sample": true, "manyPrs": true}`): 40 PRs (numbers 201 to 240) over 17 neutral repositories, each entry of
+// The ~50-PR feed (props `{"sample": true, "manyPrs": true}`): 52 PRs (numbers 201 to 252) over 18 neutral repositories, each entry of
 // MANY_PRS is [repository, state]. Its states: a failing check, a conflict, ready to merge, a running check, a draft. One PR (206) is
 // unreviewed: a session of the sample (`sample review`) watches it, as a session's watch is the only source of that fact. #211 has no
 // title and #219 no page address.
-const MANY_REPOS = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec"];
+const MANY_REPOS = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo"];
 const MANY_PRS = [
   ["alpha", "fail"], ["alpha", "ready"], ["alpha", "run"], ["bravo", "conflict"], ["bravo", "ready"], ["bravo", "unreviewed"],
   ["charlie", "ready"], ["charlie", "ready"], ["delta", "fail"], ["delta", "draft"], ["echo", "ready"], ["echo", "ready"],
@@ -118,6 +119,8 @@ const MANY_PRS = [
   ["mike", "ready"], ["mike", "run"], ["november", "draft"], ["november", "ready"], ["oscar", "ready"], ["oscar", "run"],
   ["papa", "ready"], ["papa", "run"], ["quebec", "ready"], ["quebec", "ready"], ["alpha", "ready"], ["bravo", "ready"],
   ["golf", "run"], ["hotel", "draft"], ["juliet", "ready"], ["kilo", "ready"],
+  // one repository with many failing PRs, to see the capped group and its "+N more" line: 12 PRs, 9 failing, 1 conflicting
+  ...Array.from({ length: 9 }, () => ["romeo", "fail"]), ["romeo", "conflict"], ["romeo", "ready"], ["romeo", "ready"],
 ];
 const MANY_STATE = {
   fail: { checks: [{ n: "ci", state: "fail" }] },

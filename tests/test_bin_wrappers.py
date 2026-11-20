@@ -34,6 +34,28 @@ class BinWrappers(unittest.TestCase):
         names = set(re.findall(r'if /i "%~1"=="([a-z-]+)"', src))
         self.assertEqual(names, bin_subcommands())
 
+    def test_cmd_fallback_arms(self):
+        """The retired-backlog arm (written with `equ`, invisible to the `==` regex) and the usage arm."""
+        lines = text("foreman.cmd").splitlines()
+        backlog = [l for l in lines if 'if /i "%~1" equ "backlog"' in l]
+        self.assertEqual(len(backlog), 1)
+        self.assertIn("foreman backlog is retired: use foreman reports", backlog[0])
+        self.assertTrue(backlog[0].rstrip().endswith("exit /b 2)"))
+        usage = [l for l in lines if l.startswith("if not defined PF_SCRIPT (echo usage: foreman ")]
+        self.assertEqual(len(usage), 1)
+        self.assertIn("[args] 1>&2", usage[0])
+        self.assertTrue(usage[0].rstrip().endswith("exit /b 2)"))
+
+    @unittest.skipUnless(os.name == "nt", "runs foreman.cmd")
+    def test_cmd_fallback_arms_run(self):
+        cmd = str(ROOT / "bin" / "foreman.cmd")
+        r = subprocess.run([cmd, "nope"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("usage: foreman setup|update-check", r.stderr)
+        r = subprocess.run([cmd, "backlog"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)", r.stderr)
+
     def test_usage_lists_agree(self):
         expected = {tuple(sorted(bin_subcommands()))}
         for name in ("foreman", "foreman.ps1", "foreman.cmd"):
