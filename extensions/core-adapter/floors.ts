@@ -380,6 +380,27 @@ export function gitOptSpellings(words: string[], long: string, opts: { short?: s
 /** The `-c` and `--config` values among the words after `git clone`. */
 const cloneConfigs = (rest: string[]): string[] => gitOptSpellings(rest, "--config", { short: "c", consume: true }) as string[];
 
+/** The git subcommands that print objects, so a `<rev>:<path>` word of theirs reads a file (the words of `commit`, `tag` and the like are messages, never read). */
+const OBJECT_PRINTERS = new Set(["show", "cat-file", "diff", "grep", "difftool", "merge-file", "notes", "rev-parse", "ls-files"]);
+/** `git log` options whose next word is their value, not a revision. */
+const LOG_VALUE_OPTS = new Set(["--grep", "--author", "--committer", "--format", "--pretty", "--since", "--until", "--after", "--before", "--max-count", "--skip", "--date", "-S", "-G", "-n"]);
+
+/** The words of `call` that can be `<rev>:<path>`: all of an object printer's; of `log` the `-L` values and the revision operands. */
+function revWords(call: GitCall): string[] {
+  if (OBJECT_PRINTERS.has(call.sub)) return call.rest;
+  if (call.sub !== "log") return [];
+  const out: string[] = [];
+  for (let i = 0; i < call.rest.length; i++) {
+    const w = call.rest[i];
+    if (w === "--") break;
+    if (w === "-L") out.push(call.rest[++i] ?? "");
+    else if (w.startsWith("-L")) out.push(w.slice(2));
+    else if (LOG_VALUE_OPTS.has(w)) i++;
+    else if (!w.startsWith("-")) out.push(w);
+  }
+  return out;
+}
+
 /** All git floors of one segment: config writes in every form (`git clone -c` included), remote changes, the push floors. */
 function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   const call = gitCall(seg, env);
@@ -403,8 +424,8 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   if (call.sub === "remote") return remoteFloor(call) ?? soft;
   if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env) ?? soft;
-  // `<rev>:<path>` and `:<path>` print the file out of the object store (show, cat-file, diff, grep, difftool, merge-file, notes ...): the path part is judged as any path
-  for (const w of call.rest) {
+  // `<rev>:<path>` and `:<path>` print the file out of the object store: the path part is judged as any path
+  for (const w of revWords(call)) {
     const i = w.indexOf(":");
     const s = i >= 0 ? secretPath(w.slice(i + 1), { ...env, segCwd: call.cwd }, true) : null;
     if (s) return { ...s, fragment: undefined };

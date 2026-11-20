@@ -135,3 +135,12 @@ test("S3 controls: colons that name no secret path still run for every subcomman
     assert.doesNotMatch(answer(role, "git push origin HEAD:feature/x"), /floor-secret-path/, `${role} push`);
   }
 });
+
+test("S3 messages: a commit message or a log search naming a secret path is no floor hit; `log -L` and a log revision still are", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git commit -m 'refactor: move src/credentials.ts'", "git commit -m 'feat: read ~/.aws/credentials lazily'", "git log -S'token: ~/.netrc'", "git commit -m 'fix(floors): narrow read allow for SSH public keys in ~/.ssh'"]) {
+      assert.doesNotMatch(answer(role, l), /floor-secret-path/, `${role} ${l}`);
+    }
+    for (const l of ["git log -L1,5:.env", "git log -L 1,5:.env", "git log HEAD:.env", "git log --grep x HEAD:.env", "bash -c 'git log -L1,5:.env'"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+  }
+});

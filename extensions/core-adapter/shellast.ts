@@ -130,6 +130,8 @@ interface Run {
   platform: string;
   /** The text of every string the parser ran as a script (`-c`, `eval` ...) behind whatever wrappers and path stood before the shell. */
   strings: string[];
+  /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` is not resolved as a constant and no trial of its own starts. */
+  trial?: boolean;
 }
 
 interface Scope {
@@ -752,24 +754,29 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
 }
 
-/** The wrappers the walker unwraps to the command they wrap (`wrap(..., true)` above, `ShellSegment.passThrough` on a segment): they run no text of their own, the wrapped command is its own segment. A failed unwrap leaves the wrapper as the (opaque) program. */
-const PASS_THROUGH: ReadonlySet<string> = new Set(["env", "nohup", "nice", "timeout", "command", "stdbuf", "setsid"]);
-
 /** A pass-through wrapper whose words name a runner (`env sh`, `nohup bash`): the wrapped command runs text. */
 const wrapsRunner = (x: any): boolean => (x.suffix ?? []).some((w: any) => typeof (w.value ?? w.text) === "string" && (RUNNERS.has(baseName(w.value ?? w.text)) || /[$`]/.test(w.text ?? "")));
 
-/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `walkerWrappers`: the pass-through wrappers do not count (the constant `$FOREMAN_SCRATCH` only). */
-function runsCode(node: SyntaxNode, walkerWrappers = false): boolean {
+/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `passing`: wrappers the walker unwrapped as pass-through (see `passNames`) do not count unless they wrap a runner (the constant `$FOREMAN_SCRATCH` only). */
+function runsCode(node: SyntaxNode, passing: ReadonlySet<string> = new Set()): boolean {
   let found = false;
   const visit = (n: SyntaxNode): void => {
     if (found) return;
     const x = n as any;
     if (x.type === "Function") found = true;
-    else if (x.type === "Command" && x.name && (/[$`]/.test(x.name.text) || (RUNNERS.has(baseName(x.name.value ?? x.name.text)) && !(walkerWrappers && PASS_THROUGH.has(baseName(x.name.value ?? x.name.text)) && !wrapsRunner(x))))) found = true;
+    else if (x.type === "Command" && x.name && (/[$`]/.test(x.name.text) || (RUNNERS.has(baseName(x.name.value ?? x.name.text)) && !(passing.has(baseName(x.name.value ?? x.name.text)) && !wrapsRunner(x))))) found = true;
     else forEachChild(n, visit);
   };
   visit(node);
   return found;
+}
+
+/** The names of the wrappers the walker unwraps as pass-through in `script`: a trial walk, read off the `passThrough` field of its segments. */
+function passNames(script: Script, src: string, sc: Scope): Set<string> {
+  const rn = sc.run;
+  const trial: Run = { out: [], vars: new Map(), assignOk: new Set(), env: rn.env, platform: rn.platform, strings: [], trial: true };
+  walkScript(script, src, { ...sc, run: trial });
+  return new Set(trial.out.flatMap((x) => (x.passThrough ?? []).map((i) => x.wrappers[i])));
 }
 
 /**
@@ -860,7 +867,7 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const child = childAssigns(script, src, rn);
   for (const [, , cmd] of child.values()) rn.assignOk.add(cmd);
   // the harness constant `$FOREMAN_SCRATCH` of a child resolves on any line that never rebinds it (a heredoc or pipe leaves the closed grammar)
-  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !runsCode(script, true) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
+  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !rn.trial && !runsCode(script, passNames(script, src, sc)) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {
