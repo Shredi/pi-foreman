@@ -1189,6 +1189,13 @@ export interface UnknownDelete {
 
 const UNKNOWN_DELETE = (why: string, floor = true): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})`, floor });
 const RM_RECURSIVE = /^-[A-Za-z]*[rR]|^--recursive$/;
+/** A command word that holds an expansion and names no program: `$X`, `"$CMD"`. `$V/bin/pip` ends in a literal basename, so it is that program, not an unknown one. */
+const varCommandWord = (p: string): boolean => {
+  if (!/[$`]/.test(p) || /[=\s]/.test(p)) return false;
+  const tail = (p.split(/[\\/]/).pop() ?? "").replace(/["']/g, "");
+  const literalTail = /[\\/]/.test(p) && tail !== "" && !/[$`]/.test(tail) && !/\$\(|`/.test(p);
+  return !literalTail;
+};
 /** A recursive flag behind a command word that is itself a variable: short clusters only (`-rf`, `-R`), so a PowerShell parameter like `-Force` is none. */
 const VAR_CMD_RECURSIVE = /^-(?=[A-Za-z]{1,4}$)[A-Za-z]*[rR]|^--recursive$/;
 const EXEC_WORDS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
@@ -1248,7 +1255,7 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
     if (prog === "find" && findExecRemoves(argv)) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
     // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so its words are scanned as a runner's string under find -exec is
     if (s.opaque === "nonliteral_script" && removerInString([s.program, ...argv].join(" "))) hits.push(UNKNOWN_DELETE("a remover inside a script string built at run time"));
-    if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
+    if (varCommandWord(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
     if (prog === "git" && argv.some((w) => /[$`]/.test(w) || w === "")) {
       const call = gitCall(s, env);
       if (call?.sub === "clean") hits.push(UNKNOWN_DELETE("git clean with a variable operand"));
@@ -1337,7 +1344,7 @@ function findExecRemoves(argv: string[]): boolean {
 function remoteKind(seg: ShellSegment, prog: string, env: FloorEnv, rmOk: boolean): string | null {
   const a = seg.argv;
   if (wordsRemove([seg.program, ...a]) || (prog === "find" && findExecRemoves(a)) || (seg.opaque === "nonliteral_script" && removerInString([seg.program, ...a].join(" ")))) return rmOk ? null : "a recursive rm";
-  if (/[$`]/.test(seg.program) && !/[=\s]/.test(seg.program) && a.some((w) => VAR_CMD_RECURSIVE.test(w))) return "a command word that is a variable with a recursive flag";
+  if (varCommandWord(seg.program) && a.some((w) => VAR_CMD_RECURSIVE.test(w))) return "a command word that is a variable with a recursive flag";
   if (prog === "shred") return "shred";
   if (prog === "find" && a.includes("-delete")) return "find -delete";
   if (pythonDisk(seg, prog)) return "a disk format or erase";
