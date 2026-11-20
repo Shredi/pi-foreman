@@ -40,7 +40,7 @@ const walk = (el, out = []) => {
   if (el.kind === "HoverCard") walk(el.props.trigger, out);
   return out;
 };
-const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard");
+const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const cardOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`⎇ #${n}`));
 const fullCards = (root) => cards(root).filter((c) => texts(c.contentEl).length > 0);

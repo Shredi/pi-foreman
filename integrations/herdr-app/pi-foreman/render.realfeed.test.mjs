@@ -43,7 +43,7 @@ const walk = (el, out = []) => {
   return out;
 };
 const texts = (root) => walk(root).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
-const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard").map((e) => e.contentEl);
+const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card").map((e) => e.contentEl);
 
 function mod(doc = REAL) {
   const d = parseRadarDoc(JSON.stringify(doc));
@@ -91,7 +91,7 @@ test("Open PRs section and session chips render; the card shows real job names",
   assert.ok(t.some((s) => s.includes("#51")), "open PR chip");
   // A card is built when the pointer rests on its chip: rest on each chip in turn, as onMove does.
   const all = [];
-  for (const h of walk(r).filter((e) => e.kind === "HoverCard").map((e) => e.props.trigger.props.on_mouse_move)) {
+  for (const h of walk(r).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card").map((e) => e.props.trigger.props.on_mouse_move)) {
     h({}, { notify() {} });
     all.push(...cards(m.render({})).flatMap((c) => texts(c)));
   }
@@ -102,7 +102,7 @@ test("Open PRs section and session chips render; the card shows real job names",
 });
 
 test("a HoverCard id is not reused when the card's content changed", () => {
-  const ids = (doc) => walk(mod(doc).render({})).filter((e) => e.kind === "HoverCard").map((e) => e.cardId);
+  const ids = (doc) => walk(mod(doc).render({})).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card").map((e) => e.cardId);
   const before = JSON.stringify(ids(REAL));
   assert.ok(ids(REAL).every((id) => typeof id === "string" && id));
   const changed = structuredClone(REAL);
