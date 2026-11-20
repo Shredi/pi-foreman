@@ -453,21 +453,25 @@ export class ReloadingConfig<T> {
   private print: string;
   private readonly agentDir: string;
   private readonly load: () => Promise<T>;
-  constructor(agentDir: string, initial: T, load: () => Promise<T>) {
+  private readonly accept: (v: T) => boolean;
+  constructor(agentDir: string, initial: T, load: () => Promise<T>, accept: (v: T) => boolean = () => true) {
     this.agentDir = agentDir;
     this.load = load;
+    this.accept = accept;
     this.value = initial;
     this.print = configFingerprint(agentDir);
   }
   current(): T {
     return this.value;
   }
-  /** Reloads when the layers changed since the last look; a failed load is retried at the next call. */
+  /** Reloads when the layers changed since the last look; a load that throws or that `accept` rejects (loadMergedConfig returns defaults instead of throwing) keeps the old value and is retried at the next call. */
   async refresh(): Promise<void> {
     const now = configFingerprint(this.agentDir);
     if (now === this.print) return;
     try {
-      this.value = await this.load();
+      const next = await this.load();
+      if (!this.accept(next)) return;
+      this.value = next;
       this.print = now;
     } catch {}
   }

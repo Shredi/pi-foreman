@@ -98,3 +98,22 @@ test("a failed reload keeps the old config and retries at the next call", async 
   assert.equal(cfg.current().v, 2);
   r.done();
 });
+
+test("a defaults result (loader fallback) keeps the old config and retries at the next tick", async () => {
+  const r = rig();
+  let source: "defaults" | "cli" = "defaults";
+  let calls = 0;
+  const cfg = new ReloadingConfig(r.dir, { v: 1, source: "cli" as string }, async () => (calls++, { v: 2, source }), (c) => c.source === "cli");
+  r.write({ changed: true }, 5000);
+  await cfg.refresh();
+  assert.equal(cfg.current().v, 1);
+  await cfg.refresh();
+  assert.equal(calls, 2, "retried without a further file edit");
+  assert.equal(cfg.current().v, 1);
+  source = "cli";
+  await cfg.refresh();
+  assert.equal(cfg.current().v, 2);
+  await cfg.refresh();
+  assert.equal(calls, 3, "fingerprint stored after the cli result");
+  r.done();
+});
