@@ -9,7 +9,8 @@
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
     python scripts/foreman_session.py prune [--dry-run] [--agent-dir D]
-    python scripts/foreman_session.py remote probe|open|deliver|close --json   (the remote side; JSON on stdin)
+    python scripts/foreman_session.py restart <label|child id|label@machine> [--json] [--dry-run] [--agent-dir D]
+    python scripts/foreman_session.py remote probe|open|deliver|close|restart --json   (the remote side; JSON on stdin)
     python scripts/foreman_session.py remote notice <plan|result|update|ask|closed> [file] [--close ready|open]
     python scripts/foreman_session.py remote notice refused --reason=TEXT
     python scripts/foreman_session.py close-remote <label|child id> [--path P.md] [--json] [--agent-dir D]
@@ -34,7 +35,18 @@ refuses, it prints the manual message and exits 1; it never falls back to Herdr.
 `prune [--dry-run]` marks `closed` (note `pruned: process and terminal gone`) each local `open`/`closing` entry whose
 process is gone (no live file with a running pid or fresh heartbeat) AND whose hc terminal / Herdr pane is provably not
 listed; an unreadable listing, a remote entry or an entry without a terminal record is never touched. `--dry-run`
-writes nothing. One line per entry, then the count.
+writes nothing. One line per entry, then the count. The entry gets `closedBy: "prune"` (a crashed child may be restarted).
+
+`reap` is the closed-child part of `list` and `prune` on its own: for each `closed` local entry it ends and removes the kept hc
+terminal (only one that still has the child's name; a live one is killed after a minute), then, unless `prune` closed the
+entry, removes the child's worktree and local branch the safe way (clean apart from an untracked `.workflow/`, never
+--force). A failure is retried by the next pass.
+
+`restart <label|child id|label@machine>` starts a child session again with its history in a new kept hc terminal that has
+Pi as its program (`pi --session <id>`; nothing is typed into a shell), updates the entry's terminal address and sets it back
+to `open`. Restartable: an `open` entry whose Pi no longer runs, or a `closed` entry that `prune` closed; an entry closed by a
+close flow is refused. A child on another machine is restarted through the remote `restart` verb (the parent probes the
+remote first: an older remote is refused with "update pi-foreman"). `--dry-run` shows the `hc run` and changes nothing.
 
 Herdr (HERDR_PANE_ID set and `herdr` on PATH, or HERDR_BIN): the workspace whose label is the
 basename of the git top level of --cwd (default: the current dir), else `workspace create`
@@ -391,8 +403,10 @@ def remote_footer(label, plan_first):
             "   The review is done: next, below heavy go on and build; at heavy call `foreman_checkpoint`. Never idle waiting for the parent.",
             "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
             "   - Tier heavy: call `foreman_checkpoint`; the owner answers in a dialog in this pane (attaching to it from the",
-            "     other machine), and you build after the approval. Run no notice before it: the parent learns from its own check",
-            "     that you wait on the owner.",
+            "     other machine), and you build after the approval. A plan checkpoint is never asked by file. When no dialog shows",
+            "     (the checkpoint returns pending), write `ask.md` with the first line `# Ask <n>: checkpoint: attach to answer` and run",
+            "         %s ask" % base,
+            "     The owner then attaches to this pane to answer. Run no other notice before the checkpoint.",
             "   The parent may send notes, corrections or owner decisions as a brief (`brief-<n>.md`); treat it as input. A brief",
             "   that changes the plan makes a new plan version: have it reviewed again and, at heavy, take it to the checkpoint again.",
             "   A `ruling.md` the parent delivers is a note like any other file; it approves nothing.",
@@ -598,7 +612,7 @@ def reply_address(value, machine):
     return "%s/%s" % (machine, tail) if TERMINAL_ID_RE.match(tail) else None
 
 
-def hc_terminal_info(binary, address, timeout=HC_TIMEOUT):
+def hc_terminal_info(binary, address, timeout=HC_TIMEOUT, with_name=False):
     """`hc get <address> --json`: {"state": "finished", "gone" (not_found), "live" or "unknown" (hc could not tell), "foreground":
     the foreground program's name or None, "notice": the terminal's `fm.notice` label or None} (the last two for a live or
     finished terminal; the reply carries them as `foreground.name` and `labels`, see remotewatch.ts).
@@ -624,8 +638,11 @@ def hc_terminal_info(binary, address, timeout=HC_TIMEOUT):
     if state not in ("finished", "live"):
         return info
     fg, labels = data.get("foreground"), data.get("labels")
-    return {"state": state, "foreground": fg.get("name") if isinstance(fg, dict) else None,
-            "notice": labels.get("fm.notice") if isinstance(labels, dict) else None}
+    out = {"state": state, "foreground": fg.get("name") if isinstance(fg, dict) else None,
+           "notice": labels.get("fm.notice") if isinstance(labels, dict) else None}
+    if with_name:
+        out["name"] = data.get("name") if isinstance(data.get("name"), str) else None
+    return out
 
 
 def hc_terminal_state(binary, address, timeout=HC_TIMEOUT):
@@ -766,32 +783,34 @@ def pi_fallback_words():
     return words if ok else None
 
 
-def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi", banner=None):
+def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi", banner=None, session=None):
     """The child's argv after `--` (no shell, unquoted): the TUI pane identity is dropped, the caller's PATH passed.
     `pi_word` names the Pi CLI in the PowerShell wrapper (a remote Windows child passes `pi.cmd`). `banner` (see
-    start_banner) is printed first; on POSIX it makes the argv a `sh -c` wrapper that execs the same argv."""
+    start_banner) is printed first; on POSIX it makes the argv a `sh -c` wrapper that execs the same argv.
+    `session` (a restart) resumes that Pi session instead of sending the launch messages."""
     if platform == "win32":
         head = "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID -ErrorAction SilentlyContinue; $env:PATH = %s; " % ps_quote(path)
-        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word, banner)]
+        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word, banner, session)]
     pi = pi_fallback_words() or [shutil.which("pi") or "pi"]
     argv = (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + pi
-            + (["--model", model] if model else []) + launch_messages(first, prompt))
+            + (["--model", model] if model else []) + launch_tail(first, prompt, session))
     if banner:  # the printf result is ignored (`;`): the exec always runs
         return ["sh", "-c", 'printf "%s\\n" "$1"; shift; exec "$@"', "sh", banner] + argv
     return argv
 
 
-def hc_run_args(name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True):
+def hc_run_args(name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True, parent=None):
     """Arguments of `hc run`. --no-notify always: hc would otherwise type the child's notes into the parent's terminal.
     --keep always: the terminal survives core loss and reboot. A local child gets no herdr labels, so herdr-app shows it
     as a sub-agent of the parent's tab; only a remote child passes `space` (its machine's space). `extra_labels` are
     (key, value) pairs; `no_parent` adds --no-parent (a remote child has no hc parent terminal). `keep=False` passes --rm
-    instead of --keep (the local `hc attach` terminal of a remote child: it is removed once it exits)."""
+    instead of --keep (the local `hc attach` terminal of a remote child: it is removed once it exits). `parent` nests
+    the terminal under that terminal (a restart: the recorded parent) instead of the caller's."""
     labels = ["--label", "herdr.space=" + space] if space else []
     for k, v in extra_labels:
         labels += ["--label", "%s=%s" % (k, v)]
     return (["run", "--json", "--bg", "--no-notify", "--keep" if keep else "--rm"] + (["--no-parent"] if no_parent else [])
-            + ["--cwd", str(cwd), "--name", name] + (["--outlive-parent"] if outlive else []) + labels
+            + (["--parent", parent] if parent else []) + ["--cwd", str(cwd), "--name", name] + (["--outlive-parent"] if outlive else []) + labels
             + ["--"] + list(child_argv))
 
 
@@ -820,8 +839,8 @@ def hc(binary, args, timeout=HC_TIMEOUT):
     return data
 
 
-def open_in_hc(binary, name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True):
-    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive, space, extra_labels, no_parent, keep))
+def open_in_hc(binary, name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True, parent=None):
+    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive, space, extra_labels, no_parent, keep, parent))
     parent = reply.get("parent")
     return {"address": reply["address"], "parent": parent if isinstance(parent, str) and VALUE_RE.match(parent) else None,
             "space": space}
@@ -1002,6 +1021,11 @@ def first_commands(cmds, plan_mode):
     return out
 
 
+def launch_tail(first, prompt, session=None):
+    """The words after the model option: `--session <id|file>` for a restart (the history, no new brief), else the launch messages."""
+    return ["--session", session] if session else launch_messages(first, prompt)
+
+
 def launch_messages(first, prompt):
     """The positional Pi messages of the launch line: the first commands, then the brief prompt. A bare /plan would open
     the plan-mode menu and never reach the brief, so it is dropped and the last word becomes `/plan <prompt>`."""
@@ -1036,16 +1060,16 @@ def start_banner(label, model, machine, brief):
     return " ".join(parts)
 
 
-def posix_command(env, model, prompt, first=(), banner=None):
+def posix_command(env, model, prompt, first=(), banner=None, session=None):
     pre = "printf '%%s\\n' %s; " % shlex.quote(banner) if banner else ""
-    return pre + _posix_command(env, model, prompt, first)
+    return pre + _posix_command(env, model, prompt, first, session)
 
 
-def _posix_command(env, model, prompt, first=()):
+def _posix_command(env, model, prompt, first=(), session=None):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + [shlex.quote(w) for w in pi_fallback_words() or ["pi"]]
     if model:
         parts += ["--model", shlex.quote(model)]
-    return " ".join(parts + [shlex.quote(m) for m in launch_messages(first, prompt)])
+    return " ".join(parts + [shlex.quote(m) for m in launch_tail(first, prompt, session)])
 
 
 # ASCII apostrophe and the typographic single quotes U+2018-U+201B, which PowerShell also reads as quotes
@@ -1056,11 +1080,11 @@ def ps_quote(v):
     return "'" + "".join(ch * 2 if ch in PS_SINGLE_QUOTES else ch for ch in v) + "'"
 
 
-def powershell_command(env, model, prompt, first=(), pi_word="pi", banner=None):
+def powershell_command(env, model, prompt, first=(), pi_word="pi", banner=None, session=None):
     sets = (["Write-Host %s" % ps_quote(banner)] if banner else []) + ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
     words = pi_fallback_words() if pi_word == "pi" else None
     head = ["&"] + [ps_quote(w) for w in words] if words else [pi_word]
-    call = head + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
+    call = head + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_tail(first, prompt, session)]
     return "; ".join(sets + [" ".join(call)])
 
 
@@ -1417,17 +1441,40 @@ def session_config(adir):
     return sessions if isinstance(sessions, dict) else {}
 
 
-def pi_version():
+PROBE_BUDGET = 12  # seconds of the remote probe's own work (the parent's call limit is PROBE_TIMEOUT)
+PI_VERSION_TIMEOUT = 6  # seconds of one `pi --version` attempt
+PI_VERSION_RETRY_MIN = 2  # no retry when less than this is left of the probe budget
+
+
+def pi_version_result(deadline=None):
+    """(version, why): the first line of `pi --version`, or None and the reason it failed (not on PATH, timed out after
+    N s, exit n). One retry after a timeout or a nonzero exit; each attempt gets at most PI_VERSION_TIMEOUT seconds and
+    at most what is left of `deadline`, and there is no retry when less than PI_VERSION_RETRY_MIN seconds are left."""
     exe = shutil.which("pi")
     if not exe:
-        return None
-    try:
-        r = subprocess.run([exe, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           stdin=subprocess.DEVNULL, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    out = (r.stdout.decode("utf-8", "replace").strip() or r.stderr.decode("utf-8", "replace").strip()).splitlines()
-    return out[0].strip() if r.returncode == 0 and out else None
+        return None, "pi is not on PATH"
+    why = "pi --version did not run"
+    for attempt in range(2):
+        limit = PI_VERSION_TIMEOUT if deadline is None else min(PI_VERSION_TIMEOUT, deadline.left())
+        if attempt and (deadline is not None and deadline.left() < PI_VERSION_RETRY_MIN):
+            break
+        try:
+            r = subprocess.run([exe, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               stdin=subprocess.DEVNULL, timeout=max(limit, 0.5))
+        except subprocess.TimeoutExpired:
+            why = "pi --version timed out after %d s" % round(max(limit, 0.5))
+            continue
+        except OSError as e:
+            return None, "pi --version could not run: %s" % strip_control(e)
+        out = (r.stdout.decode("utf-8", "replace").strip() or r.stderr.decode("utf-8", "replace").strip()).splitlines()
+        if r.returncode == 0 and out:
+            return out[0].strip(), None
+        why = "pi --version exited %d%s" % (r.returncode, "" if out else " without output")
+    return None, why
+
+
+def pi_version():
+    return pi_version_result()[0]
 
 
 def package_version(directory):
@@ -1457,25 +1504,34 @@ def check_parent_address(params):
         raise Refused("parentAddress must be <opener id>@<parentName>", "bad_request")
 
 
-def hc_status():
-    """{available, coreUp, version} of the hc on this machine: `hc server status --json` answers when a core runs."""
+def hc_status(deadline=None):
+    """{available, coreUp, version} of the hc on this machine: `hc server status --json` answers when a core runs.
+    With a `deadline` the call gets at most what is left of it."""
     binary = hc_bin()
     if not binary:
         return {"available": False, "coreUp": False, "version": None}
     try:
-        data = hc_read(binary, ["server", "status", "--json"], DISCOVERY_TIMEOUT)
+        data = hc_read(binary, ["server", "status", "--json"], deadline.slice(DISCOVERY_TIMEOUT) if deadline else DISCOVERY_TIMEOUT)
     except HcError:
         return {"available": True, "coreUp": False, "version": None}
     version = data.get("version") if isinstance(data, dict) else None
     return {"available": True, "coreUp": True, "version": version if isinstance(version, str) else None}
 
 
+REMOTE_VERBS = ["probe", "open", "deliver", "close", "restart"]
+
+
 def remote_probe(adir, params):
     check_fields(params, {"parentName": str, "parentAddress": str}, ("parentName", "parentAddress"))
     check_parent_address(params)
-    return {"protocol": REMOTE_PROTOCOL, "foremanVersion": package_version(Path(__file__).resolve().parent.parent),
-            "piVersion": pi_version(), "intercomMachineName": intercom_machine_name(adir), "platform": host_platform(),
-            "hc": hc_status(), "agentDir": str(adir), "addons": installed_addon_ids(adir)}
+    deadline = Deadline(PROBE_BUDGET)
+    version, why = pi_version_result(deadline)
+    reply = {"protocol": REMOTE_PROTOCOL, "foremanVersion": package_version(Path(__file__).resolve().parent.parent),
+             "piVersion": version, "intercomMachineName": intercom_machine_name(adir), "platform": host_platform(),
+             "hc": hc_status(deadline), "agentDir": str(adir), "addons": installed_addon_ids(adir), "verbs": list(REMOTE_VERBS)}
+    if why:
+        reply["piVersionError"] = why
+    return reply
 
 
 def installed_addon_ids(adir):
@@ -1700,7 +1756,7 @@ def cmd_remote(a):
     adir = agent_dir(a.agent_dir)
     try:
         verbs = {"probe": remote_probe, "open": remote_open, "deliver": remote_deliver,
-                 "close": remote_close}
+                 "close": remote_close, "restart": remote_restart}
         reply = dict(verbs[a.verb](adir, read_params()), ok=True)
     except Refused as e:
         reply = {"ok": False, "code": e.code or "refused", "error": str(e)}
@@ -2116,7 +2172,9 @@ def cmd_open_remote(a):
                       "or `pi install <pi-foreman source>`)"
                       % (name, probe.get("protocol"), REMOTE_PROTOCOL, name), "remote_protocol")
     if not probe.get("piVersion"):
-        raise Refused("pi was not found on %s (in its hc exec environment)" % name, "remote_missing")
+        reason = probe.get("piVersionError")
+        raise Refused("pi did not answer on %s (in its hc exec environment): %s"
+                      % (name, strip_control(reason)[:200] if isinstance(reason, str) and reason else "pi was not found"), "remote_missing")
     remote_hc = probe.get("hc")
     if not isinstance(remote_hc, dict):
         raise Unreachable("remote %s unreachable: its probe reply is malformed" % name)
@@ -2229,7 +2287,13 @@ def cmd_open_remote(a):
 def cmd_machine_setup(a):
     """`machine setup <name>`: run this package's `setup` on the remote over `hc exec --on` (add-ons of this machine, hc intercom)."""
     adir = agent_dir(a.agent_dir)
-    _, argv = machine_entry(adir, a.name)
+    unlisted = None
+    try:
+        _, argv = machine_entry(adir, a.name)
+    except Refused as e:
+        if not a.dry_run:
+            raise
+        unlisted, argv = e, ["foreman"]  # a dry run still shows what it can; the real run refuses
     binary = hc_required()
     timeout = getattr(a, "timeout", None)
     timeout = min(max(timeout, 1), SETUP_TIMEOUT_MAX) if isinstance(timeout, int) and not isinstance(timeout, bool) else SETUP_TIMEOUT_MAX
@@ -2242,7 +2306,16 @@ def cmd_machine_setup(a):
     cmd += ["--intercom-hc", "--machine-name", a.name]
     if a.dry_run:
         print(" ".join(shlex.quote(c) for c in cmd))
-        return 0
+        if unlisted is not None:
+            print("not in config; the real run would refuse: %s" % unlisted)
+        try:
+            check_hc_machine(binary, a.name)
+        except Refused as e:
+            sys.stderr.write("dry run: %s; the remote changes are not listed\n" % e)
+            return 0
+        print("remote changes on %s (its own `setup --dry-run`, nothing is written there):" % a.name)
+        sys.stdout.flush()
+        return subprocess.call(cmd + ["--dry-run"])
     # stdout streams live; stderr goes through a pipe that a reader thread copies to ours line by line while hc runs, and keeps for the timeout check
     read_fd, write_fd = os.pipe()
     chunks = []
@@ -2602,12 +2675,13 @@ def cmd_prune(a):
     for s in gone:
         print("%s%s  %s  %s" % ("would prune " if a.dry_run else "pruned ", s.get("label"), s.get("child"), s.get("status")))
         if not a.dry_run:
-            s.update(status="closed", note="pruned: process and terminal gone")
+            s.update(status="closed", note=PRUNE_NOTE, closedBy="prune")
     print("%d %s" % (len(gone), "would be pruned" if a.dry_run else "pruned"))
     if gone and not a.dry_run:
         write_registry(adir, reg)
     if not a.dry_run:
         prune_remote_terminals(adir)
+        reap_local_closed(adir)
     return 0
 
 
@@ -2847,6 +2921,7 @@ def prune_remote_terminals(adir, out=None):
 def cmd_list(a):
     adir = agent_dir(a.agent_dir)
     warn_unremoved(settle_close_attempts(adir, sys.stderr)[1])  # stdout stays the list (or one JSON document)
+    reap_local_closed(adir, sys.stderr)
     reg = read_registry(adir)
     if a.json:
         print(json.dumps(reg, indent=1))
@@ -2866,6 +2941,424 @@ def cmd_list(a):
         print("  %s  %s  %s  %s  %s%s%s%s" % (s.get("label"), s.get("model") or "-", s.get("status"), s.get("handoff"),
                                             s.get("child"), address, where, tail))
     return 0
+
+
+# ---------------------------------------------------------------- restart
+
+PRUNE_NOTE = "pruned: process and terminal gone"  # what `prune` wrote before it set `closedBy`
+RESTART_LOCK_STALE = 120  # seconds after which a restart lock or Pi session lock counts as left behind
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}\Z")
+IDENTITY_ENTRY_TYPE = "pi-foreman-identity"
+
+
+def pruned_closed(entry):
+    """True for a `closed` entry that `prune` closed (a crashed child that may be restarted), also one pruned before `closedBy` existed."""
+    return entry.get("status") == "closed" and (entry.get("closedBy") == "prune" or entry.get("note") == PRUNE_NOTE)
+
+
+def restart_refusal(entry, remote_side=False):
+    """None when the registry entry may be restarted, else the reason. Local children: `open`, or `closed` by `prune`;
+    a child on another machine: `open` (the remote verb decides whether it still runs). An entry whose parent is
+    `<id>@<machine>` belongs to that machine's parent: it is restarted there, never here (`remote_side` is the remote verb)."""
+    status = entry.get("status")
+    on_machine = isinstance(entry.get("machine"), str) and bool(entry["machine"])
+    if status != "open" and not (not on_machine and pruned_closed(entry)):
+        if status in ("closing", "closed"):
+            return "it is %s, closed by a close flow: it is not restarted" % status
+        return "it is %s, not open" % status
+    if not on_machine and not remote_side and "@" in str(entry.get("parent") or ""):
+        return "its parent session is on another machine: restart it from there (foreman session restart on the parent's machine)"
+    cwd = entry.get("cwd")
+    if not on_machine and not (isinstance(cwd, str) and cwd and os.path.isdir(cwd)):
+        return "its working folder no longer exists: %s" % strip_control(cwd)
+    return None
+
+
+def read_first_line(path):
+    try:
+        return Path(path).read_text("utf-8").splitlines()[0].strip() or None
+    except (OSError, IndexError, UnicodeDecodeError):
+        return None
+
+
+def handoff_session_id(handoff):
+    """The Pi session id the adapter wrote to `<handoff>/live.json`, else None."""
+    try:
+        d = json.loads((Path(handoff) / "live.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    v = d.get("piSessionId") if isinstance(d, dict) else None
+    return v if isinstance(v, str) and SESSION_ID_RE.match(v) else None
+
+
+def find_session_file(adir, sid):
+    """The Pi session file `<agent dir>/sessions/<folder>/<time>_<id>.jsonl` of a session id (the newest), else None."""
+    try:
+        found = sorted(Path(adir, "sessions").glob("*/*_%s.jsonl" % sid), key=lambda f: f.stat().st_mtime)
+    except OSError:
+        return None
+    return found[-1] if found else None
+
+
+def read_identity(file, sid):
+    """The newest `pi-foreman-identity` entry of the session file that names `sid`, else {}."""
+    found = {}
+    try:
+        with open(file, encoding="utf-8") as f:
+            for line in f:
+                if IDENTITY_ENTRY_TYPE not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                d = e.get("data") if isinstance(e, dict) and e.get("customType") == IDENTITY_ENTRY_TYPE else None
+                if isinstance(d, dict) and d.get("v") == 1 and d.get("piSessionId") == sid:
+                    found = d
+    except OSError:
+        return {}
+    return found
+
+
+def lock_fresh(path):
+    try:
+        return time.time() - os.stat(path).st_mtime <= RESTART_LOCK_STALE
+    except OSError:
+        return False
+
+
+class RestartLock:
+    """`<state>/restart/<child>.lock`, created exclusively: two restarts of one child never race. A lock older than
+    RESTART_LOCK_STALE seconds is replaced."""
+
+    def __init__(self, adir, child):
+        self.path = Path(adir) / "pi-foreman" / "state" / "restart" / ("%s.lock" % re.sub(r"[^A-Za-z0-9._-]", "_", child))
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        for _ in range(2):
+            try:
+                os.close(os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                return self
+            except FileExistsError:
+                if lock_fresh(self.path):
+                    break
+                try:
+                    os.unlink(str(self.path))
+                except OSError:
+                    break
+        raise Refused("another restart of this session is running", "restart_busy")
+
+    def __exit__(self, *exc):
+        try:
+            os.unlink(str(self.path))
+        except OSError:
+            pass
+
+
+def update_entry(adir, child, fields, drop=()):
+    reg = read_registry(adir)
+    for s in reg["sessions"]:
+        if isinstance(s, dict) and s.get("child") == child:
+            s.update(fields)
+            for k in drop:
+                s.pop(k, None)
+    write_registry(adir, reg)
+
+
+def retire_terminal(binary, entry, child):
+    """The old kept terminal of a restarted child: only a terminal that still carries the child's name is touched. Finished:
+    `hc rm`. Live (a shell took over after a host crash; the caller checked that the child's Pi is not running): `hc kill`,
+    then `hc rm`. A terminal with another name is left alone. Returns a note for the report, None when nothing is left."""
+    hc_at = entry.get("hc") if isinstance(entry.get("hc"), dict) else None
+    address = hc_at.get("address") if hc_at else None
+    if not binary or not isinstance(address, str) or not VALUE_RE.match(address):
+        return None
+    info = hc_terminal_info(binary, address, with_name=True)
+    if info["state"] == "gone":
+        return None
+    if info["state"] == "unknown":
+        return "the old terminal %s could not be read and was left alone" % address
+    if info.get("name") != hc_name(child):
+        return "the old terminal %s is not this session's (another name) and was left alone" % address
+    if info["state"] == "live":
+        try:
+            subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return "the old terminal %s could not be ended and was left alone" % address
+    result = rm_remote_terminal(binary, address)
+    return None if result in ("removed", "gone") else "the old terminal %s could not be removed" % address
+
+
+def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
+    """Start the child of a local registry entry again in a new kept hc terminal with Pi as its program (`pi --session <id>`,
+    never typed into a shell). `rctx` ({"space"}) is the remote verb: the child gets no hc parent and the machine space,
+    as the remote `open` gives them. Returns {child, label, address, parent, status} (`status` is `hand` when the entry has
+    no hc terminal: the command line to run is said instead)."""
+    child, label = entry.get("child"), entry.get("label")
+    why = restart_refusal(entry, remote_side=bool(rctx))
+    if why:
+        raise Refused("%s is not restarted: %s" % (label, why), "not_restartable")
+    handoff = entry.get("handoff")
+    if not isinstance(handoff, str) or not Path(handoff).is_dir():
+        raise Refused("%s has no handoff folder to restart from" % label, "no_handoff")
+    sid = handoff_session_id(handoff)
+    if not sid:
+        raise Refused("%s has no recorded Pi session id (live.json in its handoff folder): resume it by hand" % label, "no_session")
+    live = read_live_files(adir)
+    if not _live_process_gone(entry, live, time.time()):
+        raise Refused("%s still runs (its Pi process is alive): nothing was restarted" % label, "still_running")
+    if lock_fresh(Path(adir) / "pi-foreman" / "state" / "panes" / ("%s.lock" % sid)):
+        raise Refused("another run holds the session lock of %s: nothing was restarted" % label, "session_locked")
+    session_file = find_session_file(adir, sid)
+    identity = read_identity(session_file, sid) if session_file else {}
+    parent = read_first_line(Path(handoff) / "parent") or entry.get("parent")
+    if not isinstance(parent, str) or not parent:
+        raise Refused("%s has no parent intercom id (parent file of its handoff folder)" % label, "no_parent")
+    model = entry.get("model") or identity.get("model") or None
+    parent_label = identity.get("parentLabel") if isinstance(identity.get("parentLabel"), str) else None
+    if not parent_label:
+        here = Path.cwd()
+        parent_label = opener_slug(here, git_top(here))
+    profile = identity.get("permsProfile") if isinstance(identity.get("permsProfile"), str) else None
+    env = child_env(Path(handoff), parent, child, parent_label, model, remote=bool(rctx) or bool(identity.get("remoteParent")),
+                    plan_phase=identity.get("planPhase") == "1", profile=profile, agent_dir=adir)
+    bg = identity.get("bgEnv") if isinstance(identity.get("bgEnv"), dict) else {}
+    bg = {k: v for k, v in bg.items() if BG_NAME_RE.match(k) and isinstance(v, str) and BG_VALUE_RE.match(v)}
+    if bg:  # the session's own PI_BG_* replace the restarting shell's, as the crash restart does
+        env = [kv for kv in env if not kv[0].startswith(ENV_BG_PREFIX)] + sorted(bg.items())
+    beat = None
+    for d in live:
+        if isinstance(d, dict) and d.get("sessionId") == sid and isinstance(d.get("heartbeatAt"), str):
+            parsed = parse_iso(d["heartbeatAt"])
+            beat = parsed.timestamp() if parsed else None
+    env.append(("PI_FOREMAN_RESUMED", str(int((beat or time.time()) * 1000))))
+    resume = str(session_file) if session_file else sid
+    cwd = Path(entry["cwd"])
+    binary, backend = hc_bin(), entry.get("backend")
+    scfg = sessions_config(adir)
+    banner = start_banner(label, model, short_hostname() if rctx else None, Path(handoff) / "brief.md")
+    if backend != "hc" or not binary:
+        line = (posix_command(env, model, None, banner=banner, session=resume) if host_platform() != "win32"
+                else powershell_command(env, model, None, banner=banner, session=resume))
+        say("%s has no hc terminal here (backend %s): run this in %s:\n  %s" % (label, backend or "terminal", cwd, line))
+        return {"child": child, "label": label, "status": "hand", "command": line}
+    argv = hc_child_argv(env, model, None, [], host_platform(), os.environ.get("PATH", ""),
+                         "pi.cmd" if rctx and host_platform() == "win32" else "pi", banner, session=resume)
+    hc_at = entry.get("hc") if isinstance(entry.get("hc"), dict) else {}
+    recorded_parent = hc_at.get("parent") if isinstance(hc_at.get("parent"), str) else None
+    nest = None
+    if not rctx and recorded_parent:
+        listed = hc_terminal_addresses()
+        nest = recorded_parent if listed and recorded_parent in listed else None
+    space = rctx.get("space") if rctx else hc_at.get("space")
+    labels = [("fm.child", child), ("fm.parent", parent.split("@", 1)[0])] if rctx else ()
+    outlive = False if rctx else hc_outlive_parent(scfg)
+    if dry_run:
+        say("dry run: would run under herdr-core:\n  %s" % json.dumps(
+            [binary] + hc_run_args(hc_name(child), cwd, argv, outlive, space if rctx else None, labels, bool(rctx), parent=nest)))
+        return {"child": child, "label": label, "status": "dryRun"}
+    with RestartLock(adir, child):
+        note = retire_terminal(binary, entry, child)
+        if note:
+            say("note: %s" % note)
+        try:
+            made = open_in_hc(binary, hc_name(child), cwd, argv, outlive, space if rctx else None, labels, bool(rctx), True, nest)
+        except HcError as e:
+            raise Refused("%s was not restarted: %s" % (label, e), "restart_failed")
+        hc_new = {"address": made["address"], "parent": made["parent"], "space": space}
+        update_entry(adir, child, {"status": "open", "hc": hc_new, "backend": "hc",
+                                   "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "lastError": None},
+                     drop=("closedBy", "note", "reaped", "passRetryAt"))
+    say("restarted %s under herdr-core: %s (%s)" % (label, made["address"], "parent %s" % made["parent"] if made["parent"]
+                                                    else "not nested: no parent terminal"))
+    return {"child": child, "label": label, "status": "open", "address": made["address"], "parent": made["parent"], "hc": hc_new}
+
+
+def remote_restart(adir, params):
+    """The remote `restart` verb: restart the child of this machine's handoff dir for its parent."""
+    check_fields(params, {"handoffName": str, "parentAddress": str, "space": str}, ("handoffName", "parentAddress"))
+    if not ADDRESS_RE.match(params["parentAddress"]):
+        raise Refused("parentAddress must be <id>@<machine>", "bad_request")
+    space = params.get("space")
+    if space is not None and not VALUE_RE.match(space):
+        raise Refused("space may use only A-Z a-z 0-9 . _ : / @ -", "bad_request")
+    d = deliver_dir(adir, params["handoffName"])
+    if read_small(d / "parent") != params["parentAddress"]:
+        raise Refused("the session behind this handoff dir does not belong to %s" % params["parentAddress"], "wrong_session")
+    child = read_small(d / "child")
+    entry = next((s for s in read_registry(adir)["sessions"] if isinstance(s, dict) and s.get("child") == child), None)
+    if not child or not entry:
+        raise Refused("this machine has no registry entry for that handoff dir", "no_entry")
+    info = restart_local(adir, entry, {"space": space}, say=lambda _m: None)
+    return {k: v for k, v in info.items() if k in ("child", "status", "hc")}
+
+
+def cmd_restart(a):
+    """`restart <label|child id|label@machine> [--json] [--dry-run]`: start a child session again (local or on another machine)."""
+    adir = agent_dir(a.agent_dir)
+    entry = find_entry(adir, a.target)
+    if not entry:
+        raise Refused("no session with label or child id %r (see: foreman session list)%s"
+                      % (a.target, address_candidates(adir, a.target)), "no_session")
+    say = (lambda m: sys.stderr.write(m + "\n")) if a.json else print
+    if isinstance(entry.get("machine"), str) and entry["machine"]:
+        info = restart_remote_child(adir, entry, a.dry_run, say)
+    else:
+        info = restart_local(adir, entry, dry_run=a.dry_run, say=say)
+    if a.json:
+        print_json(dict(info, ok=True))
+    return 0
+
+
+def restart_remote_child(adir, entry, dry_run, say):
+    """The parent's side of a restart of a child on another machine: probe (an older remote is refused before any change),
+    the remote verb, then the new address and a new local attach terminal."""
+    name, label, child = entry["machine"], entry.get("label"), entry["child"]
+    why = restart_refusal(entry)
+    if why:
+        raise Refused("%s@%s is not restarted: %s" % (label, name, why), "not_restartable")
+    address = entry.get("parentAddress")
+    m = ADDRESS_RE.match(address) if isinstance(address, str) else None
+    if not m or not isinstance(entry.get("handoffName"), str):
+        raise Refused("%s@%s has no parent address or remote handoff recorded" % (label, name), "no_handoff")
+    _, argv = machine_entry(adir, name)
+    binary = hc_required()
+    check_hc_machine(binary, name)
+    probe = hc_exec_verb(binary, name, argv, "probe", {"parentName": m.group(2), "parentAddress": address}, PROBE_TIMEOUT)
+    verbs = probe.get("verbs")
+    if probe.get("protocol") != REMOTE_PROTOCOL or not isinstance(verbs, list) or "restart" not in verbs:
+        raise Refused("update pi-foreman on %s: it does not know the restart command yet (run `pi update` there, then "
+                      "`foreman setup`)" % name, "remote_old")
+    hc_at = entry.get("hc") if isinstance(entry.get("hc"), dict) else {}
+    payload = {"handoffName": entry["handoffName"], "parentAddress": address}
+    if isinstance(hc_at.get("space"), str) and hc_at["space"]:
+        payload["space"] = hc_at["space"]
+    if dry_run:
+        say("dry run: would restart %s on %s" % (label, name))
+        return {"child": child, "label": label, "status": "dryRun", "machine": name}
+    with RestartLock(adir, child):
+        reply = hc_exec_verb(binary, name, argv, "restart", payload, OPEN_TIMEOUT)
+        made = reply.get("hc") if isinstance(reply.get("hc"), dict) else None
+        stored = reply_address(made.get("address"), name) if made else None
+        if reply.get("status") == "hand" or not stored:
+            raise Refused("%s on %s was not restarted: the remote started no terminal (%s)" % (label, name, reply.get("status")), "restart_failed")
+        kill_attach(entry)
+        fields = {"status": "open", "hc": {"address": stored, "space": hc_at.get("space"), "tab": None},
+                  "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "lastError": None, "closeTriedAt": None,
+                  "closeExpiredAt": None}
+        local = open_attach(adir, binary, name, child, stored)
+        fields["attach"] = {"address": local} if local else None
+        update_entry(adir, child, fields, drop=("closedBy", "reaped", "remoteLive", "closedSeenAt", "closedSeenSeq", "passRetryAt"))
+    say("restarted %s on %s: remote terminal %s%s" % (label, name, stored, " (attach: %s)" % local if local else ""))
+    return {"child": child, "label": label, "status": "open", "machine": name, "address": stored, "attach": local}
+
+
+# ---------------------------------------------------------------- reap of closed local children
+
+LOCAL_REAP_GRACE = 60  # seconds a closed child's terminal may stay live (a shell took over) before it is killed
+REAP_RETRY_PAUSE = 5 * 60  # seconds a pass leaves a closed entry alone after a failed terminal read, removal or kill (`reapRetryAt`)
+
+
+def reap_local_terminal(binary, entry, now):
+    """One step for the kept terminal of a closed local child: "done" (removed, gone, or not this child's: left alone),
+    "wait" (still live, inside the grace period) or "failed" (hc could not read, kill or remove it). Only a terminal that
+    still carries the child's name (`hc_name`) is killed or removed; a live one is killed only after LOCAL_REAP_GRACE
+    seconds since it was first seen live."""
+    hc_at = entry.get("hc") if isinstance(entry.get("hc"), dict) else None
+    address = hc_at.get("address") if hc_at else None
+    if not binary or not isinstance(address, str) or not VALUE_RE.match(address):
+        return "done", {}
+    info = hc_terminal_info(binary, address, with_name=True)
+    if info["state"] == "gone":
+        return "done", {}
+    if info["state"] == "unknown":
+        return "failed", {}
+    if info.get("name") != hc_name(entry["child"]):
+        return "done", {"note": "kept terminal %s has another name: left alone" % address}
+    if info["state"] == "live":
+        seen = number_of(entry.get("reapSeenAt"))
+        if seen is None:
+            return "wait", {"reapSeenAt": now}
+        if now - seen < LOCAL_REAP_GRACE:
+            return "wait", {}
+        try:
+            subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return "failed", {}
+    return ("done" if rm_remote_terminal(binary, address) in ("removed", "gone") else "failed"), {}
+
+
+def inside_path(root, path):
+    root, path = os.path.realpath(root), os.path.realpath(path)
+    return path == root or path.startswith(root + os.sep)
+
+
+def remove_closed_worktree(adir, entry, live):
+    """After the kept terminal is gone: remove the child's linked worktree (under the managed root) and its local branch the
+    safe way (`safe_ops`: never --force; clean apart from an untracked `.workflow/`; branch merged). None when there is nothing
+    to remove or it went, else the reason it stays (a later pass tries again)."""
+    cwd = entry.get("cwd")
+    if not isinstance(cwd, str) or not os.path.isdir(cwd):
+        return None
+    if not managed_worktree(cwd, adir):
+        return None
+    for d in live:
+        if isinstance(d, dict) and isinstance(d.get("cwd"), str) and isinstance(d.get("pid"), int) and not isinstance(d["pid"], bool) \
+                and inside_path(cwd, d["cwd"]) and process_alive(d["pid"]):
+            return "a running session uses the folder"
+    try:
+        import foreman_config
+        import safe_ops
+        cfg = safe_ops.ops_config(foreman_config.load_config(agent_dir=str(adir))["config"])
+        branch = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, timeout=30).stdout.decode("utf-8", "replace").strip()
+        if not branch or branch == "HEAD" or safe_ops.is_default_branch(cwd, branch, cfg["baseBranch"]):
+            return None
+        chk = safe_ops.check_worktree(cwd, cwd, cfg, top_level=(".workflow",))
+        safe_ops.remove_worktree(chk)
+    except Exception as e:  # noqa: BLE001 - a refusal or git failure leaves the worktree; the next pass retries
+        return strip_control(getattr(e, "name", None) or e)[:120]
+    return None
+
+
+def reap_local_closed(adir, out=None):
+    """The list/prune pass for `closed` local entries: end and remove the child's kept terminal (never by closing a tab or
+    pane; see reap_local_terminal), then, for an entry a close flow closed (not one `prune` closed: that child may be
+    restarted), remove its worktree and branch. Marks `reaped` and `worktreeDone`; a failure is retried after REAP_RETRY_PAUSE."""
+    out = out or sys.stdout
+    binary = hc_bin()
+    now = time.time()
+    live = None
+    for s in read_registry(adir)["sessions"]:
+        if not isinstance(s, dict) or s.get("machine") or s.get("status") != "closed" or not isinstance(s.get("child"), str):
+            continue
+        if s.get("reaped") and (s.get("worktreeDone") or pruned_closed(s)):
+            continue
+        retry = number_of(s.get("reapRetryAt"))
+        if retry is not None and now - retry < REAP_RETRY_PAUSE:
+            continue
+        fields = {}
+        if not s.get("reaped"):
+            result, extra = reap_local_terminal(binary, s, now)
+            fields.update(extra)
+            if result == "done":
+                fields["reaped"] = True
+                print("reaped %s  %s" % (s.get("label"), s.get("child")), file=out)
+            elif result == "failed":
+                fields["reapRetryAt"] = now
+        if (s.get("reaped") or fields.get("reaped")) and not pruned_closed(s) and not s.get("worktreeDone"):
+            live = read_live_files(adir) if live is None else live
+            why = remove_closed_worktree(adir, s, live)
+            if why is None:
+                fields["worktreeDone"] = True
+            else:
+                fields["reapRetryAt"] = now
+                fields["lastError"] = "worktree kept: %s" % why
+        if fields:
+            mark_entry(adir, s, **fields)
 
 
 def resolve_child(adir, target):
@@ -3010,7 +3503,7 @@ def main(argv=None):
     b.add_argument("--agent-dir", dest="agent_dir_sub")
     rm = sub.add_parser("remote")
     verbs = rm.add_subparsers(dest="verb")
-    for verb in ("probe", "open", "deliver", "close"):
+    for verb in ("probe", "open", "deliver", "close", "restart"):
         v = verbs.add_parser(verb)
         v.add_argument("--json", action="store_true")
         v.add_argument("--agent-dir", dest="agent_dir_sub")
@@ -3027,6 +3520,13 @@ def main(argv=None):
     ms.add_argument("--dry-run", action="store_true")
     ms.add_argument("--timeout", type=int, help="seconds hc waits for the remote setup (default and maximum 600)")
     ms.add_argument("--agent-dir", dest="agent_dir_sub")
+    rp = sub.add_parser("reap")
+    rp.add_argument("--agent-dir", dest="agent_dir_sub")
+    rs = sub.add_parser("restart")
+    rs.add_argument("target")
+    rs.add_argument("--json", action="store_true")
+    rs.add_argument("--dry-run", action="store_true")
+    rs.add_argument("--agent-dir", dest="agent_dir_sub")
     cr = sub.add_parser("close-remote")
     cr.add_argument("target")
     cr.add_argument("--path")
@@ -3049,6 +3549,11 @@ def main(argv=None):
             return cmd_machine_setup(a)
         if a.cmd == "close-remote":
             return cmd_close_remote(a)
+        if a.cmd == "restart":
+            return cmd_restart(a)
+        if a.cmd == "reap":
+            reap_local_closed(agent_dir(a.agent_dir))
+            return 0
         if a.cmd == "open":
             return cmd_open(a)
         if a.cmd == "list":

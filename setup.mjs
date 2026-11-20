@@ -1891,6 +1891,8 @@ async function main(argv) {
     }
 
     if (dry) {
+      const edits = [!same && "subagents block", filtered && "pi-intercom filter", reordered && "package order", comp.changed && "compaction overrides", searchOff && "extensions"].filter(Boolean);
+      if (edits.length) say(`would change ${settingsFile}: ${edits.join(", ")}`);
       for (const a of [...removeArgs, ...installArgs]) say(`would run: pi ${a.join(" ")}`);
       if (needRecord) say(`would record the managed hash in ${managedFile}`);
       if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);

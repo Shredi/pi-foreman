@@ -9,6 +9,12 @@ export { isolationDir, keychainService, macKeychainProbe };
 
 export const BRIDGE_PROVIDER = "claude-bridge";
 
+/** Notice for a claude-bridge request the provider refused for its login (HTTP 401/403, a structured field; never message text), else undefined. The login lives in the isolated folder, on a remote machine too. */
+export function bridgeAuthNotice(provider: string | undefined, status: unknown, dir: string): string | undefined {
+  if (provider !== BRIDGE_PROVIDER || (status !== 401 && status !== 403)) return undefined;
+  return `pi-foreman: the claude-bridge login was refused (HTTP ${status}); an OAuth login expires. Renew it on the machine this session runs on, also a remote one: CLAUDE_CONFIG_DIR=${dir} claude auth login`;
+}
+
 /** The doctor's `providers:` line: the providers the model registry holds in this session, sorted. */
 export function providersLine(registry: { getAll?(): { provider: string }[] }): string {
   let all: { provider: string }[] = [];
@@ -151,7 +157,7 @@ export function isolationDoctor(input: IsoDoctorInput): string[] {
   if (cloud.length) out.push(`INFO bridge isolation folder holds cloud-fetched ${cloud.join(", ")} (written by Claude Code from the account's managed settings; not host config)`);
   const login: string[] = [...loginSigns(input.dir, { env: input.env, platform: input.platform, keychain: input.keychain })];
   if (login.length) out.push(`OK   bridge login present (${login.join(", ")})`);
-  else out.push(`WARN bridge login not found for ${input.dir} — fix: run CLAUDE_CONFIG_DIR=${input.dir} claude, then /login; or set CLAUDE_CODE_OAUTH_TOKEN (claude setup-token).`);
+  else out.push(`WARN bridge login not found for ${input.dir} — fix: run CLAUDE_CONFIG_DIR=${input.dir} claude auth login (or claude, then /login); or set CLAUDE_CODE_OAUTH_TOKEN (claude setup-token). A login expires: renew it the same way, on a remote machine too.`);
   return out;
 }
 

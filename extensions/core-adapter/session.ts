@@ -42,7 +42,7 @@ import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
 
 export const SESSION_USAGE =
-  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
+  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session restart <label> | /foreman session list";
 export const CHILD_REFUSAL = "/foreman session is for a top-level foreman session only; refused in subagent children.";
 /** Seconds an outbox send waits for pi-intercom's result (a confirmation dialog may be open). */
 export const SEND_WAIT_MS = 15_000;
@@ -58,6 +58,7 @@ export type SessionCommand =
   | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean; worktree?: boolean; base?: string; summary?: string }
   | { sub: "brief"; target: string; body: string; rework?: true }
   | { sub: "close"; target: string; path?: string }
+  | { sub: "restart"; target: string }
   | { sub: "list" }
   | { error: string };
 
@@ -75,6 +76,7 @@ export function parseSessionArgs(args: string): SessionCommand {
     if (rest.length < 1 || rest.length > 2) return { error: SESSION_USAGE };
     return rest[1] ? { sub: "close", target: rest[0], path: rest[1] } : { sub: "close", target: rest[0] };
   }
+  if (sub === "restart") return rest.length === 1 ? { sub: "restart", target: rest[0] } : { error: SESSION_USAGE };
   if (sub !== "open") return { error: SESSION_USAGE };
   const out = { sub: "open" as const, label: "", brief: "", planFirst: false, focus: false, dryRun: false } as Extract<SessionCommand, { sub: "open" }>;
   const pos: string[] = [];
@@ -870,6 +872,15 @@ export async function sessionClose(d: SessionDeps, target: string, resultPath?: 
   return r;
 }
 
+/** `foreman session restart <target>`: the Python verb restarts a local or remote child (it runs hc itself). */
+export async function sessionRestart(d: SessionDeps, target: string): Promise<SessionResult> {
+  if (!d.runRemote) return { text: `${target}: not restarted (no runner)`, ok: false };
+  const r = await d.runRemote(["restart", target]);
+  const ok = !r.error && !r.timedOut && r.code === 0;
+  const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : `${target}: not restarted`);
+  return { text, ok };
+}
+
 export function sessionList(d: SessionDeps): SessionResult {
   return { text: formatList(readRegistry(d.agentDir)), ok: true };
 }
@@ -882,6 +893,7 @@ export async function runSessionCommand(d: SessionDeps, args: string): Promise<S
   if (c.sub === "open") return sessionOpen(d, c);
   if (c.sub === "brief") return sessionBrief(d, c.target, c.body, c.rework === true);
   if (c.sub === "close") return sessionClose(d, c.target, c.path);
+  if (c.sub === "restart") return sessionRestart(d, c.target);
   return sessionList(d);
 }
 

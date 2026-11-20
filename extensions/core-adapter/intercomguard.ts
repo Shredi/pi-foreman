@@ -25,6 +25,20 @@ export interface IntercomPolicy {
   isChild: boolean;
   allowRemote: boolean;
   allowOpenPane: boolean;
+  /** `<child id>@<machine>` for the bare id of a registry child on another machine, else undefined. */
+  remoteAddressOf?: (to: string) => string | undefined;
+}
+
+/** The address `<child id>@<machine>` a send to the bare child id `to` of a registry child on another machine needs (the registry's structured fields), else undefined. A label is never matched: a local session may share it. */
+export function remoteChildAddress(agentDir: string, to: string): string | undefined {
+  try {
+    const reg = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-foreman", "state", "sessions.json"), "utf8")) as { sessions?: unknown };
+    const hit = (Array.isArray(reg.sessions) ? reg.sessions : []).find((e) => e && typeof e === "object" && (e as { child?: unknown }).child === to && typeof (e as { machine?: unknown }).machine === "string" && (e as { machine: string }).machine) as { machine: string; originMachine?: unknown } | undefined;
+    if (!hit) return undefined;
+    return `${to}@${typeof hit.originMachine === "string" && hit.originMachine ? hit.originMachine : hit.machine}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Refusal reason for an `intercom` call, or undefined (allowed, or not the intercom tool). */
@@ -34,6 +48,10 @@ export function intercomBlock(toolName: string, input: unknown, p: IntercomPolic
   const i = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   if (i.openProjectPaneIfMissing && !p.allowOpenPane) {
     return "pi-foreman: intercom openProjectPaneIfMissing is refused: starting Pi in a new pane is a launch outside the role allowlist. Send to a running session, or set intercom.allowOpenPane in your foreman.json.";
+  }
+  const remote = typeof i.to === "string" && !i.to.includes("@") ? p.remoteAddressOf?.(i.to) : undefined;
+  if (remote) {
+    return `pi-foreman: ${i.to as string} is a session on another machine. Send to ${remote}; that needs intercom.allowRemote in your foreman.json on this machine${p.allowRemote ? " (it is set)" : " (it is not set)"}.`;
   }
   if (typeof i.to === "string" && i.to.includes("@") && !p.allowRemote) {
     return "pi-foreman: intercom targets of the form name@machine (cross-machine over SSH or hc) are refused. Send to a session on this machine, or set intercom.allowRemote in your foreman.json.";
