@@ -166,7 +166,7 @@ import { ownerFactsLines, ownerFormHints, ownerSectionIssues, ownerSummary, plan
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
-import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
+import { OpenPrsRefresher, ReloadingConfig, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
@@ -1249,7 +1249,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s.live) s.live.where = () => where.read();
       s.live?.setAwayGetter(() => s.selfWarm.state() === "watching" && s.presence.away());
       s.live?.setOwnerGetter(() => s.selfWarm.ownerPresence());
-      s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(s.config.config) });
+      const prCfg = new ReloadingConfig(agentDir, config, () => loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner }), (c) => c.source === "cli");
+      s.openPrs = new OpenPrsRefresher({ agentDir, prepare: () => prCfg.refresh(), config: () => get(prCfg.current().config, "radar.openPrs"), ghHost: () => { const h = get(prCfg.current().config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(prCfg.current().config) });
       s.openPrs.start();
       const live = s.live;
       waits.onChange(id, () => live?.touch());
