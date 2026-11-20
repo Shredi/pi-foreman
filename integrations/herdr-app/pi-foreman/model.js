@@ -72,7 +72,13 @@ const prExtras = (p) => ({
   ...(typeof p.head === "string" && p.head ? { head: p.head } : {}), ...(typeof p.mergeState === "string" && p.mergeState ? { mergeState: p.mergeState } : {}),
   // the required checks a passed PR still waits on (the tracker's list, set without `unsettled`); anything else is dropped
   ...(waitingNames(p.waiting).length ? { waiting: waitingNames(p.waiting) } : {}),
+  // the tracker's phases (tools.prPhases): the gate state, a gated repository (merge state blocked counts as ready), a repository with rules
+  ...(gateOf(p.gate) ? { gate: gateOf(p.gate) } : {}), ...(p.gated === true ? { gated: true } : {}), ...(p.ruled === true ? { ruled: true } : {}),
 });
+
+const GATE_STATES = ["waiting", "running", "failed", "passed"];
+// The gate info of a feed entry: a known state and at most 10 waiting names; anything else is dropped.
+const gateOf = (g) => (isObj(g) && GATE_STATES.includes(g.state) ? { state: g.state, ...(waitingNames(g.waiting).length ? { waiting: waitingNames(g.waiting) } : {}) } : null);
 
 // Names of the checks a PR waits on: non-empty strings, at most 10, each cut to 120 characters.
 const waitingNames = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim()).slice(0, 10).map((s) => s.trim().slice(0, 120)) : []);
@@ -150,7 +156,8 @@ export function jobOf(c) {
   const key = typeof raw === "string" ? raw.toLowerCase() : "";
   const state = CHECK[STATE_ALIAS[key] ?? key];
   if (!state) return null;
-  return { name: isObj(c) ? str(c.n) || str(c.name) || str(c.label) : "", state };
+  // `phase` (the tracker's tools.prPhases): 2 is a gate check, "ignore" a check that does not count; absent: phase 1
+  return { name: isObj(c) ? str(c.n) || str(c.name) || str(c.label) : "", state, ...(isObj(c) && (c.phase === 2 || c.phase === "ignore") ? { phase: c.phase } : {}) };
 }
 
 function normOpenPrs(raw) {
@@ -159,8 +166,9 @@ function normOpenPrs(raw) {
   for (const p of raw.slice(0, 300)) {
     if (!isObj(p) || int(p.number) === null) continue;
     const jobs = (Array.isArray(p.checks) ? p.checks : Array.isArray(p.jobs) ? p.jobs : []).map(jobOf).filter(Boolean);
+    // `checks` holds the phase-1 states only: the dot, pill and counts read them
     out.push({
-      number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
+      number: p.number, checks: jobs.filter((j) => !j.phase).map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
       state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p), ...(p.tracked === true ? { tracked: true } : {}),
       ...(p.hiddenRepo === true ? { hiddenRepo: true } : {}),
     });
@@ -542,6 +550,11 @@ export function prStateText(pr) {
   return d.fill === "red" ? (d.pulse ? "CI failing, still running" : "CI failing") : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
 
+/** The gate state of a PR in words (`gate waiting|running|failed|passed`, from the tracker's `gate`); "" without a gate. The text only: the dot and pill never read it. */
+export function prGateText(pr) {
+  return isObj(pr?.gate) && GATE_STATES.includes(pr.gate.state) ? `gate ${pr.gate.state}` : "";
+}
+
 /** The page of a PR: its own URL, else `<https repository URL>/pull/<number>`; "" when radar gives neither (not clickable). */
 export function prUrl(node, pr) {
   if (!isObj(pr)) return "";
@@ -817,7 +830,7 @@ const gap = (v) => v === undefined || v === null || v === "";
 // Plain fields a later copy fills in where the first entry has none
 const FILL = ["url", "repo", "headRepo", "title", "bodyText", "branch", "baseRef", "state", "mergeable", "head", "mergeState"];
 // The check block: taken as one, never mixed
-const BLOCK = ["checks", "jobs", "unsettled", "waiting"];
+const BLOCK = ["checks", "jobs", "unsettled", "waiting", "gate", "gated", "ruled"];
 
 // The first entry, with the gaps of `later` filled in and its check block replaced when it has no jobs and `later` has some. A new object.
 function mergeEntry(first, later) {
@@ -1246,7 +1259,9 @@ function pillOf(pr, d) {
   const settled = d.fill === "green" || (d.fill === "dim" && mine?.noChecks === true);
   if (!settled) return { state: null };
   if (rev && (!mine || mine.state === "unreviewed")) return { state: "unreviewed" };
-  if (pr?.mergeable === "MERGEABLE" && !["blocked", "behind", "dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
+  // a gated repository (tools.prPhases gate or merge label): the host blocks the merge until the gate and reviews are in, so blocked is ready
+  const stops = pr?.gated === true ? ["behind", "dirty", "unknown", "draft"] : ["blocked", "behind", "dirty", "unknown", "draft"];
+  if (pr?.mergeable === "MERGEABLE" && !stops.includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
   if (waitingOf(pr).length && d.fill === "green" && ms !== "behind") return { state: "required" };
   if (ms === "blocked" || ms === "behind") return { state: "waiting", merge: ms };
   return { state: null };
@@ -1285,6 +1300,7 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
       baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
       ...(pr.head || twin.head ? { head: pr.head || twin.head } : {}), ...(pr.mergeState || twin.mergeState ? { mergeState: pr.mergeState || twin.mergeState } : {}),
       ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks, ...(twin.unsettled ? { unsettled: true } : {}), ...(twin.waiting && !pr.waiting ? { waiting: twin.waiting } : {}) } : {}),
+      ...(twin.gate && !pr.gate ? { gate: twin.gate } : {}), ...(twin.gated && !pr.gated ? { gated: true } : {}), ...(twin.ruled && !pr.ruled ? { ruled: true } : {}),
       ...(pr.unsettled ? { unsettled: true } : {}),
     };
   });
@@ -1298,18 +1314,23 @@ export function prCard(pr) {
   const dotOnly = jobs.length > 0 && listOf(pr?.jobs).length > 0 && !str(pr?.title) && jobs.every((j) => !j.name);
   const dot = prDotState(pr);
   const status = !dotOnly ? "" : dot.fill === "red" ? (dot.pulse ? "checks failed, still running" : "checks failed") : dot.pulse ? "checks running" : dot.fill === "green" ? "checks passed" : "";
-  const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state }));
+  const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state, phase: j.phase }));
   const group = (key, label, state) => {
-    const names = named.filter((j) => j.state === state).map((j) => j.name);
+    const names = named.filter((j) => !j.phase && j.state === state).map((j) => j.name);
     return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
   };
   const waitNames = pillOf(pr, baseDot(pr)).state === "required" ? waitingOf(pr) : [];
   const waitGroup = { key: "waiting", label: "waiting", count: waitNames.length, names: waitNames.slice(0, CARD_CAP), more: Math.max(0, waitNames.length - CARD_CAP) };
-  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), waitGroup, group("passed", "passed", "ok")];
+  const phased = (key, label, phase) => {
+    const names = named.filter((j) => j.phase === phase).map((j) => (j.state === "fail" ? `${j.name} (failed)` : j.state === "pending" ? `${j.name} (running)` : j.name));
+    return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
+  };
+  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), waitGroup, group("passed", "passed", "ok"), phased("gate", "Gate", 2), phased("ignored", "Not counted", "ignore")];
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
-    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}${pr?.unreviewed === true ? ` · ${UNREVIEWED}` : ""}`,
+    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}${pr?.unreviewed === true ? ` · ${UNREVIEWED}` : ""}${prGateText(pr) ? ` · ${prGateText(pr)}` : ""}`,
+    ...(prGateText(pr) ? { gate: { text: prGateText(pr), tone: pr.gate.state === "failed" ? "red" : pr.gate.state === "passed" ? "green" : "amber" } } : {}),
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[3].count },

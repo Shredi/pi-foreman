@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prGateText, splitPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
@@ -479,7 +479,8 @@ export default class ForemanAgents extends View {
         .when(pr.unreviewed === true, (e) => e.child(div().text_color(tones(t).amber).child(UNREVIEWED)))
         .child(prDot(t, st)))
       .when(Boolean(line?.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
-      .when(Boolean(line) && pr.unreviewed === true, (el) => el.child(div().flex_none().text_color(tones(t).amber).child(UNREVIEWED)));
+      .when(Boolean(line) && pr.unreviewed === true, (el) => el.child(div().flex_none().text_color(tones(t).amber).child(UNREVIEWED)))
+      .when(Boolean(line) && Boolean(prGateText(pr)), (el) => el.child(div().flex_none().text_color(pr.gate.state === "failed" ? t.blocked : t.dim).child(prGateText(pr))));
     const c = prCard(pr);
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
@@ -518,7 +519,7 @@ export default class ForemanAgents extends View {
   // `maxH` bounds the card to the room on its side of the chip; what does not fit is clipped (gpui-kit style.rs:95 max_h, gpui `overflow_hidden`).
   cardView(t, c, maxH = 0) {
     const color = tones(t);
-    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green };
+    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green, gate: color.amber, ignored: t.dim }; // Gate: amber, Not counted: grey
     const shell = v_flex().w(300).p(10).gap(7).bg(t.popover).border(1).border_color(t.border).rounded(8)
       .text_size(11).text_color(t.muted)
       .when(maxH > 0, (el) => el.max_h(maxH).overflow_hidden());
@@ -534,7 +535,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(c.status), (el) => el.child(div().text_color(t.foreground).child(c.status)))
       .when(Boolean(c.note), (el) => el.child(div().text_color(t.dim).child(c.note)))
       .when(c.groups.length === 0 && !c.status && !c.note, (el) => el.child(div().text_color(t.dim).child("no job data")));
-    const state = div().text_color(t.foreground).child(c.state);
+    const state = div().text_color(c.gate?.tone === "red" ? color.red : t.foreground).child(c.state); // a failed gate colours the line red
     return shell.child(title).child(state).when(Boolean(c.excerpt), (el) => el.child(excerpt))
       .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs);
   }
