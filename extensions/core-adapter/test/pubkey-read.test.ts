@@ -101,11 +101,11 @@ test("floors: everything else under ~/.ssh stays denied for a read", () => {
 test("the gate: a public key read is allowed as floor-pubkey-read, a write is blocked", () => {
   const roots = { worktree: work, scratch: [], tmp: [], scratchBase: path.join(base, "scr"), owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false } as never;
   const g = (tool: string, input: Record<string, unknown>): unknown => gateDecide(tool, input, work, { env: () => env, roots: () => roots });
-  assert.deepEqual(g("read", { path: K }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
+  assert.deepEqual(g("read", { path: K }), { allow: true, rule: "floor-pubkey-read", layer: "default" });
   // a shell command spells the absolute path with forward slashes: in bash syntax a backslash is an escape (`D:\a\x` reads `D:ax`)
   const fssh = ssh.replace(/\\/g, "/");
-  assert.deepEqual(g("bash", { command: `cat ${fssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
-  assert.deepEqual(g("bash", { command: `ssh-keygen -l -f ${fssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
+  assert.deepEqual(g("bash", { command: `cat ${fssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "default" });
+  assert.deepEqual(g("bash", { command: `ssh-keygen -l -f ${fssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "default" });
   assert.equal((g("write", { path: K, content: "x" }) as { rule?: string }).rule, "floor-secret-path");
   assert.equal((g("read", { path: "~/.ssh/id_ed25519" }) as { rule?: string }).rule, "floor-secret-path");
   assert.notEqual((g("bash", { command: `cat ${fssh}/k.pub /etc/hosts` }) as { rule?: string } | undefined)?.rule, "floor-pubkey-read");

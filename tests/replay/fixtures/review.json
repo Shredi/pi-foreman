@@ -1,11 +1,11 @@
 {
  "foreman": {
   "r1": [
-   {"tools": [{"name": "bash", "arguments": {"command": "pip install requests"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "git branch -D old-topic || true"}}]},
    {"text": "Done."}
   ],
   "r2": [
-   {"tools": [{"name": "bash", "arguments": {"command": "pip install flask"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "git branch -D other-topic || true"}}]},
    {"text": "Done."}
   ]
  }

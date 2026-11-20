@@ -10,7 +10,6 @@ import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { slashForm } from "../pathnorm.ts";
-import { parseRule, type ParsedRule, type RuleSets } from "../rules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 
@@ -36,23 +35,17 @@ const roots = (o: { child?: boolean; worktree?: string } = {}): GateRoots => ({
 });
 const verdictOf = (r: GateResult): string => (r === undefined ? "none" : "block" in r ? `block:${r.rule}` : "allow" in r ? `allow:${r.rule}` : `ask:${r.rule}`);
 // `floors: true` leaves the fixture base out of the floor's write roots, as a root under the home directory is: the delete and overwrite floors answer first there
-function gate(tool: string, input: Record<string, unknown>, o: { child?: boolean; worktree?: string; sets?: RuleSets; floors?: boolean } = {}): string {
+function gate(tool: string, input: Record<string, unknown>, o: { child?: boolean; worktree?: string; floors?: boolean } = {}): string {
   const r = roots(o);
   return verdictOf(
     gateEvaluate(tool, input, o.worktree ?? wt, {
       env: (c) => baseFloorEnv(c, { ...(o.child ? { child: true } : {}), pkgRoot: pkg, writeRoots: o.floors ? [c] : [c, base] }),
       roots: () => r,
-      ...(o.sets ? { rules: { sets: o.sets, env: { cwd: wt, home: base, platform, checkout: wt } } } : {}),
     }).result,
   );
 }
-const sh = (command: string, o?: { child?: boolean; worktree?: string; sets?: RuleSets; floors?: boolean }): string => gate("bash", { command }, o);
+const sh = (command: string, o?: { child?: boolean; worktree?: string; floors?: boolean }): string => gate("bash", { command }, o);
 const IR = "ask:install-root-write";
-const rl = (t: string): ParsedRule => {
-  const r = parseRule(t);
-  assert.ok(r.ok, t);
-  return (r as { ok: true; rule: ParsedRule }).rule;
-};
 
 const ASKED = [
   `echo x > ${I}/dist/a.js`, `echo x >> ${I}/a`, `touch ${I}/a`, `rm ${I}/dist/a.js`, `rm -rf ${I}`, `cp a ${I}/a`, `mv a ${I}/a`, `mv ${I}/a b`, `sed -i s/a/b/ ${I}/a`,
@@ -112,18 +105,6 @@ test("main: a write spelled with @, a .. segment or file:// into a root is asked
   assert.notEqual(gate("write", { path: `${W}/src/../a`, content: "x" }), IR);
 });
 
-test("an allow rule, a built-in allow or a bare Write allow does not clear it; a deny rule still refuses first", () => {
-  const abs = (p: string): string => `${platform === "win32" ? "//" : "/"}${slashForm(platform, p)}/**`;
-  const allow: RuleSets = { allow: [rl(`Write(${abs(inst)})`), rl("Bash(*)")], ask: [], deny: [] };
-  assert.equal(gate("write", { path: `${I}/a`, content: "x" }, { sets: allow }), IR);
-  assert.equal(sh(`echo x > ${I}/a`, { sets: allow }), IR);
-  // beside it: the same rules still allow what is not in a root
-  assert.match(gate("write", { path: `${W}/src/a.ts`, content: "x" }, { sets: allow }), /^allow:/);
-  const deny: RuleSets = { allow: [], ask: [], deny: [rl(`Write(${abs(inst)})`)] };
-  assert.match(gate("write", { path: `${I}/a`, content: "x" }, { sets: deny }), /^block:rule /);
-  assert.notEqual(gate("write", { path: `${W}/src/a.ts`, content: "x" }, { sets: deny }), IR);
-});
-
 test("a child's write into a root is refused as a write outside its worktree, not asked; a child's read of it is not", () => {
   for (const l of [`echo x > ${I}/a`, `rm ${I}/a`, `cp a ${P}/a`]) assert.equal(sh(l, { child: true }), "block:child-write-outside", l);
   assert.equal(gate("write", { path: `${I}/a`, content: "x" }, { child: true }), "block:child-write-outside");
@@ -178,38 +159,6 @@ test("owner: a write to the harness checkout from another worktree asks with the
   const own = await rig(t);
   assert.equal(await own.call("write", { path: path.join(own.project, ".workflow", "scratch", "a.txt"), content: "x" }), undefined);
   assert.equal(own.titles.length, 0);
-});
-
-test("mode deny refuses it without a dialog, mode allow and auto still ask; headless refuses", async (t) => {
-  const deny = await rig(t, { mode: "deny" });
-  const res = await deny.call("write", { path: target(), content: "x" });
-  assert.ok(res?.block);
-  assert.match(String(res.reason), /permissions mode is deny/);
-  assert.equal(deny.titles.length, 0);
-  for (const mode of ["allow", "auto"]) {
-    const r = await rig(t, { mode, answers: ["deny with comment"] });
-    assert.ok((await r.call("write", { path: target(), content: "x" }))?.block, mode);
-    assert.match(r.titles[0] ?? "", /install-root-write/, mode);
-  }
-  const head = await rig(t, { headless: true });
-  assert.ok((await head.call("write", { path: target(), content: "x" }))?.block);
-  assert.equal(head.titles.length, 0);
-});
-
-test("a shell line that changes the harness checkout asks the owner in every mode, with an allow-everything classifier that is never called", async (t) => {
-  let calls = 0;
-  const verdict = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
-  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => (calls++, { content: [{ type: "text", text: verdict }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
-  for (const mode of ["auto", "allow", "ask"]) {
-    for (const command of [`git -C ${fwd(PKG)} pull`, `cd ${fwd(PKG)} && make`]) {
-      const titles: string[] = [];
-      const ui = { notify: () => undefined, confirm: async () => false, select: async (title: string) => (titles.push(title), "deny with comment"), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
-      const c = await r11Rig(t, {}, { ctx: { ui, modelRegistry: registry, [RIG_PERMISSIONS]: { mode, allow: ["Write", "Edit", "Bash(*)"], classifier: { allow: ["Anything at all."] } } }, config });
-      assert.ok((await c.call("bash", { command }))?.block, `${mode} ${command}`);
-      assert.match(titles[0] ?? "", /install-root-write/, `${mode} ${command}`);
-    }
-  }
-  assert.equal(calls, 0);
 });
 
 // list-mode `git branch` is no write for a read-only role (the read-only fence skips its catch-all), but install-root-write still counts it, as at head

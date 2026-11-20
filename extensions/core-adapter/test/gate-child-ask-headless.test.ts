@@ -10,8 +10,8 @@ import { NO_PANE_TEXT } from "../presencewait.ts";
 
 type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "builder", "reviewer"];
-const ASK = JSON.stringify({ verdict: "ask", entry: "package-install", reason: "because package-install" });
-const ALLOW = JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "because" });
+const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ALLOW = JSON.stringify({ verdict: "clear", reason: "because" });
 function registry(reply: string) {
   return { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
 }
@@ -34,7 +34,7 @@ test("headless parent: the launch binding has no askDir, and the child's ask is 
   });
   const child = await r11Rig(t, {}, { ctx: { modelRegistry: registry(ASK) }, config, child: true });
   const t0 = Date.now();
-  const res = await child.call("bash", { command: "pip install requests" });
+  const res = await child.call("bash", { command: "git branch -D old-branch" });
   assert.ok(Date.now() - t0 < 10000);
   assert.ok(res?.block);
   assert.match(String(res.reason), /nobody is at this session \(no pane\)/);
@@ -42,5 +42,5 @@ test("headless parent: the launch binding has no askDir, and the child's ask is 
   const recs = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
   const rec = recs.filter((x) => x.layer === "dialog").at(-1)!;
   assert.deepEqual([rec.verdict, rec.kind], ["deny", "child"]);
-  assert.equal(rec.reason, `${NO_PANE_TEXT} The call was: danger-install: installs, runs or removes software from a package registry.`);
+  assert.match(String(rec.reason), new RegExp(`^${NO_PANE_TEXT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} The call was: danger-git: changes git history`));
 });

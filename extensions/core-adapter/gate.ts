@@ -1,22 +1,22 @@
-// The gate's synchronous decision (r79 item 3). Pipeline: parse -> floors -> selfmod -> deny rules -> ask rules -> allow rules and built-in
-// allows -> dangerous class; index.ts adds the mode step (classifier, dialog, deny) and the log for what is left. A floor of kind `deny` blocks; a floor
-// of kind `ask` (opaque-text word match) and a self-modification rule go to the owner before the mode step, behind the deny and ask rules. Shell,
-// path and payload tools all pass through here. A handler failure denies (fail-safe).
+// The gate's synchronous decision (r79 item 3). Pipeline: parse -> floors -> selfmod -> protected targets -> built-in allows -> the judge-first list;
+// index.ts adds the judge, the dialog and the log for what is left. A floor of kind `deny` blocks; a floor of kind `ask` (opaque-text word match) and a
+// self-modification rule go to the owner; a floor of kind `judge` and a judge-first list entry (defaults.ts JUDGE_FIRST) go to the judge first, and
+// a call nothing names runs. Shell, path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { JUDGE_FIRST, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, strongerHit, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
 import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
 import { relaxPatternWords } from "./patternargs.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
-import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
+import type { ReadToolMap, RuleCall, RuleEnv } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
@@ -35,8 +35,8 @@ export interface GateDeps {
   roots?: (cwd: string) => GateRoots;
   /** Git facts for the push and switch defaults (default: real git lookups). */
   facts?: GitFacts;
-  /** The merged pattern rules and their environment (permconfig `Resolved.rules`); absent: no pattern rules. */
-  rules?: { sets: RuleSets; env: RuleEnv };
+  /** The environment the protected-target match and the built-in allows read; absent: the call's cwd as the checkout. */
+  rules?: { env: RuleEnv };
   /** `gate.readTools`: extension tool name -> path field (null: none); judged like read/grep (Read rules, path floors, owned-path allows). */
   readTools?: ReadToolMap;
   /** The merged protected targets (permconfig `Resolved.protected`); absent or empty: no protected check. */
@@ -54,16 +54,16 @@ export const NOTE_TOOLS: ReadonlySet<string> = new Set(["scratchpad", "memory_wr
 /** pi-foreman tools outside OWN_TOOLS whose prose fields (the note's markdown, the session brief) are text for a reader: prose fields skip the raw floors, every other field keeps them. */
 const PROSE_FIELD_TOOLS = new Set(["foreman_show", "foreman_session_open"]);
 
-/** What asks the owner before the mode step: a self-modification rule, an ask-kind floor hit (opaque text), a pattern `ask` rule, a protected-target match. */
-export type AskCause = "selfmod" | "floor" | "rule" | "protected";
+/** What asks the owner: a self-modification rule, an ask-kind floor hit (opaque text), a protected-target match. */
+export type AskCause = "selfmod" | "floor" | "protected";
 
 /**
- * `block`: a floor or a deny rule. `allow`: a built-in allow or an allow rule. `ask`: the dialog / ask path, never a model call and never run under
- * mode `allow`. undefined: nothing decided here.
+ * `block`: a floor. `allow`: a built-in allow. `ask`: the dialog / ask path (the protected check runs a model first). undefined: nothing decided
+ * here (the judge-first list follows; a call it does not name runs).
  */
 export type GateResult =
-  | { block: true; reason: string; rule: string; layer?: "floor" | "rule" }
-  | { allow: true; rule: string; layer?: "default" | "rule" }
+  | { block: true; reason: string; rule: string; layer?: "floor" }
+  | { allow: true; rule: string; layer?: "default" }
   | { ask: true; rule: string; reason: string; cause?: AskCause; match?: ProtectedMatch }
   | undefined;
 
@@ -88,6 +88,9 @@ const blocked = (h: FloorHit, tool: string): GateResult => {
   return r;
 };
 const askFromFloor = (h: FloorHit): GateResult => ({ ask: true, rule: h.rule, reason: h.reason, cause: "floor" });
+
+/** The dangerous-class entry of a judge-first floor hit (rule `danger-<name>`). */
+const dangerOfFloor = (h: FloorHit | null | undefined): DangerHit | null => (h?.kind === "judge" ? { name: h.rule, reason: h.reason } : null);
 
 /** A self-modification hit: a child is denied outright (with what to report), every other session kind is asked. */
 function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
@@ -394,7 +397,7 @@ export interface GateOutcome {
   danger: DangerHit | null;
   /** The parse of a shell tool's line (proposeRule reads it). */
   segments?: ShellSegment[];
-  /** A shell line that fell into the dangerous class: the names of every entry it matches (`danger` is the first); the read question's entry condition reads it. */
+  /** Every judge-first label the line matched (tests and the log read them). */
   dangers?: string[];
 }
 
@@ -403,19 +406,9 @@ const baseProg = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCas
 /** The name of the built-in allow of a plain download (`webReadAllow`, r79 Addendum S5). */
 export const WEB_READ_RULE = "builtin-web-read";
 
-/** The layer an allow name belongs to: built-in names are `default-*`, `path-*`, `builtin-*`; anything else is a pattern rule. */
-const allowLayer = (rule: string): "default" | "rule" => (rule.split("+").every((n) => /^(?:default-|path-|builtin-)/.test(n)) ? "default" : "rule");
-
-function ruleResult(v: RuleVerdict): GateResult {
-  if (v.verdict === "deny") return { block: true, rule: `rule ${v.rule}`, layer: "rule", reason: `pi-foreman: denied by the permission rule ${v.rule}.` };
-  if (v.verdict === "ask") return { ask: true, rule: `rule ${v.rule}`, reason: `the permission rule ${v.rule} asks`, cause: "rule" };
-  if (v.verdict === "allow") return { allow: true, rule: v.rule, layer: allowLayer(v.rule) };
-  return undefined;
-}
-
 /**
- * The gate's synchronous decision: parse -> floors (a deny blocks; an ask-kind hit waits behind the rules) -> selfmod -> deny rules -> ask rules ->
- * the floor ask -> allow rules and built-in allows -> dangerous class. The caller applies the mode step to what is left.
+ * The gate's synchronous decision: parse -> floors (a deny blocks) -> selfmod -> protected targets -> the floor ask -> built-in allows -> the
+ * judge-first list. The caller judges, asks or runs what is left.
  */
 export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
   // a powershell line has one word per path: each distinct path is looked up once for the whole call
@@ -432,32 +425,31 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
     const roots = rootsBase && readTools ? { ...rootsBase, readTools } : rootsBase;
     const facts = deps.facts ?? gitFacts;
     const home = env.home ?? os.homedir();
-    const rules0 = deps.rules ?? { sets: { deny: [], ask: [], allow: [] }, env: { cwd, home, platform, checkout: cwd } };
-    const rules = readTools ? { sets: rules0.sets, env: { ...rules0.env, readTools } } : rules0;
+    const rules0 = deps.rules ?? { env: { cwd, home, platform, checkout: cwd } };
+    const rules = readTools ? { env: { ...rules0.env, readTools } } : rules0;
+    const noRules = { deny: [], ask: [], allow: [] };
     const effectCtx0 = roots ? effectCtxOf({ roots, platform, cwd }) : undefined;
     const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
-    /** deny rules and ask rules, then a pending floor ask, then allow rules and the built-in allow `builtin`. */
+    /** The install-root ask, the protected check, a pending floor ask, then the built-in allow `builtin`. A judge-first floor hit allows nothing. */
     // set by the path and shell branches below before `ruled` runs: the ask of a write into an install or package root
     let installAsk: GateResult;
-    // `raw`: the call as spelled (a path tool): deny, ask and protected rules match it too, allow rules only `call`
+    // `raw`: the call as spelled (a path tool): the protected check matches it too, the built-in allow only `call`
     const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[], raw?: RuleCall): GateResult => {
       const calls = raw ? [call, raw] : [call];
-      const denied = calls.map((c) => matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, c, rules.env)).find((v) => v.verdict === "deny");
-      if (denied) return ruleResult(denied);
-      // after the owner's deny rules, before the protected check, ask rules, allow rules, built-in allows, the danger class and the mode step: nothing there clears it
+      // before the protected check, the built-in allows and the judge-first list: nothing there clears it
       if (installAsk) return installAsk;
-      if (!pending && deps.protected?.length) {
+      if ((!pending || pending.kind === "judge") && deps.protected?.length) {
         const m = calls.map((c) => matchProtected(c, segments, deps.protected ?? [], { ...rules.env, ec: effectCtx0 })).find((x) => x);
         if (m) {
           const ids = m.entries.map((e) => e.id).join(",");
           return { ask: true, rule: `protected:${ids}`, reason: `the call touches protected target ${m.entries.map((e) => `${e.id} (${e.kind} ${e.glob})`).join(", ")}`, cause: "protected", match: m };
         }
       }
-      const first = calls.map((c) => matchRules({ deny: [], ask: rules.sets.ask, allow: [] }, c, rules.env)).find((v) => v.verdict === "ask");
-      if (first) return ruleResult(first);
+      if (pending?.kind === "judge") return undefined;
       if (pending) return askFromFloor(pending);
-      return ruleResult(matchRules(rules.sets, call, rules.env, builtin));
+      const v = matchRules(noRules, call, rules.env, builtin);
+      return v.verdict === "allow" ? { allow: true, rule: v.rule, layer: "default" } : undefined;
     };
 
     // a child's `$FOREMAN_OUT` is its kept output dir (set in its process env): the guards read the line with the path in it (childscratch.ts expandOutVar)
@@ -471,7 +463,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const psSeg = toolName === "powershell" ? powershellWordSegment(psWords(cmd, cwd, home, platform), cwd) : null;
       const lineHit = lineFloors(cmd, parsed, env);
       const wordHit = psSeg ? segmentFloors(psSeg, env, [psSeg]) : null;
-      const h = lineHit?.kind === "deny" ? lineHit : wordHit?.kind === "deny" ? wordHit : (lineHit ?? wordHit);
+      const h = lineHit?.kind === "deny" ? lineHit : wordHit?.kind === "deny" ? wordHit : strongerHit(lineHit, wordHit);
       // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
       const segs = parsed.map(relaxPatternWords);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
@@ -509,9 +501,11 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
       const denv = { roots, platform, cwd, facts, floor: env };
       if (result) return { result, danger: null, segments: segs };
-      const hits = DANGER_RULES.filter((r) => r.test(dcall, denv));
-      const danger: DangerHit | null = hits.length ? { name: hits[0].name, reason: hits[0].reason } : null;
-      return { result: undefined, danger, segments: segs, ...(hits.length ? { dangers: hits.map((r) => r.name) } : {}) };
+      const hits = JUDGE_FIRST.filter((r) => r.test(dcall, denv));
+      const floorDanger = dangerOfFloor(h);
+      const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reason } : null);
+      const labels = [...new Set([...(floorDanger ? [floorDanger.name] : []), ...hits.map((r) => r.name)])];
+      return { result: undefined, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
     }
     const readField = readFieldOf(readTools, toolName);
     if (PATH_TOOLS.has(toolName) || readField !== undefined) {
@@ -527,8 +521,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(nin, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
       const scan = h?.kind === "deny" ? null : scanToolFloor(toolName, nin, cwd, env);
-      if (scan) return decided(blocked(scan, toolName));
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
+      const hs = strongerHit(h, scan);
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
@@ -538,9 +532,9 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       }
       installAsk = installRootWrite(toolName, nin, undefined, null, { roots, facts, platform, cwd });
       const pv = pathDecide(toolName, nin, cwd, roots, platform);
-      const result = ruled(ruleCallOf(toolName, nin, callCtx()), h, () => (pv ? pv.rule : readOnly && !pathWords(nin).some((w) => !sshPublicKey(w, env)) && pathWords(nin).length > 0 ? PUBKEY_READ_RULE : null), undefined, nin === inp ? undefined : ruleCallOf(toolName, inp, callCtx()));
+      const result = ruled(ruleCallOf(toolName, nin, callCtx()), hs, () => (pv ? pv.rule : readOnly && !pathWords(nin).some((w) => !sshPublicKey(w, env)) && pathWords(nin).length > 0 ? PUBKEY_READ_RULE : null), undefined, nin === inp ? undefined : ruleCallOf(toolName, inp, callCtx()));
       if (result) return decided(result);
-      return { result: undefined, danger: dangerMatch({ tool: toolName, input: nin }, { roots, platform, cwd, facts }) };
+      return { result: undefined, danger: dangerOfFloor(hs) ?? dangerMatch({ tool: toolName, input: nin }, { roots, platform, cwd, facts }) };
     }
     // own tools carry free text (ledger notes, plans) that may quote a floor pattern: only their prose fields skip the floors
     const proseExempt = PROSE_FIELD_TOOLS.has(toolName) || NOTE_TOOLS.has(toolName) || (deps.noteTools?.includes(toolName) ?? false);
@@ -555,7 +549,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
     const builtinRule = toolDefault(toolName, inp, { child: roots.child, roots, cwd, platform }) ?? (web && web.candidate && web.ok ? WEB_READ_RULE : undefined);
     const result = ruled(ruleCallOf(toolName, inp, callCtx()), ph, () => builtinRule ?? null);
     if (result) return decided(result);
-    return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp }, { roots, platform, cwd, facts }) };
+    return { result: undefined, danger: dangerOfFloor(ph) ?? dangerMatch({ tool: toolName, input: inp }, { roots, platform, cwd, facts }) };
   } catch (e) {
     return { result: { block: true, rule: "gate-error", layer: "floor", reason: `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.` }, danger: null };
   }

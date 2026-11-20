@@ -171,6 +171,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     channel: (name: string, data: unknown) => channels.get(name)?.(data),
     /** turn_start: the foreman's calls that never got a tool_result (`call` is a tool_call only) are no longer in flight. */
     turnStart: () => handlers.get("turn_start")!({}, ctx),
+    /** A finished compaction (session_compact). */
+    compact: () => handlers.get("session_compact")!({ compactionEntry: { summary: "summary" }, reason: "manual" }, ctx),
     /** session_start again (a reload): the round-state file is restored. */
     restart: () => handlers.get("session_start")!({ reason: "reload" }, ctx),
     /** The live model changes the way a /model pick does (ctx.model only; fire `model_select` for the event). */

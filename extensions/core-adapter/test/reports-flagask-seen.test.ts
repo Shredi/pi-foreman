@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
 import { readRows, storeFor } from "../reports.ts";
 
-const ESCALATE = JSON.stringify({ verdict: "escalate", entry: null, reason: "unsure" });
+const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "unsure" });
 const registry = {
   find: () => ({ id: "m" }),
   getProviderAuthStatus: () => ({ configured: false }),
@@ -20,7 +20,7 @@ test("flag-ask notice, trace off, second flag of the same command: the report al
     config: { presence: { enabled: false }, trace: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } },
     piExtra: { registerCommand: (n: string, d: { handler: (a: string, c: unknown) => Promise<void> }) => void commands.set(n, d) },
   });
-  assert.equal(await r.call("bash", { command: "pip install requests" }), undefined);
+  assert.equal(await r.call("bash", { command: "git branch -D old-topic" }), undefined);
   await commands.get("foreman")!.handler("flag-ask", r.ctx);
   await commands.get("foreman")!.handler("flag-ask", r.ctx);
   const flagged = notes.filter((n) => /flagged/.test(n));

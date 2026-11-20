@@ -29,6 +29,17 @@ tool schema the model sees, see [launch fields](#launch-fields-in-the-tool-schem
 climb-eligible run, the launch is refused: `strong launch of builder refused [strong_no_reason]: pass `reason` as
 an extra top-level field of the subagent call ...`.
 
+## The keyword `top`
+
+`model: "top"` resolves to the entry with the highest rank tier across the whole role map (every role's `model` and `strong`
+in `providers.<p>.ranks`, tier 0 is the top). Without ranks, or when no mapped model is ranked, it resolves like `strong` and
+the launch result says so. It exists for the steward's analysis helper (docs/retro.md) and is narrow on purpose: only role
+`explorer`, only in the steward session, only with a `reason` (the same top-level field as the strong launch). Every other
+use is refused with one line, `launch refused [top_not_allowed]: ...`, and the trace records `launch_refused` with that
+reason. A `top` explorer is not held to `ladder.childPolicy`: the strongest model is the point of the launch. The trace
+records `launch_top {role, model, ranked}`. Whether the session is the steward comes from session state set by
+`/foreman steward on`, never from text.
+
 `strongAbove` is 100000 by default and 200000 for the explorer (`roles.explorer.strongAbove` in the defaults): an
 explorer's read-only map grows its context by reading, a 276 s map ended climb-eligible at the old limit, and a
 stronger model would start from the same context. Raise or lower it per role, provider or ladder.

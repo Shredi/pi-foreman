@@ -297,13 +297,13 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "pip install requests"
+       "command": "git branch -D old-topic"
       }
      }
     ]
    },
    {
-    "text": "[[replay:rp_b2]] built (the install was not allowed)"
+    "text": "[[replay:rp_b2]] built (the branch delete was not allowed)"
    }
   ],
   "rp_r2": [

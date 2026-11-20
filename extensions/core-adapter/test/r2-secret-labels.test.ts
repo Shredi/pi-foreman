@@ -69,12 +69,18 @@ const answer = (role: string, line: string): string => {
   return `undecided ${(o.dangers ?? []).join("+")}`;
 };
 
-test("S3: a git revision naming a secret file is labelled danger-git-secret and left to the mode step, for main and builder, also inside bash -c", () => {
+// C: `danger-git-secret` left the judge-first list; the secret-path floor refuses a git revision path `<rev>:<secret>` itself (git show, git cat-file, also with -C)
+test("S3: a git revision naming a secret file is refused by the secret-path floor, for main and builder", () => {
   for (const role of ROLES2) {
-    for (const l of ["git show HEAD:.env", "git show :.env", "git show HEAD:.claude/.credentials.json", "bash -c 'git show HEAD:.env'"]) assert.equal(answer(role, l), "undecided danger-git-secret", `${role} ${l}`);
-    // names the floors' own text match already refuse keep that answer
-    for (const l of ["git show HEAD:~/.ssh/id_rsa", "git cat-file -p HEAD:config/.env.production"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    for (const l of ["git show HEAD:.env", "git show :.env", "git cat-file -p HEAD:.env", "git -C sub show HEAD:.env", "git show HEAD:.claude/.credentials.json",
+      "git show HEAD:~/.ssh/id_rsa", "git cat-file -p HEAD:config/.env.production"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    assert.equal(answer(role, "bash -c 'git show HEAD:.env'"), "block floor-secret-path", `${role} bash -c`);
   }
+});
+
+test("S3 harmless revision paths run: a readme, an env example, a plain show", () => {
+  for (const role of ROLES2) for (const l of ["git show HEAD:README.md", "git show HEAD:.env.example"]) assert.equal(answer(role, l), "allow default-git-read", `${role} ${l}`);
+  for (const role of ROLES2) for (const l of ["git -C sub show HEAD:README.md", "git cat-file -p HEAD:README.md"]) assert.doesNotMatch(answer(role, l), /^block/, `${role} ${l}`);
 });
 
 test("S3 controls: no label and the same decision as before for a source file, a bare revision, a format with a colon and a refspec", () => {
@@ -84,9 +90,10 @@ test("S3 controls: no label and the same decision as before for a source file, a
   }
 });
 
-test("S5: a segment that is no known read and names a policy or state folder is labelled danger-harness-folder, for main and builder", () => {
+// C: `danger-harness-folder` left the judge-first list: such a segment carries no label
+test("S5: a segment that is no known read and names a policy or state folder carries no label in C, for main and builder", () => {
   for (const role of ROLES2) {
-    for (const l of [`git add ${POLICY}`, `git add ${STATE}`]) assert.equal(answer(role, l), "undecided danger-harness-folder", `${role} ${l}`);
+    for (const l of [`git add ${POLICY}`, `git add ${STATE}`]) assert.equal(answer(role, l), role === "foreman" ? "allow default-git-add" : "undecided ", `${role} ${l}`);
   }
 });
 
@@ -99,16 +106,53 @@ test("S5 controls: cat, grep and ls of the file are no label (a child's reads st
   assert.equal(answer("foreman", "mytool a.txt"), "undecided ");
 });
 
-test("S5 without the floor env in DangerEnv: the label does not fire", () => {
+test("S5 with or without the floor env in DangerEnv: no harness-folder label (C)", () => {
   const seg = parseShell(`git add ${POLICY}`, { cwd: work });
   const env = { roots: roots("foreman"), platform: process.platform, cwd: work, facts };
   assert.equal(dangerSegment(seg[0], env), null);
-  assert.equal(dangerSegment(seg[0], { ...env, floor: envOf(false) }), "danger-harness-folder");
+  assert.equal(dangerSegment(seg[0], { ...env, floor: envOf(false) }), null);
 });
 
-test("S5: an input redirect of a policy file by an unknown program is labelled danger-harness-folder (the redirects branch); a known reader's is not", () => {
+test("S5: an input redirect of a policy file carries no label in C, by an unknown program or a known reader", () => {
   const env = { roots: roots("foreman"), platform: process.platform, cwd: work, facts, floor: envOf(false) };
-  assert.equal(dangerSegment(parseShell(`mytool < ${POLICY}`, { cwd: work })[0], env), "danger-harness-folder");
+  assert.equal(dangerSegment(parseShell(`mytool < ${POLICY}`, { cwd: work })[0], env), null);
   assert.equal(dangerSegment(parseShell(`cat < ${POLICY}`, { cwd: work })[0], env), null);
   assert.equal(dangerSegment(parseShell("mytool < a.txt", { cwd: work })[0], env), null);
+});
+
+// PR C review fix: the `<rev>:<secret>` check runs for every git subcommand, not only show and cat-file
+test("S3: a git revision naming a secret file is refused for diff, grep, difftool, merge-file and notes too", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git diff HEAD~1:.env HEAD:.env", "git grep -e . HEAD:.env", "git difftool HEAD:.env", "git merge-file -p HEAD:.env a b", "git notes show HEAD:.env"]) {
+      assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    }
+  }
+});
+
+test("S3 controls: colons that name no secret path still run for every subcommand", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git log --format=%h:%s", "git show HEAD:a:b.txt", "git diff HEAD~1 HEAD -- README.md", "git show HEAD:.env.example"]) assert.equal(answer(role, l), "allow default-git-read", `${role} ${l}`);
+    assert.doesNotMatch(answer(role, "git push origin HEAD:feature/x"), /floor-secret-path/, `${role} push`);
+  }
+});
+
+test("S3 messages: a commit message or a log search naming a secret path is no floor hit; `log -L` still is", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git commit -m 'refactor: move src/credentials.ts'", "git commit -m 'feat: read ~/.aws/credentials lazily'", "git log -S'token: ~/.netrc'", "git commit -m 'fix(floors): narrow read allow for SSH public keys in ~/.ssh'"]) {
+      assert.doesNotMatch(answer(role, l), /floor-secret-path/, `${role} ${l}`);
+    }
+    for (const l of ["git log -L1,5:.env", "git log -L 1,5:.env", "bash -c 'git log -L1,5:.env'"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+  }
+});
+
+test("S3 log: only the -L values of log and whatchanged are read; other words are options, revisions or messages", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git log --pretty -L1,5:.env", "git log --format=%h -L1,5:.env", "git whatchanged --i-still-use-this -L1,1:.env", "git log -L 1,5:.env", "git log -n 1 -L1,5:.env"]) {
+      assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    }
+    // a blob revision operand to log prints nothing, so these are harmless
+    for (const l of ["git log HEAD:.env", "git log --grep x HEAD:.env", "git commit -m 'refactor: move src/credentials.ts'", "git commit -m 'feat: read ~/.aws/credentials lazily'", "git log -S'token: ~/.netrc'", "git log --grep 'x:.env'"]) {
+      assert.doesNotMatch(answer(role, l), /floor-secret-path/, `${role} ${l}`);
+    }
+  }
 });

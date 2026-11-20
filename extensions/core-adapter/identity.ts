@@ -16,7 +16,6 @@ export const LIVE_FILE = "live.json";
 const STABLE_ID_ENV = "PI_INTERCOM_STABLE_ID";
 const PARENT_LABEL_ENV = "PI_FOREMAN_PARENT_LABEL";
 const SESSION_MODEL_ENV = "PI_FOREMAN_SESSION_MODEL";
-const PERMS_PROFILE_ENV = "PI_FOREMAN_PERMS_PROFILE";
 const PLAN_PHASE_ENV = "PI_FOREMAN_PLAN_PHASE";
 const BG_PREFIX = "PI_BG_";
 
@@ -32,7 +31,6 @@ export interface IdentityEntry {
   remoteParent: string | null;
   sessionName: string | null;
   /** The launch keys a crash restart needs again (`foreman pane-resume` sets them before Pi starts); each is written only when set. */
-  permsProfile?: string;
   planPhase?: "1";
   bgEnv?: Record<string, string>;
 }
@@ -46,10 +44,9 @@ export function captureIdentity(env: Env, piSessionId: string, sessionName: stri
   const handoff = text(env[HANDOFF_DIR_ENV]);
   const child = text(env[STABLE_ID_ENV]);
   if (!handoff || !child) return null;
-  const permsProfile = text(env[PERMS_PROFILE_ENV]);
   // on win32 pi-foreman sets PI_BG_SHELL and PI_BG_SHELL_PATH itself at every start (a backslash path would not pass BG_VALUE_RE anyway)
   const bgEnv = bgKeys(Object.entries(env).filter(([k]) => process.platform !== "win32" || (k !== "PI_BG_SHELL" && k !== "PI_BG_SHELL_PATH")));
-  return { v: 1, piSessionId, child, parentLabel: text(env[PARENT_LABEL_ENV]), handoff, model: text(env[SESSION_MODEL_ENV]), remoteParent: text(env[REMOTE_PARENT_ENV]), sessionName: text(sessionName), ...(permsProfile ? { permsProfile } : {}), ...(env[PLAN_PHASE_ENV] === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) };
+  return { v: 1, piSessionId, child, parentLabel: text(env[PARENT_LABEL_ENV]), handoff, model: text(env[SESSION_MODEL_ENV]), remoteParent: text(env[REMOTE_PARENT_ENV]), sessionName: text(sessionName), ...(env[PLAN_PHASE_ENV] === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) };
 }
 
 /** The `PI_BG_*` pairs whose name and value pass the launcher's patterns, sorted by name (a stable JSON); undefined when there are none. */
@@ -70,9 +67,8 @@ export function latestIdentity(entries: unknown[]): IdentityEntry | null {
     const child = text(d.child);
     const handoff = text(d.handoff);
     if (!piSessionId || !child || !handoff) return null;
-    const permsProfile = text(d.permsProfile);
     const bgEnv = d.bgEnv && typeof d.bgEnv === "object" && !Array.isArray(d.bgEnv) ? bgKeys(Object.entries(d.bgEnv)) : undefined;
-    return { v: 1, piSessionId, child, parentLabel: text(d.parentLabel), handoff, model: text(d.model), remoteParent: text(d.remoteParent), sessionName: text(d.sessionName), ...(permsProfile ? { permsProfile } : {}), ...(d.planPhase === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) }; // key order as captureIdentity (compared as JSON)
+    return { v: 1, piSessionId, child, parentLabel: text(d.parentLabel), handoff, model: text(d.model), remoteParent: text(d.remoteParent), sessionName: text(d.sessionName), ...(d.planPhase === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) }; // key order as captureIdentity (compared as JSON)
   }
   return null;
 }

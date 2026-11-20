@@ -24,11 +24,8 @@
    "model": "foreman-fake/foreman"
   },
   {
-   "event": "guard",
-   "role": "foreman",
-   "toolFamily": "bash",
-   "guard": "gate",
-   "decision": "ask"
+   "event": "review",
+   "decision": "escalate"
   },
   {
    "event": "blocked_open"
@@ -71,11 +68,8 @@
    "model": "foreman-fake/foreman"
   },
   {
-   "event": "guard",
-   "role": "foreman",
-   "toolFamily": "bash",
-   "guard": "gate",
-   "decision": "ask"
+   "event": "review",
+   "decision": "escalate"
   },
   {
    "event": "blocked_open"
@@ -137,11 +131,8 @@
     "model": "foreman-fake/foreman"
    },
    {
-    "event": "guard",
-    "role": "foreman",
-    "toolFamily": "bash",
-    "guard": "gate",
-    "decision": "ask"
+    "event": "review",
+    "decision": "escalate"
    },
    {
     "event": "dialog",
@@ -196,11 +187,8 @@
     "model": "foreman-fake/foreman"
    },
    {
-    "event": "guard",
-    "role": "foreman",
-    "toolFamily": "bash",
-    "guard": "gate",
-    "decision": "ask"
+    "event": "review",
+    "decision": "escalate"
    },
    {
     "event": "dialog",

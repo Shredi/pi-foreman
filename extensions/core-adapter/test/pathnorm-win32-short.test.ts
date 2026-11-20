@@ -72,7 +72,7 @@ test("rm of a glob under the worktree spelled short is inside; the same glob out
 // (core.hooksPath, not core.editor: only a floored key makes the exemption observable.)
 // pre-fix: the config target and the scratch root were compared in one spelling each, and the `~` in `RUNNER~1` made the git line a non-literal word, so
 // `git config` under the own scratch with a short-spelled root was not exempt: floor-git-config
-test("git config --file under the own scratch is exempt when spelled short (8.3) like its root; a mixed spelling stays floored", () => {
+test("git config --file under the own scratch is exempt when spelled short (8.3) like its root; a mixed spelling stays judge-first (danger-git-config in C)", () => {
   // drive-less spellings: configTargets resolves the operand with the host's path module, so this reads the same on every host
   const short = new Map<string, string>([["\\users\\runneradmin", "\\Users\\runneradmin"], ["\\users\\runner~1", "\\Users\\runneradmin"], ["\\users\\runneradmin\\scr", "\\Users\\runneradmin\\scr"], ["\\users\\runner~1\\scr", "\\Users\\runneradmin\\scr"]]);
   const f = (scratch: string, file: string): string | null => {
@@ -83,8 +83,8 @@ test("git config --file under the own scratch is exempt when spelled short (8.3)
   // every spelling of the target must sit under some spelling of the root, so a mixed pair stays floored (conservative); the same spelling of both is exempt
   assert.equal(f("/Users/RUNNER~1/scr", "/Users/RUNNER~1/scr/mine/cfg"), null);
   assert.equal(f("/Users/runneradmin/scr", "/Users/runneradmin/scr/mine/cfg"), null);
-  assert.equal(f("/Users/runneradmin/scr", "/Users/RUNNER~1/scr/mine/cfg"), "floor-git-config");
-  assert.equal(f("/Users/runneradmin/scr", "/Users/RUNNER~1/other/cfg"), "floor-git-config");
+  assert.equal(f("/Users/runneradmin/scr", "/Users/RUNNER~1/scr/mine/cfg"), "danger-git-config");
+  assert.equal(f("/Users/runneradmin/scr", "/Users/RUNNER~1/other/cfg"), "danger-git-config");
 });
 
 const tmp = fs.realpathSync.native(mkTestTmp("pf79-short-"));

@@ -580,7 +580,7 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "cd . && ledger -f .workflow/LEDGER-lh.md mark 1"
+       "command": "cd . && ledger -f .workflow/LEDGER-lh.md mark 1 && git branch -D old-topic"
       }
      }
     ]
@@ -590,7 +590,7 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "ledger mark 2"
+       "command": "ledger mark 2 && git branch -D old-topic"
       }
      }
     ]

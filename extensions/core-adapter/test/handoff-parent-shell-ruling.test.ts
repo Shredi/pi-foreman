@@ -37,12 +37,12 @@ test("redirect, cat >, heredoc, cp and mv into ruling*.md / brief*.md of an open
   }
 });
 
-test("other names of an opened dir, other dirs and a missing opened root stay write-outside", { skip: posixOnly }, () => {
+test("other names of an opened dir, other dirs and a missing opened root carry no label in C", { skip: posixOnly }, () => {
   const cases: Array<[string, Partial<GateRoots>?]> = [
     [`echo x > ${O}/notes.md`], [`echo x > ${O}/ask.md`], [`echo x > ${O}/result.md`], [`cp ${wt}/a ${O}/close.json`], [`echo x > ${O}/ruling.txt`], [`echo x > ${O}/work/ruling.md`],
     [`echo x > ${F}/ruling.md`], [`cp ${wt}/a ${F}/brief.md`], [`echo x > ${O}/ruling.md`, { openedHandoffs: [] }],
   ];
-  for (const [l, o] of cases) assert.deepEqual(shell(l, o), { danger: "danger-write-outside" }, l);
+  for (const [l, o] of cases) assert.deepEqual(shell(l, o), { danger: null }, l); // C: no label
 });
 
 test("every target must be a ruling target: a second redirect into the worktree or another dir is no allow", { skip: posixOnly }, () => {

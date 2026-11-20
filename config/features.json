@@ -365,8 +365,8 @@
     {
       "id": "permissions",
       "area": "safety",
-      "title": "Permission rules",
-      "purpose": "Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. The user file can also name work folders: reads there are allowed and an auto folder lets writes no other root covers run as under mode auto, except in protected places (`/foreman perms list` shows them).",
+      "title": "Permission settings",
+      "purpose": "Default allow: the gate refuses only the floors (a short fixed list of dangerous commands), and for the judge-first kinds (deletes and writes whose target the gate cannot read, git config and remotes, losing local git work, terminal inject, whole-disk scans, protected targets) the judge looks first; the owner is asked when it does not clear the call. Your `permissions.json` (user, project and session layers) holds protected entries and work folders (`/foreman perms list` shows them). Old mode, profile and rule-list keys are accepted and ignored; the doctor names each one still set.",
       "doc": "docs/permissions.md",
       "keys": ["permissions.profile", "paths.hubWorkflow"],
       "commands": [],
@@ -700,13 +700,26 @@
       "area": "retro",
       "toggle": {"on": {"retro.report": true}, "off": {"retro.report": false}},
       "title": "Fault reports",
-      "purpose": "Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over.",
+      "purpose": "Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over, and the reports of a remote or parent-opened session are imported when its notice arrives (`foreman reports import`).",
       "doc": "docs/retro.md#reporting-at-the-source",
       "keys": ["retro.report", "retro.expireDays", "retro.startNote"],
       "commands": ["foreman reports", "/foreman flag-ask"],
       "switch": {"key": "retro.report", "on": "true"},
       "state": "on",
       "enable": "{\"retro\": {\"report\": true}}"
+    },
+    {
+      "id": "steward",
+      "area": "retro",
+      "toggle": {"on": {"steward.enabled": true}, "off": {"steward.enabled": false}},
+      "title": "Report steward",
+      "purpose": "Opt-in. `/foreman steward on` makes one main session the steward of the repository's report list: it groups the reports, starts one read-only helper on the strongest ranked model (`model: \"top\"`) to check each group, writes a steward report with the review-round numbers and proposes rounds, one question per round; it never starts a round without the owner's yes. A watch wakes it when enough new reports arrived or the oldest waited too long. Without a steward the main session is shown the repeated open reports at its start.",
+      "doc": "docs/retro.md#steward",
+      "keys": ["steward.enabled", "steward.minNew", "steward.maxWaitHours", "steward.checkMinutes", "steward.maxProposals"],
+      "commands": ["/foreman steward"],
+      "switch": {"key": "steward.enabled", "on": "true"},
+      "state": "off",
+      "enable": "{\"steward\": {\"enabled\": true}}"
     },
     {
       "id": "close",
@@ -802,18 +815,6 @@
       "doc": "docs/permissions.md#the-steps",
       "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes", "gate.mode", "gate.readTools", "safety.git"],
       "commands": ["/foreman perms"],
-      "switch": null,
-      "state": "on",
-      "enable": ""
-    },
-    {
-      "id": "rule-workshop",
-      "area": "safety",
-      "title": "Permission rule workshop",
-      "purpose": "`foreman perms suggest` groups the decisions that cost a dialog or a classifier call in the gate log into candidate generic rules and sentences, with a safety note each and a replay against the logged history (a lower bound, since the log keeps redacted shapes). `foreman perms adopt` re-validates chosen candidates and writes them to your user file at your terminal; `foreman perms review` flags adopted rules that never fire. The owner dialog also offers to remember the exact command.",
-      "doc": "docs/permissions.md#commands",
-      "keys": [],
-      "commands": ["foreman perms"],
       "switch": null,
       "state": "on",
       "enable": ""

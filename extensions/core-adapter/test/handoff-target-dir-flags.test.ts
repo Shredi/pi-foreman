@@ -33,7 +33,8 @@ const seen = (kind: string, command: string): string => {
   const res = out.result as { allow?: boolean; block?: boolean; rule?: string } | undefined;
   return res?.block ? `block:${res.rule}` : out.danger?.name ?? (res?.allow ? `allow:${res.rule}` : "none");
 };
-const REFUSED: Record<string, string> = { sub: "block:child-write-outside", own: "danger-write-outside", parent: "danger-write-outside" };
+// C: the label `danger-write-outside` is gone: a write outside for the session (own, parent) carries no label and runs; the subagent child keeps the block
+const REFUSED: Record<string, string> = { sub: "block:child-write-outside", own: "none", parent: "none" };
 const work = (kind: string): string => path.join(kind === "parent" ? O : H, "work");
 
 test("any option other than the known-safe flags gives main's result (the real write may land in X)", { skip: posixOnly }, () => {

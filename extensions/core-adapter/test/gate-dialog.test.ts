@@ -1,5 +1,5 @@
-// r79 items 5, 6, 10, 11: the gate's ask routing per session kind: the owner dialog (four options), the deny texts of a child and a headless session.
-// The "allow for session" option and the round-session ask.md routing are gone; a session opened by another session asks in its own pane.
+// r79 items 5, 6, 10, 11: the gate's ask routing per session kind: the owner dialog (three options), the deny texts of a child and a headless session.
+// A call on the judge-first list that the judge does not clear (unsure) asks. The remember options and the round-session ask.md routing are gone; a session opened by another session asks in its own pane.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -23,7 +23,7 @@ function fakeRegistry(replies: Reply[], found = true) {
   };
   return { registry, calls };
 }
-const ESCALATE = JSON.stringify({ verdict: "escalate", entry: null, reason: "unsure" });
+const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
 // presence off: an owner dialog in a rig awaits the presence probe otherwise
 const baseConfig = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } };
 
@@ -48,16 +48,15 @@ async function rig(t: Parameters<typeof r11Rig>[0], replies: Reply[], o: { answe
   return { ...r, reg, titles, optionLists, log };
 }
 
-const CMD = { command: "pip install requests" };
+const CMD = { command: "git branch -D old-branch" };
 
-test("owner ask: the dialog shows the cause and the command and offers the five options; allow once continues", async (t) => {
+test("owner ask: the dialog shows the cause and the command and offers the three options; allow once continues", async (t) => {
   const r = await rig(t, [ESCALATE], { answers: ["allow once"] });
   assert.equal(await r.call("bash", CMD), undefined);
-  // B2.3: a readable, glob-free command also offers the exact-command option next to "allow and remember"
-  assert.deepEqual(r.optionLists[0], ["allow once", "allow and remember", "allow and remember this exact command", "deny with comment", "deny and stop"]);
+  assert.deepEqual(r.optionLists[0], ["allow once", "deny with comment", "deny and stop"]);
   assert.match(r.titles[0], /^pi-foreman: bash asks\n/);
-  assert.match(r.titles[0], /cause: danger-install/);
-  assert.match(r.titles[0], /pip install requests/);
+  assert.match(r.titles[0], /cause: danger-git/);
+  assert.match(r.titles[0], /git branch -D old-branch/);
   const d = r.events("dialog").at(-1)!;
   assert.deepEqual([d.guard, d.cause, d.kind, d.decision], ["gate", "danger", "owner", "allow-once"]);
   assert.deepEqual([r.log().at(-1)!.layer, r.log().at(-1)!.verdict], ["dialog", "allow"]);
@@ -73,15 +72,15 @@ test("deny with comment: typed text goes to the agent; an empty text is a plain 
 });
 
 test("deny and stop blocks every later gated call until the next user prompt", async (t) => {
-  const r = await rig(t, [ESCALATE], { answers: ["deny and stop"] });
+  const r = await rig(t, [ESCALATE], { answers: ["deny and stop", "allow once"] });
   const res = await r.call("bash", CMD);
   assert.ok(res && res.block);
   assert.match(String(res.reason), /stop and ask the owner/);
-  const next = await r.call("bash", { command: "terraform plan" });
+  const next = await r.call("bash", { command: "git branch -D other-branch" });
   assert.ok(next && next.block);
   assert.equal(next.reason, res.reason);
   await r.ownerPrompt("continue please");
-  assert.equal(await r.call("bash", { command: "terraform plan" }), undefined);
+  assert.equal(await r.call("bash", { command: "git branch -D other-branch" }), undefined);
 });
 
 test("a dismissed dialog is a deny", async (t) => {
@@ -94,7 +93,7 @@ test("a dismissed dialog is a deny", async (t) => {
 
 test("a command of many lines is cut in the dialog and the full text goes to a file", async (t) => {
   const r = await rig(t, [ESCALATE], { answers: ["allow once"] });
-  await r.call("bash", { command: `pip install x\n${Array.from({ length: 200 }, (_, i) => `echo line${i}`).join("\n")}` });
+  await r.call("bash", { command: `git branch -D x\n${Array.from({ length: 200 }, (_, i) => `echo line${i}`).join("\n")}` });
   assert.match(r.titles[0], /lines omitted/);
   assert.ok(r.titles[0].split("\n").length < 100);
 });
@@ -115,7 +114,7 @@ test("dialogReport counts the gate dialog records", async (t) => {
   const r = await rig(t, [ESCALATE], { answers: ["allow once", "deny and stop"] });
   await r.call("bash", CMD);
   await r.ownerPrompt("x");
-  await r.call("bash", { command: "pip install flask" });
+  await r.call("bash", { command: "git branch -D other-branch" });
   const dir = path.join(r.agentDir, "pi-foreman", "state");
   const f = fs.readdirSync(dir).find((n) => n.startsWith("trace-") && n.endsWith(".jsonl"))!;
   const rep = dialogReport(path.join(dir, f));
@@ -125,7 +124,7 @@ test("dialogReport counts the gate dialog records", async (t) => {
 test("every gate record has its own unique id, the dialog record included", async (t) => {
   const r = await rig(t, [ESCALATE], { answers: ["allow once", "deny and stop"] });
   await r.call("bash", CMD);
-  await r.call("bash", { command: "pip install flask" });
+  await r.call("bash", { command: "git branch -D other-branch" });
   const recs = r.log();
   assert.ok(recs.some((x) => x.layer === "dialog"));
   for (const x of recs) assert.match(String(x.id), /^[0-9a-f]{12}$/);
@@ -141,7 +140,6 @@ test("selfmod rule, owner: the dialog names the cause selfmod; no classifier cal
   assert.doesNotMatch(String((await r.call("write", SETTINGS))?.reason), /self-modification/);
   assert.equal(r.titles.length, 1);
   assert.match(r.titles[0], /cause: .*selfmod-project-settings/);
-  assert.equal(r.optionLists[0].includes("allow and remember"), false, "no remember for a selfmod ask");
   assert.equal(r.reg.calls.length, 0);
   const d = r.events("dialog").at(-1)!;
   assert.deepEqual([d.rule, d.decision], ["self-modification", "allow-once"]);

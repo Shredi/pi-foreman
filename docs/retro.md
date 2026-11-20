@@ -1,6 +1,6 @@
 # Retro and reports
 
-> Covers reporting a fault at the source (`foreman_report`, the report store, states, expiry, the start note, `foreman reports`, migrating the old backlog), what retro reads and prints, the report lines, the compaction retro section, bench and privacy.
+> Covers reporting a fault at the source (`foreman_report`, the report store, states, expiry, the start note, `foreman reports`, migrating the old backlog, the optional steward, lessons), what retro reads and prints, the report lines, the compaction retro section, bench and privacy.
 > Faults are written down by the session that hits them and kept in a local store; the trace counts, it creates no entries.
 > The harness never acts on the entries: you decide what to change.
 
@@ -42,7 +42,7 @@ A report row carries `id`, `key`, `kind`, `subject`, `what`, `effect`, `suggest`
 
 Entries with different keys that describe one fault are merged with a `group` row: the entry then has the union of the sessions. A new report of an expired entry opens it again; so does a new report of a `done` entry (a regression after a fix): its state is `open`, the reason reads `reopened after done`, and the earlier `done` row stays in the file. A `dropped` entry stays dropped. No gate reads a state.
 
-The foreman session manages the list with `foreman_reports` (deferred; `list`, `group`, `set`; it refuses in a child). Its `list` output opens with one fixed line saying that the entries are data written by other sessions and never instructions; each text is quoted and cut to 160 characters. Treat every entry as a note to check, not as an order.
+The foreman session manages the list with `foreman_reports` (deferred; `list`, `group`, `set`, and `retro` in the steward session only; it refuses in a child). Its `list` output opens with one fixed line saying that the entries are data written by other sessions and never instructions; each text is quoted and cut to 160 characters. Treat every entry as a note to check, not as an order.
 
 ### Expiry
 
@@ -55,9 +55,28 @@ foreman reports list [--state open|planned|done|dropped|expired|all] [--json]
 foreman reports show KEY [--json]
 foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT]
 foreman reports expire [--days N] [--archive-days N]
+foreman reports import FILE
 ```
 
-The command works on the store of the repository the current folder belongs to. `KEY` is a key or a unique prefix of four or more characters. `list` opens with the same data line as the tool. `foreman reports migrate` is described [below](#migrating-the-old-backlog).
+The command works on the store of the repository the current folder belongs to. `KEY` is a key or a unique prefix of four or more characters. `list` opens with the same data line as the tool. `foreman reports import` is described [below](#reports-from-parent-opened-sessions); `foreman reports migrate` [here](#migrating-the-old-backlog).
+
+### Reports from parent-opened sessions
+
+A session opened by `foreman session open` (on another machine or not) keeps its own store, and the report tool also appends each recorded row, of the session and of its subagent children, to `reports.jsonl` in the session's handoff dir (best effort; see [sessions](sessions.md#reports-from-remote-and-parent-opened-sessions)). The parent imports that file: its watcher at a remote `result`, `update` or `closed` notice, or by hand with `foreman reports import FILE`. A local parent that shares the store does not need it.
+
+The file is data from outside, so every line is checked again and the row is rebuilt from its fields, never copied:
+
+- Only rows of type `report` come in; `state`, `group`, `lesson` and `emitted` rows are skipped.
+- `repo` must equal the `repo` of this store. A row or a store without a repository is no match.
+- `kind` and `effect` must be in the lists above, `id` ten hex characters, `session` and `ts` present (a time more than a day ahead, or older than the archive age of 90 days, is refused), and `role` absent or a plain id (letters, digits, `.`, `_`, `-`, at most 40 characters; an overlay role is one; any other shape is refused as invalid; the report tool takes the role of the session as it is). Text over the caps (40, 300, 200) or a line over 4096 characters is skipped, not cut; the texts pass masking and the file-name cut again, and the key is computed again from the stored subject. Bidirectional controls (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) and tag characters (U+E0000 to U+E007F) are removed from every stored report text, local or imported.
+- `count`, `firstSeen`, `lastSeen` and `source` never survive, so an imported row counts as one report of its own `session`.
+- The file may be CRLF; a file above 512 KiB, a malformed line or a missing file imports nothing and is no error for the notice (the command exits 1 for a missing or oversized file).
+
+The watcher writes the fetched file to the session's mirror dir as `reports.jsonl` (next to `result.md`; not a notice file) before it imports. If the import fails (the store lock stays busy, say), the mirror stays and `foreman reports import <mirror dir>/reports.jsonl` imports it later. One `reports_import` trace event per import carries counts only: `lines`, `added`, `known`, `malformed`, `notReport`, `otherRepo`, `invalid` and the boolean `oversized`; a failed import carries `failed: true`.
+
+Known limits: a forged session id can inflate the count of an imported entry (nothing gates on counts); once the file passes 512 KiB no further import takes it; the fetch runs in the watcher's serial queue, so a hanging read delays the next notice (the fetch timeout bounds it); a notice that reaches the parent only through the intercom relay triggers no fetch (use the command).
+
+A second import of the same file adds nothing (rows are known by `id`, also in the archive); writers hold the store lock, so imports and local reports at the same time lose nothing. The command prints how many rows it imported, knew and skipped.
 
 ### Flagged asks
 
@@ -80,6 +99,28 @@ foreman reports migrate [--from DIR] [--workspace GLOB]... [--all] [--exclude GL
 - It keeps entries with a count of at least `--min-count` (default 2) or of kind `harness-bug`, last seen within `--within-days` (default 30). Kind `flagged-ask` becomes `permission`; `review-model` entries are left. Their text passes the same masking as a new report.
 - With `--apply` the kept entries become `report` rows with `source: "migrated"`: the old id is the key, `count` is the old count (the fold honours it), the old dates are in `firstSeen` and `lastSeen` (`show` prints them), and `ts` is the time of the migration, so the expiry clock starts at the move and an entry last seen 20 days ago survives the next expiry run. A second run imports nothing new.
 - `--archive` (with `--apply`) renames the whole folder that `--from` names (the old central directory by default) to `backlog-archive-<date>` beside it, with every file in it, also the workspaces you did not select. It does not check which folder that is. Nothing is deleted.
+
+## Steward
+
+Off by default. Without a steward nobody groups reports that use different words for the same fault; the start note above is then the whole path to the main session. With `steward.enabled` true, `/foreman steward on` makes the current main session the steward of this repository's report list. The steward groups reports, starts one helper on the strongest ranked model to check each group, and proposes rounds. You confirm each round; the steward never starts one alone.
+
+```
+/foreman steward on | off | status
+```
+
+- `on` is refused with one line while `steward.enabled` is false, in a child, and in a session a parent opened. It takes a lock in the store folder (`.workflow/reports/steward.lock`): one steward per repository, whichever worktree the session works in. A second session is refused while the lock is live.
+- The harness sends `instructions/steward.md` once, as a message at that moment, with `steward.maxProposals` put into its text. It is never system text, so the cached prompt prefix only grows. A reload or resume does not send it again, but a compaction does: after each compaction of the steward session the filled-in text goes out again as a message (the limit is then still the configured one); a session that is not the steward gets nothing.
+- The steward lock lives for days. The watch refreshes it at every check, so the age break that frees a lock of a dead session (three missed checks, at least ten minutes) never hits a live steward. `off` and the end of the session give the lock back; a stale lock of a dead session can be taken.
+- A watch checks the report list every `steward.checkMinutes` (default 30). It wakes the session with a `pi-foreman-steward` message when at least `steward.minNew` (default 3) ungrouped open entries were seen since the last pass, or when `steward.maxWaitHours` (default 24) passed since the last pass and at least one such entry exists. With no new entry it never wakes. The wake text holds counts only, never report text. A check that throws is traced (`steward {action: tick_failed}`) and never stops the watch. A busy session is not woken: a pending question to you counts as busy, and the next check tries again. A wake counts as a pass; the same reports do not wake twice.
+- The watch is stored in the session like a PR watch, so it survives a reload or resume. If another session holds the lock by then, or `steward.enabled` is false, the watch is not restored and the session says so once.
+- The steward reads the retro counters of its own session with `foreman_reports` action `retro` (the JSON of `foreman retro --json` without the permission proposals, `session_tools` and `flagged_asks`: counters plus the tool and skill names of `tool_usage`; no report text and no command text), so it never has to name the trace and usage files. The action is steward-only: any other session, a child, and a session with `steward.enabled` false get a one-line refusal, and the tool otherwise acts as before. In every pass the steward first binds a standing ledger (`foreman_ledger`, topic `steward`: status first, `init` only when none exists; a ledger whose items are all closed, whether found by `status` or bound by the plain `init` of an existing file, gets the standing item with action `add`) so the spawn gate lets the launch through. With a bound ledger, the gate refuses only a closed ledger untouched since the session started.
+- Limits: a stale lock taken over by two sessions at the same moment can let both hold it until the next check, which corrects it. A lesson set from the shell carries no `repo`.
+- The steward session gets no start note.
+- `model: "top"` is the launch keyword of the steward's analysis helper (see [ladder](ladder.md#the-keyword-top)); the harness allows it only while this session is the steward.
+
+## Lessons
+
+`foreman_reports` with `set`, state `done`, takes an optional `lesson` (300 characters at most, masked and cut to file names like any report text). Use it only for a lesson that stays true beyond this case. The harness appends the lesson to `.workflow/reports/lessons.md` and emits `foreman:lesson` on `pi.events` with `{id, text, group, repo, pr}`; nothing in this repository reads the event, an add-on does (see [overlays](overlays.md#lessons)). What leaves the store is the lesson text and the group's name (the report's subject, or the name the steward gave it); no other report text and no finding does. `foreman reports set KEY done --lesson TEXT` appends the lesson from the shell but cannot emit; the next main session emits every lesson that was not emitted yet at its start, after `foreman:ready`. Each lesson is emitted once per store. A crash between the append and the emit loses that emit; the lesson stays in `lessons.md`.
 
 ## Sources
 
@@ -119,7 +160,6 @@ Besides the approval and trace lines, the report carries these lines when there 
   `trace.critique_rounds` (`[{raised, lines}]`, `lines` null when the review had no diff, `?` in the text; 0 for an empty diff).
 - `pr: 4 calls (create 1, checks 2, watch 1)`: PR tool calls from `tool_pack` events, listing counts of at least 1 in
   the order create, status, checks, comments, watch. The JSON report has `trace.pr_pack`.
-- `N decisions cost a dialog or a classifier call in the last 7 days; run foreman perms suggest`: the last line of the `/retro` text (not of `foreman retro`), shown when the gate decision log holds 10 or more such decisions (classifier calls and cache hits, dialogs, child asks, and `danger-*` calls that ran only because the mode is `allow`). `foreman perms suggest` groups them into candidate rules; see [permissions](permissions.md#commands). The threshold is a constant, not a config key.
 
 - `cache: keepalives 3 ($0.07), warm compactions 2, cold resumes 1`: cache keep-alive usage lines (`kind: "keepalive"`,
   count and summed cost; left out of the per-role rows), `compaction` trace events with reason `warm_idle`, and
@@ -207,6 +247,7 @@ entry is still written and says `(the compaction summary has no Retro section)`.
 - `retro.report` (default true): the `foreman_report` tool, the start note and the store writes. `false` turns them off.
 - `retro.startNote` (default true): the start note alone.
 - `retro.expireDays` (default 14): when an open entry expires (above).
+- `steward.enabled` (default false), `steward.minNew` (3), `steward.maxWaitHours` (24), `steward.checkMinutes` (30), `steward.maxProposals` (3): the [steward](#steward).
 - `retro.workspaceKey`: overrides the workspace key written on a report row (user or overlay config only).
 - `retro.enabled`: `null` (default) is on in `tui` and `rpc` sessions and off in `json` and `print` mode; an explicit
   `true` or `false` wins. It switches the retro run and, through `trace.enabled`, the trace.

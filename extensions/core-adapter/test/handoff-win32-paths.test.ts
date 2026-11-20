@@ -46,12 +46,12 @@ for (const lower of [false, true]) {
     }
   });
 
-  test(`rulingWrite, win32 (${tag}): a ruling name of an opened dir is an allow, other names and dirs are not`, { skip: !win }, () => {
+  test(`rulingWrite, win32 (${tag}): a ruling name of an opened dir is an allow, other names and dirs carry no label`, { skip: !win }, () => {
     assert.equal(seen(PARENT, `cp ${w}/a ${o}/ruling.md`), "allow:default-write-handoff-ruling");
     mkSrc();
-    assert.equal(seen(PARENT, `cp ${w}/a ${o}`), "danger-write-outside");
-    assert.equal(seen(PARENT, `cp ${w}/a ${o}/notes.md`), "danger-write-outside");
-    assert.equal(seen(PARENT, `cp ${w}/a ${x}/ruling.md`), "danger-write-outside");
+    assert.equal(seen(PARENT, `cp ${w}/a ${o}`), "none"); // C: the foreman's write outside carries no label
+    assert.equal(seen(PARENT, `cp ${w}/a ${o}/notes.md`), "none");
+    assert.equal(seen(PARENT, `cp ${w}/a ${x}/ruling.md`), "none");
   });
 
   test(`tee floor, win32 (${tag}): a subagent tee outside is child-write-outside, the sinks and own names are not`, { skip: !win }, () => {
