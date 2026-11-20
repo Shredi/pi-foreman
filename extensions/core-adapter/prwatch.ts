@@ -423,7 +423,7 @@ export function baselineOf(snap: WatchSnapshot): WatchState {
 
 /** The gate result of a head: settled once there is a gate run, no gate run is pending and no gate name is still to come (`fail` when one failed or is missing). */
 function gateResultOf(snap: { head: string; runs: Run[]; gate?: GateInfo }): { settled: boolean; pending: boolean; result: "pass" | "fail" } {
-  const g = snap.runs.filter((r) => r.phase === 2);
+  const g = snap.runs.filter((r) => r.phase === 2 && !r.noAnswer);
   const pending = g.some((r) => r.bucket === "pending" && !r.noAnswer);
   const result = g.some((r) => r.bucket === "failed" || r.bucket === "missing") ? "fail" : "pass";
   return { settled: g.length > 0 && !pending && !snap.gate?.waiting?.length, pending, result };

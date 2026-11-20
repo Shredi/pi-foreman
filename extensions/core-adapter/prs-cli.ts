@@ -579,7 +579,7 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     // every gating run passed and only required names have no run: merge-time (the base's recent merged PRs ran none of the missing names before their merge), pre-merge (one of them did)
     // or not learnable (no complete answer); a source run merged in is counted, a failure is none of these (it is immediate)
     const waiting = waitingOf(e.snap.runs, e.snap.required);
-    const ran = waiting.length > 0 && facts && !facts.unknown && stored?.learn ? phaseOne(stored.learn.ran) : undefined;
+    const ran = waiting.length > 0 && facts && !facts.unknown && stored?.learn ? stored.learn.ran : undefined;
     const mergeTime = ran ? (e.snap.required ?? []).filter((n) => !ran.includes(n)) : [];
     if (ran && waiting.every((n) => mergeTime.includes(n))) {
       // case 1: the merge-time names do not veto; the pass stands at once and the names ride along

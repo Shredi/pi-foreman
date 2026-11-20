@@ -94,6 +94,9 @@ test("the gate result: a missing gate run is a fail; a made-up pending run of a 
   assert.ok(na.delta?.events.includes("gate checks finished: pass"), String(na.delta?.events));
   const running = prDelta(base, snap([run("build", "passed"), run("deploy", "pending")]), false);
   assert.match(text(running.delta), /\n- gate running/);
+  // the stand-in alone is no gate run: no `gate checks finished: pass`
+  const only = prDelta(base, snap([run("build", "passed"), noAnswer]), false);
+  assert.ok(!only.delta?.events.some((e) => e.startsWith("gate checks finished")), String(only.delta?.events));
 });
 
 test("gate_settled follows the wake rules: a rule set without it sends no `gate checks finished`", () => {

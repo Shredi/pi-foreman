@@ -67,8 +67,8 @@ export function globMatch(pattern: string, text: string): boolean {
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
 /** A non-empty list of non-empty glob strings, or an error text. */
-export function parseGlobs(v: unknown, what: string): string[] | string {
-  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_GLOBS) return `${what} must be a list of 1..${MAX_GLOBS} globs`;
+export function parseGlobs(v: unknown, what: string, max = MAX_GLOBS): string[] | string {
+  if (!Array.isArray(v) || v.length === 0 || v.length > max) return `${what} must be a list of 1..${max} globs`;
   const out: string[] = [];
   for (const g of v) {
     if (typeof g !== "string" || g.trim() === "" || g.length > MAX_GLOB || /[\p{Cc}]/u.test(g)) return `${what} has an invalid glob`;

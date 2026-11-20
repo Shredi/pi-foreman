@@ -46,7 +46,7 @@ function nameGlobs(v: unknown, what: string): string[] | string {
   if (v === undefined) return [];
   if (!Array.isArray(v) || v.length > MAX_NAMES) return `${what} must be a list of at most ${MAX_NAMES} globs`;
   if (v.length === 0) return [];
-  return parseGlobs(v, what);
+  return parseGlobs(v, what, MAX_NAMES);
 }
 
 function parseRule(raw: unknown): PhaseRule | string {
