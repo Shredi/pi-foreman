@@ -47,7 +47,7 @@ const installs = (env) => {
   }
 };
 const managed = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
-const specs = DEFAULTS.map((id) => ({ polish: "npm:pi-polish@0.1.2", quiver: "npm:pi-quiver@6.14.2", memory: "npm:pi-memory@0.4.2" })[id]);
+const specs = DEFAULTS.map((id) => ({ polish: "npm:pi-polish@0.1.13", quiver: "npm:pi-quiver@6.15.2", memory: "npm:pi-memory@0.4.2" })[id]);
 
 test("a plain non-interactive run installs the default add-ons, says so, and records them as offered", () => {
   const env = fresh();
