@@ -10,7 +10,7 @@ import { isTrackedKey, keyString } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { DEFAULT_RULES, wakes } from "./prwake.ts";
 import type { WakeEvent, WakeKind, WakeRule } from "./prwake.ts";
-import { gatedRepo, mergeLabelOf, phaseOf } from "./prphases.ts";
+import { gatedRepo, mergeLabelOf, rulesKeyOf } from "./prphases.ts";
 import type { GateInfo, PhaseRule } from "./prphases.ts";
 import { labelTarget, readiness } from "./prready.ts";
 import type { ReviewFacts } from "./prready.ts";
@@ -127,6 +127,8 @@ export interface WatchSnapshot {
   gated?: true;
   /** A rule of `tools.prPhases` matches this repository (the sidebar shows the not-counted group). */
   ruled?: true;
+  /** prphases.ts rulesKeyOf of the repository's rules when the tracker wrote this snap; absent: "" (no effective rule, or a snap from before the field). */
+  rulesKey?: string;
   /** The host's review decision; absent: the host gave none (or an older stored entry). */
   reviewDecision?: ReviewDecision;
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
@@ -1579,18 +1581,9 @@ export class PrWatches {
   private labelTargetOf(w: Watch, snap: WatchSnapshot, rules: readonly PhaseRule[]): boolean | null {
     const facts = this.deps.reviewFacts?.(snap.head);
     if (!facts) return null;
-    // a snap stored before the tracker saw the live rules: classify with them too, so a gate run never counts and a gated repository never labels a head with no phase-1 run
-    // phases alone change a run: an untagged run keeps its own `gates` unless the live rules move it out of phase 1; a tagged run counts again when the live rules say phase 1,
-    // unless its source is non-gating (the tracker's stored per-source record; a source with no record counts: fail closed)
-    const classify = (r: Run): Run => {
-      const one = phaseOf(rules, w.key.repo, r) === 1;
-      if (!r.phase) return one || r.gates === false ? r : { ...r, gates: false };
-      if (!one) return r;
-      const { phase: _p, gates: _g, ...rest } = r;
-      return r.source && snap.sources?.[r.source]?.gates === false ? { ...rest, gates: false } : rest;
-    };
-    const live: WatchSnapshot = { ...snap, ...(snap.gated || gatedRepo(rules, w.key.repo) ? { gated: true as const } : {}), runs: snap.runs.map((r) => classify(r)) };
-    return labelTarget({ facts, checks: checksOf(w.state, live, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
+    // a snap written under other rules than the live ones (or before the tracker saw them) is not used: no label until the tracker has polled the PR again
+    if ((snap.rulesKey ?? "") !== rulesKeyOf(rules, w.key.repo)) return null;
+    return labelTarget({ facts, checks: checksOf(w.state, snap, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
   }
 
   /**

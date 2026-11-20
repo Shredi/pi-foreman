@@ -2,6 +2,7 @@
 // ready), the gate (phase 2: shown, reported, never holds back ready) and not-counted checks (never counted, never reported). A rule also names the repository's merge label.
 // Rules add up: the gate and not-counted lists are the union over every rule whose `repos` match (ignore wins over gate), the last merge label wins. Pure; the tracker (prs-cli.ts),
 // the search feed (openprs.ts), pr_checks (gitpack.ts) and the watch (prwatch.ts) share it. A malformed rule is dropped with a message, never widened.
+import { createHash } from "node:crypto";
 import { globMatch, parseGlobs } from "./prwake.ts";
 import type { Bucket, Run } from "./prwatch.ts";
 
@@ -135,6 +136,15 @@ export interface PhasedSnap {
   gate?: GateInfo;
   gated?: true;
   ruled?: true;
+  /** rulesKeyOf of the repository under the rules the sort used; absent: no effective rule. */
+  rulesKey?: string;
+}
+
+/** A stable fingerprint of the repository's effective phase rules (gate list, ignore list, merge label); "" when none is set. The tracker stores it, the watch compares it. */
+export function rulesKeyOf(rules: readonly PhaseRule[], repo: string): string {
+  const v = viewOf(rules, repo);
+  if (v.gate.length === 0 && v.ignore.length === 0 && v.mergeLabel === "") return "";
+  return createHash("sha1").update(JSON.stringify([[...v.gate].sort(), [...v.ignore].sort(), v.mergeLabel])).digest("hex").slice(0, 16);
 }
 
 /**
@@ -158,7 +168,7 @@ export function phasesStep(rules: readonly PhaseRule[], repo: string, runs: Run[
     waiting = required.filter((n, i) => phases[i] === 2 && !isRun(n));
   }
   const gate = gateOf(tagged, waiting);
-  return { runs: tagged, ...(kept !== undefined ? { required: kept } : {}), ...(gate ? { gate } : {}), ...(v.gated ? { gated: true as const } : {}), ...(v.ruled ? { ruled: true as const } : {}) };
+  return { runs: tagged, ...(kept !== undefined ? { required: kept } : {}), ...(gate ? { gate } : {}), ...(v.gated ? { gated: true as const } : {}), ...(v.ruled ? { ruled: true as const } : {}), ...(rulesKeyOf(rules, repo) ? { rulesKey: rulesKeyOf(rules, repo) } : {}) };
 }
 
 /** One check entry of a `pr_checks` answer. */

@@ -51,9 +51,9 @@ test("stale snap tags flaky as not counted, live rules count it again, flaky fai
   assert.deepEqual((await go(s, () => LIVE)).labels, []);
 });
 
-test("same with flaky passed: label added", async () => {
+test("same with flaky passed: no label while the snap key differs from the live rules", async () => {
   const s = snapOf([run("flaky", "passed"), run("build", "passed")]);
-  assert.deepEqual((await go(s, () => LIVE)).labels, ["+merge-ok"]);
+  assert.deepEqual((await go(s, () => LIVE)).labels, []);
 });
 
 test("live rules throw: no label call", async () => {

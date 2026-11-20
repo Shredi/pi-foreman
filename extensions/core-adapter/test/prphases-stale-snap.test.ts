@@ -60,6 +60,6 @@ test("current snap, deploy passed: no label", async () => {
   assert.deepEqual(await labels(fresh([run("deploy", "passed")])), []);
 });
 
-test("stale snap, untagged passed phase-1 run: label added", async () => {
-  assert.deepEqual(await labels(stale([run("build", "passed")])), ["+merge-ok"]);
+test("stale snap, untagged passed phase-1 run: no label until the tracker rewrites it", async () => {
+  assert.deepEqual(await labels(stale([run("build", "passed")])), []);
 });

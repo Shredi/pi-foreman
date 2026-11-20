@@ -447,6 +447,10 @@ The first example silences GitHub too (`source: "*"` matches it), but the always
 
 Rules add up: the lists of every matching rule are joined, the last `mergeLabel` wins. In a repository with a `gate` list or a `mergeLabel`, the forge's `blocked` merge state still gives the ready line (it carries a line saying the gate or reviews are still to come), and a head with no phase-1 check is never ready. A required gate name with no run yet is shown as waiting. A gate failure is a message to act on (`gate_failed`: `gate check failed` with a `- gate failed <name> <url>` line per check, and in a child session once per head `report to the parent: PR #n gate failed on <sha>`); it does not take back the ready line. The gate result is reported once per head (`gate_settled`: `gate checks finished: pass|fail`, only when a gate run exists, all gate runs are done and no required gate name is still waiting for its run). While the gate waits or runs, every message of the watch carries a `- gate waiting <names>` or `- gate running` data line (it wakes nothing by itself). On GitHub the `pr_checks` output tags gate checks `gate` and ignored ones `not counted`, and its summary counts phase 1 only; on GitLab only the `pr_checks` output is classified.
 
+The merge label waits until the tracker has polled the PR under the current rules: a snapshot written under other rules (or before `tools.prPhases` was set) gives no label until the next poll.
+
+A check whose name matches an `ignore` or `gate` glob is taken out of phase 1, so a PR author can move a job out of phase 1 by naming it to match (inherent to name globs).
+
 ```json
 { "tools": { "prPhases": [
   { "repos": ["acme/*"], "gate": ["deploy-*"], "ignore": ["review-bot"], "mergeLabel": "ready-to-merge" }
