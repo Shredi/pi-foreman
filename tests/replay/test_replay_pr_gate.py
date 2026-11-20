@@ -94,6 +94,20 @@ class TestPrGate(ReplayCase):
         reasons = [r.get("reason") for r in trace_of(rig.traces(), "foreman") if r.get("event") == "pr_refused"]
         self.assertEqual(reasons, ["stale_review"])
 
+    def test_pr_tool_after_empty_commit_keeps_review(self):
+        rig, env, _ = self.pr_rig("prempty")
+        pi = rig.start(env=env)
+        self.attempt(pi, "pr-review")
+        pi.wait_child_notify(timeout=120, answers=ASK_YES)
+        # an empty commit keeps the reviewed tree, so the review stays valid (D117)
+        commit(rig.project, "chore: empty commit after the review")
+        tool = last(self.attempt(pi, "pr-tool"))
+        pi.close()
+        self.assertFalse(tool[1], tool)
+        self.assertNotIn("pr_refused", tool[2])
+        reasons = [r.get("reason") for r in trace_of(rig.traces(), "foreman") if r.get("event") == "pr_refused"]
+        self.assertNotIn("stale_review", reasons)
+
     def test_pr_tool_without_review(self):
         rig, env, _ = self.pr_rig("prtool")
         pi = rig.start(env=env)
