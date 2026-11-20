@@ -10,7 +10,7 @@ import { isTrackedKey, keyString } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { DEFAULT_RULES, wakes } from "./prwake.ts";
 import type { WakeEvent, WakeKind, WakeRule } from "./prwake.ts";
-import { gateOf, gatedRepo, mergeLabelOf } from "./prphases.ts";
+import { gatedRepo, mergeLabelOf, phaseOf } from "./prphases.ts";
 import type { GateInfo, PhaseRule } from "./prphases.ts";
 import { labelTarget, readiness } from "./prready.ts";
 import type { ReviewFacts } from "./prready.ts";
@@ -1570,7 +1570,10 @@ export class PrWatches {
   private labelTargetOf(w: Watch, snap: WatchSnapshot): boolean | null {
     const facts = this.deps.reviewFacts?.(snap.head);
     if (!facts) return null;
-    return labelTarget({ facts, checks: checksOf(w.state, snap, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
+    // a snap stored before the tracker saw the live rules: classify with them too, so a gate run never counts and a gated repository never labels a head with no phase-1 run
+    const rules = this.phases();
+    const live: WatchSnapshot = { ...snap, ...(snap.gated || gatedRepo(rules, w.key.repo) ? { gated: true as const } : {}), runs: snap.runs.map((r) => (r.phase || r.gates === false || phaseOf(rules, w.key.repo, r) === 1 ? r : { ...r, gates: false })) };
+    return labelTarget({ facts, checks: checksOf(w.state, live, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
   }
 
   /**
