@@ -61,6 +61,7 @@ test("a non-list protected key makes the file invalid like any other bad key", (
   const w = world();
   w.user({ protected: "nope" });
   const s = w.store();
+  s.resolve();
   assert.match(s.drainNotices().join("\n"), /protected must be a list/);
 });
 

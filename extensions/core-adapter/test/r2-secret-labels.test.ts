@@ -69,14 +69,18 @@ const answer = (role: string, line: string): string => {
   return `undecided ${(o.dangers ?? []).join("+")}`;
 };
 
-// C: `danger-git-secret` left the judge-first list: a revision naming a secret file is a plain git read (a loosening, named in the plan's owner section); the text-match floors keep their answers
-test("S3: a git revision naming a secret file carries no label in C: the default git read runs it (inside bash -c it is undecided), for main and builder", () => {
+// C: `danger-git-secret` left the judge-first list; the secret-path floor refuses a git revision path `<rev>:<secret>` itself (git show, git cat-file, also with -C)
+test("S3: a git revision naming a secret file is refused by the secret-path floor, for main and builder", () => {
   for (const role of ROLES2) {
-    for (const l of ["git show HEAD:.env", "git show :.env", "git show HEAD:.claude/.credentials.json"]) assert.equal(answer(role, l), "allow default-git-read", `${role} ${l}`);
-    assert.equal(answer(role, "bash -c 'git show HEAD:.env'"), "undecided ", `${role} bash -c`);
-    // names the floors' own text match already refuse keep that answer
-    for (const l of ["git show HEAD:~/.ssh/id_rsa", "git cat-file -p HEAD:config/.env.production"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    for (const l of ["git show HEAD:.env", "git show :.env", "git cat-file -p HEAD:.env", "git -C sub show HEAD:.env", "git show HEAD:.claude/.credentials.json",
+      "git show HEAD:~/.ssh/id_rsa", "git cat-file -p HEAD:config/.env.production"]) assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    assert.equal(answer(role, "bash -c 'git show HEAD:.env'"), "block floor-secret-path", `${role} bash -c`);
   }
+});
+
+test("S3 harmless revision paths run: a readme, an env example, a plain show", () => {
+  for (const role of ROLES2) for (const l of ["git show HEAD:README.md", "git show HEAD:.env.example"]) assert.equal(answer(role, l), "allow default-git-read", `${role} ${l}`);
+  for (const role of ROLES2) for (const l of ["git -C sub show HEAD:README.md", "git cat-file -p HEAD:README.md"]) assert.doesNotMatch(answer(role, l), /^block/, `${role} ${l}`);
 });
 
 test("S3 controls: no label and the same decision as before for a source file, a bare revision, a format with a colon and a refspec", () => {

@@ -403,6 +403,14 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   if (call.sub === "remote") return remoteFloor(call) ?? soft;
   if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env) ?? soft;
+  if (call.sub === "show" || call.sub === "cat-file") {
+    // `<rev>:<path>` and `:<path>` print the file out of the object store: the path part is judged as any path
+    for (const w of call.rest) {
+      const i = w.indexOf(":");
+      const s = i >= 0 ? secretPath(w.slice(i + 1), { ...env, segCwd: call.cwd }, true) : null;
+      if (s) return { ...s, fragment: undefined };
+    }
+  }
   // `-e <pattern>` reads as "keep this", and a pattern that matches nothing deletes the whole tree: judge-first, as every `git clean`
   return soft ?? (call.sub === "clean" ? gitCleanExclude(call) : null);
 }
