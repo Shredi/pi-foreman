@@ -119,3 +119,19 @@ test("S5: an input redirect of a policy file carries no label in C, by an unknow
   assert.equal(dangerSegment(parseShell(`cat < ${POLICY}`, { cwd: work })[0], env), null);
   assert.equal(dangerSegment(parseShell("mytool < a.txt", { cwd: work })[0], env), null);
 });
+
+// PR C review fix: the `<rev>:<secret>` check runs for every git subcommand, not only show and cat-file
+test("S3: a git revision naming a secret file is refused for diff, grep, difftool, merge-file and notes too", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git diff HEAD~1:.env HEAD:.env", "git grep -e . HEAD:.env", "git difftool HEAD:.env", "git merge-file -p HEAD:.env a b", "git notes show HEAD:.env"]) {
+      assert.equal(answer(role, l), "block floor-secret-path", `${role} ${l}`);
+    }
+  }
+});
+
+test("S3 controls: colons that name no secret path still run for every subcommand", () => {
+  for (const role of ROLES2) {
+    for (const l of ["git log --format=%h:%s", "git show HEAD:a:b.txt", "git diff HEAD~1 HEAD -- README.md", "git show HEAD:.env.example"]) assert.equal(answer(role, l), "allow default-git-read", `${role} ${l}`);
+    assert.doesNotMatch(answer(role, "git push origin HEAD:feature/x"), /floor-secret-path/, `${role} push`);
+  }
+});

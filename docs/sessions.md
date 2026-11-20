@@ -79,7 +79,7 @@ A label that already has a registry entry that is not closed or failed is not op
 - `brief.md`: your brief plus a footer telling the child how to report back (below).
 - `parent`: the opener's intercom id, one line. The child's routing, close check and replies read it every time ([re-point an orphaned child](#safety)). The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
-- later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md` and files below `work/`; no dialog in any mode for the write tool and `cp` (in mode `ask` an `echo >`, `printf >` or heredoc redirect still reaches the mode step). A subagent of a child session may write the same names.
+- later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md` and files below `work/`; no dialog for the write tool, `cp` and an `echo >`, `printf >` or heredoc redirect to these names. A subagent of a child session may write the same names.
 - `live.json`: `{intercomId, piSessionId, at}`, written by the child's adapter at each session start. It binds the handoff dir to the Pi session. It is write-ask, like `parent` and `child`.
 
 #### Identity after a restart
@@ -303,7 +303,7 @@ A heavy task with several phases may run as a multi-session plan: one child sess
 
 ### Parallel rounds
 
-Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Its commits and pushes happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree; the gate labels `npm ci` `danger-install` and the mode step decides on it). Children on POSIX may run the exact `npm ci` in their own worktree.
+Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Its commits and pushes happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree; the gate has no install rule, so `npm ci` runs without a dialog). Children on POSIX may run the exact `npm ci` in their own worktree.
 
 A security revision after the final review is cap-exempt: one more Opus builder is allowed.
 Builders commit per numbered item.

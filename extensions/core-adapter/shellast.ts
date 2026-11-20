@@ -58,6 +58,8 @@ export interface ShellSegment {
   cwd: string | null;
   /** The wrappers this segment was unwrapped from, outermost first (`env`, `bash`, `$(`, backtick ...). */
   wrappers: string[];
+  /** Set (not enumerable) by `wrap()`: the indexes into `wrappers` of the wrappers the walker unwrapped to the command they wrap and that run no text of their own (`env`, `nohup`, `timeout` ...). */
+  passThrough?: number[];
   opaque: OpaqueReason | null;
   /** Set (not enumerable) on a segment that stands for a function, select, coproc or arithmetic for, or a nested string too deep to walk: the source text of the bodies it holds. */
   bodies?: string[];
@@ -134,6 +136,8 @@ interface Scope {
   run: Run;
   cwd: string | null;
   wrappers: string[];
+  /** Indexes into `wrappers` of the pass-through wrappers (see `ShellSegment.passThrough`). */
+  passAt?: number[];
   depth: number;
   /** stdin comes from a pipe, a heredoc, a here-string or `<`. */
   stdin: boolean;
@@ -280,6 +284,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "stdinFed", { value: Boolean(c ? c.feeds : sc.stdin), enumerable: false });
   // not enumerable either: the old delete check read a `> $X` only when the target ended the command (`echo > $F arg` is none)
   Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
+  Object.defineProperty(out, "passThrough", { value: [...(sc.passAt ?? [])], enumerable: false, configurable: true });
   Object.defineProperty(out, "heredocs", { value: [...(c ? c.docs : sc.docs)], enumerable: false, configurable: true });
   sc.run.out.push(out);
 }
@@ -582,9 +587,9 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
   const prog = p.value;
   const name = baseName(prog);
-  const wrap = (inner: W[], w: string, at = cwd): string | null => {
+  const wrap = (inner: W[], w: string, at = cwd, pass = false): string | null => {
     if (!inner.length) return plain(prog, name, [], c, cwd);
-    return run(inner, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, w] } }, at);
+    return run(inner, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, w], passAt: pass ? [...(sc.passAt ?? []), sc.wrappers.length] : sc.passAt } }, at);
   };
   const bad = (reason: OpaqueReason): string | null => {
     seg(sc, prog, rest.map((a) => a.value ?? a.text), reason, c, cwd);
@@ -655,24 +660,24 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
         if (!harmless((args[0].assign ?? asAssign(args[0]))!)) c.reason = pick(c.reason, "assignment");
         args = args.slice(1);
       }
-      wrap(args, "env", at);
+      wrap(args, "env", at, true);
       return cwd;
     }
     case "timeout": {
       const o = opts({ flags: "v", arg: "ks", long: ["--foreground", "--preserve-status", "--verbose"], longArg: ["--kill-after", "--signal"] });
       if (typeof o === "string") return bad(o);
       if (o.rest[0] && o.rest[0].value === null) return bad(o.rest[0].reason ?? "unresolved_var");
-      return wrap(o.rest.slice(1), "timeout");
+      return wrap(o.rest.slice(1), "timeout", undefined, true);
     }
     case "nice": {
       const o = opts({ arg: "n", numeric: true, longArg: ["--adjustment"] });
-      return typeof o === "string" ? bad(o) : wrap(o.rest, "nice");
+      return typeof o === "string" ? bad(o) : wrap(o.rest, "nice", undefined, true);
     }
     case "nohup": {
       const o = opts({});
       if (typeof o === "string") return bad(o);
       if (!c.redirs.some((r) => [">", ">>", "&>", "&>>"].includes(r.op) && (r.fd === null || r.fd === "1"))) c.reason = pick(c.reason, "writing_wrapper");
-      return wrap(o.rest, "nohup");
+      return wrap(o.rest, "nohup", undefined, true);
     }
     case "xargs": {
       const o = opts({
@@ -698,7 +703,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     case "command": {
       const o = opts({ flags: "pvV" });
       if (typeof o === "string" || has(o.opts, "-v", "-V")) return plain(prog, name, rest, c, cwd);
-      return wrap(o.rest, "command");
+      return wrap(o.rest, "command", undefined, true);
     }
     case "exec": {
       // `exec [-cl] [-a name] cmd args`: the command is the segment; the redirect-only form (no command) stays the opaque builtin
@@ -710,11 +715,11 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     }
     case "stdbuf": {
       const o = opts({ arg: "ioe", longArg: ["--input", "--output", "--error"] });
-      return typeof o === "string" ? bad(o) : wrap(o.rest, "stdbuf");
+      return typeof o === "string" ? bad(o) : wrap(o.rest, "stdbuf", undefined, true);
     }
     case "setsid": {
       const o = opts({ flags: "cfw", long: ["--ctty", "--fork", "--wait"] });
-      return typeof o === "string" ? bad(o) : wrap(o.rest, "setsid");
+      return typeof o === "string" ? bad(o) : wrap(o.rest, "setsid", undefined, true);
     }
     case "watch": {
       const o = opts({
@@ -747,8 +752,8 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
 }
 
-/** The wrappers the walker unwraps to the command they wrap (`wrap(...)` above): they run no text of their own, the wrapped command is its own segment. A failed unwrap leaves the wrapper as the (opaque) program. */
-export const PASS_THROUGH: ReadonlySet<string> = new Set(["env", "nohup", "nice", "timeout", "command", "stdbuf", "setsid"]);
+/** The wrappers the walker unwraps to the command they wrap (`wrap(..., true)` above, `ShellSegment.passThrough` on a segment): they run no text of their own, the wrapped command is its own segment. A failed unwrap leaves the wrapper as the (opaque) program. */
+const PASS_THROUGH: ReadonlySet<string> = new Set(["env", "nohup", "nice", "timeout", "command", "stdbuf", "setsid"]);
 
 /** A pass-through wrapper whose words name a runner (`env sh`, `nohup bash`): the wrapped command runs text. */
 const wrapsRunner = (x: any): boolean => (x.suffix ?? []).some((w: any) => typeof (w.value ?? w.text) === "string" && (RUNNERS.has(baseName(w.value ?? w.text)) || /[$`]/.test(w.text ?? "")));

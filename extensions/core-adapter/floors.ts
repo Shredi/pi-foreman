@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, PASS_THROUGH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
@@ -403,13 +403,11 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   if (call.sub === "remote") return remoteFloor(call) ?? soft;
   if (call.sub === "push" && env.child && !env.builder) return hit("git-push-child", PUSH_CHILD_TEXT);
   if (call.sub === "push") return pushFloor(call, env) ?? soft;
-  if (call.sub === "show" || call.sub === "cat-file") {
-    // `<rev>:<path>` and `:<path>` print the file out of the object store: the path part is judged as any path
-    for (const w of call.rest) {
-      const i = w.indexOf(":");
-      const s = i >= 0 ? secretPath(w.slice(i + 1), { ...env, segCwd: call.cwd }, true) : null;
-      if (s) return { ...s, fragment: undefined };
-    }
+  // `<rev>:<path>` and `:<path>` print the file out of the object store (show, cat-file, diff, grep, difftool, merge-file, notes ...): the path part is judged as any path
+  for (const w of call.rest) {
+    const i = w.indexOf(":");
+    const s = i >= 0 ? secretPath(w.slice(i + 1), { ...env, segCwd: call.cwd }, true) : null;
+    if (s) return { ...s, fragment: undefined };
   }
   // `-e <pattern>` reads as "keep this", and a pattern that matches nothing deletes the whole tree: judge-first, as every `git clean`
   return soft ?? (call.sub === "clean" ? gitCleanExclude(call) : null);
@@ -1447,7 +1445,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (rest) {
       const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
-      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
       withHeredocs(inner, seg);
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, acc);
@@ -1688,7 +1686,7 @@ function runsText(s: ShellSegment): boolean {
  * without the pass-through wrappers the walker unwrapped (`env`, `nohup`, `timeout`...: the wrapped command is its own segment). A failed unwrap keeps the wrapper as the program.
  */
 function runsShellText(s: ShellSegment): boolean {
-  const names = [base(s.program), ...s.wrappers.map(base).filter((w) => !PASS_THROUGH.has(w))];
+  const names = [base(s.program), ...s.wrappers.filter((_, i) => !s.passThrough?.includes(i)).map(base)];
   if (names.some((n) => RUNNERS.has(n) || EXTRA_RUNNERS.has(n) || SHELLS.has(n))) return true;
   return s.argv.some((a) => a === "-exec" || a === "-execdir" || a === "-ok" || a === "-okdir");
 }

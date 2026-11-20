@@ -7383,6 +7383,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const pr = gp.store.resolve();
     out.push(`INFO permissions: ${pr.protected.length} protected targets, ${pr.prose.deny.length} deny sentences; decision log ${gateLogFile(s.agentDir)}`);
     for (const k of pr.ignored) out.push(`INFO permissions: ${k} is no longer used and is ignored (the judge-first list replaces modes, profiles and rule lists)`);
+    const profileSet = get(s.config.config, "permissions.profile");
+    if (typeof profileSet === "string" && profileSet.trim() !== "") out.push("INFO permissions: permissions.profile is no longer used and is ignored (the judge-first list replaces modes, profiles and rule lists)");
     if (fs.existsSync(gp.store.filePath("project"))) {
       const why = gp.store.projectDistrust();
       if (why) out.push(`WARN ${gp.store.filePath("project")}: ${why}; its widening keys (allow, additionalDirectories, classifier.allow) are ignored`);
