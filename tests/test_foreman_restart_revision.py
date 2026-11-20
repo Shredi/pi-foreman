@@ -16,8 +16,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
-from test_foreman_session_restart import LocalRestartBase, CHILD  # noqa: E402
-import foreman_session as fsn  # noqa: E402
+from test_foreman_session_restart import LocalRestartBase, CHILD
+import foreman_session as fsn
 
 
 class SharedWorktreeTest(unittest.TestCase):

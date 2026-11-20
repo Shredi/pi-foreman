@@ -6,13 +6,12 @@ import os
 import shutil
 import sys
 import time
-import unittest
 from pathlib import Path
 from unittest import mock
 
 TESTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TESTS))
-from test_foreman_session_remote import RemoteBase, ADDRESS, lines_of  # noqa: E402
+from test_foreman_session_remote import RemoteBase  # noqa: E402
 import foreman_session as fsn  # noqa: E402
 
 CHILD = "fm-demo-abc123"
