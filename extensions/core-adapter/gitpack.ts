@@ -10,6 +10,8 @@ import { get } from "./config.ts";
 import type { Env } from "./env.ts";
 import { PrWatches, TRACKER_DOWN, countRuns, oneLine, reviewFact } from "./prwatch.ts";
 import type { StoreRead, WatchSnapshot } from "./prwatch.ts";
+import { tagChecks } from "./prphases.ts";
+import type { PhaseRule } from "./prphases.ts";
 import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, remoteReposOf, validHost, validNumber, validRepo } from "./prhost.ts";
@@ -294,6 +296,8 @@ export interface PrPackSession {
   githubHosts?(): GithubHosts;
   /** Draft handling is on (tools.prDraft not false, the review gate and the PR feed on). Absent: off, pr_create as it always was. */
   draftFlow?(): boolean;
+  /** The rules of tools.prPhases (prphases.ts). Absent: none, the pr_checks answer is as the host gave it. */
+  phases?(): readonly PhaseRule[];
   /** Appends the `pr` row of a watched PR to the session's findings file (findings.ts appendPrRow); may throw. Absent: nothing is written. */
   recordPr?(row: { repo: string; number: number; branch: string | null; head: string | null; cwd: string }): Promise<void>;
 }
@@ -426,7 +430,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           refusedDraft = true;
           outcome = await run("pr_create", { ...params, draft: false });
         }
-        const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);
+        const res = report(t.op === "pr_status" ? await withReview(s, outcome) : t.op === "pr_checks" ? await withPhases(s, outcome, params, dir ?? ctx.cwd) : outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
         const openedOn = typeof params.head === "string" && params.head ? await commitOf(dir ?? ctx.cwd, params.head) : await headOf(dir ?? ctx.cwd);
@@ -543,6 +547,19 @@ async function withReview(s: PrPackSession, o: SafeOpOutcome): Promise<SafeOpOut
     // an address that does not parse names no repository: never look a watch up by number alone
     const last = key && key.n === o.result.number ? s.watches.reviewOf(key) : null;
     return { ...o, result: { ...o.result, review: reviewFact(o.result.headSha, new Set(await s.reviewed()), last ?? "") } };
+  } catch {
+    return o;
+  }
+}
+
+/** A `pr_checks` answer sorted by the rules of tools.prPhases (prphases.ts tagChecks); the repository is the call's, else the checkout's (asked once per directory). Never fails the call. */
+async function withPhases(s: PrPackSession, o: SafeOpOutcome, params: Record<string, unknown>, cwd: string): Promise<SafeOpOutcome> {
+  if (o.kind !== "ran") return o;
+  try {
+    const rules = s.phases?.() ?? [];
+    if (rules.length === 0) return o;
+    const repo = typeof params.repo === "string" && params.repo ? params.repo : ((await s.tracker?.repoFor?.(cwd).catch(() => null))?.repo ?? null);
+    return { ...o, result: tagChecks(rules, repo, o.result) };
   } catch {
     return o;
   }

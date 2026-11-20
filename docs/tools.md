@@ -97,6 +97,7 @@ sets, and a templates object brings any other CLI. Nothing here merges a PR, fix
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prGithubHosts` | unset (no built-in default) | not in project/session (user or overlay config only; 1 to 20 host names, each with an optional `:port`, lowercased and deduplicated) |
 | `tools.prReadyLabel` | `""` (off) | not in project/session (user or overlay config only; a label name of 1 to 50 characters, no control character, no comma, no leading `-`; see [Ready label](#ready-label)) |
+| `tools.prPhases` | `[]` (off) | not in project/session (user or overlay config only; at most 32 rules, each with `repos`, `gate`, `ignore` and `mergeLabel`; see [Phases](#phases)) |
 | `tools.prSettleSeconds` | `90` | any layer (integer 0..3600, seconds a passing check set must stand unchanged on a head before `pr_watch` reports it, where the base branch has no readable required checks, and for the fallback line `checks passed, waiting on required checks` where a required check has no run, every check that ran passed and the tracker could not learn that check as a merge-time one (see [Watch](#watch)); `0` = off; a pass also waits for checks that recent merged pull requests ran, see [Expected checks](#expected-checks); the fixed 10 minutes there only bring a line, never a pass) |
 | `tools.prReturnToBase` | `true` | any layer (boolean; when a watched PR is merged, return the session's own checkout to the updated base branch and delete the local PR branch, see [Watch](#watch)) |
 | `tools.prWatchSeconds` | `60` | any layer (integer 5..3600, seconds between two `pr_watch` store reads; floored to 30 at runtime; a watch gets news at the `foreman prs poll` cycle plus up to one such tick) |
@@ -400,15 +401,15 @@ The sources of one poll run at most four processes at a time. PRs are taken in t
 |---|---|---|
 | `source` | `"*"` | A source name, `github` or `*` (every source and GitHub). |
 | `repos` | `["*"]` | Globs over the lowercased `owner/name`. |
-| `events` | all | A non-empty subset of `issue`, `review`, `review_summary`, `check_failed`, `checks_settled`, `mergeable`, `no_checks`. |
+| `events` | all | A non-empty subset of `issue`, `review`, `review_summary`, `check_failed`, `checks_settled`, `mergeable`, `no_checks`, `gate_failed`, `gate_settled`. |
 | `authors` | `"any"` | `"bot"`, `"human"`, `"any"` or a list of login globs. |
 | `checks` | `["*"]` | Globs over the check name as the source printed it, without the `<source>/` prefix (for GitHub the plain check name). |
 | `wake` | required | `true` wakes, `false` stays silent. |
 
-The built-in defaults come first: GitHub wakes for every event, and every other source wakes for `issue`, `review`, `review_summary`, `check_failed` and `checks_settled`. Your rules follow, and the last rule that matches an event decides; an event no rule matches does not wake. So with no `tools.prWake`, every source event wakes.
+The built-in defaults come first: GitHub wakes for every event, and every other source wakes for `issue`, `review`, `review_summary`, `check_failed`, `checks_settled`, `gate_failed` and `gate_settled`. Your rules follow, and the last rule that matches an event decides; an event no rule matches does not wake. So with no `tools.prWake`, every source event wakes.
 
-- Event kinds: `issue`, `review` (inline) and `review_summary` are comments; `check_failed` is one fresh failed check; `checks_settled` is "checks finished"; `mergeable` is a mergeable change; `no_checks` is "no checks reported". `checks_settled`, `mergeable` and `no_checks` are PR-level events and carry the source `github`, so they match `source: "github"` and `source: "*"` rules and never a rule for a named source.
-- `authors` applies only to the three comment kinds: `bot` and `human` follow the comment's `bot` flag (GitHub's and the source's), a list matches the login. On any other event a rule with `authors` other than `any` does not match. `checks` applies only to `check_failed`; on any other event a rule with `checks` does not match. An inapplicable filter never matches, so it can only narrow a rule, never widen it.
+- Event kinds: `issue`, `review` (inline) and `review_summary` are comments; `check_failed` is one fresh failed check; `checks_settled` is "checks finished"; `mergeable` is a mergeable change; `no_checks` is "no checks reported"; `gate_failed` is one fresh failed gate check and `gate_settled` is "gate checks finished" (see [Phases](#phases)). `checks_settled`, `mergeable` and `no_checks` are PR-level events and carry the source `github`, so they match `source: "github"` and `source: "*"` rules and never a rule for a named source.
+- `authors` applies only to the three comment kinds: `bot` and `human` follow the comment's `bot` flag (GitHub's and the source's), a list matches the login. On any other event a rule with `authors` other than `any` does not match. `checks` applies only to `check_failed` and `gate_failed`; on any other event a rule with `checks` does not match. An inapplicable filter never matches, so it can only narrow a rule, never widen it.
 - `merged`, `closed`, `ready to merge`, the child's `checks passed, merge state blocked/behind` lines and `watch lost` are not rule events and always wake.
 - A silent event is still marked seen: the watch's state is updated for every event before the rules filter, so a silent event never replays when a later rule change would wake it. A poll whose events are all silent sends nothing. A failure that wakes while "checks finished" is silent (or the other way round) is sent on its own; they are folded into one line only when both wake.
 
@@ -432,6 +433,25 @@ Wake for human inline review comments, but not for bot comments, from GitHub and
 The second example works because the defaults already wake every comment and the rule silences the bot ones. To wake for human review comments only and stay silent otherwise, put `{ "source": "*", "wake": false }` first and `{ "events": ["review"], "authors": "human", "wake": true }` after it.
 
 The first example silences GitHub too (`source: "*"` matches it), but the always-wake set still applies. Note what silence hides: with sources that gate (the default), a counting source that keeps failing holds back "checks finished", "ready to merge" and "no checks reported" regardless of the rules, and its error is visible only in the `pr_watch` result and the chip, never as a message.
+
+### Phases
+
+`tools.prPhases` (user or overlay config only) splits the checks of a PR into phases per repository. Phase 1 is every check not named by a rule: it alone decides "checks finished", "ready to merge", the ready line and the label. Phase 2 (`gate`) checks run later, for example after a review or an approval; they are reported separately and never hold the ready line back. Checks in `ignore` are not counted at all and send nothing. Default is `[]`: all checks are phase 1, as before. A malformed rule is dropped, never widened; at most 32 rules are used.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `repos` | every repository | Globs over the lowercased `owner/name`. |
+| `gate` | none | Check-name globs of phase 2 (case-insensitive; a source check also matches by its name without the `<source>/` prefix). |
+| `ignore` | none | Check-name globs that are not counted; `ignore` wins over `gate`. |
+| `mergeLabel` | none | A label that replaces `tools.prReadyLabel` in the matching repositories. It is added only when phase 1 is green, the review passed, the PR is mergeable and not a draft, and removed when that stops being true. The harness never merges. |
+
+Rules add up: the lists of every matching rule are joined, the last `mergeLabel` wins. In a repository with a `gate` list or a `mergeLabel`, the forge's `blocked` merge state still gives the ready line (it carries a line saying the gate or reviews are still to come), and a head with no phase-1 check is never ready. A required gate name with no run yet is shown as waiting. A gate failure is a message to act on (`gate_failed`), the gate result is reported once per head (`gate_settled`). On GitHub the `pr_checks` output tags gate checks `gate` and ignored ones `not counted`, and its summary counts phase 1 only; on GitLab only the `pr_checks` output is classified.
+
+```json
+{ "tools": { "prPhases": [
+  { "repos": ["acme/*"], "gate": ["deploy-*"], "ignore": ["review-bot"], "mergeLabel": "ready-to-merge" }
+] } }
+```
 
 ### Identity
 

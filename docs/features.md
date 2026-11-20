@@ -1029,6 +1029,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `tools.prReadyLabel` | the label the harness writes to the PR host comes from the user or overlay config |
 | `tools.prSources` | PR sources run programs: user or overlay config only |
 | `tools.prWake` | the wake rules for PR watches come from the user or overlay config |
+| `tools.prPhases` | the PR phase rules (and the merge label the harness writes to the PR host) come from the user or overlay config |
 | `skills.visible` | it hides every other skill: user or overlay config only |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |

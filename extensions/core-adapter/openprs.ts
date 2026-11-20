@@ -8,6 +8,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { GithubHosts } from "./prhost.ts";
+import { phasesStep } from "./prphases.ts";
+import type { GateInfo, PhaseRule } from "./prphases.ts";
 import { globMatch, parseGlobs } from "./prwake.ts";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
@@ -22,6 +24,8 @@ export interface OpenPrCheck {
   n: string;
   state: OpenPrState;
   label: string;
+  /** The check belongs to the gate (`2`) or does not count (`ignore`) under `tools.prPhases` (prphases.ts); absent: phase 1. */
+  phase?: 2 | "ignore";
 }
 export interface OpenPr {
   repo: string;
@@ -40,6 +44,12 @@ export interface OpenPr {
   /** The description, secret-shaped tokens redacted, cut to 500 characters; absent when empty. */
   bodyText?: string;
   mergeable?: OpenPrMergeable;
+  /** The gate state of the checks (prphases.ts gateOf); absent: no gate check. The search feed has no required list, so it is never `waiting`. */
+  gate?: GateInfo;
+  /** A rule of `tools.prPhases` names gate checks or a merge label for the repository (sidebar: `blocked` counts as ready). */
+  gated?: true;
+  /** A rule of `tools.prPhases` matches the repository. */
+  ruled?: true;
   /** The GitHub host the PR was found on; written only for a host other than github.com (absent: github.com). */
   host?: string;
   /** Set by the PR tracker when the repository matches `radar.openPrs.hideRepos`: the sidebar skips the row (display only). */
@@ -249,8 +259,16 @@ function checksOf(roll: unknown): OpenPrCheck[] {
   return out;
 }
 
+const BUCKET: Record<OpenPrState, "pending" | "failed" | "passed"> = { run: "pending", fail: "failed", ok: "passed", none: "passed" };
+
+/** The checks of one PR sorted by the rules of its repository (prphases.ts, the tracker's helper): `phase` per check, the gate state, `gated` and `ruled`. */
+function sortChecks(phases: readonly PhaseRule[], repo: string, checks: OpenPrCheck[]): { checks: OpenPrCheck[]; gate?: GateInfo; gated?: true; ruled?: true } {
+  const sorted = phasesStep(phases, repo, checks.map((c) => ({ id: c.n, name: c.n, bucket: BUCKET[c.state], url: "" })));
+  return { checks: checks.map((c, i) => (sorted.runs[i].phase ? { ...c, phase: sorted.runs[i].phase } : c)), ...(sorted.gate ? { gate: sorted.gate } : {}), ...(sorted.gated ? { gated: true as const } : {}), ...(sorted.ruled ? { ruled: true as const } : {}) };
+}
+
 /** The PRs of one `gh api graphql` answer; entries without a number, repository or safe https URL are dropped. */
-export function parseSearch(text: string): OpenPr[] {
+export function parseSearch(text: string, phases: readonly PhaseRule[] = []): OpenPr[] {
   const doc: unknown = JSON.parse(text);
   const data = isObj(doc) && isObj(doc.data) ? doc.data : null;
   const nodes = data && isObj(data.search) && Array.isArray(data.search.nodes) ? data.search.nodes : null;
@@ -266,9 +284,14 @@ export function parseSearch(text: string): OpenPr[] {
     const base = clean(x.baseRefName, 255);
     const headRepo = isObj(x.headRepository) ? clean(x.headRepository.nameWithOwner, 140) : "";
     const body = typeof x.bodyText === "string" ? clean(redactCommand(x.bodyText).replace(/\s+/g, " ").trim(), MAX_BODY) : "";
+    const checks = checksOf(commit?.statusCheckRollup);
+    const sorted = phases.length > 0 ? sortChecks(phases, repo, checks) : null;
     out.push({
       repo, number: x.number as number, title: clean(x.title, 200), url: x.url, state: x.isDraft === true ? "draft" : "open",
-      author: isObj(x.author) ? clean(x.author.login, 60) : "", checks: checksOf(commit?.statusCheckRollup),
+      author: isObj(x.author) ? clean(x.author.login, 60) : "", checks: sorted?.checks ?? checks,
+      ...(sorted?.gate ? { gate: sorted.gate } : {}),
+      ...(sorted?.gated ? { gated: true as const } : {}),
+      ...(sorted?.ruled ? { ruled: true as const } : {}),
       ...(head ? { headRefName: head } : {}),
       ...(base ? { baseRefName: base } : {}),
       ...(headRepo ? { headRepo } : {}),
@@ -312,6 +335,8 @@ export interface RefreshOptions {
   signal?: AbortSignal;
   /** tools.prGithubHosts: one search per listed host. Absent: github.com only. `{error}`: no gh call, the error is recorded. */
   hosts?: GithubHosts;
+  /** tools.prPhases: the checks of each found PR are sorted by the rules of its repository. Absent: none. */
+  phases?: readonly PhaseRule[];
 }
 export type RefreshResult = "off" | "fresh" | "locked" | "refreshed" | "failed";
 
@@ -359,7 +384,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
           tried.set(h, (tried.get(h) ?? 0) + 1);
           const host = h === "github.com" ? [] : ["--hostname", h];
           try {
-            for (const p of parseSearch(await o.gh(["api", "graphql", ...host, "-f", `query=${GRAPHQL}`, "-f", `q=${q}`]))) {
+            for (const p of parseSearch(await o.gh(["api", "graphql", ...host, "-f", `query=${GRAPHQL}`, "-f", `q=${q}`]), o.phases)) {
               if (seen.has(p.url)) continue;
               seen.add(p.url);
               all.push(h === "github.com" ? p : { ...p, host: h });
@@ -408,6 +433,8 @@ export interface OpenPrsDeps {
   now?: () => number;
   /** tools.prGithubHosts, read on every tick; absent: github.com only. */
   hosts?(): GithubHosts;
+  /** tools.prPhases, read on every tick; absent: none. */
+  phases?(): readonly PhaseRule[];
 }
 
 /** Ticks once a minute (first tick after a few seconds); each tick refreshes only when the file is older than refreshSeconds. */
@@ -443,7 +470,7 @@ export class OpenPrsRefresher {
     this.busy = true;
     try {
       if (this.deps.ghHost && !this.deps.ghHost()) return "off";
-      return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal, ...(this.deps.hosts ? { hosts: this.deps.hosts() } : {}) });
+      return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal, ...(this.deps.hosts ? { hosts: this.deps.hosts() } : {}), ...(this.deps.phases ? { phases: this.deps.phases() } : {}) });
     } catch {
       return "failed";
     } finally {

@@ -404,7 +404,8 @@ async function siblingRefusal(session: string, dir: string, records: readonly Re
 }
 
 /** One line for the review panel block when the PR's checks failed ("" otherwise). */
-export function checksLine(c: { failed: { name: string }[]; pending: unknown[]; summary: string } | null): string {
-  if (!c || !Array.isArray(c.failed) || c.failed.length === 0) return "";
+export function checksLine(c: { failed: { name: string; phase?: string }[]; pending: unknown[]; summary: string } | null): string {
+  // a gate check and a check that does not count (tools.prPhases) never make the line: the summary counts phase 1 only
+  if (!c || !Array.isArray(c.failed) || c.failed.filter((f) => !f?.phase).length === 0) return "";
   return `PR checks: ${c.summary}. Failed checks block a merge; fix them before asking for review again.`;
 }
