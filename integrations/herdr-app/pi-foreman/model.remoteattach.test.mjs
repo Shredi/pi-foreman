@@ -52,3 +52,12 @@ test("a click on the card focuses the terminal at the stored address, whatever i
   assert.deepEqual(remoteClick(node, terms()), { kind: "focus", address: "t3" });
   assert.equal(remoteClick(node, [{ address: "t1", state: "live" }]).kind, "open");
 });
+
+test("the stored attach address alone hides the terminal: no argv, no name or one that matches nothing", () => {
+  const bare = [{ address: "t1", state: "live", name: "parent" }, { address: "t3", state: "live", parent: "t1" }];
+  assert.deepEqual(addrs(draw(bare)), []);
+  assert.deepEqual(addrs(draw(bare, tree(regNode({ attach: "" })))), ["t3"], "without the stored address the same terminal is a row");
+  const named = [{ address: "t1", state: "live", name: "parent" }, { address: "t3", state: "live", name: "shell", parent: "t1" }];
+  assert.deepEqual(addrs(draw(named)), []);
+  assert.deepEqual(addrs(draw(named, tree(regNode({ attach: "" })))), ["t3"]);
+});

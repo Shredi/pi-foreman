@@ -140,7 +140,7 @@ export default class ForemanAgents extends View {
     this.hcProp = given.hc;
     // The sample view (docs/development.md): the radar comes from sample.mjs once; nothing is polled and nothing is started.
     this.sample = given.sample === true;
-    this.manyPrs = given.manyPrs === true; // with the sample: the ~40-PR feed of sample.mjs (SAMPLE_MANY) instead of the legend's
+    this.manyPrs = given.manyPrs === true; // with the sample: the 52-PR feed of sample.mjs (SAMPLE_MANY) instead of the legend's
     if (this.sample) {
       const doc = parseRadarDoc(JSON.stringify(this.manyPrs ? SAMPLE_MANY.radar : SAMPLE.radar));
       this.radar.set("local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: null, tried: Date.now() });
