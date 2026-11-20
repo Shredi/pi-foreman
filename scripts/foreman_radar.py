@@ -29,7 +29,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from foreman_session import agent_dir, entry_gone, hc_terminal_addresses
+from foreman_session import agent_dir, entry_gone, hc_terminal_addresses, process_alive, restart_refusal
 
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0
@@ -714,6 +714,23 @@ def closes_dead(e, n):
     return e.get("status") == "closed" and n.get("glyph") == "lost" and n.get("state") in ("lost", "stale") and bool(n.get("sid"))
 
 
+def mark_restartable(e, n):
+    """Flag `restartable` on the node of a registry entry that `foreman session restart` accepts and whose Pi is not running
+    (the sidebar shows the Restart action from this flag; it decides nothing itself). A local child: the node is over
+    (`closed`), or its heartbeat is lost and its process is gone. A child on another machine: only its terminal state
+    `finished` (a late or unknown one is not over: the parent cannot tell). An entry the restart refuses (closed by a close
+    flow, parent on another machine, working folder gone) never is."""
+    if restart_refusal(e):
+        return
+    if e.get("machine"):
+        ok = n["state"] == "finished"
+    else:
+        pid = n.get("pid")
+        ok = n["state"] == "closed" or (n["glyph"] == "lost" and isinstance(pid, int) and not isinstance(pid, bool) and not process_alive(pid))
+    if ok:
+        n["restartable"] = True
+
+
 def build(data, now):
     """Join live files, registry entries and handoff dirs into session nodes; return the list of roots."""
     nodes, by_sid, by_handoff = {}, {}, {}
@@ -862,6 +879,7 @@ def build(data, now):
                 live["glyph"], live["state"] = "idle", "closed"
             elif e.get("status") == "open":
                 live["regOpen"] = True
+            mark_restartable(e, live)
             merged.add(key)
             continue
         ho = handoff_by_leaf.get(leaf(e.get("handoff")))
@@ -896,6 +914,7 @@ def build(data, now):
             n["glyph"], n["state"] = "idle", "closed"
         elif e.get("status") == "open":
             n["regOpen"] = True
+        mark_restartable(e, n)
         if isinstance(e.get("parent"), str) and e["parent"] and not n["parent"]:
             n["parent"] = e["parent"]
         if n["started"] is None:
@@ -1191,6 +1210,8 @@ def to_json_node(n, now, symbols):
             out["machine"] = n["machine"]
         if n.get("regOpen"):
             out["regOpen"] = True
+        if n.get("restartable"):
+            out["restartable"] = True
         out["sid"] = n["sid"]
         out["waits"] = n["waits"]
         out["started"] = n["started"]
