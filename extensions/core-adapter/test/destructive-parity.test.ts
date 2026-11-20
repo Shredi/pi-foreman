@@ -17,14 +17,13 @@ const rows: Row[] = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "f
 
 /** The deliberate differences from `was` that stay: `dir` is the only direction the class allows, with its reason. Everything the judge-first list took over from a refusal needs no class. */
 const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
-  1: { dir: "looser", why: "owner exception: a recursive rm over ssh, and a delete inside the worktree, run" },
+  1: { dir: "looser", why: "owner exception: a delete inside the worktree runs (a recursive rm over ssh is judge-first since the PR C security round)" },
   3: { dir: "looser", why: "approved by #289 (ledger 8): scratch deletes through FOREMAN_SCRATCH, a read-only `which rm`/git loop, a non-delete `$a=...` assignment, a push to a named feature branch" },
   4: { dir: "stricter", why: "PowerShell system-folder and disk lines stay a hard deny where the Python guard only asked" },
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
   8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs; no text match, no program list" },
   10: { dir: "stricter", why: "coproc bodies are read (the Python guard and the floors at f0d8b980 looked inside none): a system delete in one is a floor" },
-  11: { dir: "looser", why: "owner 2026-11-19: a remote compound (an ssh or container string wrapped in if/while/for/until/{ }) gets the verdict of its plain form, looser than the Python text match" },
   14: { dir: "looser", why: "builder round of 2026-11-19: under `xargs` the stdin text becomes arguments, never the program (`xargs bash <<'E'`): the Python text match refused it, the gate no longer reads the body as code" },
 };
 
@@ -103,9 +102,13 @@ test("the forms that stay floors: literal system deletes, the rare local forms, 
   both("powershell", "Remove-Item -Recurse -LiteralPath:C:\\Windows", "floor");
 });
 
+test("a remote command (ssh, docker or podman exec, kubectl exec) is judge-first whatever it runs (owner decision of the PR C security round)", () => {
+  for (const l of ["ssh host 'rm -rf /data'", "ssh host ls", "docker exec c ls"]) both("bash", l, "judge");
+});
+
 test("the harmless lines still run", () => {
   for (const child of [false, true]) {
-    for (const l of ["git push origin $B", "ssh host 'rm -rf /data'", "ssh host ls", "docker ps", "rm -rf *", "iex -S mix"]) assert.equal(verdictOf("bash", l, child), "run", `${child ? "child" : "foreman"}: ${l}`);
+    for (const l of ["git push origin $B", "docker ps", "rm -rf *", "iex -S mix"]) assert.equal(verdictOf("bash", l, child), "run", `${child ? "child" : "foreman"}: ${l}`);
   }
   // a redirect through a variable is run by the foreman when the variable is not the target at the end of the command; a child's write through it is the write check's judge-first hit (D4)
   for (const l of ["echo > $F arg", "echo hi >| $F"]) assert.equal(verdictOf("bash", l, false), "run", `foreman: ${l}`);

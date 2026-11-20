@@ -1313,7 +1313,7 @@ type Where = "local" | "ssh" | "container";
  * target host, container or pod and the options included, as it joined them (`_check_remote`). So the first command of the joined text is named by the target, and
  * only a later command (`ssh host 'ls; shred /x'`) was read: the bare `ssh host shred /x` was never refused, and stays running.
  */
-function remoteCommand(seg: ShellSegment, prog: string): { words: string[]; where: Where } | null {
+export function remoteCommand(seg: ShellSegment, prog: string): { words: string[]; where: Where } | null {
   const a = seg.argv;
   if (prog === "ssh") return { words: a, where: "ssh" };
   if (["docker", "podman", "kubectl"].includes(prog) && a.length > 1 && (a[0] === "exec" || a[0] === "run")) return { words: a.slice(1), where: "container" };
