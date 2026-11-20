@@ -90,6 +90,8 @@ A removed entry is marked `removed: <ts>` in the manifest, so a second run of th
 `timeout`, `not sent`) under the CLOSE report. This never fails the parent's close. See
 [sessions](sessions.md#closing-the-children-with-the-parent).
 
+When a local child turns `closed` (it answered the close), its kept terminal is ended and removed: `hc rm` for a finished one, `hc kill` then `hc rm` for one a shell took over after a grace period, and only when the terminal still carries the child's name (another name is left alone). Never a tab or pane close. The close flow runs this once, bounded, and `foreman session list` or `prune` retries what is left. After the terminal is gone the child's worktree and local branch are removed the safe way (never `--force`; an untracked `.workflow/` alone counts as clean; a branch that is not merged stays). An entry that `foreman session prune` closed (a crashed child that may be restarted) keeps its worktree and branch; its terminal is still removed.
+
 For a child on another machine the order is sent with `foreman session close-remote`. It is confirmed (the entry is
 `closing`) or reported as `not sent` and the entry stays as it was; a refused or failed close removes nothing on either
 machine, and an order nobody answered expires at the next `foreman session list` or `prune`. The target may be the address `<label>@<machine>`, which the result wake of a remote child names. Leftover terminals of `closed` children are removed at the next list, and a program still running there is ended only after the closed notice and a two-minute wait; the local copy of the child's files is kept. The rules are in

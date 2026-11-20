@@ -80,7 +80,7 @@ import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
-import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
+import { BRIDGE_PROVIDER, BridgeIsolation, bridgeAuthNotice, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, rowModelOf, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { gateMigrationLines } from "./gatemigrate.ts";
@@ -256,7 +256,7 @@ import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSiz
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncRunDirs, bashOutputLogs, recordBashOutputLog, childSurface, hubWorkflowDirs, mainWorkflowReadable, ownTaskReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
-import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender } from "./intercomguard.ts";
+import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender, remoteChildAddress } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -2329,6 +2329,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sessions.delete(s.id);
   });
 
+  // An expired claude-bridge login: one notice per process, from the response status (never message text).
+  let bridgeAuthShown = false;
+  pi.on("after_provider_response", (event, ctx) => {
+    if (bridgeAuthShown) return;
+    const text = bridgeAuthNotice(ctx.model?.provider, event.status, isolationOn(isoSetting, ctx.model?.provider) ? isolationDir(sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir())) : null);
+    if (!text) return;
+    bridgeAuthShown = true;
+    ctx.ui.notify(text, "error");
+  });
   pi.on("model_select", async (event, ctx) => {
     const ps = sessionFor(ctx);
     if (ps) tracePoint(ps, event.model);
@@ -3815,7 +3824,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === INTERCOM_TOOL) {
       try {
         const s = await ensureSession(ctx);
-        const reason = intercomBlock(event.toolName, event.input, { isChild: s.isChild, allowRemote: get(s.config.config, "intercom.allowRemote") === true, allowOpenPane: get(s.config.config, "intercom.allowOpenPane") === true });
+        const reason = intercomBlock(event.toolName, event.input, { isChild: s.isChild, allowRemote: get(s.config.config, "intercom.allowRemote") === true, allowOpenPane: get(s.config.config, "intercom.allowOpenPane") === true, remoteAddressOf: (to) => remoteChildAddress(s.agentDir, to) });
         s.trace?.emit({ event: "guard", guard: "intercom", toolFamily: "intercom", decision: reason ? "blocked" : "allowed" });
         if (reason) return { block: true, reason };
       } catch (err) {
