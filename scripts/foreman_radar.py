@@ -326,6 +326,23 @@ def _join_key(p):
     return (host, p["repo"].lower(), p["number"])
 
 
+def tracked_meta(adir):
+    """(trackedAt ISO stamp or None, tracked list size) of the PR poll: `trackedAt` of state/tracked-prs-state.json (None when missing or 0) and the number of
+    lines in state/tracked-prs.json. The sidebar marks the PR list stale from these; reads files only."""
+    sdir = Path(adir) / "pi-foreman" / "state"
+    st = read_json(sdir / "tracked-prs-state.json")
+    t = st.get("trackedAt") if isinstance(st, dict) else None
+    at = None
+    if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0:
+        try:
+            at = datetime.datetime.fromtimestamp(t / 1000.0, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (OverflowError, OSError, ValueError):
+            at = None
+    lst = read_json(sdir / "tracked-prs.json")
+    n = len([x for x in lst["prs"] if isinstance(x, dict)]) if isinstance(lst, dict) and isinstance(lst.get("prs"), list) else 0
+    return at, n
+
+
 def read_pr_feed(adir, now):
     """(entries, search fetched-at stamp or None), or None when neither source has anything.
     All search entries are listed; a tracked entry replaces its search twin while display-fresh (okAt within 15 min) or when its time (okAt, else the
@@ -356,7 +373,7 @@ def read_pr_feed(adir, now):
                 ent["hiddenRepo"] = True
             entries[i] = ent
     entries.sort(key=lambda p: (p["repo"].lower(), p["number"]))
-    return entries, at
+    return entries, at, tracked_meta(adir)
 
 
 def config_symbols(adir):
@@ -1254,6 +1271,8 @@ def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=
         doc["openPrs"] = open_prs[0]
         if open_prs[1] is not None:
             doc["openPrsAt"] = open_prs[1]
+        if len(open_prs) > 2:
+            doc["trackedAt"], doc["trackedN"] = open_prs[2]
     return doc
 
 

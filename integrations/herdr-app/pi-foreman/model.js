@@ -251,7 +251,9 @@ export function parseRadarDoc(text, machine = null) {
   }
   matchPrs(nodes, openPrs);
   dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
-  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
+  const trackedAt = typeof doc.trackedAt === "string" ? Date.parse(doc.trackedAt) : NaN;
+  const trackedN = Number.isInteger(doc.trackedN) && doc.trackedN > 0 ? doc.trackedN : 0;
+  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}), ...(trackedN ? { trackedN } : {}), ...(Number.isFinite(trackedAt) ? { trackedAt } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
@@ -948,6 +950,17 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
     add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p), idOf(null, p));
   });
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
+}
+
+/** The tracked PR state is stale after three poll rounds (`foreman prs poll` runs every 30 s). */
+export const PRS_STALE_MS = 90000;
+/** The words the legend gives the "stale" mark on the Open PRs header. */
+export const PR_STALE_WORDS = "stale: the tracked PR poll has not run for 90 s, so the PR states may be old";
+
+/** "stale" when a radar record has tracked PRs (`trackedN`) and its tracked state time (`trackedAt`, ms) is missing or older than PRS_STALE_MS at `now` (ms); else "".
+ *  `recs` is the list of radar records; one stale record is enough. */
+export function prsStaleText(recs, now) {
+  return Number.isFinite(now) && listOf(recs).some((r) => isObj(r) && r.ok && r.trackedN > 0 && !(Number.isFinite(r.trackedAt) && now - r.trackedAt <= PRS_STALE_MS)) ? "stale" : "";
 }
 
 /** "updated 12m ago" ("updated <1m ago" under a minute) for the Open PRs header from the `openPrsAt` time (ms) and now (ms); "" when the time is unknown. */

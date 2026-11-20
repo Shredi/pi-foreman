@@ -542,6 +542,13 @@ first of `python3`, `python3.14`, `python3.13`, `python` that is Python 3.13+. N
 `pi-foreman needs Python 3.13+; found <cmd> <version>`. To pin an interpreter, set `PI_FOREMAN_PYTHON` or `python.path`
 in `foreman.json` (`null` auto-detects; the adapter tries `python.path` before `PI_FOREMAN_PYTHON`).
 
+## Node for apps that start `foreman`
+
+A GUI app (the herdr-app mod) starts commands with a short `PATH` that has no nvm or fnm Node, so `foreman prs poll` would stop with
+`needs Node >= 22.6`. Each Pi session writes the path of its own Node to `<agent dir>/pi-foreman/state/node-path` (only when it changed).
+When `node` is not on `PATH`, the Node subcommands of `bin/foreman`, `foreman.cmd` and `foreman.ps1` use that file's Node if it still exists;
+without a record, nothing changes.
+
 ## Windows
 
 `pi` is a `.cmd` shim there and Node cannot spawn `.cmd` directly, so setup reads the shim and runs Pi's JS entry with
