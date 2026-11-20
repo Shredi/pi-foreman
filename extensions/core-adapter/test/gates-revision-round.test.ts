@@ -65,3 +65,17 @@ test("the review-tag defuse of the findings blocks runs until stable: a nested t
     assert.match(block, /\[\[?\[?pre-pr\]|pre-pr/);
   }
 });
+
+test("coverAliases: a newer FAIL on the same tree in another checkout (other head) blocks the alias; a FAIL on a different tree does not", async () => {
+  const H = "a".repeat(40);
+  const X = "b".repeat(40);
+  const Y = "c".repeat(40);
+  const T = "e".repeat(40);
+  const pass: ReviewRecord = { role: "reviewer", verdict: "pass", head: H, cwd: "/B", kind: "code", tree: T };
+  const o = { blocked: () => false, treeOf: async () => T };
+  const sameTreeFail: ReviewRecord = { role: "reviewer", verdict: "fail", head: Y, cwd: "/C", kind: "code", tree: T };
+  assert.equal((await coverAliases([pass, sameTreeFail], X, o)).length, 0);
+  assert.equal((await coverAliases([sameTreeFail, pass], X, o)).length, 1, "an older FAIL does not block");
+  const otherTreeFail: ReviewRecord = { ...sameTreeFail, tree: "f".repeat(40) };
+  assert.equal((await coverAliases([pass, otherTreeFail], X, o)).length, 1, "a FAIL on a different tree does not block");
+});
