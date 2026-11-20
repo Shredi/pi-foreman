@@ -93,7 +93,7 @@ export function resolveProgram(first: string, input: ResolveInput): string | nul
   return real;
 }
 
-export const CONTROL = /[\p{Cc}\p{Cf}]/gu;
+const CONTROL = /[\p{Cc}\p{Cf}]/gu;
 
 /** A display label: control characters and known secrets removed, cut to `max` characters. */
 export function cleanLabel(raw: string, max: number): string {
