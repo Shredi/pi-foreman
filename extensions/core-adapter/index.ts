@@ -853,7 +853,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     questionBlocks.delete(id);
     release?.(outcome);
   };
-  /** The outcome of an `ask_user_question` or `plan_mode_question` call from its result (the plan-mode result has no `cancelled: false`: an error or `cancelled: true` is a dismissal, else an answer); other tools say nothing. */
+  /** The outcome of an `ask_user_question` or `plan_mode_question` call from its result (the plan-mode result carries `cancelled: false` with the answers, `cancelled: true` for every cancel; an error or `cancelled: true` is a dismissal, else an answer); other tools say nothing. */
   const questionOutcome = (toolName: string, details: unknown, isError: boolean): DialogOutcome | undefined =>
     toolName === ASK_USER_TOOL ? (askAnswered(details, isError) ? "answered" : "dismissed") : toolName === "plan_mode_question" ? (isError || (details as { cancelled?: unknown } | null | undefined)?.cancelled === true ? "dismissed" : "answered") : undefined;
   let bgTrace: (rec: Record<string, unknown>) => void = () => undefined;
@@ -1700,6 +1700,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function clearHold(s: Session, cause: string): void {
     if (!s.hold) return;
     s.hold = null;
+    s.holdNoticeSince = null;
     s.live?.setHold(false);
     s.trace?.emit({ event: "hold", decision: "cleared", cause });
     persistCeremonyState(s);
@@ -1823,7 +1824,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     removeOpenDialogs(s.agentDir, s.id);
     if (dialogs.length === 0) return;
     s.trace?.emit({ event: "open_dialog_reask", count: dialogs.length });
-    pi.sendMessage({ customType: OPEN_DIALOG_MESSAGE_TYPE, content: reAskText(dialogs), display: true }, { triggerTurn: true });
+    pi.sendMessage({ customType: OPEN_DIALOG_MESSAGE_TYPE, content: reAskText(dialogs, planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[])), display: true }, { triggerTurn: true });
   }
 
   /** Session opened by another session: rewrite `<handoff>/round-state.json` (roundstate.ts); never an approval flag. */

@@ -77,7 +77,7 @@ test("plan_mode_question records its outcome: an answer is lastAnswer answered, 
   const { w, a } = await start(t);
   const q = [{ header: "DB", question: "Which?", options: [{ label: "pg" }] }];
   await a.fire("tool_call", { toolName: "plan_mode_question", toolCallId: "p1", input: { questions: q } });
-  await a.fire("tool_execution_end", { toolName: "plan_mode_question", toolCallId: "p1", result: { details: { answers: ["pg"] } }, isError: false });
+  await a.fire("tool_execution_end", { toolName: "plan_mode_question", toolCallId: "p1", result: { details: { cancelled: false, answers: ["pg"] } }, isError: false });
   let last = live(w).lastAnswer as { outcome: string };
   assert.equal(last.outcome, "answered");
   await a.fire("tool_call", { toolName: "plan_mode_question", toolCallId: "p2", input: { questions: q } });
@@ -87,22 +87,44 @@ test("plan_mode_question records its outcome: an answer is lastAnswer answered, 
 });
 
 test("the re-ask of a plan_mode_question names plan_mode_question, not ask_user_question", () => {
-  const text = reAskText([dialogOf("question", "Q", { tool: "plan_mode_question", questions: [{ question: "A?" }] }, new Date(T0))]);
+  const text = reAskText([dialogOf("question", "Q", { tool: "plan_mode_question", questions: [{ question: "A?" }] }, new Date(T0))], true);
   assert.match(text, /call plan_mode_question again with the same questions/);
   assert.doesNotMatch(text, /ask_user_question/);
 });
 
-test("questions read from the file are capped in count, string length and size", () => {
+test("the re-ask of a plan_mode_question with plan mode off names ask_user_question", () => {
+  const text = reAskText([dialogOf("question", "Q", { tool: "plan_mode_question", questions: [{ question: "A?" }] }, new Date(T0))], false);
+  assert.match(text, /call ask_user_question again with the same questions/);
+  assert.doesNotMatch(text, /plan_mode_question/);
+});
+
+test("a hold set again after it ended gets its notice again, three times in a row", async (t) => {
+  const { w, a } = await start(t);
+  for (let i = 0; i < 3; i++) {
+    await hold(a, { note: `n${i}` });
+    await settle(a);
+    await hold(a, { off: true });
+  }
+  assert.equal(w.notes.filter((n) => /ends on hold with steps missing/.test(n)).length, 3);
+});
+
+test("questions read from the file are capped in count and size, strings whole", () => {
   const d = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "fu-od-"));
   try {
     const od = new OpenDialogs(d, "s1");
     od.add(dialogOf("question", "Q", { tool: "ask_user_question" }, new Date(T0)));
     const file = openDialogFile(d, "s1");
-    const many = Array.from({ length: 50 }, (_, i) => ({ question: "q".repeat(5000) + i }));
+    const many = Array.from({ length: 50 }, (_, i) => ({ question: "q".repeat(300) + i }));
     fs.writeFileSync(file, JSON.stringify({ v: 1, dialogs: [{ kind: "question", label: "x", since: new Date(T0).toISOString(), questions: many }] }));
     const q = readOpenDialogs(d, "s1")[0].questions as { question: string }[];
     assert.equal(q.length, 8);
-    assert.equal(q[0].question.length, 400);
+    assert.equal(q[0].question.length, 301, "a string comes back whole");
+    const preview = "p".repeat(900);
+    const one = [{ question: "x".repeat(580), options: [{ label: "a", preview }] }];
+    fs.writeFileSync(file, JSON.stringify({ v: 1, dialogs: [{ kind: "question", label: "x", since: new Date(T0).toISOString(), questions: one }] }));
+    const w1 = readOpenDialogs(d, "s1")[0].questions as { question: string; options: { preview: string }[] }[];
+    assert.equal(w1[0].question.length, 580);
+    assert.equal(w1[0].options[0].preview, preview);
     const wide = Array.from({ length: 8 }, () => ({ a: "x".repeat(399), b: "y".repeat(399), c: "z".repeat(399), d: "w".repeat(399), e: "v".repeat(399), f: "u".repeat(399), g: "t".repeat(399), h: "s".repeat(399) }));
     fs.writeFileSync(file, JSON.stringify({ v: 1, dialogs: [{ kind: "question", label: "x", since: new Date(T0).toISOString(), questions: wide }] }));
     assert.equal(readOpenDialogs(d, "s1")[0].questions, undefined, "above the size cap: no questions");
