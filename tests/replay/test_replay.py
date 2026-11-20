@@ -318,14 +318,13 @@ class TestRoleAllowlist(ReplayCase):
         self.assertIn("builder child result", notice)
         pi.close()
         t = rig.traces()
-        fr = [r for r in t["trace-" + sid] if r["event"] == "friction"]
         raw = t.pop("trace-" + sid)
         # ledger item 26: the builder launch is allowed by the gate default `default-role-launch` with no review call; the unknown `worker` launch still reaches the review (golden keeps its one review record)
         rules = [r.get("rule") for r in raw if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
         self.assertEqual(rules[-1:], ["default-role-launch"], rules)
         foreman = shape(raw)
         self.assertEqual([r["role"] for r in foreman if r["event"] == "role_launch"], ["builder"])
-        self.assertEqual([(r["role"], r["kind"], r["note"]) for r in fr], [("builder", "permission", "needed permission twice for [path]")])  # the trace scrubs every string field
+        self.assertFalse([r for r in raw if r.get("event") == "friction"])  # the Friction: line is no longer parsed
         self.golden("role_allowlist", {"foreman": foreman})
 
 

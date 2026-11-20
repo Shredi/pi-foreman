@@ -139,13 +139,13 @@ def ask_role(rec):
 
 
 def bench_key(row):
-    """Retro backlog key of a cell: bench/<task id> (the Harbor trial dir name), else bench/<row id>."""
+    """Workspace key of a cell: bench/<task id> (the Harbor trial dir name), else bench/<row id>."""
     name = re.sub(r"[^A-Za-z0-9._-]", "_", str(row.get("_task_id") or row.get("id") or "row")).strip(".")
     return "bench/" + (name or "row")
 
 
 def run_bench_retro(args, row, agent, status, runner=subprocess.run):
-    """After the session: file the cell's friction in the bench backlog with scripts/foreman_retro.py (stdlib, no
+    """After the session: run scripts/foreman_retro.py for the cell (it writes no backlog) (stdlib, no
     model, never --model). Skipped for rows whose post steps already run /retro. Failures are logged, never raised."""
     if not row.get("_permission_system") or "retro" in post_steps_of(row):
         return
@@ -153,8 +153,7 @@ def run_bench_retro(args, row, agent, status, runner=subprocess.run):
         state = agent / "pi-foreman" / "state"
         sessions = [f for f in (Path(args.work) / "sessions").rglob("*.jsonl") if "subagent-artifacts" not in f.parts]
         cmd = [sys.executable, str(Path(__file__).resolve().parent.parent / "scripts" / "foreman_retro.py"),
-               "--agent-dir", str(agent), "--backlog-workspace", str(args.cwd), "--workspace-key", bench_key(row),
-               "--backlog-session", re.sub(r"[^A-Za-z0-9._-]", "_", str(row.get("id") or "row"))]
+               "--agent-dir", str(agent)]
         with tempfile.TemporaryDirectory(prefix="pf-retro-") as tmp:
             for flag, name, files in (("--trace", "trace.jsonl", sorted(state.glob("trace-*.jsonl"))),
                                       ("--usage", "usage.jsonl", sorted((state / "usage").glob("*.jsonl")))):

@@ -57,7 +57,7 @@ test("trace: only an overlay deny carries its (redacted) command; the ask event 
   assert.deepEqual(sanitizeTrace({ event: "read_budget", phase: "before", count: 6, action: "warn", command: "cat x" }), { event: "read_budget", phase: "before", count: 6, action: "warn" });
   // plan checkpoint events keep `by`, never plan or note text
   assert.deepEqual(sanitizeTrace({ event: "checkpoint", decision: "approve", by: "rig", tier: "heavy", note: "owner words", path: "p" }), { event: "checkpoint", decision: "approve", by: "rig", tier: "heavy" });
-  assert.deepEqual(sanitizeTrace({ event: "friction", role: "builder", runId: "r1", kind: "prompt", note: "brief thin", path: "p" }), { event: "friction", role: "builder", runId: "r1", kind: "prompt", note: "brief thin" });
+  assert.deepEqual(sanitizeTrace({ event: "report", role: "builder", runId: "r1", kind: "prompt", subject: "brief thin", effect: "slow", id: "abc", note: "dropped", path: "p" }), { event: "report", role: "builder", runId: "r1", kind: "prompt", subject: "brief thin", effect: "slow", id: "abc" });
   assert.deepEqual(sanitizeTrace({ event: "plan_written", tier: "heavy", by: "foreman", file: "plan-x.md" }), { event: "plan_written", tier: "heavy", by: "foreman" });
 });
 

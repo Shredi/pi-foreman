@@ -1,4 +1,4 @@
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for PowerShell.
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for PowerShell. reports takes list|show|set|expire|migrate (old backlog import).
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = @(if ($args.Count -gt 1) { $args[1..($args.Count - 1)] })
 if ($sub -eq 'setup') {
@@ -65,12 +65,11 @@ switch ($sub) {
     'radar' { $name = 'foreman_radar.py' }
     'config' { $name = 'foreman_config.py' }
     'bench' { $name = 'foreman_bench.py' }
-    'backlog' { $name = 'foreman_backlog.py' }
     'findings' { $name = 'foreman_findings.py' }
     'close' { $name = 'foreman_close.py' }
     'worktree' { $name = 'foreman_worktree.py' }
     'machine' { $name = 'foreman_session.py'; $rest = @('machine') + @($rest) }
-    default { [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]'); exit 2 }
+    default { if ("$sub" -eq 'backlog') { [Console]::Error.WriteLine('foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)'); exit 2 }; [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]'); exit 2 }
 }
 $script = Join-Path $PSScriptRoot "..\scripts\$name"
 $py = $env:PI_FOREMAN_PYTHON

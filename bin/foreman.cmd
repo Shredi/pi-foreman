@@ -1,5 +1,5 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|migrate (old backlog import).
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
@@ -22,13 +22,13 @@ if /i "%~1"=="session" if not defined PI_FOREMAN_START_CHECK_SECONDS set "PI_FOR
 if /i "%~1"=="radar" set "PF_SCRIPT=foreman_radar.py"
 if /i "%~1"=="config" set "PF_SCRIPT=foreman_config.py"
 if /i "%~1"=="bench" set "PF_SCRIPT=foreman_bench.py"
-if /i "%~1"=="backlog" set "PF_SCRIPT=foreman_backlog.py"
 if /i "%~1"=="findings" set "PF_SCRIPT=foreman_findings.py"
 if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
 set "PF_FIRST="
 if /i "%~1"=="machine" (set "PF_SCRIPT=foreman_session.py" & set "PF_FIRST= machine")
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|machine^|dialogs^|prs^|rounds^|reports^|perms^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT if /i "%~1" equ "backlog" (echo foreman backlog is retired: use foreman reports ^(list^|show^|set^|expire^|migrate^) 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|findings^|close^|worktree^|machine^|dialogs^|prs^|rounds^|reports^|perms^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS=%PF_FIRST%"
 :collect

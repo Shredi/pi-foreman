@@ -147,7 +147,7 @@ test("e: [alpha, beta/probe] direct: probe is up front; alpha in bulk when named
   assert.deepEqual(over.mcpActive(), ["mcp__beta__probe"]);
   assert.deepEqual(over.trace, [{ event: "mcp_child_direct", provider: "p1", servers: "beta", count: 1 }, { event: "mcp_child_direct_capped", provider: "p1", count: 4, cap: 3 }]);
   assert.match(over.mcp.note() ?? "", /other tools of the MCP server alpha are not declared: find them with tool_search/);
-  assert.match(over.mcp.note() ?? "", /With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 \(mcp\.directMaxTools\), so they are not declared and found with tool_search; name that under Friction/);
+  assert.match(over.mcp.note() ?? "", /With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 \(mcp\.directMaxTools\), so they are not declared and found with tool_search; report that with foreman_report/);
   assert.equal(over.mcp.callBlock("mcp__alpha__shout"), undefined);
 });
 
@@ -282,14 +282,14 @@ test("h2: [alpha, beta/probe] with alpha over the cap: the line carries the cap 
   const c = await child(t, { launch: ["alpha", "beta/probe"], tools, max: 3 });
   assert.equal(
     c.mcp.note(),
-    "pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. The other tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). With the 1 named tool, the 4 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.",
+    "pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. The other tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). With the 1 named tool, the 4 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; report that with foreman_report.",
   );
 });
 
 test("h2: a server that registered nothing in time gets the no-tool sentence; a tool missing on a server that did register keeps the old wording", async (t) => {
   const silent = await child(t, { launch: ["alpha/echo", "beta/probe"], tools: [{ name: "mcp__beta__probe", label: "beta/probe" }] });
   const note = silent.mcp.note() ?? "";
-  assert.match(note, /MCP server alpha registered no tool: it did not answer in time or it is hidden in the MCP config, so its named tools \(alpha\/echo\) are not declared; name it under Friction in your report\./);
+  assert.match(note, /MCP server alpha registered no tool: it did not answer in time or it is hidden in the MCP config, so its named tools \(alpha\/echo\) are not declared; report it with foreman_report\./);
   assert.doesNotMatch(note, /Named but not found/);
   const lacking = await child(t, { launch: ["alpha/echo", "alpha/missing"] });
   assert.match(lacking.mcp.note() ?? "", /Named but not found on the server: alpha\/missing/);
@@ -413,7 +413,7 @@ test("k: the same with alpha over the cap: the cap sentence after p1, probe not 
   assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
   assert.equal(
     c.mcp.note(),
-    `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH} With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.`,
+    `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH} With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; report that with foreman_report.`,
   );
   assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p2", servers: "beta", count: 1 }, { event: "mcp_child_direct_capped", provider: "p1", count: 4, cap: 3 }]);
 });
@@ -434,7 +434,7 @@ test("k: a named tool hidden in a server named whole is named in the line as not
   assert.deepEqual(c.mcpActive(), []);
   assert.equal(
     c.mcp.note(),
-    "pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.",
+    "pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). Named but not available in this child (hidden in the MCP config): alpha/echo; report it with foreman_report.",
   );
 });
 
@@ -465,7 +465,7 @@ const NO_TOOL = "it did not answer in time or it is hidden in the MCP config";
 const alphaHidden = [{ name: "alpha", config: { exposure: "hidden" } }];
 
 test("m: [alpha/echo] with nothing registered gets the no-tool sentence, with a hidden config and with a silent server (same text)", async (t) => {
-  const text = `${NONE_DECLARED} MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`;
+  const text = `${NONE_DECLARED} MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; report it with foreman_report.`;
   const hidden = await child(t, { launch: ["alpha/echo"], tools: [], servers: alphaHidden, piOrder: true });
   const silent = await child(t, { launch: ["alpha/echo"], tools: [], piOrder: true });
   assert.equal(hidden.mcp.note(), text);
@@ -476,7 +476,7 @@ test("m: [alpha] named whole with nothing registered, on a direct provider: the 
   for (const servers of [alphaHidden, undefined]) {
     const c = await child(t, { launch: ["alpha"], tools: [], servers, piOrder: true });
     const note = c.mcp.note() ?? "";
-    assert.equal(note, `${NONE_DECLARED} MCP server alpha registered no tool: ${NO_TOOL}; name it under Friction in your report.`);
+    assert.equal(note, `${NONE_DECLARED} MCP server alpha registered no tool: ${NO_TOOL}; report it with foreman_report.`);
     assert.doesNotMatch(note, /tool_search|later/);
   }
 });
@@ -485,7 +485,7 @@ test("m: several silent servers, named and whole, each get the sentence; a serve
   const c = await child(t, { launch: ["alpha/echo", "beta"], tools: [], servers: [], piOrder: true });
   assert.equal(
     c.mcp.note(),
-    `${NONE_DECLARED} MCP server beta registered no tool: ${NO_TOOL}; name it under Friction in your report. MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`,
+    `${NONE_DECLARED} MCP server beta registered no tool: ${NO_TOOL}; report it with foreman_report. MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; report it with foreman_report.`,
   );
 });
 
@@ -524,7 +524,7 @@ test("n: the same with alpha over the cap: the cap sentence, alpha in the search
   assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
   assert.equal(
     c.mcp.note(),
-    `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH} With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.`,
+    `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH} With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; report that with foreman_report.`,
   );
 });
 
@@ -532,7 +532,7 @@ test("n: a server that registered nothing by the end of the wait: the line does 
   const c = await child(t, { launch: ["alpha", "beta"], late: ["alpha"] });
   assert.equal(
     c.mcp.note(),
-    `pi-foreman: MCP tools declared in your tool list: all 2 tools of server beta. No other MCP tool is declared in this launch. MCP server alpha registered no tool: ${NO_TOOL}; name it under Friction in your report.`,
+    `pi-foreman: MCP tools declared in your tool list: all 2 tools of server beta. No other MCP tool is declared in this launch. MCP server alpha registered no tool: ${NO_TOOL}; report it with foreman_report.`,
   );
 });
 

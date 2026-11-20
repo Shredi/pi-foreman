@@ -15,7 +15,7 @@ test("trace: every string field is scrubbed, secrets stay redacted", () => {
   const w = openTrace({ enabled: true, dir, stateDir: dir, sessionId: "all" })!;
   w.emit({ event: "overlay", decision: "deny", role: "builder", reason: `denied ${home}/work/notes.md`, command: `cat ${home}/.ssh/id_rsa /etc/hosts http://x/secret b.txt token=abcdef123456`, runId: "r1" });
   w.emit({ event: "tool_error", tool: "read", message: `ENOENT: /srv/app/a.ts and c.json`, reason: "see /var/log/x.log" });
-  w.emit({ event: "friction", kind: "prompt", note: "open ./src/a.ts or ../b.py" });
+  w.emit({ event: "report", kind: "prompt", subject: "open ./src/a.ts or ../b.py" });
   lines.push(...fs.readFileSync(w.file, "utf8").trim().split("\n"));
   const text = lines.join("\n");
   assert.equal(lines.length, 3);

@@ -11,7 +11,7 @@ import { withFileLock } from "../statefile.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
-const PRELUDE = `import sys, time, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_backlog as bl, foreman_findings as ff\n`;
+const PRELUDE = `import sys, time, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_config as bl, foreman_findings as ff\n`;
 
 const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "flock-"));
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

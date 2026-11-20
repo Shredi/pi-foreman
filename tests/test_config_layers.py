@@ -308,13 +308,32 @@ class LayerRulesTest(unittest.TestCase):
     def test_removed_compaction_keys_warn_once_in_the_project_layer(self):
         self.check_removed_compaction_warning(proj=True)
 
-    def test_retro_backlog_location_keys_not_from_project(self):
-        res = self.load(proj={"retro": {"backlogDir": "x", "workspaceKey": "k", "repoBacklog": [{"path": "/x", "commit": True}],
-                                        "expireDays": 3}}, session={})
+    def test_retro_workspace_key_not_from_project(self):
+        res = self.load(proj={"retro": {"workspaceKey": "k", "expireDays": 3}}, session={})
         retro, joined = res["config"]["retro"], "\n".join(res["warnings"])
-        self.assertEqual((retro["backlogDir"], retro["workspaceKey"], retro["repoBacklog"], retro["expireDays"]), (None, None, [], 3))
-        for key in ("backlogDir", "workspaceKey", "repoBacklog"):
-            self.assertIn("project retro.%s ignored" % key, joined)
+        self.assertEqual((retro["workspaceKey"], retro["expireDays"]), (None, 3))
+        self.assertIn("project retro.workspaceKey ignored", joined)
+
+    def test_a_config_with_the_removed_retro_keys_still_loads(self):
+        old = {"backlogDir": "x", "repoBacklog": [{"path": "/x", "commit": True}], "askThreshold": 3, "panelThreshold": 2, "expireDays": 5}
+        for layers in ({"l2": {"retro": old}}, {"proj": {"retro": old}, "session": {}}):
+            res = self.load(**layers)
+            self.assertEqual(res["errors"], [])
+            self.assertFalse(res["safetyFallback"])
+            self.assertEqual(res["config"]["retro"]["expireDays"], 5)
+
+    def test_removed_retro_keys_are_gone_and_start_note_is_in_defaults_and_schema(self):
+        root = Path(__file__).resolve().parent.parent / "config"
+        defaults = json.loads((root / "foreman.defaults.json").read_text(encoding="utf-8"))["retro"]
+        schema = json.loads((root / "foreman.schema.json").read_text(encoding="utf-8"))["properties"]["retro"]["properties"]
+        features = (root / "features.json").read_text(encoding="utf-8")
+        for key in ("backlogDir", "repoBacklog", "askThreshold", "panelThreshold"):
+            self.assertNotIn(key, defaults)
+            self.assertNotIn(key, schema)
+            self.assertNotIn("retro." + key, features)
+        self.assertIs(defaults["startNote"], True)
+        self.assertEqual(schema["startNote"]["type"], "boolean")
+        self.assertIn("retro.startNote", features)
 
     def test_ceremony_escalation_keys_tighten_only(self):
         # MINOR-7: signals union only, file count lower only (>= 1), default raise only, wrong types dropped.
@@ -394,16 +413,16 @@ class LayerRulesTest(unittest.TestCase):
 
     def test_review_climb_keys_user_only_and_plan_review_true_only(self):
         proj = {"ladder": {"reviewPanel": {"shadows": ["p/x"]}}, "ceremony": {"reviewModel": "p/x", "reviewByOccasion": {"item": {"thinking": "high"}}, "planReview": {"heavy": False, "standard": True}},
-                "retro": {"panelThreshold": 1}}
+                }
         res = self.load(proj=proj, session={})
         cfg, warnings = res["config"], "\n".join(res["warnings"])
-        self.assertEqual((cfg["ladder"]["reviewPanel"]["shadows"], cfg["ceremony"]["reviewModel"], cfg["retro"]["panelThreshold"]), ([], None, 3))
+        self.assertEqual((cfg["ladder"]["reviewPanel"]["shadows"], cfg["ceremony"]["reviewModel"]), ([], None))
         self.assertEqual(cfg["ceremony"]["reviewByOccasion"], {})
         self.assertEqual(cfg["ceremony"]["planReview"], {"trivial": False, "standard": True, "heavy": True})
-        for key in ("ladder.reviewPanel", "ceremony.reviewModel", "ceremony.reviewByOccasion", "retro.panelThreshold", "ceremony.planReview.heavy"):
+        for key in ("ladder.reviewPanel", "ceremony.reviewModel", "ceremony.reviewByOccasion", "ceremony.planReview.heavy"):
             self.assertIn("project %s ignored" % key, warnings)
-        res = self.load(l2={"ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False}}, "retro": {"panelThreshold": 5}}, proj={}, session={})
-        self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"], res["config"]["retro"]["panelThreshold"]), ("p/x", False, 5))
+        res = self.load(l2={"ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False}}}, proj={}, session={})
+        self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"]), ("p/x", False))
 
     def test_high_stakes_user_only(self):
         hs = {"model": "p/x", "modules": 9, "lines": 50}

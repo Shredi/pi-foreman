@@ -137,7 +137,7 @@ test("over the cap none is declared: trace mcp_child_direct_capped with provider
   const note = c.mcp.note();
   assert.equal(note, cappedNote(41, 40));
   assert.match(note ?? "", /^pi-foreman: the 41 MCP tools allowed to this child are over the cap of 40 \(mcp\.directMaxTools\)/);
-  assert.match(note ?? "", /under Friction/);
+  assert.match(note ?? "", /with foreman_report/);
   assert.ok(note?.includes('mcp: ["server/tool"]'));
   assert.ok(note?.includes("raise mcp.directMaxTools"));
 });

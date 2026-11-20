@@ -149,6 +149,7 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
+import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
 import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, runReport, runReports, type ReportSession } from "./reportstool.ts";
 import { recordReport, reportContext } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
@@ -188,7 +189,6 @@ import { taskLedger } from "./ledgerpath.ts";
 import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
-import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
@@ -337,6 +337,8 @@ interface Session {
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
+  /** The start note was handled (sent, or nothing qualified) for this process; the session entry covers a reload. */
+  startNoteDone: boolean;
   /** The pi-foreman section text the last before_agent_start set (review N2: put back after a compaction). */
   foremanSection?: string;
   /** Orientation packet, built on the first foreman prompt ("" = none). */
@@ -969,6 +971,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
+      startNoteDone: false,
       notified: new Set(),
       runs: new Map(),
       activeRuns: new Set(),
@@ -2390,7 +2393,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function onForemanCompact(s: Session, ctx: ExtensionContext, summary: string, reason: string): Promise<void> {
     const section = s.retro.commit();
     if (section) s.foremanSection = section;
-    const r = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session", true), "--json"]);
+    const r = await runScript(s, "foreman_retro.py", [...retroInputs(s, ctx, "--session"), "--json"]);
     let counters: unknown = null;
     try {
       counters = r.ok ? JSON.parse(r.text) : null;
@@ -3049,7 +3052,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) recordPlanReviews(s, runId, reviewResults);
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data, reviewResults)) s.steps[step]++;
-          for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(reviewResults);
           const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
           s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
@@ -6311,6 +6313,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await idleModel.beforeTurn(s.turn.cause);
   });
 
+  // The start note (startnote.ts, retro.startNote): its own handler, because Pi collects one message per handler and the triage hint above must not be dropped.
+  // A main session without a parent only; sent once, recorded in a session entry. A message appended to the transcript, never system text.
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild || s.startNoteDone || process.env.PI_FOREMAN_HANDOFF_DIR?.trim()) return;
+    s.startNoteDone = true;
+    if (get(s.config.config, "retro.startNote") === false || get(s.config.config, "retro.report") === false) return;
+    if (startNoteRecorded((ctx.sessionManager.getBranch?.() ?? []) as unknown[])) return;
+    const text = startNoteText(s.cwd);
+    if (!text) return;
+    try {
+      pi.appendEntry(START_NOTE_ENTRY, { v: 1 });
+    } catch {
+      // the session file is not writable now: the note is still sent
+    }
+    return { message: { customType: START_NOTE_TYPE, content: text, display: true } };
+  });
+
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
@@ -6475,7 +6495,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   } as never);
 
   // Report tools (reportstool.ts, docs/retro.md): `foreman_report` is registered in every adapter process, so a child gets it through its tool list; `retro.report: false`
-  // takes it off the active tools at session start and the call refuses. `foreman_reports` (list, group, set) is deferred and refuses in a child.
+  // takes it off the active tools of a main session at start; a child keeps a tool its role declares, and the call refuses there. `foreman_reports` (list, group, set) is deferred and refuses in a child.
   const reportSession = (s: Session): ReportSession => {
     const expire = get(s.config.config, "retro.expireDays");
     return {
@@ -6491,15 +6511,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   };
   /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
-  const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<boolean> => {
+  const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<"recorded" | "seen" | null> => {
     const rs = reportSession(s);
-    if (!rs.enabled) return false;
+    if (!rs.enabled) return null;
     try {
       const r = recordReport({ cwd: s.cwd, role: "foreman", session: rs.foremanSession, runId: null, source: "owner", ...(rs.expireDays !== undefined ? { expireDays: rs.expireDays } : {}), ...(await reportContext(s.cwd, rs.workspaceOverride)) }, { kind: "permission", subject: rec.family, what: rec.command, effect: "slowed", suggest: rec.note });
-      return r.status === "recorded" || r.status === "seen";
+      return r.status === "recorded" || r.status === "seen" ? r.status : null;
     } catch {
       // a report never fails the command
-      return false;
+      return null;
     }
   };
   pi.registerTool({
@@ -6508,7 +6528,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     description: REPORT_DESCRIPTION,
     parameters: REPORT_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-      const r = await runReport(reportSession(await ensureSession(ctx)), params);
+      const s = await ensureSession(ctx);
+      const r = await runReport(reportSession(s), params);
+      if (r.event) s.trace?.emit({ event: "report", role: s.usage.line.role, ...r.event });
       return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
     },
   } as never);
@@ -7140,7 +7162,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   /** Retro inputs of this session (agent dir, review log, usage, session file, trace). */
-  function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string, reportOnly = false): string[] {
+  function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string): string[] {
     const args = ["--agent-dir", s.agentDir, "--usage", s.usage.file];
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) args.push(sessionFlag, sessionFile);
@@ -7150,11 +7172,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const f = traceFile(get(s.config.config, "trace.dir"), s.markerDir, id);
       if (fs.existsSync(f)) args.push("--trace", f);
     }
-    // Backlog: file under this workspace; off when retro is off, and for the compaction report (counted by the next /retro or /sync).
-    args.push("--backlog-workspace", workspaceOf(s.cwd).root);
-    const wsKey = get(s.config.config, "retro.workspaceKey");
-    if (typeof wsKey === "string" && wsKey.trim()) args.push("--workspace-key", wsKey.trim());
-    if (reportOnly || !retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) args.push("--no-backlog");
     // The bridge logs cost 0: pass registry rates of the logged models (a file, not the command line).
     try {
       const rates: Record<string, unknown> = {};
@@ -7288,8 +7305,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         const rec = askFlag.flag(s.id, rest.join(" "));
         if (rec) s.trace?.emit(rec);
-        const reportWritten = rec ? await flagReport(s, rec) : false;
-        ctx.ui.notify(rec ? `pi-foreman: flagged the last answered ask (${rec.family}${s.trace ? "" : `; tracing is off, ${reportWritten ? "the report was written" : "nothing was written"}`}).` : "pi-foreman: no ask answered in this session yet; nothing flagged.", rec ? "info" : "warning");
+        const reportState = rec ? await flagReport(s, rec) : null;
+        ctx.ui.notify(rec ? `pi-foreman: flagged the last answered ask (${rec.family}${s.trace ? "" : `; tracing is off, ${reportState === "recorded" ? "the report was written" : reportState === "seen" ? "the report already exists" : "nothing was written"}`}).` : "pi-foreman: no ask answered in this session yet; nothing flagged.", rec ? "info" : "warning");
         return;
       }
       if (sub === "dialogs") {
