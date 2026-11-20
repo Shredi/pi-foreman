@@ -12,7 +12,7 @@ import { rmTestTmp } from "./_tmpbase.ts";
 import { tick, world } from "./_r46world.ts";
 import { execFileSync } from "node:child_process";
 
-async function amendCase(t: Parameters<typeof world>[0], cleared: boolean): Promise<{ reason: string; alias: boolean }> {
+async function amendCase(t: Parameters<typeof world>[0], cleared: "no" | "other" | "same"): Promise<{ reason: string; alias: boolean }> {
   const w = world(t, { realSnapshot: true });
   const dir = w.project;
   fs.rmSync(path.join(dir, ".git"), { recursive: true, force: true });
@@ -29,13 +29,18 @@ async function amendCase(t: Parameters<typeof world>[0], cleared: boolean): Prom
     git(B, "worktree", "add", "-q", C, "-b", "cbr");
     git(C, "commit", "-q", "--allow-empty", "-m", "y");
     const Y = git(C, "rev-parse", "HEAD");
+    fs.writeFileSync(path.join(C, "z.txt"), "z\n");
+    git(C, "add", "z.txt");
+    git(C, "commit", "-q", "-m", "z");
+    const Z = git(C, "rev-parse", "HEAD");
+    git(C, "reset", "-q", "--hard", Y);
     git(C, "commit", "-q", "--amend", "--allow-empty", "-m", "y amended");
     const X = git(C, "rev-parse", "HEAD");
     assert.notEqual(X, Y);
     const tree = (await commitTreeNoWorkflow(B, h1))!;
     assert.equal(await commitTreeNoWorkflow(B, X), tree);
     const rec: ReviewRecord = { role: "reviewer", verdict: "pass", head: h1, cwd: B, kind: "code", occasion: "pre-pr", tree };
-    const run = { verdict: "fail" as const, head: Y, cwd: fs.realpathSync.native(C), revised: false, handed: false, cleared, clearedAt: cleared ? "z".repeat(40) : undefined };
+    const run = { verdict: "fail" as const, head: Y, cwd: fs.realpathSync.native(C), revised: false, handed: false, cleared: cleared !== "no", clearedAt: cleared === "other" ? Z : cleared === "same" ? Y : undefined };
     const hs = { fired: { reasons: ["design"] }, runIds: [], runs: [run], bases: {} };
     w.entries.push({ type: "custom", customType: CEREMONY_ENTRY, data: buildCeremonyState({ plan: null, lineages: [], planPhase: false, reviews: [rec], highStakes: hs }) });
     const a = await w.adapter("startup");
@@ -50,13 +55,19 @@ async function amendCase(t: Parameters<typeof world>[0], cleared: boolean): Prom
 }
 
 test("an amend in a sibling worktree of an uncleared high-stakes FAIL's commit gets no alias of a PASS on the same tree in another checkout", async (t) => {
-  const r = await amendCase(t, false);
+  const r = await amendCase(t, "no");
   assert.equal(r.alias, false);
   assert.notEqual(r.reason, "", "the PR is refused");
 });
 
-test("a cleared high-stakes FAIL no longer blocks the alias on its tree", async (t) => {
-  const r = await amendCase(t, true);
+test("a high-stakes FAIL cleared at a head of another tree still blocks the alias on its tree", async (t) => {
+  const r = await amendCase(t, "other");
+  assert.equal(r.alias, false);
+  assert.notEqual(r.reason, "", "the PR is refused");
+});
+
+test("a high-stakes FAIL cleared at a head of the same tree no longer blocks the alias on its tree", async (t) => {
+  const r = await amendCase(t, "same");
   assert.equal(r.alias, true);
   assert.equal(r.reason, "");
 });

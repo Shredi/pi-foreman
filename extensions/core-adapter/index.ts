@@ -1658,10 +1658,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const first = cwd ? await rootOf(cwd) : null;
     const hs = s.hs.state();
     const failed = uncleared(hs) ? hs.runs[hs.runs.length - 1]?.cwd : undefined;
-    const failTrees = new Set<string>(); // the trees of the uncleared high-stakes FAILs of any checkout: that content was refused, a re-commit of it earns no alias
+    const failTrees = new Set<string>(); // the trees of the high-stakes FAILs of any checkout not cleared at a head of the same tree: that content was refused, a re-commit of it earns no alias
     for (const x of hs.runs) {
-      const t = x.verdict === "fail" && !x.cleared && x.head ? await commitTreeOf(x.cwd, x.head) : null;
-      if (t) failTrees.add(t);
+      const t = x.verdict === "fail" && x.head ? await commitTreeOf(x.cwd, x.head) : null;
+      if (!t) continue;
+      const at = x.cleared && x.clearedAt ? await commitTreeOf(x.cwd, x.clearedAt) : null;
+      if (at !== t) failTrees.add(t); // cleared only counts when it was cleared at a head of that very tree
     }
     const treeOf = async (co: string, h: string): Promise<string | null> => {
       const t = await commitTreeOf(co, h);
