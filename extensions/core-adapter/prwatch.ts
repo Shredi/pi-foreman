@@ -1554,6 +1554,16 @@ export class PrWatches {
     }
   }
 
+  /** False when the live phase-rules source throws (the label step then adds nothing this tick). */
+  private phasesReadable(): boolean {
+    try {
+      this.deps.phaseRules?.();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** The label name of watch `w` now ("" = off): the repository's merge label, else tools.prReadyLabel. */
   private labelName(w: Watch): string {
     const merge = mergeLabelOf(this.phases(), w.key.repo);
@@ -1572,7 +1582,12 @@ export class PrWatches {
     if (!facts) return null;
     // a snap stored before the tracker saw the live rules: classify with them too, so a gate run never counts and a gated repository never labels a head with no phase-1 run
     const rules = this.phases();
-    const live: WatchSnapshot = { ...snap, ...(snap.gated || gatedRepo(rules, w.key.repo) ? { gated: true as const } : {}), runs: snap.runs.map((r) => (r.phase || r.gates === false || phaseOf(rules, w.key.repo, r) === 1 ? r : { ...r, gates: false })) };
+    // a run counts as phase 1 when the stored tag or the live rules say so (fail closed both ways)
+    const classify = (r: Run): Run => {
+      if (phaseOf(rules, w.key.repo, r) === 1) return r.phase || r.gates === false ? (({ phase: _p, gates: _g, ...rest }) => rest)(r) : r;
+      return r.phase || r.gates === false ? r : { ...r, gates: false };
+    };
+    const live: WatchSnapshot = { ...snap, ...(snap.gated || gatedRepo(rules, w.key.repo) ? { gated: true as const } : {}), runs: snap.runs.map((r) => classify(r)) };
     return labelTarget({ facts, checks: checksOf(w.state, live, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
   }
 
@@ -1595,6 +1610,7 @@ export class PrWatches {
         this.persist();
       }
       if (!name || w.labeling || w.labelStopped || snap.state !== "open" || !snap.head) return;
+      if (!this.phasesReadable()) return; // fail closed: no label of any kind while the live phase rules cannot be read
       const target = this.labelTargetOf(w, snap);
       if (target === null) return;
       const head = snap.head;
