@@ -73,7 +73,7 @@ test("a high-stakes FAIL cleared at a head of the same tree still blocks the ali
 });
 
 test("an uncleared high-stakes FAIL whose checkout was removed gives no alias", async (t) => {
-  const r = await amendCase(t, "no", { removeC: true });
+  const r = await amendCase(t, "no", { removeC: true, passAt: 3000 });
   assert.equal(r.alias, false);
   assert.notEqual(r.reason, "", "the PR is refused");
 });

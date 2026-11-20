@@ -4,6 +4,22 @@
 import type { ReviewRecord } from "./reviews.ts";
 
 /**
+ * The one rule for a same-tree alias against high-stakes FAILs (`runs` of the high-stakes state): `open` while any FAIL of the session is uncleared (no alias is made, none counts), else `after`, the newest FAIL time
+ * (Infinity for a FAIL without one; null with no FAIL): an alias or its source PASS counts only with a launch time (`at`) later than it.
+ */
+export function aliasFloor(runs: readonly { verdict: string; cleared: boolean; failAt?: number }[]): { open: boolean; after: number | null } {
+  const fails = runs.filter((x) => x.verdict === "fail");
+  return { open: fails.some((x) => !x.cleared), after: fails.length === 0 ? null : fails.some((x) => x.failAt === undefined) ? Infinity : Math.max(...fails.map((x) => x.failAt as number)) };
+}
+
+/** `records` without the `same_tree` aliases the {@link aliasFloor} rejects: what every gate reads. */
+export function liveRecords<T extends ReviewRecord>(records: readonly T[], runs: readonly { verdict: string; cleared: boolean; failAt?: number }[]): readonly T[] {
+  const f = aliasFloor(runs);
+  if (f.after === null || !records.some((r) => r.via)) return records;
+  return records.filter((r) => !r.via || (!f.open && r.at !== undefined && r.at > f.after!));
+}
+
+/**
  * The alias records `head` earns, each with the head of the PASS it copies. Per checkout (the `cwd` of the records), when no record of any checkout names `head`, its newest code review (aliases left
  * out) is a PASS with a `tree`, the checkout is not `blocked` (an uncleared high-stakes FAIL there) and `treeOf(checkout, head)` equals that tree, and no code-review FAIL of any checkout on that same tree is newer (by record order) than the PASS.
  * With `after` (the newest high-stakes FAIL time of the session), the PASS must carry a record time (`at`) later than it. `first` (a checkout) is searched first. A commit that does not resolve gives null from `treeOf`: no alias.
