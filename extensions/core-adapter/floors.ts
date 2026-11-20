@@ -382,21 +382,16 @@ const cloneConfigs = (rest: string[]): string[] => gitOptSpellings(rest, "--conf
 
 /** The git subcommands that print objects, so a `<rev>:<path>` word of theirs reads a file (the words of `commit`, `tag` and the like are messages, never read). */
 const OBJECT_PRINTERS = new Set(["show", "cat-file", "diff", "grep", "difftool", "merge-file", "notes", "rev-parse", "ls-files"]);
-/** `git log` options whose next word is their value, not a revision. */
-const LOG_VALUE_OPTS = new Set(["--grep", "--author", "--committer", "--format", "--pretty", "--since", "--until", "--after", "--before", "--max-count", "--skip", "--date", "-S", "-G", "-n"]);
-
-/** The words of `call` that can be `<rev>:<path>`: all of an object printer's; of `log` the `-L` values and the revision operands. */
+/** The words of `call` that can be `<rev>:<path>`: all of an object printer's; of `log` and `whatchanged` only the `-L` values (a revision operand prints no blob). */
 function revWords(call: GitCall): string[] {
   if (OBJECT_PRINTERS.has(call.sub)) return call.rest;
-  if (call.sub !== "log") return [];
+  if (call.sub !== "log" && call.sub !== "whatchanged") return [];
   const out: string[] = [];
   for (let i = 0; i < call.rest.length; i++) {
     const w = call.rest[i];
     if (w === "--") break;
     if (w === "-L") out.push(call.rest[++i] ?? "");
     else if (w.startsWith("-L")) out.push(w.slice(2));
-    else if (LOG_VALUE_OPTS.has(w)) i++;
-    else if (!w.startsWith("-")) out.push(w);
   }
   return out;
 }
