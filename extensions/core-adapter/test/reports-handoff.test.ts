@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { readRows, storeFor } from "../reports.ts";
 import { HANDOFF_REPORTS } from "../reportsimport.ts";
+import { realPath } from "../workspacekey.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -52,7 +53,7 @@ async function rig(t: T, o: { role?: string; handoff?: string; env?: string } = 
 }
 
 const dirOf = (t: T): string => {
-  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-handoff-")));
+  const d = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-handoff-")));
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
   return d;
 };

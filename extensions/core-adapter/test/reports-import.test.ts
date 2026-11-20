@@ -11,12 +11,13 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { main, USAGE, type ReportsDeps } from "../reports-cli.ts";
 import { foldRows, keyOf, readRows, storeFor } from "../reports.ts";
 import { HANDOFF_REPORTS, IMPORT_MAX_BYTES, checkRow, importEvent, importFile, importText } from "../reportsimport.ts";
+import { realPath } from "../workspacekey.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = "acme/app";
 const NOW = Date.parse("2026-11-03T12:00:00Z");
 const tmp = (t: { after(fn: () => void): void }): string => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-import-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-import-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 };

@@ -12,8 +12,9 @@ import { readRegistry, writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
 import { HANDOFF_REPORTS, importFile, importText } from "../reportsimport.ts";
 import { readRows, storeFor } from "../reports.ts";
+import { realPath } from "../workspacekey.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-rwatch-mir-")));
+const root = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-rwatch-mir-")));
 const sha = (b: Buffer | string): string => crypto.createHash("sha256").update(b).digest("hex");
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 const HANDOFF = "/home/u/.pi/handoff/20261103-120000-demo";

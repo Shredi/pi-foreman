@@ -9,11 +9,12 @@ import { main, type ReportsDeps } from "../reports-cli.ts";
 import { cleanText, keyOf, readRows, recordReport, storeFor } from "../reports.ts";
 import { checkRow, importEvent, importText } from "../reportsimport.ts";
 import { sanitizeTrace } from "../trace.ts";
+import { realPath } from "../workspacekey.ts";
 
 const REPO = "acme/app";
 const NOW = Date.parse("2026-11-03T12:00:00Z");
 const tmp = (t: { after(fn: () => void): void }): string => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-import-h-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-import-h-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 };
