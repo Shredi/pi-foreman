@@ -332,6 +332,12 @@ export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 /** Arguments of a package PR tool that name the branch the pull request opens from (B-M7). */
 export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch", "head_branch"];
 
+/** The refs a PR tool call names (`owner:branch` reads as `branch`), else `HEAD`. */
+export function prBranchRefs(input: Record<string, unknown>): string[] {
+  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
+  return named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+}
+
 /**
  * The reviewed-head test for one branch argument: null when accepted, else the refusal with the shas it names.
  * The PASS may be the branch's local ref, its same-named remote branch (a push the local ref lags behind:
@@ -356,8 +362,7 @@ async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]
  * not resolve in the workspace refuses (head_unknown).
  */
 export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}, headless: string | null = null): Promise<{ reason: PrRefusal; message: string } | null> {
-  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
-  const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+  const refs = prBranchRefs(input);
   for (const ref of refs) {
     const f = await headRefusal(cwd, ref, reviewed);
     if (!f) continue;
@@ -395,8 +400,7 @@ export type HighStakesGate = (scope: string | null, heads: readonly string[]) =>
 
 /** The commits the branch arguments of a PR tool call name (workspace HEAD without one), unresolvable ones left out. */
 async function prHeads(cwd: string, input: Record<string, unknown>): Promise<string[]> {
-  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
-  const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+  const refs = prBranchRefs(input);
   const out: string[] = [];
   for (const ref of refs) {
     const sha = await commitOf(cwd, ref);
