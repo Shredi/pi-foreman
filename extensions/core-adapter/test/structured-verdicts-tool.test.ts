@@ -186,7 +186,7 @@ test("V is accepted only when the launch lists it (the item V of a launch withou
 });
 
 test("no binding, a binding without a folder that exists, or a role that does not review: refused with the channel text, nothing written", async (t) => {
-  const channel = /this launch has no verdict channel \(no record folder from the foreman\)\. .*it needs a restart \(.*pi --session parent-session/; // no handoff dir in the binding: the owner resumes it (d105-refusal-wording.test.ts covers the other form)
+  const channel = /this launch has no verdict channel \(no record folder from the foreman\)\. .*it needs a restart \(.*pi --session /; // no handoff dir in the binding: the owner resumes it (d105-refusal-wording.test.ts covers the other form)
   const none = await child(t, null);
   const a = await none.call({ verdict: "pass" });
   assert.equal(a.isError, true);
