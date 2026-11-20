@@ -8,7 +8,7 @@ import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
-  radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
+  radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
@@ -440,7 +440,7 @@ export default class ForemanAgents extends View {
         if (this.childPi.has(addr) || this.remoteTargets?.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) {
           const before = this.recs.get(addr);
           this.recs.set(addr, { recs, attach, tried: Date.now() });
-          if (JSON.stringify([before?.recs ?? [], before?.attach ?? ""]) !== JSON.stringify([recs, attach])) cx.notify();
+          if (recsKey(before?.recs) !== recsKey(recs) || (before?.attach ?? "") !== attach) cx.notify();
         }
       });
     }
@@ -806,12 +806,17 @@ export default class ForemanAgents extends View {
   legend(t) {
     const trigger = h_flex().id("legend-open").h(22).w(22).mr(4).items_center().justify_center().rounded(11).cursor_pointer().text_size(11).text_color(t.muted)
       .hover((el) => el.bg(t.hover).text_color(t.foreground))
-      .on_hover((hovered, cx) => {
-        if (hovered) { this.legendLeft = null; if (!this.legendHot) { this.legendHot = true; cx?.notify?.(); } } else this.legendLeft = Date.now();
-      })
+      .on_hover((hovered, cx) => this.legendOver("trigger", hovered, cx))
       .child("?");
     return HoverCard.new("legend-card").open_delay(200).close_delay(200).anchor("top_center")
-      .trigger(trigger).content(this.legendHot ? this.legendView(t) : div());
+      .trigger(trigger).content(this.legendHot ? this.legendView(t).on_hover((hovered, cx) => this.legendOver("card", hovered, cx)) : div());
+  }
+
+  // The pointer is on the "?" or on the open card: the content stays while it is on either, and goes LEGEND_LEAVE_MS after it left both.
+  legendOver(part, hovered, cx) {
+    this.legendIn ??= new Set();
+    if (hovered) this.legendIn.add(part); else this.legendIn.delete(part);
+    if (this.legendIn.size > 0) { this.legendLeft = null; if (!this.legendHot) { this.legendHot = true; cx?.notify?.(); } } else this.legendLeft = Date.now();
   }
 
   legendView(t) {

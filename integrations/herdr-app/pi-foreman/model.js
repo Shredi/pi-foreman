@@ -615,6 +615,9 @@ export function parseRecords(text) {
     });
 }
 
+/** What is shown of parsed records, as a string to compare: the records and the `background-agents/` segment bgText reads from the record id. */
+export const recsKey = (recs) => JSON.stringify(listOf(recs).map((r) => [r, AGENT_SEGMENTS.get(r) ?? null]));
+
 /** The `<machine>/<terminal>` a hand-made `hc attach` terminal follows, from the text of `hc get <terminal> --json` (its `argv`
  *  `["sh","-c","hc attach m/t"]` or its foreground `argv` `["hc","attach","m/t"]`); "" for any other terminal. */
 export function parseAttachTarget(text) {
