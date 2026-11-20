@@ -38,7 +38,7 @@ class SharedWorktreeTest(unittest.TestCase):
         self.entry = {"cwd": str(self.wt), "child": CHILD, "status": "closed"}
 
     def git(self, cwd, *args):
-        return subprocess.run(["git", "-C", str(cwd)] + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True).stdout.decode()
+        return subprocess.run(["git", "-C", str(cwd), "-c", "core.autocrlf=false"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True).stdout.decode()
 
     def registry(self, *others):
         fsn.write_registry(self.adir, {"sessions": [self.entry] + [dict({"cwd": str(self.wt)}, **o) for o in others]})

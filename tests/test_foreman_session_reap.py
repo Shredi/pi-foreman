@@ -111,7 +111,7 @@ class WorktreeRemovalTest(unittest.TestCase):
         self.entry = {"cwd": str(self.wt), "child": CHILD}
 
     def git(self, cwd, *args):
-        return subprocess.run(["git", "-C", str(cwd)] + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True).stdout.decode()
+        return subprocess.run(["git", "-C", str(cwd), "-c", "core.autocrlf=false"] + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=True).stdout.decode()
 
     def branches(self):
         return self.git(self.repo, "branch", "--list", "child").strip()

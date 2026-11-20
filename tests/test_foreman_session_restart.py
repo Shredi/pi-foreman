@@ -15,6 +15,23 @@ from test_foreman_session_remote import RemoteBase  # noqa: E402
 import foreman_session as fsn  # noqa: E402
 
 CHILD = "fm-demo-abc123"
+
+
+def launch_text(argv):
+    """The launch line of a `hc run` argv as one string: the POSIX words, or the PowerShell -Command text (win32)."""
+    return " ".join(argv)
+
+
+def assign(key, value, win=None):
+    """One env assignment as the platform's launch line spells it: `K=V` words, or `$env:K='V'` on win32."""
+    if sys.platform == "win32" if win is None else win:
+        return "$env:%s=%s" % (key, fsn.ps_quote(value))
+    return "%s=%s" % (key, value)
+
+
+def word(value, win=None):
+    """One launch word (a flag or a path) as the platform's launch line spells it: bare, or single-quoted on win32."""
+    return fsn.ps_quote(value) if (sys.platform == "win32" if win is None else win) else value
 PARENT_ID = "pid-parent-0001"
 SID = "sess-aaaa1111"
 
@@ -84,8 +101,9 @@ class RestartLocalTest(LocalRestartBase):
         self.assertIn("--keep", head)
         self.assertEqual(head[head.index("--name") + 1], fsn.hc_name(CHILD))
         self.assertEqual(head[head.index("--cwd") + 1], str(self.proj))
-        self.assertIn(str(self.sfile), argv)
-        self.assertIn("--session", argv)
+        text = launch_text(argv)
+        self.assertIn(word(str(self.sfile)), text)
+        self.assertIn(word("--session"), text)
         stored = self.stored()
         self.assertEqual((stored["status"], stored["hc"]["address"]), ("open", "t2"))
 
@@ -113,11 +131,11 @@ class RestartLocalTest(LocalRestartBase):
         with mock.patch.object(fsn, "hc_terminal_addresses", return_value={"t0"}):
             self.restart()
         _, argv = self.run_head()
-        words = " ".join(argv)
-        for want in ("PI_FOREMAN_HANDOFF_DIR=%s" % self.hand, "PI_FOREMAN_PARENT_INTERCOM=" + PARENT_ID,
-                     "PI_INTERCOM_STABLE_ID=" + CHILD, "PI_FOREMAN_PARENT_LABEL=boss", "PI_FOREMAN_PERMS_PROFILE=strict",
-                     "PI_FOREMAN_PLAN_PHASE=1", "PI_BG_SHELL=zsh"):
-            self.assertIn(want, words)
+        words = launch_text(argv)
+        for key, value in (("PI_FOREMAN_HANDOFF_DIR", str(self.hand)), ("PI_FOREMAN_PARENT_INTERCOM", PARENT_ID),
+                           ("PI_INTERCOM_STABLE_ID", CHILD), ("PI_FOREMAN_PARENT_LABEL", "boss"),
+                           ("PI_FOREMAN_PERMS_PROFILE", "strict"), ("PI_FOREMAN_PLAN_PHASE", "1"), ("PI_BG_SHELL", "zsh")):
+            self.assertIn(assign(key, value), words)
 
     def test_finished_old_terminal_is_removed(self):
         with mock.patch.object(fsn, "hc_terminal_addresses", return_value=set()):
@@ -189,8 +207,8 @@ class RestartLocalTest(LocalRestartBase):
         code, out, err = self.restart()
         self.assertEqual(code, 0, err)
         self.assertEqual(self.hc_calls("run"), [])
-        self.assertIn("--session", out)
-        self.assertIn("PI_INTERCOM_STABLE_ID=" + CHILD, out)
+        self.assertIn(word("--session"), out)
+        self.assertIn(assign("PI_INTERCOM_STABLE_ID", CHILD), out)
         self.assertEqual(self.stored()["status"], "open")
 
     def test_prune_closed_entry_is_restartable_and_open_again(self):
