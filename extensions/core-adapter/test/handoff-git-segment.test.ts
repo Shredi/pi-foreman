@@ -58,10 +58,10 @@ test("shell, S: redirect, cp and mv into work/.git or work/.GIT are blocked", { 
   assert.equal(seen(`cp ${wt}/a ${H}/work/x.txt`), undefined);
 });
 
-test("shell, C: redirect, cp and mv into work/.git are write-outside, work/x carries no danger", { skip: posixOnly }, () => {
+test("shell, C: redirect, cp and mv into work/.git carry no label in C (a write outside the worktree runs for the parent), nor does work/x", { skip: posixOnly }, () => {
   const danger = (command: string): string | null => gateEvaluate("bash", { command }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: false }), roots: () => roots("C") }).danger?.name ?? null;
   for (const n of ["work/.git/HEAD", "work/.GIT/HEAD"]) {
-    for (const l of [`echo x > ${H}/${n}`, `cp ${wt}/a ${H}/${n}`, `mv ${wt}/a ${H}/${n}`]) assert.equal(danger(l), "danger-write-outside", l);
+    for (const l of [`echo x > ${H}/${n}`, `cp ${wt}/a ${H}/${n}`, `mv ${wt}/a ${H}/${n}`]) assert.equal(danger(l), null, l);
   }
   assert.equal(danger(`echo x > ${H}/work/x.txt`), null);
 });
