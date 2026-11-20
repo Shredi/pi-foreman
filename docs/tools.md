@@ -485,7 +485,7 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 
 `foreman_dialogs` (the permission dialogs of the trace per family, the JSON of `/foreman dialogs --json`; read only, see [sessions](sessions.md#commands)),
 `foreman_wait` (timers, files, processes, CI runs, children) is foreman-only; see
-[sessions](sessions.md#background-runs). The bundled add-on's `bg_run` is guarded like `bash`.
+[sessions](sessions.md#background-runs). `foreman_hold({note})` (foreman only) marks that the session waits for the owner on purpose: the finish check lets a turn end without the review (not the final finish), and the sidebar shows "Needs you"; `{off: true}`, the owner's next message, a builder launch or a project edit ends it (see [ceremony](ceremony.md)). The bundled add-on's `bg_run` is guarded like `bash`.
 
 ### foreman_report and foreman_reports
 

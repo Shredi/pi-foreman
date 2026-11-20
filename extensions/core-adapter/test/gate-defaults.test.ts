@@ -153,7 +153,7 @@ test("powershell is one opaque segment: raw-text floors, then no default", () =>
 });
 
 test("own tools: exactly the enumeration is a default; every other tool falls through", () => {
-  const listed = ["plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "review_verdict", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_script", "foreman_wait", "foreman_protect", "foreman_report", "foreman_reports", "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill", "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch", "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable"];
+  const listed = ["plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "review_verdict", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_script", "foreman_wait", "foreman_hold", "foreman_protect", "foreman_report", "foreman_reports", "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill", "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch", "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable"];
   assert.deepEqual([...OWN_TOOLS].sort(), [...listed].sort());
   for (const t of listed) assert.deepEqual(g(t, {}), { allow: true, rule: "default-own-tool", layer: "default" }, t); // r79: the result names its layer
   for (const t of ["bg_run", "foreman_move", "foreman_copy", "foreman_session_open", "pr_create", "subagent", "intercom", "codemode", "mcp", "skill", "read", "write", "edit", "unknown_tool"]) assert.equal(kind(g(t, {})), "pass", t);

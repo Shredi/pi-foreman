@@ -186,7 +186,7 @@ test("V is accepted only when the launch lists it (the item V of a launch withou
 });
 
 test("no binding, a binding without a folder that exists, or a role that does not review: refused with the channel text, nothing written", async (t) => {
-  const channel = /this launch has no verdict channel \(no record folder from the foreman\); give the verdict in your report/;
+  const channel = /this launch has no verdict channel \(no record folder from the foreman\)\. .*foreman session restart <label>/;
   const none = await child(t, null);
   const a = await none.call({ verdict: "pass" });
   assert.equal(a.isError, true);
