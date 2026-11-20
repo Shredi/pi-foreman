@@ -40,8 +40,9 @@ test("a shell that reads a heredoc or here-string runs its body: the body gets t
       if (sh === "sudo bash") continue;
       refused(`${sh} <<'E'\n${b}\nE`);
     }
-    // a remote shell (docker exec) is judge-first whatever it runs; a local one runs
-    if (sh !== "sudo bash") (sh.startsWith("docker") ? judged : runs)(`${sh} <<'E'\nls\nE`);
+    // a shell fed on stdin is judge-first (danger-inline-code), a remote one too (danger-remote), whatever the body runs
+    // (`busybox sh` stays a runner the walker reads: its body gets the checks above and nothing more, as before)
+    if (sh !== "sudo bash") (sh === "busybox sh" ? runs : judged)(`${sh} <<'E'\nls\nE`);
   }
   for (const b of bodies) {
     refused(`bash <<< '${b}'`);
@@ -49,7 +50,7 @@ test("a shell that reads a heredoc or here-string runs its body: the body gets t
     refused(`sh <<-E\n\t${b}\n\tE`);
   }
   for (const child of [false, true]) assert.notEqual(run("bash", "sudo bash <<'E'\nrm -rf $X\nE", child), "allow");
-  runs("bash <<< 'ls'");
+  judged("bash <<< 'ls'");
   runs("cat <<'E'\nrm -rf $X\nE");
   runs("cat <<< 'rm -rf $X'");
 });

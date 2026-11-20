@@ -601,10 +601,9 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   const p = words[0];
   const rest = words.slice(1);
   if (p.value === null) {
-    // `$V/bin/pip`: the program is named by the literal basename after the expansion; the line stays opaque (the directory is unknown) and the name goes through the same lookup a literal program does
+    // `$V/bin/pip`: the program is named by the literal basename after the expansion; the name goes through the same lookup a literal program does, so the segment is not opaque for its program word
     const leaf = p.tail?.split(/[\\/]/).pop();
     if (leaf) {
-      c.reason = pick(c.reason, p.reason ?? "unresolved_var");
       return run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
     }
     seg(sc, p.text, rest.map((a) => a.value ?? a.text), p.reason ?? "unresolved_var", c, cwd);

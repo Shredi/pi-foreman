@@ -1043,8 +1043,11 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   const at = /^([^@/\s]*)@(.+)$/.exec(w) ?? /^[^@/\s=]+=<(.+)$/.exec(w);
   if (at) {
     const file = at[at.length - 1].replace(/[\\/]?;.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
-    const h = secretPath(file, env, read);
-    if (h) return h;
+    // a `-F` value may list several files: `f=@a.json,.env` (only the form shape; `-d@a,b` is one name)
+    for (const f of /=[@<]/.test(w) ? file.split(",") : [file]) {
+      const h = secretPath(f, env, read);
+      if (h) return h;
+    }
   }
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
@@ -1382,6 +1385,25 @@ function behindWrapper(seg: ShellSegment): string[] | null {
   return /^(?:busybox|toybox)$/.test(prog) && seg.argv.length > 0 && !seg.argv[0].startsWith("-") ? seg.argv : null;
 }
 
+/** The words as one shell line: a word with a space or a metacharacter quoted, an expansion left as it is. */
+const wordsText = (words: string[]): string => words.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
+
+/**
+ * The segments of a line and, below them, every segment the parser does not unwrap itself: the body of a function, select, coproc or arithmetic for, and the words behind
+ * `busybox`/`toybox` or a privilege program (the paths `pythonKinds` re-parses). For the judge-first rules that read a segment's own program (inline code, a remote command).
+ */
+export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth = 0): ShellSegment[] {
+  const out: ShellSegment[] = [];
+  for (const seg of segs) {
+    out.push(seg);
+    if (depth >= NORMALISE_DEPTH) continue;
+    const rest = behindWrapper(seg);
+    const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
+    for (const t of texts) out.push(...nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1));
+  }
+  return out;
+}
+
 /** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, the words behind a wrapper). */
 function localKind(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
   const d = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
@@ -1469,7 +1491,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     // containers, ssh), to a fixpoint. A line's own `sudo` is the privilege floor's.
     const rest = top && PRIVILEGE.has(prog) ? null : behindWrapper(seg);
     if (rest) {
-      const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
+      const restText = wordsText(rest);
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
       const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
