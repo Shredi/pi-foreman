@@ -37,7 +37,7 @@ const walk = (el, out = []) => {
   if (el.props?.trigger) walk(el.props.trigger, out);
   return out;
 };
-const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard");
+const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const root = () => treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5", dots: [{ n: 16, state: "fail", label: "#16", src: "pr", name: "ci" }] }, []));
 const move = (y) => ({ position: { x: 200, y }, local_position: { x: 10, y: 9 }, bounds: { x: 0, y: 0, width: 60, height: 18 } });
 

@@ -128,27 +128,26 @@ test("writeNote is atomic and readable back; takeLock: one holder, a stale lock 
 test("readSessionFile: newest identity of this session, valid keys kept, invalid ones dropped and listed", (t) => {
   const { agentDir, sessionFile } = world(t);
   fs.mkdirSync(path.join(agentDir, "pi-foreman"), { recursive: true });
-  fs.writeFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ profiles: { mine: {} } }));
   const line = (o: unknown) => `${JSON.stringify(o)}\n`;
   const id = (data: Record<string, unknown>) => line({ type: "custom", customType: "pi-foreman-identity", data: { v: 1, piSessionId: SID, ...data } });
   fs.appendFileSync(sessionFile, line({ type: "session_info", name: "my session" }) + id({ permsProfile: "old" }) + id({ permsProfile: "mine", planPhase: "1", bgEnv: { PI_BG_FEATURES: "process", PI_BG_BAD: "a;b", lower: "x" } }));
   const r = readSessionFile(sessionFile, SID, agentDir);
   assert.equal(r.name, "my session");
-  assert.deepEqual(r.identity, { permsProfile: "mine", planPhase: "1", bgEnv: { PI_BG_FEATURES: "process" } });
+  assert.deepEqual(r.identity, { planPhase: "1", bgEnv: { PI_BG_FEATURES: "process" } }, "an old permsProfile is ignored");
   assert.deepEqual(r.dropped.sort(), ["bgEnv.PI_BG_BAD", "bgEnv.name"]);
   fs.appendFileSync(sessionFile, id({ permsProfile: "unknown-profile", planPhase: "2" }));
   const r2 = readSessionFile(sessionFile, SID, agentDir);
   assert.deepEqual(r2.identity, {});
-  assert.deepEqual(r2.dropped.sort(), ["permsProfile", "planPhase"]);
+  assert.deepEqual(r2.dropped.sort(), ["planPhase"]);
   assert.equal(readSessionFile(path.join(agentDir, "nothing.jsonl"), SID, agentDir).identity, null);
 });
 
-test("buildSpawnEnv: opened-session keys dropped first, the identity's plan phase, profile and PI_BG_* set; a plain session keeps the shell's", () => {
+test("buildSpawnEnv: opened-session keys dropped first, the identity's plan phase and PI_BG_* set; a plain session keeps the shell's", () => {
   const base = { PATH: "/bin", PI_FOREMAN_HANDOFF_DIR: "/h", PI_FOREMAN_PLAN_PHASE: "1", PI_INTERCOM_STABLE_ID: "x", PI_FOREMAN_PARENT_INTERCOM: "p", PI_FOREMAN_SESSION_MODEL: "m", PI_FOREMAN_REMOTE_PARENT: "r", PI_FOREMAN_RESUMED: "5", PI_BG_FEATURES: "shell", PI_FOREMAN_PERMS_PROFILE: "shellprofile" };
   const plain = buildSpawnEnv(base, null, 123.4);
   assert.deepEqual(plain, { PATH: "/bin", PI_BG_FEATURES: "shell", PI_FOREMAN_PERMS_PROFILE: "shellprofile", PI_FOREMAN_RESUMED: "123" });
-  const opened = buildSpawnEnv(base, { permsProfile: "steward", planPhase: "1", bgEnv: { PI_BG_FEATURES: "process" } }, 9);
-  assert.deepEqual(opened, { PATH: "/bin", PI_BG_FEATURES: "process", PI_FOREMAN_PERMS_PROFILE: "steward", PI_FOREMAN_PLAN_PHASE: "1", PI_FOREMAN_RESUMED: "9" });
+  const opened = buildSpawnEnv(base, { planPhase: "1", bgEnv: { PI_BG_FEATURES: "process" } }, 9);
+  assert.deepEqual(opened, { PATH: "/bin", PI_BG_FEATURES: "process", PI_FOREMAN_PERMS_PROFILE: "shellprofile", PI_FOREMAN_PLAN_PHASE: "1", PI_FOREMAN_RESUMED: "9" });
 });
 
 test("readResumeSetting: auto by default, off from foreman.json, an overlay package layer wins, unreadable is auto", (t) => {

@@ -32,7 +32,8 @@ const seen = (kind: string, command: string): string => {
   const res = out.result as { allow?: boolean; block?: boolean; rule?: string } | undefined;
   return res?.block ? `block:${res.rule}` : out.danger?.name ?? (res?.allow ? `allow:${res.rule}` : "none");
 };
-const REFUSED: Record<string, string> = { sub: "block:child-write-outside", own: "danger-write-outside", parent: "danger-write-outside" };
+// C: the label `danger-write-outside` is gone: a write outside for the session (own, parent) carries no label and runs; the subagent child keeps the block
+const REFUSED: Record<string, string> = { sub: "block:child-write-outside", own: "none", parent: "none" };
 // a recursive cp is also caught by the hard floor when the temp dir lies outside the floor's write roots (Linux CI: under home), which fires first
 const assertRefused = (kind: string, name: string, got: string): void => {
   if (name === "cp -rT") assert.ok([REFUSED[kind], "block:floor-overwrite-outside"].includes(got), `${kind}: ${name}: ${got}`);

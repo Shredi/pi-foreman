@@ -13,7 +13,7 @@
       "additionalProperties": false,
       "description": "The rules-first permission system.",
       "properties": {
-        "profile": { "type": ["string", "null"], "description": "The permission profile. Honoured in the user, organisation and default layers only." }
+        "profile": { "type": ["string", "null"], "description": "Removed: permission profiles are gone. Accepted and ignored; the doctor prints an INFO line while it is set." }
       }
     },
     "rankTiers": { "type": "object", "description": "Preset template only (config/presets/inexpensive.json): roles named by rank tier, resolved to models by `foreman config apply-preset` and removed from the written file. The runtime never reads it." },

@@ -1,5 +1,5 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|perms|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
@@ -7,7 +7,6 @@ if /i "%~1"=="dialogs" goto dialogs
 if /i "%~1"=="prs" goto prs
 if /i "%~1"=="rounds" goto rounds
 if /i "%~1"=="reports" goto reports
-if /i "%~1"=="perms" goto perms
 if /i "%~1"=="pane-resume" goto paneresume
 if /i "%~1"=="features" goto features
 if /i "%~1"=="knowledge" goto knowledge
@@ -28,7 +27,7 @@ if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
 set "PF_FIRST="
 if /i "%~1"=="machine" (set "PF_SCRIPT=foreman_session.py" & set "PF_FIRST= machine")
 if not defined PF_SCRIPT if /i "%~1" equ "backlog" (echo foreman backlog is retired: use foreman reports ^(list^|show^|set^|expire^|migrate^) 1>&2 & exit /b 2)
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|findings^|close^|worktree^|machine^|dialogs^|prs^|rounds^|reports^|perms^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|findings^|close^|worktree^|machine^|dialogs^|prs^|rounds^|reports^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS=%PF_FIRST%"
 :collect
@@ -119,19 +118,6 @@ shift
 goto collectpr
 :runpr
 node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\paneresume-cli.ts" %PF_ARGS%
-exit /b %ERRORLEVEL%
-:perms
-node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
-if errorlevel 1 (echo foreman perms needs Node ^>= 22.6 ^(--experimental-strip-types^) 1>&2 & exit /b 1)
-shift
-set "PF_ARGS="
-:collectp
-if "%~1"=="" goto runperms
-set PF_ARGS=%PF_ARGS% %1
-shift
-goto collectp
-:runperms
-node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\permssuggest-cli.ts" %PF_ARGS%
 exit /b %ERRORLEVEL%
 :setup
 node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" >nul 2>nul

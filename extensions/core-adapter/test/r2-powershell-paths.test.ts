@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
+import { r11Rig } from "./_r11rig.ts";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
@@ -20,7 +20,7 @@ import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { posix, posixOnly } from "./_platform.ts";
 
-const OPAQUE = "danger-opaque";
+// C: no `danger-opaque` label: a powershell line carries no label of its own (judge-first kinds only), for every role
 const base = fs.realpathSync(mkTestTmp("pf-r2-ps-"));
 const home = path.join(base, "home");
 const wt = path.join(base, "wt");
@@ -249,7 +249,7 @@ test("B: no word earns an allow: a path bash would call free (a read in the work
     for (const r of ROLES) {
       const o = outcome(r, line);
       assert.equal(o.result, undefined, `${r}: ${line} -> ${name(o.result)}`);
-      assert.ok((o.dangers ?? []).includes(OPAQUE), `${r}: ${line}`);
+      assert.deepEqual(o.dangers ?? [], [], `${r}: ${line}`);
     }
   }
   // the reference: bash decides the same read as a built-in allow
@@ -268,9 +268,9 @@ test("B: a word never makes a verdict looser: the line floors still run on the l
 
 // ---------------------------------------------------------------- the label
 
-test("C: every role gets danger-opaque only on a powershell line, a read-only role included", () => {
+test("C: no role gets a label on a plain powershell line (danger-opaque is gone), a read-only role included", () => {
   for (const line of ["Get-Content a.txt", "Set-Content a.txt x", `Set-Content ${scr}/ok.txt x`, "Get-ChildItem", "git status", "npm test", "Write-Output hi", "Get-Process", `Invoke-WebRequest https://example.com -OutFile x.bin`, ""]) {
-    for (const r of ["reviewer", "explorer", "foreman", "builder"] as const) assert.deepEqual(dangers(r, line), [OPAQUE], `${r}: ${JSON.stringify(line)}`);
+    for (const r of ["reviewer", "explorer", "foreman", "builder"] as const) assert.deepEqual(dangers(r, line), [], `${r}: ${JSON.stringify(line)}`);
   }
 });
 
@@ -279,20 +279,20 @@ test("C: a bash line of a read-only role carries no label", () => {
   assert.deepEqual(outcome("reviewer", "echo hello", "bash").dangers ?? [], []);
 });
 
-test("Get-Content a.txt in the worktree: no verdict of the gate, danger-opaque for every role", () => {
+test("Get-Content a.txt in the worktree: no verdict of the gate and no label for every role", () => {
   for (const r of ROLES) {
     const o = outcome(r, "Get-Content a.txt");
     assert.equal(o.result, undefined, r);
-    assert.ok((o.dangers ?? []).includes(OPAQUE), r);
+    assert.deepEqual(o.dangers ?? [], [], r);
   }
 });
 
-test("a powershell line of a role that is not read-only is judged by words alone: a word outside the worktree is only danger-opaque", () => {
+test("a powershell line of a role that is not read-only is judged by words alone: a word outside the worktree gets no verdict and no label", () => {
   for (const line of ["Set-Content ../outside.txt x", "Set-Content /tmp/x x", "Set-Content C:\\Windows\\x x"]) {
     for (const r of ["foreman", "builder"] as const) {
       const o = outcome(r, line);
       assert.equal(o.result, undefined, `${r}: ${line}`);
-      assert.deepEqual(o.dangers, [OPAQUE], `${r}: ${line}`);
+      assert.deepEqual(o.dangers ?? [], [], `${r}: ${line}`);
     }
   }
 });
@@ -321,7 +321,7 @@ test("win32 platform: the checks run on win32 spellings (a short home spelling, 
 
 const text = (t: string) => ({ content: [{ type: "text", text: t }], stopReason: "stop", usage: { input: 1, output: 1 } });
 
-async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "builder" | "main"; mode?: string; gate?: Record<string, unknown> } = {}) {
+async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "builder" | "main"; gate?: Record<string, unknown> } = {}) {
   const role = o.role ?? "explorer";
   const prev = process.env[BINDINGS_ENV];
   const askDir = fs.mkdtempSync(path.join(os.tmpdir(), "ps-ask-"));
@@ -338,14 +338,13 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "bu
     getProviderAuthStatus: () => ({ configured: false }),
     complete: async (_m: unknown, c: { systemPrompt: string }) => {
       prompts.push(c.systemPrompt);
-      return text(JSON.stringify({ verdict: "allow", entry: "A1", reason: "covered" }));
+      return text(JSON.stringify({ verdict: "clear", reason: "covered" }));
     },
   };
-  const perms = { ...(o.mode ? { mode: o.mode } : {}), classifier: { allow: ["Anything at all."] } };
   const r = await r11Rig(t, {}, {
     child: role !== "main",
     deps: { spawner: inprocSpawner },
-    ctx: { hasUI: false, mode: "json", modelRegistry: registry, [RIG_PERMISSIONS]: perms },
+    ctx: { hasUI: false, mode: "json", modelRegistry: registry },
     config: { gate: { reviewTimeoutMs: 300, ...(o.gate ?? {}) }, providers: { fake: { review: { model: "small" }, roles: { explorer: { model: "fake/explorer" } } } } },
   });
   if (role === "explorer") {
@@ -356,12 +355,12 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "bu
   }
   return { ...r, prompts, askDir };
 }
-test("allow-sentence route, mode auto: main, a builder and a read-only child with a powershell line get the allow-sentence judge once", async (t) => {
+test("C: main, a builder and a read-only child with a plain powershell line run it with no judge call (no allow-sentence route)", async (t) => {
   for (const role of ["main", "builder", "explorer"] as const) {
-    const r = await rig(t, { role, mode: "auto" });
+    const r = await rig(t, { role });
     const res = (await r.call("powershell", { command: "Get-Content a.txt" })) as { block?: boolean } | undefined;
     assert.ok(!res?.block, `${role}: ${JSON.stringify(res)}`);
-    assert.equal(r.prompts.length, 1, `${role}: one allow-sentence call`);
+    assert.equal(r.prompts.length, 0, `${role}: no judge call`);
   }
 });
 
@@ -372,12 +371,12 @@ const sess = path.join(agentDir, "sessions", "s");
 for (const d of [path.join(hand, "work"), sess, path.join(wt, ".pi", "scratch"), path.join(wt, ".pi", "tasks")]) fs.mkdirSync(d, { recursive: true });
 const handRoots: Partial<GateRoots> = { childHandoff: hand, ownHandoff: hand };
 
-test("the child's own handoff files, a session folder file, .pi/scratch and .pi/tasks words are not refused for any role (the bash write outcome: no verdict, danger-opaque stays)", () => {
+test("the child's own handoff files, a session folder file, .pi/scratch and .pi/tasks words are not refused for any role (the bash write outcome: no verdict, no label)", () => {
   for (const line of [`Set-Content ${hand}/result.md x`, `Get-Content ${hand}/plan.md`, `Set-Content ${hand}/work/x y`, `Add-Content ${hand}/ask.md x`, `Get-Content ${sess}/x.md`, "Set-Content .pi/scratch/x y", "Set-Content .pi/tasks/x y", "Get-ChildItem .pi/tasks"]) {
     for (const r of ROLES) {
       const o = outcome(r, line, "powershell", handRoots);
       assert.equal(o.result, undefined, `${r}: ${line} -> ${name(o.result)}`);
-      assert.ok((o.dangers ?? []).includes(OPAQUE), `${r}: ${line}`);
+      assert.deepEqual(o.dangers ?? [], [], `${r}: ${line}`);
     }
   }
   // the bash write of the handoff files and of .pi/scratch is no verdict either (the reference)
@@ -489,36 +488,31 @@ test("withLookupCache is per call: a lookup made inside the scope is not served 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const pkgLine = `Set-Content ${PKG.replace(/\\/g, "/")}/extensions/core-adapter/no-such-file.ts x`;
 
-async function mainUi(t: Parameters<typeof r11Rig>[0], o: { mode?: string; headless?: boolean } = {}) {
+async function mainUi(t: Parameters<typeof r11Rig>[0], o: { headless?: boolean } = {}) {
   const titles: string[] = [];
   const ui = { notify: () => undefined, confirm: async () => false, select: async (title: string) => (titles.push(title), "deny with comment"), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
-  const c = await r11Rig(t, {}, { ctx: { ui, ...(o.headless ? { hasUI: false, mode: "print" } : {}), ...(o.mode ? { [RIG_PERMISSIONS]: { mode: o.mode, allow: ["Bash(*)", "PowerShell(*)"] } } : {}) }, config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } } });
+  const c = await r11Rig(t, {}, { ctx: { ui, ...(o.headless ? { hasUI: false, mode: "print" } : {}) }, config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } } });
   return { ...c, titles };
 }
 
-test("rig: an install-folder word of the main session is refused in mode deny (the dialog is not shown) and when headless; with a UI in mode auto the owner is asked", async (t) => {
-  const deny = await mainUi(t, { mode: "deny" });
-  const res = (await deny.call("powershell", { command: pkgLine })) as { block?: boolean; reason?: string } | undefined;
-  assert.equal(res?.block, true);
-  assert.match(String(res?.reason), /permissions mode is deny/);
-  assert.equal(deny.titles.length, 0);
+test("rig: an install-folder word of the main session is refused when headless (no dialog); with a UI the owner is asked", async (t) => {
   const head = await mainUi(t, { headless: true });
   assert.equal(((await head.call("powershell", { command: pkgLine })) as { block?: boolean } | undefined)?.block, true);
   assert.equal(head.titles.length, 0);
-  const auto = await mainUi(t, { mode: "auto" });
+  const auto = await mainUi(t);
   assert.equal(((await auto.call("powershell", { command: pkgLine })) as { block?: boolean } | undefined)?.block, true, "the owner's no refuses");
   assert.match(auto.titles[0] ?? "", /install-root-write/);
 });
 
-test("rig: an install-folder word of a child is refused in every mode, with no question to the parent and no model call", async (t) => {
+test("rig: an install-folder word of a child is refused, with no question to the parent and no model call", async (t) => {
   for (const role of ["builder", "explorer"] as const) {
-    for (const mode of ["auto", "allow", "ask", "deny"]) {
-      const r = await rig(t, { role, mode });
+    {
+      const r = await rig(t, { role });
       const res = (await r.call("powershell", { command: pkgLine })) as { block?: boolean; reason?: string } | undefined;
-      assert.equal(res?.block, true, `${role} ${mode}`);
-      assert.match(res?.reason ?? "", /denied for child sessions \(install-root-write\)/, `${role} ${mode}`);
-      assert.equal(fs.existsSync(path.join(r.askDir, "ask.md")), false, `${role} ${mode}`);
-      assert.equal(r.prompts.length, 0, `${role} ${mode}`);
+      assert.equal(res?.block, true, role);
+      assert.match(res?.reason ?? "", /denied for child sessions \(install-root-write\)/, role);
+      assert.equal(fs.existsSync(path.join(r.askDir, "ask.md")), false, role);
+      assert.equal(r.prompts.length, 0, role);
     }
   }
 });

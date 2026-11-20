@@ -29,7 +29,8 @@ function show(line: string, role: string, kind: Kind): string {
 }
 const REFUSED = "block child-readonly-write []";
 const FREE = "undecided  []";
-const OPAQUE = 'undecided  ["danger-opaque"]';
+// C: no `danger-opaque` label: a line the harness cannot read is not judge-first, it runs for builder and main
+const OPAQUE = FREE;
 
 /** Each row: the line, the outcome for reviewer and explorer, and the outcome for builder and main (the same value as before this step). */
 function check(rows: Array<[string, string, string]>): void {

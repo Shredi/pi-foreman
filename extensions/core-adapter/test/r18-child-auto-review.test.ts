@@ -19,7 +19,8 @@ type Block = { block?: boolean; reason?: string } | undefined;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FX = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "r16-auto-review.json"), "utf8")) as { reviewable: { name: string; line: string }[] };
-const PROBE = FX.reviewable[0].line;
+// C: the whitelist classifier is gone; a judge-first line (git branch -D) goes to the judge, which answers clear or unsure
+const PROBE = "git branch -D old-topic";
 const OTHER_STATE = FX.reviewable[2].line;
 const ROLE = "explorer";
 
@@ -106,14 +107,15 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }, repl
   };
 }
 
-const V = (verdict: string, entry: string | null, reason = "stub"): string => JSON.stringify({ verdict, entry, reason });
+const V = (verdict: string, reason = "stub"): string => JSON.stringify({ verdict, reason });
 const gate = (c: { events: (n: string) => Record<string, unknown>[] }): string[] => c.events("guard").filter((x) => x.guard === "gate").map((x) => `${x.decision}:${x.rule}`);
 
-test("r18 child: a toolchain-probe line goes to the classifier; allow -> a gate allow record with the child role and session kind child", async (t) => {
-  const c = await childRig(t, V("allow", "A1"));
+test("r18 child: a judge-first line goes to the judge; clear -> a gate allow record with the child role and session kind child", async (t) => {
+  const c = await childRig(t, V("clear"));
   const r = await c.bash(PROBE);
   assert.equal(r, undefined, JSON.stringify(r));
-  assert.deepEqual(gate(c), ["allowed:classifier:A1"]);
+  assert.equal(gate(c).length, 1, JSON.stringify(gate(c)));
+  assert.match(gate(c)[0], /^allowed:/);
   assert.equal(c.events("auto_review_allow").length + c.events("overlay").length, 0);
   assert.equal(c.sent.length, 1);
   assert.ok(c.sent[0].includes(`role: ${ROLE}`), c.sent[0]);
@@ -122,7 +124,7 @@ test("r18 child: a toolchain-probe line goes to the classifier; allow -> a gate 
 
 // R41: the selfmod-state-read rule (selfmod.ts) denies a child's read of another session's state dir; no model call.
 test("r18 child: a read of another session's state dir is denied by the selfmod-state-read rule, no review", async (t) => {
-  const c = await childRig(t, V("deny", "secret-access", "another session's state"));
+  const c = await childRig(t, V("unsure", "another session's state"));
   const r = await c.bash(OTHER_STATE.replace(/~\/\.pi\/agent(?=\/)/g, shPath(c.agentDir)).replace(/\{agentDir\}/g, shPath(c.agentDir)).replace(/\{other\}/g, "01a16999-other"));
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /selfmod-state-read.*report this line to the foreman/);
@@ -130,24 +132,15 @@ test("r18 child: a read of another session's state dir is denied by the selfmod-
   assert.deepEqual(gate(c), ["blocked:selfmod-state-read"]);
 });
 
-test("r18 child: an escalating classifier is a child deny with the no-pane text (no ask dir, no owner dialog)", async (t) => {
-  const c = await childRig(t, V("escalate", null, "unsure"));
+test("r18 child: an unsure judge is a child deny with the no-pane text (no ask dir, no owner dialog)", async (t) => {
+  const c = await childRig(t, V("unsure", "unsure"));
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /nobody is at this session \(no pane\)/);
-  assert.equal(c.sent.length, 2);
-});
-
-test("r18 child: a classifier deny is final and blocks naming the whitelist rule", async (t) => {
-  const c = await childRig(t, V("deny", "D1", "no way"));
-  const r = await c.bash(PROBE);
-  assert.equal(r?.block, true);
-  assert.match(r?.reason ?? "", /^pi-foreman: denied by whitelist rule D1: Never read secrets/);
   assert.equal(c.sent.length, 1);
-  assert.deepEqual(gate(c), ["blocked:prose:D1"]);
 });
 
-test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict: it escalates, and a child with no pane is denied", async (t) => {
+test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict: a child with no pane is denied", async (t) => {
   const c = await childRig(t, '{"verdict":"defer"}');
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);

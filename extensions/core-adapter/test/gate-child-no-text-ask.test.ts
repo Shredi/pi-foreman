@@ -36,19 +36,23 @@ test("child: the same through $FOREMAN_SCRATCH", () => {
 test("child: a loop of grep over the config files is opaque with no ask, ls of config/ is a read allow", () => {
   const loop = run('for f in config/*.json; do grep -n foo "$f"; done');
   assert.equal(isAsk(loop), false, JSON.stringify(loop.result));
-  assert.equal(loop.danger?.name ?? null, "danger-opaque", JSON.stringify(loop.danger));
+  assert.equal(loop.danger?.name ?? null, null, JSON.stringify(loop.danger)); // an opaque read is not on the judge-first list: it runs
   const ls = run("ls -la config/");
   assert.equal(isAsk(ls), false, JSON.stringify(ls.result));
   assert.equal(ls.danger?.name ?? null, null, JSON.stringify(ls.danger));
 });
 
-test("child loop variable: a loop body stays opaque, never a default write-in allow", () => {
-  for (const l of ['for f in a.json b.json; do grep -n foo "$f"; done', "for f in *; do rm -rf $f/; done", "for f in 'a /etc/outside'; do rm -rf $f; done"]) {
+test("child loop variable: a loop body stays opaque, never a default write-in allow; a delete with the loop variable goes to the judge", () => {
+  const read = run('for f in a.json b.json; do grep -n foo "$f"; done');
+  assert.equal(isAsk(read), false, JSON.stringify(read.result));
+  assert.equal(read.result, undefined);
+  assert.equal(read.danger?.name ?? null, null, JSON.stringify(read.danger));
+  for (const l of ["for f in *; do rm -rf $f/; done", "for f in 'a /etc/outside'; do rm -rf $f; done"]) {
     const out = run(l);
     assert.equal(isAsk(out), false, `${l}: ${JSON.stringify(out.result)}`);
-    // a recursive rm of the loop variable is the floor `delete-unknown-target` (refused in every mode until the permission modes go), not a default allow either
-    if (/rm -rf/.test(l)) assert.match(String((out.result as { rule?: string } | undefined)?.rule), /floor-delete-unknown-target/, `${l}: ${JSON.stringify(out.result)}`);
-    else assert.equal(out.danger?.name ?? null, "danger-opaque", `${l}: ${JSON.stringify(out.danger)}`);
+    // a recursive rm of the loop variable is a delete with an unknown target: no default allow, the judge looks first
+    assert.equal(out.result, undefined, `${l}: ${JSON.stringify(out.result)}`);
+    assert.equal(out.danger?.name, "danger-delete-unknown-target", `${l}: ${JSON.stringify(out.danger)}`);
   }
 });
 

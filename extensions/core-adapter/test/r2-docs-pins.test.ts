@@ -34,12 +34,10 @@ function show(line: string, role: Role, cwd = wt): string {
   return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 }
 
-test("find <harness folder> is labelled danger-harness-folder for every role", { skip: posixOnly }, () => {
+// C: `danger-harness-folder` left the judge-first list (docs/safety.md is updated in the docs step): the read runs, for every role
+test("find <harness folder> carries no label for any role (C: the harness-folder label is gone)", { skip: posixOnly }, () => {
   const line = `find ${HF}`;
-  assert.equal(show(line, "main"), 'undecided  ["danger-harness-folder"]');
-  assert.equal(show(line, "builder"), 'undecided  ["danger-harness-folder"]');
-  assert.equal(show(line, "reviewer"), 'undecided  ["danger-harness-folder"]');
-  assert.equal(show(line, "explorer"), 'undecided  ["danger-harness-folder"]');
+  for (const role of ["main", "builder", "reviewer", "explorer"] as const) assert.equal(show(line, role), "undecided  []", role);
 });
 
 test("a child reads another session's subagent-artifacts and the agent-dir foreman.json: no rule refuses the read for any role", { skip: posixOnly }, () => {

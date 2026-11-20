@@ -71,8 +71,6 @@ export interface LaunchBinding {
   verdictDir?: string;
   /** A review launch: the ledger item ids the verdict tool accepts (the launch's `items` field, resolved at the launch). */
   items?: (number | "V")[];
-  /** r79: the parent's resolved permissions mode, its session override (`/foreman perms mode`) and the profile name; the child re-reads the permission files per decision. `childDeny` marks the child deny set (gate.ts childDenied): a child's write outside its worktree and own scratch and its PR creation are denied before any allow rule, built-in allow or classifier verdict, whatever the mode. */
-  perms?: { mode: string; override?: string; profile?: string; childDeny?: true };
 }
 
 export interface LadderLimits {
@@ -284,10 +282,8 @@ export function readBinding(env: Env): LaunchBinding | null {
     const noAsk = b.noAsk === "deny" || b.noAsk === "no-pane" ? b.noAsk : undefined;
     const verdictDir = str(b.verdictDir);
     const items = Array.isArray(b.items) ? b.items.map(itemId).filter((x): x is number | "V" => x !== null) : null;
-    const pm = isObj(b.perms) && str(b.perms.mode) ? b.perms : null;
-    const perms = pm ? { mode: str(pm.mode) as string, ...(str(pm.override) ? { override: str(pm.override) as string } : {}), ...(str(pm.profile) ? { profile: str(pm.profile) as string } : {}), ...(pm.childDeny === true ? { childDeny: true as const } : {}) } : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(scratch && out && path.isAbsolute(scratch) && path.isAbsolute(out) ? { out } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(verdictDir && path.isAbsolute(verdictDir) ? { verdictDir } : {}), ...(items ? { items } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(scratch && out && path.isAbsolute(scratch) && path.isAbsolute(out) ? { out } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(verdictDir && path.isAbsolute(verdictDir) ? { verdictDir } : {}), ...(items ? { items } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
   } catch {
     return null;
   }
