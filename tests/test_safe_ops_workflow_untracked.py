@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_safe_ops_ignored_files import g, put, safe_ops  # noqa: E402
+from test_safe_ops_ignored_files import g, put, safe_ops
 
 
 class RepoCase(unittest.TestCase):

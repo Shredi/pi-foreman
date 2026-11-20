@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import shell_write_guard as swg  # noqa: E402
+import shell_write_guard as swg
 
 FIXTURE = json.loads((Path(__file__).resolve().parent / "fixtures" / "handoff-names.json").read_text("utf-8"))
 

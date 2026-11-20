@@ -8,12 +8,13 @@ import { fileURLToPath } from "node:url";
 import { main, type ReportsDeps } from "../reports-cli.ts";
 import { foldRows, readRows, storeFor } from "../reports.ts";
 import { parseOldStore } from "../reports-migrate.ts";
+import { realPath } from "../workspacekey.ts";
 
 const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "old-backlog");
 const NOW = Date.parse("2026-02-10T00:00:00Z");
 
 function rig(t: { after(fn: () => void): void }): { cwd: string; old: string } {
-  const cwd = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-migrate-")));
+  const cwd = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-migrate-")));
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   const old = path.join(cwd, "old", "backlog");
   fs.cpSync(FIXTURE, old, { recursive: true });

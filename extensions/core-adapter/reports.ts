@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withFileLock, writeTextAtomic } from "./statefile.ts";
 import { redactCommand } from "./trace.ts";
-import { currentBranch, mainCheckout, repoOf, workspaceKeyOf } from "./workspacekey.ts";
+import { currentBranch, mainCheckout, realPath, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 
 export const KINDS = ["harness-bug", "permission", "rule", "prompt", "agent", "routing", "skill"] as const;
 export const EFFECTS = ["blocked", "slowed", "wrong-result", "note"] as const;
@@ -89,7 +89,7 @@ export interface Store {
 
 /** The store of the repository `cwd` belongs to: in its main checkout (a linked worktree resolves to it); outside git, in a submodule or a bare layout in the workspace root. */
 export function storeFor(cwd: string): Store {
-  const dir = path.join(mainCheckout(cwd), ".workflow", "reports");
+  const dir = path.join(realPath(mainCheckout(cwd)), ".workflow", "reports");
   return { dir, file: path.join(dir, "reports.jsonl"), archive: path.join(dir, "reports-archive.jsonl"), lock: path.join(dir, "reports.jsonl.lock"), stamp: path.join(dir, ".expired"), lessons: path.join(dir, "lessons.md") };
 }
 

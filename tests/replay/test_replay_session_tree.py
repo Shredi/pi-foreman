@@ -17,9 +17,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
-from test_replay import REASON, ReplayCase  # noqa: E402
-from test_replay_session_close import drain_until  # noqa: E402
+from driver import load_fixture, tool_results
+from test_replay import REASON, ReplayCase
+from test_replay_session_close import drain_until
 
 CHILD = "fm-demo-abc123"
 RANKS = [{"match": "elite", "tier": 0}, {"match": "foreman", "tier": 1}]

@@ -4,13 +4,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { realPath } from "../workspacekey.ts";
 import { recordReport, groupKeys, storeFor, type Writer } from "../reports.ts";
 import { STEWARD_ENTRY, StewardWatch, lockFileOf, stewardSettings, wakeDecision, wakeText, type StewardDeps, type StewardEntry } from "../steward.ts";
 import { foldRows, readRows } from "../reports.ts";
 
 const MIN = 60_000;
 function tmp(t: { after(fn: () => void): void }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-steward-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-steward-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

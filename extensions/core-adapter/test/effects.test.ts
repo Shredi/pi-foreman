@@ -10,10 +10,10 @@ import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 import { readBaseline } from "../baseline.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});
-const posix = process.platform !== "win32";
 
 const base = mkTestTmp("pf-effects-");
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -113,7 +113,7 @@ test("security review: ~ after = or :, npm publish/pack dry runs, diff -r (m2, m
   assert.equal(classify("diff -u f src/main.go", ctx()), "read");
 });
 
-test("security review 4: /tmp counts for writes only; a read under /tmp goes to the review", { skip: !posix }, () => {
+test("security review 4: /tmp counts for writes only; a read under /tmp goes to the review", { skip: posixOnly }, () => {
   for (const cmd of ["cat /tmp/krb5cc_1000", "find /tmp -name krb5cc_*", "cp /tmp/krb5cc_1000 g"]) assert.ok(!["read", "write-in"].includes(classify(cmd, ctx())), cmd);
   assert.equal(classify("cat /tmp/krb5cc_1000", ctx()), "unknown");
   assert.equal(classify("cargo test > /tmp/out.txt", ctx()), "build-test");
@@ -146,7 +146,7 @@ test("readRoots: reads (only) inside a configured root; no symlink out, no relat
   }
 });
 
-test("effect classes: a symlink inside the worktree cannot lead out", { skip: !posix }, () => {
+test("effect classes: a symlink inside the worktree cannot lead out", { skip: posixOnly }, () => {
   fs.symlinkSync("/etc", path.join(repo, "etc-link"));
   assert.equal(classify("cat etc-link/passwd", ctx()), "unknown");
   assert.equal(classify("touch etc-link/x", ctx()), "write-out");
@@ -180,7 +180,7 @@ test("security review 2: lowercase cp -r (BSD follows symlinks) is not write-in 
 });
 
 // child-scratch is POSIX-only by design (timeoutallow.ts scratchCommandAllowed, childscratch.ts)
-test("security review 2: child-scratch goes through the composer; cp sources are reads ((a))", { skip: !posix }, () => {
+test("security review 2: child-scratch goes through the composer; cp sources are reads ((a))", { skip: posixOnly }, () => {
   const outside = path.join(base, "outside-cs");
   fs.mkdirSync(outside, { recursive: true });
   const cs = (cmd: string): string | null => deterministicAllow(rules, cmd, { scratchDirs: [scratch], effects: ctx() });
@@ -207,7 +207,7 @@ test("security review 2: readRoots drops filesystem roots, UNC share roots and t
   assert.deepEqual(readRootsOf(["C:\\", "d:/", "\\\\srv\\share", "\\\\srv\\share\\", "%USERPROFILE%", "D:\\H\\ME", "\\\\srv\\share\\lib"], "win32", id, "D:\\h\\me"), ["\\\\srv\\share\\lib"]);
 });
 
-test("security review 3: cp/mv into an existing dir checks the written dest/<name>; no symlink destination (B1)", { skip: !posix }, () => {
+test("security review 3: cp/mv into an existing dir checks the written dest/<name>; no symlink destination (B1)", { skip: posixOnly }, () => {
   const outside = path.join(base, "outside-b1");
   fs.mkdirSync(outside, { recursive: true });
   fs.mkdirSync(path.join(repo, "d3"));
@@ -221,7 +221,7 @@ test("security review 3: cp/mv into an existing dir checks the written dest/<nam
   assert.equal(classify("cp f src", ctx()), "write-in");
 });
 
-test("security review 3: tmp-scratch cp sources are contained reads, a tree from the worktree only (M1)", { skip: !posix }, () => {
+test("security review 3: tmp-scratch cp sources are contained reads, a tree from the worktree only (M1)", { skip: posixOnly }, () => {
   const outside = path.join(base, "outside-m1");
   fs.mkdirSync(outside, { recursive: true });
   fs.writeFileSync(path.join(outside, "id_ed25519"), "x\n");

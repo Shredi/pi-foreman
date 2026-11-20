@@ -6,12 +6,11 @@ import json
 import os
 import sys
 import unittest
-from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_foreman_session_worktree as base  # noqa: E402
-from test_foreman_session_worktree import git  # noqa: E402
+import test_foreman_session_worktree as base
+from test_foreman_session_worktree import git
 
 
 @unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")

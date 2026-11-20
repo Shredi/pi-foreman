@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from test_foreman_config import render_prompt  # noqa: E402
-import test_foreman_session as base  # noqa: E402
+from test_foreman_config import render_prompt
+import test_foreman_session as base
 
 fsn = base.fsn
 ROOT = Path(__file__).resolve().parent.parent

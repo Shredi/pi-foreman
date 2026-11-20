@@ -6,8 +6,8 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-childmerge-"));
 const wt = path.join(base, "wt");
 fs.mkdirSync(wt, { recursive: true });
@@ -41,7 +41,7 @@ const MERGES = [
 ];
 
 for (const l of MERGES) {
-  test(`child-pr-merge refuses ${JSON.stringify(l)} for builder, reviewer, explorer and the read-only round`, { skip: !posix }, () => {
+  test(`child-pr-merge refuses ${JSON.stringify(l)} for builder, reviewer, explorer and the read-only round`, { skip: posixOnly }, () => {
     for (const [role, ro] of [["builder", false], ["builder", true], ["reviewer", false], ["reviewer", true], ["explorer", false], ["explorer", true]] as const) {
       const r = res(run(l, role, ro));
       assert.equal(r.block, true, `${role} ${ro}: ${JSON.stringify(r)}`);
@@ -51,7 +51,7 @@ for (const l of MERGES) {
     }
   });
 
-  test(`main keeps danger-forge for ${JSON.stringify(l)}`, { skip: !posix }, () => {
+  test(`main keeps danger-forge for ${JSON.stringify(l)}`, { skip: posixOnly }, () => {
     const o = run(l, "foreman");
     assert.deepEqual(res(o), {});
     assert.equal(o.danger?.name, l.startsWith("FOO=1 ") ? "danger-opaque" : "danger-forge");
@@ -61,7 +61,7 @@ for (const l of MERGES) {
 const READS = ["gh pr view 1", "gh pr list", "gh pr checks 1", "gh pr diff 1", "gh api repos/o/r/pulls/1", "gh api repos/o/r/pulls/1/merge", "gh api -X GET repos/o/r/pulls/1/merge"];
 
 for (const l of READS) {
-  test(`read form ${JSON.stringify(l)} keeps its allow for builder and main`, { skip: !posix }, () => {
+  test(`read form ${JSON.stringify(l)} keeps its allow for builder and main`, { skip: posixOnly }, () => {
     for (const role of ["builder", "foreman"]) {
       const o = run(l, role);
       assert.deepEqual(res(o), { allow: true, rule: "default-gh-read", layer: "default" }, role);
@@ -70,7 +70,7 @@ for (const l of READS) {
   });
 }
 
-test("merge words as data are not refused", { skip: !posix }, () => {
+test("merge words as data are not refused", { skip: posixOnly }, () => {
   const allowed: Array<[string, Res]> = [
     ["git commit -m \"gh pr merge\"", { allow: true, rule: "default-git-commit", layer: "default" }],
     ["grep -r \"gh pr merge\" docs", { allow: true, rule: "default-read", layer: "default" }],
@@ -79,7 +79,7 @@ test("merge words as data are not refused", { skip: !posix }, () => {
   for (const [l, want] of allowed) for (const role of ["builder", "foreman"]) assert.deepEqual(res(run(l, role)), want, `${role}: ${l}`);
 });
 
-test("gh pr create stays child-pr-create; a variable program word is not refused by either rule", { skip: !posix }, () => {
+test("gh pr create stays child-pr-create; a variable program word is not refused by either rule", { skip: posixOnly }, () => {
   assert.equal(res(run("gh pr create --fill", "builder")).rule, "child-pr-create");
   for (const l of ["$X pr merge 1", "$X pr create"]) {
     const o = run(l, "builder");
@@ -88,7 +88,7 @@ test("gh pr create stays child-pr-create; a variable program word is not refused
   }
 });
 
-test("gh pr merge --help is refused for a child like gh pr create --help; main keeps its verdict", { skip: !posix }, () => {
+test("gh pr merge --help is refused for a child like gh pr create --help; main keeps its verdict", { skip: posixOnly }, () => {
   assert.equal(res(run("gh pr merge --help", "builder")).rule, "child-pr-merge");
   assert.equal(res(run("gh pr create --help", "builder")).rule, "child-pr-create");
   const o = run("gh pr merge --help", "foreman");
@@ -96,7 +96,7 @@ test("gh pr merge --help is refused for a child like gh pr create --help; main k
   assert.equal(o.danger?.name, "danger-forge");
 });
 
-test("not covered: a GraphQL merge mutation gets no child-pr-merge", { skip: !posix }, () => {
+test("not covered: a GraphQL merge mutation gets no child-pr-merge", { skip: posixOnly }, () => {
   const o = run("gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"x\"}) { clientMutationId } }'", "builder");
   assert.equal(res(o).rule, undefined);
   assert.equal(res(o).block, undefined);

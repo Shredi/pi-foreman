@@ -2,7 +2,7 @@
 // `sub/gd2` -> `../<git folder>`). The fixture is made at run time in a temp dir; the contexts are built as the other r2 tests build them. The gate resolves through the real
 // filesystem here: `roots.realpath` is left unset, so `realDefault` (the native realpath) is used. Each row pins the literal verdict for a builder (child), a reviewer
 // (read-only child) and the main session; a symlink spelling gets what the plain spelling gets.
-// Symlink creation needs privileges on win32, so every test is skipped there (the pattern of `rm-link.test.ts`: `{ skip: !posix }`).
+// Symlink creation needs privileges on win32, so every test is skipped there (the pattern of `rm-link.test.ts`: `{ skip: posixOnly }`).
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -14,8 +14,8 @@ import { gateEvaluate } from "../gate.ts";
 import { pathDecide, realDefault, realSpelling } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { posix, posixOnly } from "./_platform.ts";
 
-const posix = process.platform !== "win32";
 const base = fs.realpathSync(mkTestTmp("pf-r2-symfx-"));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const G = "." + "git";
@@ -71,7 +71,7 @@ const NONE = "undecided []";
 const ALLOW = "allow path-write-worktree";
 const ALLOW_READ = "allow path-read-worktree";
 
-test("bash: a redirect, cp and mv through a link to the git folder or `.pi` get what the plain spelling gets", { skip: !posix }, () => {
+test("bash: a redirect, cp and mv through a link to the git folder or `.pi` get what the plain spelling gets", { skip: posixOnly }, () => {
   bashRow(`echo x ${GT} gd/hooks/pre-commit`, [CWO, CWO, WO]);
   bashRow(`echo x ${GT} ${G}/hooks/pre-commit`, [CWO, CWO, WO]);
   bashRow(`echo x ${GT} pp/foreman.json`, [PI, PI, ASKPI]);
@@ -83,51 +83,51 @@ test("bash: a redirect, cp and mv through a link to the git folder or `.pi` get 
   bashRow(`echo x ${GT} sub/gd2/hooks/pre-commit`, [CWO, CWO, WO]);
 });
 
-test("bash: a redirect into a link to a file in `.pi` is the selfmod rule, as the plain path", { skip: !posix }, () => {
+test("bash: a redirect into a link to a file in `.pi` is the selfmod rule, as the plain path", { skip: posixOnly }, () => {
   bashRow(`echo x ${GT} lnk`, [PI, PI, ASKPI]);
   bashRow(`echo x ${GT} .pi/foreman.json`, [PI, PI, ASKPI]);
 });
 
-test("bash: tee through a link and the plain spelling (the main session and the reviewer are as strict as plain)", { skip: !posix }, () => {
+test("bash: tee through a link and the plain spelling (the main session and the reviewer are as strict as plain)", { skip: posixOnly }, () => {
   bashRow(`tee ${G}/hooks/pre-commit`, [CWO, CWO, OPQ]);
   // the reviewer is blocked as for the plain spelling; main is undecided with the opaque label for both spellings
   assert.equal(got("reviewer", "bash", { command: "tee gd/hooks/pre-commit" }), CWO);
   assert.equal(got("main", "bash", { command: "tee gd/hooks/pre-commit" }), OPQ);
 });
 
-test("bash: a builder's `tee gd/hooks/pre-commit` is blocked as the plain `tee <git folder>/hooks/pre-commit`", { skip: !posix }, () => {
+test("bash: a builder's `tee gd/hooks/pre-commit` is blocked as the plain `tee <git folder>/hooks/pre-commit`", { skip: posixOnly }, () => {
   assert.equal(got("builder", "bash", { command: "tee gd/hooks/pre-commit" }), CWO);
   assert.equal(got("builder", "bash", { command: `tee ${G}/hooks/pre-commit` }), CWO);
 });
 
-test("write and edit tools: `.pi` through a link or a link to a file is the selfmod rule, relative and absolute, as plain", { skip: !posix }, () => {
+test("write and edit tools: `.pi` through a link or a link to a file is the selfmod rule, relative and absolute, as plain", { skip: posixOnly }, () => {
   pathRow("pp/foreman.json", [PI, PI, ASKPI]);
   pathRow(".pi/foreman.json", [PI, PI, ASKPI]);
   pathRow("lnk", [PI, PI, ASKPI]);
 });
 
-test("write and edit tools: the plain git folder path", { skip: !posix }, () => {
+test("write and edit tools: the plain git folder path", { skip: posixOnly }, () => {
   pathRow(`${G}/hooks/pre-commit`, [CWO, CWO, NONE]);
 });
 
-test("write and edit tools: the reviewer stays blocked through the git-folder links, as plain", { skip: !posix }, () => {
+test("write and edit tools: the reviewer stays blocked through the git-folder links, as plain", { skip: posixOnly }, () => {
   for (const p of ["gd/hooks/pre-commit", "sub/gd2/hooks/pre-commit"]) for (const s of [p, path.join(wt, p)]) {
     assert.equal(got("reviewer", "write", { path: s, content: "x" }), CWO, s);
     assert.equal(got("reviewer", "edit", { path: s, edits: [{ oldText: "a", newText: "b" }] }), CWO, s);
   }
 });
 
-test("write and edit tools through `gd` or `sub/gd2` get what the plain git folder path gets (builder blocked, main no decision)", { skip: !posix }, () => {
+test("write and edit tools through `gd` or `sub/gd2` get what the plain git folder path gets (builder blocked, main no decision)", { skip: posixOnly }, () => {
   for (const p of ["gd/hooks/pre-commit", "sub/gd2/hooks/pre-commit"]) pathRow(p, [CWO, CWO, NONE]);
 });
 
-test("write tool: paths that only look like the git folder or are links elsewhere stay allowed for a builder", { skip: !posix }, () => {
+test("write tool: paths that only look like the git folder or are links elsewhere stay allowed for a builder", { skip: posixOnly }, () => {
   for (const p of ["ln/f", "sub/gd/f", "x.git", ".github/f", ".gitignore", ".gitattributes", "gh/f"]) {
     for (const s of [p, path.join(wt, p)]) assert.equal(got("builder", "write", { path: s, content: "x" }), ALLOW, s);
   }
 });
 
-test("read tool: a read through `gd` keeps its outcome", { skip: !posix }, () => {
+test("read tool: a read through `gd` keeps its outcome", { skip: posixOnly }, () => {
   assert.equal(got("builder", "read", { path: "gd/HEAD" }), got("builder", "read", { path: `${G}/HEAD` }));
   assert.equal(got("builder", "read", { path: "gd/HEAD" }), ALLOW_READ);
 });
@@ -154,7 +154,7 @@ if (posix) {
 }
 const ORDINARY = ["src/a", "src/new.txt", ".gitignore", path.join("newdir", "new.txt")];
 
-test("a worktree below a git-named folder, given through a link or really: ordinary writes are allowed in all spellings", { skip: !posix }, () => {
+test("a worktree below a git-named folder, given through a link or really: ordinary writes are allowed in all spellings", { skip: posixOnly }, () => {
   for (const root of [wtLink, wtReal]) for (const role of ROLES) for (const rel of ORDINARY) {
     for (const spelling of [rel, path.join(wtLink, rel), path.join(wtReal, rel)]) {
       // a root given through the link with a path in the real spelling is outside the root as given: unchanged by this fix, not a row here
@@ -166,7 +166,7 @@ test("a worktree below a git-named folder, given through a link or really: ordin
   }
 });
 
-test("a worktree below a git-named folder: its own git folder and a link to it stay blocked as plain", { skip: !posix }, () => {
+test("a worktree below a git-named folder: its own git folder and a link to it stay blocked as plain", { skip: posixOnly }, () => {
   for (const root of [wtLink, wtReal]) for (const rel of [path.join(G, "hooks", "h"), path.join("gd", "hooks", "h"), path.join("gd", "config")]) {
     for (const spelling of [rel, path.join(wtLink, rel), path.join(wtReal, rel)]) {
       if (root === wtReal && spelling.startsWith(wtLink)) continue;
@@ -177,7 +177,7 @@ test("a worktree below a git-named folder: its own git folder and a link to it s
   }
 });
 
-test("a scratch root below a git-named folder, given through a link: a write of <scratch>/f is allowed; its own git folder is not", { skip: !posix }, () => {
+test("a scratch root below a git-named folder, given through a link: a write of <scratch>/f is allowed; its own git folder is not", { skip: posixOnly }, () => {
   for (const role of ["builder", "reviewer"] as Role[]) {
     for (const sc of [scrLink, scrReal]) {
       assert.equal(gotAt(wt, sc, role, "write", { path: path.join(sc, "f"), content: "x" }), "allow path-write-scratch", `${role} ${sc}`);
@@ -199,7 +199,7 @@ if (posix) {
   fs.symlinkSync("la", path.join(wt, "lb"));
 }
 
-test("write and edit tools through a dangling link into the git folder get what the plain spelling gets", { skip: !posix }, () => {
+test("write and edit tools through a dangling link into the git folder get what the plain spelling gets", { skip: posixOnly }, () => {
   pathRow("hk", [CWO, CWO, NONE]);
   pathRow("hk2", [CWO, CWO, NONE]);
   pathRow("hk3", [CWO, CWO, NONE]);
@@ -207,13 +207,13 @@ test("write and edit tools through a dangling link into the git folder get what 
   ROLES.forEach((role, i) => assert.equal(got(role, "write", { path: s, content: "x" }), [CWO, CWO, NONE][i], `${role} ${s}`));
 });
 
-test("bash: a builder's tee through a dangling link into the git folder is blocked as the plain spelling", { skip: !posix }, () => {
+test("bash: a builder's tee through a dangling link into the git folder is blocked as the plain spelling", { skip: posixOnly }, () => {
   assert.equal(got("builder", "bash", { command: "tee hk" }), CWO);
   assert.equal(got("builder", "bash", { command: `tee ${G}/hooks/pre-commit` }), CWO);
   assert.equal(got("main", "bash", { command: "tee hk" }), OPQ);
 });
 
-test("write tool: a dangling link to an ordinary new file stays allowed; one to a place outside and a link loop are pinned", { skip: !posix }, () => {
+test("write tool: a dangling link to an ordinary new file stays allowed; one to a place outside and a link loop are pinned", { skip: posixOnly }, () => {
   assert.equal(got("builder", "write", { path: "dl", content: "x" }), ALLOW);
   assert.equal(got("builder", "write", { path: "do", content: "x" }), CWO);
   assert.equal(got("builder", "write", { path: "la", content: "x" }), ALLOW);
@@ -231,7 +231,7 @@ const countNative = <T>(fn: () => T): [T, number] => {
   }
 };
 
-test("realSpelling of an existing file makes exactly one native realpath call", { skip: !posix }, () => {
+test("realSpelling of an existing file makes exactly one native realpath call", { skip: posixOnly }, () => {
   const f = path.join(wt, "a");
   const [r, n] = countNative(() => realSpelling(process.platform, f, realDefault));
   assert.equal(r, f);
@@ -249,24 +249,24 @@ if (posix) {
   chain("e10_", 10, path.join(G, "hooks", "ex"));
 }
 
-test("write tool: a chain of 8 dangling links ending in the git folder is blocked for a builder", { skip: !posix }, () => {
+test("write tool: a chain of 8 dangling links ending in the git folder is blocked for a builder", { skip: posixOnly }, () => {
   assert.equal(got("builder", "write", { path: "c8_1", content: "x" }), CWO);
   assert.equal(got("builder", "write", { path: path.join(wt, "c8_1"), content: "x" }), CWO);
 });
 
-test("write tool: a chain of 9 links whose end does not exist yet is followed for 8 links only (known limit)", { skip: !posix }, () => {
+test("write tool: a chain of 9 links whose end does not exist yet is followed for 8 links only (known limit)", { skip: posixOnly }, () => {
   assert.equal(got("builder", "write", { path: "c9_1", content: "x" }), ALLOW);
 });
 
-test("write and edit tools: a chain of 10 links ending at an existing file in the git folder gets what the plain spelling gets", { skip: !posix }, () => {
+test("write and edit tools: a chain of 10 links ending at an existing file in the git folder gets what the plain spelling gets", { skip: posixOnly }, () => {
   pathRow("e10_1", [CWO, CWO, NONE]);
 });
 
-test("write tool: a link loop ends at the hop bound without hanging", { skip: !posix }, () => {
+test("write tool: a link loop ends at the hop bound without hanging", { skip: posixOnly }, () => {
   assert.equal(got("builder", "write", { path: "lb", content: "x" }), ALLOW);
 });
 
-test("one pathDecide write on an existing worktree file: native realpath call count", { skip: !posix }, () => {
+test("one pathDecide write on an existing worktree file: native realpath call count", { skip: posixOnly }, () => {
   const [v, n] = countNative(() => pathDecide("write", { path: path.join(wt, "a"), content: "x" }, wt, roots("builder") as never));
   assert.equal((v as { allow?: boolean } | undefined)?.allow, true);
   assert.equal(n, 3);
@@ -291,7 +291,7 @@ const countNativeLstat = <T>(fn: () => T): [T, number, number] => {
   }
 };
 
-test("realSpelling of a new file in an existing folder: exactly 2 native realpath and 1 lstat call", { skip: !posix }, () => {
+test("realSpelling of a new file in an existing folder: exactly 2 native realpath and 1 lstat call", { skip: posixOnly }, () => {
   const f = path.join(wt, "brand-new-file");
   const [r, nr, nl] = countNativeLstat(() => realSpelling(process.platform, f, realDefault));
   assert.equal(r, f);
@@ -299,7 +299,7 @@ test("realSpelling of a new file in an existing folder: exactly 2 native realpat
   assert.equal(nl, 1);
 });
 
-test("one pathDecide write of a new worktree file: native realpath and lstat call counts", { skip: !posix }, () => {
+test("one pathDecide write of a new worktree file: native realpath and lstat call counts", { skip: posixOnly }, () => {
   const [v, nr, nl] = countNativeLstat(() => pathDecide("write", { path: path.join(wt, "brand-new-file-2"), content: "x" }, wt, roots("builder") as never));
   assert.equal((v as { allow?: boolean } | undefined)?.allow, true);
   assert.equal(nr, 5);

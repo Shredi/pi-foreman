@@ -88,7 +88,7 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$/;
 
 export const openPrsFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "open-prs.json");
 
-const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName baseRefName bodyText mergeable repository{nameWithOwner} headRepository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}}";
+const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName baseRefName bodyText mergeable repository{nameWithOwner} headRepository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion startedAt completedAt checkSuite{app{slug} workflowRun{event workflow{name}}}} ... on StatusContext{context state createdAt}}}}}}}}}}}";
 
 const clean = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, max) : "");
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -199,14 +199,50 @@ function statusState(v: unknown): OpenPrState {
   return "none";
 }
 
+/** The identity a check counts by, null when unknown (such a run is never merged with another): a status context by its context, an
+ * Actions check run by workflow name + event + name, a check run of another app by app slug + name. */
+function checkKey(x: Record<string, unknown>, name: string): string | null {
+  if ("context" in x) return JSON.stringify(["ctx", name]);
+  const suite = isObj(x.checkSuite) ? x.checkSuite : null;
+  if (!suite) return null;
+  const run = isObj(suite.workflowRun) ? suite.workflowRun : null;
+  const wf = run && isObj(run.workflow) ? run.workflow : null;
+  const wname = wf ? clean(wf.name, 120) : "";
+  if (wname) return JSON.stringify(["run", wname, typeof run?.event === "string" ? run.event : null, name]);
+  const slug = isObj(suite.app) ? clean(suite.app.slug, 60) : "";
+  return slug && slug !== "github-actions" ? JSON.stringify(["app", slug, name]) : null;
+}
+
+/** Order of the runs of one check: start time (none yet, queued: newest), then completion time (none: newest). */
+function newestRank(x: Record<string, unknown>): [number, number] {
+  const at = (v: unknown): number => {
+    const t = typeof v === "string" && !v.startsWith("0001-") ? Date.parse(v) : NaN;
+    return Number.isNaN(t) ? Infinity : t;
+  };
+  return "context" in x ? [at(x.createdAt), Infinity] : [at(x.startedAt), at(x.completedAt)];
+}
+
+/** One entry per check: its newest run (a re-run supersedes the runs it replaces), in the order of first appearance. */
 function checksOf(roll: unknown): OpenPrCheck[] {
   if (!isObj(roll)) return [];
   const nodes = isObj(roll.contexts) && Array.isArray(roll.contexts.nodes) ? roll.contexts.nodes : [];
-  const out: OpenPrCheck[] = [];
+  const latest = new Map<string, { x: Record<string, unknown>; name: string }>();
+  let seq = 0;
   for (const x of nodes) {
-    if (!isObj(x) || out.length >= MAX_CHECKS) continue;
+    if (!isObj(x)) continue;
     const name = clean(x.name ?? x.context, 120);
     if (!name) continue;
+    const key = checkKey(x, name) ?? `single:${seq++}`;
+    const old = latest.get(key);
+    if (old) {
+      const [a, b] = [newestRank(x), newestRank(old.x)];
+      if (a[0] < b[0] || (a[0] === b[0] && a[1] < b[1])) continue;
+    }
+    latest.set(key, { x, name });
+  }
+  const out: OpenPrCheck[] = [];
+  for (const { x, name } of latest.values()) {
+    if (out.length >= MAX_CHECKS) break;
     out.push({ n: name, state: "context" in x ? statusState(x.state) : checkState(x.status, x.conclusion), label: name.slice(0, 20) });
   }
   if (out.length === 0 && typeof roll.state === "string") out.push({ n: "checks", state: statusState(roll.state), label: "checks" });
@@ -361,8 +397,90 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
   }
 }
 
+/** Stats one file as `mtimeMs:size`, or "missing" (a missing file is its own state). */
+function statPrint(file: string): string {
+  try {
+    const st = fs.statSync(file);
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return "missing";
+  }
+}
+
+/**
+ * A stat fingerprint of the config layers that hold `radar.openPrs` and the PR host keys: the user layer `<agentDir>/foreman.json`
+ * and the overlay layer (`<agentDir>/npm/node_modules`, each scoped `@*` directory in it, every `package.json` with
+ * `pi.foreman.config` and the config file it points to, as scripts/foreman_config.py `discover_l3` finds them).
+ */
+export function configFingerprint(agentDir: string): string {
+  const parts = [`L2 ${statPrint(path.join(agentDir, "foreman.json"))}`];
+  const nm = path.join(agentDir, "npm", "node_modules");
+  parts.push(`nm ${statPrint(nm)}`);
+  const dirs: string[] = [];
+  const subdirs = (dir: string): string[] => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() || e.isSymbolicLink()).map((e) => path.join(dir, e.name)).sort();
+    } catch {
+      return [];
+    }
+  };
+  for (const d of subdirs(nm)) {
+    if (path.basename(d).startsWith("@")) {
+      parts.push(`scope ${d} ${statPrint(d)}`);
+      dirs.push(...subdirs(d));
+    } else dirs.push(d);
+  }
+  for (const d of dirs) {
+    const pj = path.join(d, "package.json");
+    let rel: unknown;
+    try {
+      rel = JSON.parse(fs.readFileSync(pj, "utf8"))?.pi?.foreman?.config;
+    } catch {
+      continue;
+    }
+    if (typeof rel !== "string") continue;
+    parts.push(`pj ${pj} ${statPrint(pj)}`, `cfg ${path.join(d, rel)} ${statPrint(path.join(d, rel))}`);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * The config the refresher reads: the session's merged config until the fingerprint of the user and overlay layers changes, then a
+ * reload through `load` (the session's provider and trusted flag). Only the refresher uses it; gates keep the session snapshot.
+ */
+export class ReloadingConfig<T> {
+  private value: T;
+  private print: string;
+  private readonly agentDir: string;
+  private readonly load: () => Promise<T>;
+  private readonly accept: (v: T) => boolean;
+  constructor(agentDir: string, initial: T, load: () => Promise<T>, accept: (v: T) => boolean = () => true) {
+    this.agentDir = agentDir;
+    this.load = load;
+    this.accept = accept;
+    this.value = initial;
+    this.print = configFingerprint(agentDir);
+  }
+  current(): T {
+    return this.value;
+  }
+  /** Reloads when the layers changed since the last look; a load that throws or that `accept` rejects (loadMergedConfig returns defaults instead of throwing) keeps the old value and is retried at the next call. */
+  async refresh(): Promise<void> {
+    const now = configFingerprint(this.agentDir);
+    if (now === this.print) return;
+    try {
+      const next = await this.load();
+      if (!this.accept(next)) return;
+      this.value = next;
+      this.print = now;
+    } catch {}
+  }
+}
+
 export interface OpenPrsDeps {
   agentDir: string;
+  /** Awaited before each tick reads `config()` and `hosts()`. */
+  prepare?(): Promise<void>;
   /** The `radar.openPrs` config value, read on every tick. */
   config(): unknown;
   /** False when `tools.prHost` names a host other than gh. */
@@ -406,6 +524,7 @@ export class OpenPrsRefresher {
     if (this.busy) return "locked";
     this.busy = true;
     try {
+      await this.deps.prepare?.();
       if (this.deps.ghHost && !this.deps.ghHost()) return "off";
       return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal, ...(this.deps.hosts ? { hosts: this.deps.hosts() } : {}) });
     } catch {

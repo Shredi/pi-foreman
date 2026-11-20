@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_safe_ops_pr as pr_base  # noqa: E402
-from test_safe_ops import safe_ops  # noqa: E402
+import test_safe_ops_pr as pr_base
+from test_safe_ops import safe_ops
 
 
 class DraftTest(pr_base.PrCase):

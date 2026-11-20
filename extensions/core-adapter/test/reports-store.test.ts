@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { writeTextAtomic } from "../statefile.ts";
+import { realPath } from "../workspacekey.ts";
 import { CAPS, DATA_LINE, expireLocked, foldRows, groupKeys, keyOf, cleanText, readRows, recordReport, renderList, reportContext, scrubToBasenames, setState, storeFor } from "../reports.ts";
 import type { Writer } from "../reports.ts";
 
@@ -18,7 +19,7 @@ const DAY = 86_400_000;
 const git = (cwd: string, ...a: string[]): string => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
 
 function tmp(t: { after(fn: () => void): void }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-reports-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-reports-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -343,4 +344,19 @@ test("a report of a done entry reopens it with the earlier done kept in the reas
   assert.deepEqual([ea.state, ea.pr, ea.reason], ["open", null, "reopened after done (PR #12)"]);
   assert.equal(entries.find((e) => e.key === b.key)!.state, "dropped");
   assert.ok(readRows(store.file).some((r) => r.row === "state" && r.key === a.key && r.state === "done"), "the done row stays");
+});
+
+test("store path: a symlinked spelling of the workspace root addresses the same store", (t) => {
+  const root = tmp(t);
+  const real = path.join(root, "real");
+  fs.mkdirSync(real);
+  const link = path.join(root, "link");
+  try {
+    fs.symlinkSync(real, link, "junction");
+  } catch {
+    t.skip("symlinks are not available");
+    return;
+  }
+  assert.equal(storeFor(link).file, storeFor(real).file);
+  assert.equal(storeFor(link).lock, storeFor(real).lock);
 });

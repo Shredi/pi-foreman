@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import test_foreman_config as tfc  # noqa: E402
-import foreman_config as fc  # noqa: E402
+import test_foreman_config as tfc
+import foreman_config as fc
 
 KEY = "tools.prGithubHosts"
 

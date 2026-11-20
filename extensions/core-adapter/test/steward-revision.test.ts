@@ -5,6 +5,7 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { realPath } from "../workspacekey.ts";
 import { recordReport, setState, storeFor, readRows, type Writer } from "../reports.ts";
 import { retroCounters } from "../reportstool.ts";
 import { STEWARD_TEXT_TYPE, StewardWatch, lockFileOf, stewardSettings, wakeText, type StewardDeps } from "../steward.ts";
@@ -21,7 +22,7 @@ const skip = !py.ok ? "no Python >= 3.13" : false;
 type T = { after(fn: () => void | Promise<void>): void };
 const INSTRUCTION = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "..", "instructions", "steward.md"), "utf8");
 function tmp(t: T): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-steward-rev-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-steward-rev-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

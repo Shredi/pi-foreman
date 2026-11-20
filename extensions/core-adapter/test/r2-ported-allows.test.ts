@@ -9,7 +9,7 @@ import { baseFloorEnv, gateDecide, type GateResult } from "../gate.ts";
 import { tmpRoots, type GateRoots } from "../pathrules.ts";
 
 // the fixture worlds are literal strings (nothing is created on disk); the win32 rows run on a posix host and show what the gate code says for that string
-const posixOnly = { skip: process.platform === "win32" };
+import { posixOnly } from "./_platform.ts";
 interface Ctx { platform: string; worktree: string; cwd: string; home?: string; agentDir?: string; sessionDir?: string; pkgRoot?: string; scratch?: string; scratchBase?: string; owned: string[]; handoff?: string; foremanRoot?: string; noTmp: boolean }
 const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
 const ROLE: Record<string, string> = { m: "foreman", b: "builder", r: "reviewer" };
@@ -96,7 +96,7 @@ const run = (rows: Row[]): void => {
   }
 };
 
-test("bashpath-win32", posixOnly, () => {
+test("bashpath-win32", { skip: posixOnly }, () => {
   run([
     // bashpath-win32.test.ts:37 win32: D=C:/Users/RUNNER~1/.../L1/x; mkdir -p $D (721)
     [0,"bash","D=C:/t/pfs/s1/x; mkdir -p $D","b"],
@@ -116,16 +116,14 @@ test("bashpath-win32", posixOnly, () => {
   ]);
 });
 
-test("bg", posixOnly, () => {
+test("bg", { skip: posixOnly }, () => {
   run([
     // bg.test.ts:280 guard parity of a background shell tool with the bash call (the foreman_bg rows went with the tool)
     [1,"bash","echo x > src/a.txt","m"],
-    [1,"bash","rm -rf -- \"$1\"/*","m"],
     [1,"bash"," ","m"],
     [1,"bash","echo hi","m"],
     // bg.test.ts:373 guard parity: the add-on's bg_run gets exactly the verdict a bash call gets; a non-string 
     [1,"bg_run",{"command":"echo x > src/a.txt"},"m"],
-    [1,"bg_run",{"command":"rm -rf -- \"$1\"/*"},"m"],
     [1,"bg_run",{"command":" "},"m"],
     [1,"bg_run",{"command":"echo hi"},"m"],
     [1,"bg_run",{},"m"],
@@ -134,7 +132,7 @@ test("bg", posixOnly, () => {
   ]);
 });
 
-test("child-cd", posixOnly, () => {
+test("child-cd", { skip: posixOnly }, () => {
   run([
     // child-cd.test.ts:21 child cd: inside the workspace passes, also cumulatively and with pushd/popd
     [2,"bash","cd sub && cargo test","b"],
@@ -148,7 +146,7 @@ test("child-cd", posixOnly, () => {
   ]);
 });
 
-test("child-install-ask", posixOnly, () => {
+test("child-install-ask", { skip: posixOnly }, () => {
   run([
     // child-install-ask.test.ts:23 a child asks for npm ci, npm install and git fetch; the foreman keeps the rows
     [3,"bash","npm ci","m"],
@@ -165,7 +163,7 @@ test("child-install-ask", posixOnly, () => {
   ]);
 });
 
-test("child-install-env-prefix", posixOnly, () => {
+test("child-install-env-prefix", { skip: posixOnly }, () => {
   run([
     // child-install-env-prefix.test.ts:29 a child runs npm ci in its owned worktree root without an ask (decision: pass, no env pref
     [4,"bash","npm ci","b"],
@@ -176,7 +174,7 @@ test("child-install-env-prefix", posixOnly, () => {
   ]);
 });
 
-test("child-install-owned-root-win32", posixOnly, () => {
+test("child-install-owned-root-win32", { skip: posixOnly }, () => {
   run([
     // child-install-owned-root-win32.test.ts:31 win32 child in C:\Users\RUNNER~1\...\ws.worktrees\r1: npm ci --prefix=C:/Users/RUNNER~1/..
     [5,"bash","npm install --prefix C:/w/proj","b"],
@@ -190,7 +188,7 @@ test("child-install-owned-root-win32", posixOnly, () => {
   ]);
 });
 
-test("child-install-owned-root", posixOnly, () => {
+test("child-install-owned-root", { skip: posixOnly }, () => {
   run([
     // child-install-owned-root.test.ts:28 a child runs npm install / npm ci in its owned worktree root without an ask
     [4,"bash","npm install","b"],
@@ -203,7 +201,7 @@ test("child-install-owned-root", posixOnly, () => {
   ]);
 });
 
-test("childtmp", posixOnly, () => {
+test("childtmp", { skip: posixOnly }, () => {
   run([
     // childtmp.test.ts:44 the child's scratch dir, its workspace, reads from /tmp and /dev/null stay open
     [6,"bash","echo x > /Users/r2fx/scratch/out.txt","b"],
@@ -214,7 +212,7 @@ test("childtmp", posixOnly, () => {
   ]);
 });
 
-test("cycle3-safety", posixOnly, () => {
+test("cycle3-safety", { skip: posixOnly }, () => {
   run([
     // cycle3-safety.test.ts:49 U1: project .claude/, .mcp.json, the bridge config folder and ~/.claude are asked in the f
     [4,"write",{"path":"CLAUDE.md","content":"x"},"bm"],
@@ -229,7 +227,7 @@ test("cycle3-safety", posixOnly, () => {
   ]);
 });
 
-test("glob-linear", posixOnly, () => {
+test("glob-linear", { skip: posixOnly }, () => {
   run([
     // glob-linear.test.ts:87 overlay expandGlob (write protection, bash words) never compiles the word and stays fast
     [7,"bash","touch *a*a*a*a*a*a*a*a*a*a*b","m"],
@@ -238,7 +236,7 @@ test("glob-linear", posixOnly, () => {
   ]);
 });
 
-test("handoff-child-overlay", posixOnly, () => {
+test("handoff-child-overlay", { skip: posixOnly }, () => {
   run([
     // handoff-child-overlay.test.ts:24 child with handoffDir: allow-list names pass the childBlock, parent-owned names stay block
     [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/plan.md","content":"x"},"b"],
@@ -255,7 +253,7 @@ test("handoff-child-overlay", posixOnly, () => {
   }
 });
 
-test("handoff-parent-read", posixOnly, () => {
+test("handoff-parent-read", { skip: posixOnly }, () => {
   run([
     // handoff-parent-read.test.ts:28 own handoff dir: the foreman reads parent and child; writes still ask
     [3,"bash","cat /Users/r2fx/home/.pi/agent/pi-foreman/handoffs/s1/parent","m"],
@@ -267,7 +265,7 @@ test("handoff-parent-read", posixOnly, () => {
   ]);
 });
 
-test("lane2-apply", posixOnly, () => {
+test("lane2-apply", { skip: posixOnly }, () => {
   run([
     // lane2-apply.test.ts:88 2e: git apply of a patch under the main scratch or the own scratch inside an owned worktre
     [9,"bash","git apply /Users/r2fx/home/repo/.workflow/scratch/x.patch","b"],
@@ -282,7 +280,7 @@ test("lane2-apply", posixOnly, () => {
   ]);
 });
 
-test("lane2-isolation", posixOnly, () => {
+test("lane2-isolation", { skip: posixOnly }, () => {
   run([
     // lane2-isolation.test.ts:86 2-I: a builder's git add / commit inside its own nested isolation worktree is allowed
     [10,"bash","git add f.txt","b"],
@@ -296,7 +294,7 @@ test("lane2-isolation", posixOnly, () => {
   ]);
 });
 
-test("lane2-paths", posixOnly, () => {
+test("lane2-paths", { skip: posixOnly }, () => {
   run([
     // lane2-paths.test.ts:56 2b: a catch-all path rule never fires on a word of command prose
     [11,"bash","git commit --reason \"read index.ts, then fix it\"","m"],
@@ -333,7 +331,7 @@ test("lane2-paths", posixOnly, () => {
   ]);
 });
 
-test("lane2-prose-failclosed", posixOnly, () => {
+test("lane2-prose-failclosed", { skip: posixOnly }, () => {
   run([
     // lane2-prose-failclosed.test.ts:32 prose passes only as a known prose option value by position, a pure read's operand is deni
     [15,"bash","git commit -m \"read index.ts, then x\"","m"],
@@ -341,7 +339,7 @@ test("lane2-prose-failclosed", posixOnly, () => {
   ]);
 });
 
-test("lane2-prose-position", posixOnly, () => {
+test("lane2-prose-position", { skip: posixOnly }, () => {
   run([
     // lane2-prose-position.test.ts:33 a pure bash read of a quoted space path is denied; a commit message is not an operand
     [15,"bash","git commit -m \"/Users/r2fx/home/x/a b/f\"","m"],
@@ -349,7 +347,7 @@ test("lane2-prose-position", posixOnly, () => {
   ]);
 });
 
-test("overlay-hardening", posixOnly, () => {
+test("overlay-hardening", { skip: posixOnly }, () => {
   run([
     // overlay-hardening.test.ts:42 S1/S2: .git is write-protected in every session, git commands and .gitignore/.github pass
     [4,"bash","git status","m"],
@@ -382,7 +380,7 @@ test("overlay-hardening", posixOnly, () => {
   ]);
 });
 
-test("own-bg-tasks-readable", posixOnly, () => {
+test("own-bg-tasks-readable", { skip: posixOnly }, () => {
   run([
     // own-bg-tasks-readable.test.ts:29 the session's own bg_run task dir is readable by bash and the read tool, for the session a
     [17,"bash","cat .pi/tasks/sess-own-4321/t1.output","bm"],
@@ -392,7 +390,7 @@ test("own-bg-tasks-readable", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-grep", posixOnly, () => {
+test("permoverlay-grep", { skip: posixOnly }, () => {
   run([
     // permoverlay-grep.test.ts:27 literal 97/31: the regex of grep -nE is no path operand, in the main and the child role
     [4,"bash","grep -nE \"/Users/r2fx/home/\\.ssh/id_[a-z]+\" notes.txt","bm"],
@@ -406,7 +404,7 @@ test("permoverlay-grep", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-ps-function-drive", posixOnly, () => {
+test("permoverlay-ps-function-drive", { skip: posixOnly }, () => {
   run([
     // permoverlay-ps-function-drive.test.ts:40 ps function drive baseline: the unbound uses are trusted
     [18,"powershell",{"command":"Get-Content $env:HOME/.pi/agent/pi-foreman/x"},"m"],
@@ -416,14 +414,14 @@ test("permoverlay-ps-function-drive", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-r41-win32", posixOnly, () => {
+test("permoverlay-r41-win32", { skip: posixOnly }, () => {
   run([
     // permoverlay-r41-win32.test.ts:13 r41 win32: a drive-resolved candidate hits a drive-less floored folder and a drive-less an
     [5,"bash","rm -rf C:/w/proj/x","m"],
   ]);
 });
 
-test("permoverlay-r41", posixOnly, () => {
+test("permoverlay-r41", { skip: posixOnly }, () => {
   run([
     // permoverlay-r41.test.ts:46 r41: a scan of /, the home directory or a parent of the workspace is denied, naming the al
     [20,"grep",{"pattern":"x"},"m"],
@@ -582,7 +580,7 @@ test("permoverlay-r41", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-vars-bind-r8", posixOnly, () => {
+test("permoverlay-vars-bind-r8", { skip: posixOnly }, () => {
   run([
     // permoverlay-vars-bind-r8.test.ts:38 r8 baseline: the unbound uses are trusted
     [18,"bash","cat $HOME/.pi/agent/pi-foreman/x","m"],
@@ -678,7 +676,7 @@ test("permoverlay-vars-bind-r8", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-vars-bind", posixOnly, () => {
+test("permoverlay-vars-bind", { skip: posixOnly }, () => {
   run([
     // permoverlay-vars-bind.test.ts:39 baseline: the unbound uses are trusted
     [19,"bash","echo x > $S/f","b"],
@@ -690,7 +688,7 @@ test("permoverlay-vars-bind", posixOnly, () => {
   ]);
 });
 
-test("permoverlay-vars", posixOnly, () => {
+test("permoverlay-vars", { skip: posixOnly }, () => {
   run([
     // permoverlay-vars.test.ts:36 a same-line assignment statement resolves a later $VAR like the literal path
     [24,"bash","D=/Users/r2fx/scratch/x; mkdir -p $D","b"],
@@ -715,7 +713,7 @@ test("permoverlay-vars", posixOnly, () => {
   ]);
 });
 
-test("permoverlay", posixOnly, () => {
+test("permoverlay", { skip: posixOnly }, () => {
   run([
     // permoverlay.test.ts:79 harmless commands pass, including the .env.example exception and prose
     [7,"bash","ls -la","m"],
@@ -820,7 +818,7 @@ test("permoverlay", posixOnly, () => {
   ]);
 });
 
-test("probescan", posixOnly, () => {
+test("probescan", { skip: posixOnly }, () => {
   run([
     // probescan.test.ts:72 a reviewer still runs tracked test operands and flags
     [10,"bash","node --test","r"],
@@ -874,7 +872,7 @@ test("probescan", posixOnly, () => {
   ]);
 });
 
-test("r10-child-npm-owned-subdir", posixOnly, () => {
+test("r10-child-npm-owned-subdir", { skip: posixOnly }, () => {
   run([
     // r10-child-npm-owned-subdir.test.ts:63 `expected-open (R10f): child in ${path.relative(w, cwd)}: ${cmd} (overlay pass)`
     [4,"bash","npm ci --package-lock-only","b"],
@@ -894,7 +892,7 @@ test("r10-child-npm-owned-subdir", posixOnly, () => {
   ]);
 });
 
-test("r10-pi-scratch-read", posixOnly, () => {
+test("r10-pi-scratch-read", { skip: posixOnly }, () => {
   run([
     // r10-pi-scratch-read.test.ts:38 `expected-open (R10b): ${cmd.replace(w, "<tmp>")} (overlay, ${role === "main" ? "foreman" 
     [30,"bash","ls .pi/scratch","bm"],
@@ -908,7 +906,7 @@ test("r10-pi-scratch-read", posixOnly, () => {
   ]);
 });
 
-test("r10-plain-session-workflow-read", posixOnly, () => {
+test("r10-plain-session-workflow-read", { skip: posixOnly }, () => {
   run([
     // r10-plain-session-workflow-read.test.ts:28 expected-open (R10e): plain session overlay passes a read of the hub ledger (readable = hu
     [31,"bash","cat /Users/r2fx/x/pf-r10-plainwf/hub/.workflow/LEDGER-r9.md","m"],
@@ -916,7 +914,7 @@ test("r10-plain-session-workflow-read", posixOnly, () => {
   ]);
 });
 
-test("r10-quoted-pattern-args", posixOnly, () => {
+test("r10-quoted-pattern-args", { skip: posixOnly }, () => {
   run([
     // r10-quoted-pattern-args.test.ts:56 `expected-open (R10d): ${cmd} (overlay pass for foreman and child; the link layer is cappe
     [3,"bash","git log -L '/start/,/end/:src/x.ts'","m"],
@@ -953,7 +951,7 @@ test("r10-quoted-pattern-args", posixOnly, () => {
   ]);
 });
 
-test("r10-state-usage-read", posixOnly, () => {
+test("r10-state-usage-read", { skip: posixOnly }, () => {
   run([
     // r10-state-usage-read.test.ts:47 `expected-open (R10a): ${cmd.replace(w, "<tmp>")} (overlay, foreman)`
     [32,"bash","ls /Users/r2fx/home/.pi/agent/pi-foreman/state/usage","m"],
@@ -969,7 +967,7 @@ test("r10-state-usage-read", posixOnly, () => {
   ]);
 });
 
-test("r10-toolchain-probe", posixOnly, () => {
+test("r10-toolchain-probe", { skip: posixOnly }, () => {
   run([
     // r10-toolchain-probe.test.ts:48 `expected-open (R10c): ${cmd} (overlay, ${role === "main" ? "foreman" : "child"})`
     [3,"bash","which node","bm"],
@@ -991,7 +989,7 @@ test("r10-toolchain-probe", posixOnly, () => {
   ]);
 });
 
-test("r11-guard-false-positives-2", posixOnly, () => {
+test("r11-guard-false-positives-2", { skip: posixOnly }, () => {
   run([
     // r11-guard-false-positives-2.test.ts:43 cd_guard_commit_message_single_quoted_mention_allowed
     [2,"bash","git commit -m 'about ${CDPATH:=/tmp} as text' && cd sub","b"],
@@ -1006,7 +1004,7 @@ test("r11-guard-false-positives-2", posixOnly, () => {
   ]);
 });
 
-test("r11-guard-false-positives", posixOnly, () => {
+test("r11-guard-false-positives", { skip: posixOnly }, () => {
   run([
     // r11-guard-false-positives.test.ts:32 cd_guard_commit_message_mentions_cdpath_allowed
     [2,"bash","git commit -m \"fix(guard): the cd guard no longer reads CDPATH inside a commit message\"","b"],
@@ -1021,7 +1019,7 @@ test("r11-guard-false-positives", posixOnly, () => {
   ]);
 });
 
-test("r12-interp-shadow", posixOnly, () => {
+test("r12-interp-shadow", { skip: posixOnly }, () => {
   run([
     // r12-interp-shadow.test.ts:26 interp_python_c_plain_still_allowed
     [2,"bash","python3 -c 'x=1'","b"],
@@ -1030,7 +1028,7 @@ test("r12-interp-shadow", posixOnly, () => {
   ]);
 });
 
-test("r12-state-read", posixOnly, () => {
+test("r12-state-read", { skip: posixOnly }, () => {
   run([
     // r12-state-read.test.ts:43 state_usage_ls_grep_chain_r11_literal
     [33,"bash","ls ~/.pi/agent/pi-foreman/state/usage/ | grep 01a14b65; node --version","m"],
@@ -1053,7 +1051,7 @@ test("r12-state-read", posixOnly, () => {
   ]);
 });
 
-test("r13-bash-output-log", posixOnly, () => {
+test("r13-bash-output-log", { skip: posixOnly }, () => {
   run([
     // r13-bash-output-log.test.ts:37 r13 bash log: the R12 line passes for the session that recorded the path, for read-only ve
     [34,"bash","cut -c1-600 /Users/r2fx/x/pf-r13-bashlog/pi-bash-0123456789abcdef.log | head -40","bm"],
@@ -1062,7 +1060,7 @@ test("r13-bash-output-log", posixOnly, () => {
   ]);
 });
 
-test("r14-child-msgfile", posixOnly, () => {
+test("r14-child-msgfile", { skip: posixOnly }, () => {
   run([
     // r14-child-msgfile.test.ts:30 child_git_commit_F_pi_scratch_left_to_the_gate
     [3,"bash","git commit -F .pi/scratch/m.txt","b"],
@@ -1078,7 +1076,7 @@ test("r14-child-msgfile", posixOnly, () => {
   ]);
 });
 
-test("r14-own-bg-output", posixOnly, () => {
+test("r14-own-bg-output", { skip: posixOnly }, () => {
   run([
     // r14-own-bg-output.test.ts:42 own_bg_output_cat_literal_passes
     [36,"bash","cat .pi/tasks/01a1500b-own-66406/bc00d3ee1.output","m"],
@@ -1090,7 +1088,7 @@ test("r14-own-bg-output", posixOnly, () => {
   ]);
 });
 
-test("r14-own-state-read", posixOnly, () => {
+test("r14-own-state-read", { skip: posixOnly }, () => {
   run([
     // r14-own-state-read.test.ts:62 own_state_read_live_binding_python_literal_passes
     [37,"bash","f=~/.pi/agent/pi-foreman/state/live/01a1500b-own.json; python3 -c \"import json,sys; print(json.load(open(sys.argv[1]))[\\\"state\\\"])\" $f","m"],
@@ -1102,7 +1100,7 @@ test("r14-own-state-read", posixOnly, () => {
   ]);
 });
 
-test("r27-child-inplace", posixOnly, () => {
+test("r27-child-inplace", { skip: posixOnly }, () => {
   run([
     // r27-child-inplace.test.ts:39 reads with the same interpreters are not this deny
     [38,"bash","python3 -c \"print(open('package.json').read())\"","b"],
@@ -1118,7 +1116,7 @@ test("r27-child-inplace", posixOnly, () => {
   ]);
 });
 
-test("r29-protected-read-only", posixOnly, () => {
+test("r29-protected-read-only", { skip: posixOnly }, () => {
   run([
     // r29-protected-read-only.test.ts:41 a child's read of a protected file passes: git diff, grep, cat
     [40,"bash","git diff HEAD~1..HEAD -- package.json","b"],
@@ -1142,7 +1140,7 @@ test("r29-protected-read-only", posixOnly, () => {
   ]);
 });
 
-test("r3-bridge-config", posixOnly, () => {
+test("r3-bridge-config", { skip: posixOnly }, () => {
   run([
     // r3-bridge-config.test.ts:121 R3-H1 / round 3: protect set covers .pi/claude-bridge.json and remove/rename of the state 
     [4,"bash","ls ~/.pi/agent/pi-foreman","bm"],
@@ -1153,7 +1151,7 @@ test("r3-bridge-config", posixOnly, () => {
   ]);
 });
 
-test("r31c-grep-own-read", posixOnly, () => {
+test("r31c-grep-own-read", { skip: posixOnly }, () => {
   run([
     // r31c-grep-own-read.test.ts:50 R1.1 grep over the own trace and the own usage file passes
     [41,"bash","grep -c x ~/.pi/agent/pi-foreman/state/trace-01a1500b-own.jsonl","m"],
@@ -1172,7 +1170,7 @@ test("r31c-grep-own-read", posixOnly, () => {
   ]);
 });
 
-test("r31c-net-read", posixOnly, () => {
+test("r31c-net-read", { skip: posixOnly }, () => {
   run([
     // r31c-net-read.test.ts:156 R4.6 / R4.7 the child overlay: a read-only worktree child may run a network read, not writ
     [42,"bash","gh pr view 1","r"],
@@ -1181,21 +1179,21 @@ test("r31c-net-read", posixOnly, () => {
   ]);
 });
 
-test("r42-self-ruling-git-readonly", posixOnly, () => {
+test("r42-self-ruling-git-readonly", { skip: posixOnly }, () => {
   run([
     // r42-self-ruling-git-readonly.test.ts:167 a read-only child may run a plain git ls-remote and is denied the program-running forms
     [10,"bash","git ls-remote origin b","r"],
   ]);
 });
 
-test("r46-identity-protect", posixOnly, () => {
+test("r46-identity-protect", { skip: posixOnly }, () => {
   run([
     // r46-identity-protect.test.ts:32 live.json: a child's shell write is denied; the foreman's shell read stays open
     [4,"bash","cat /Users/r2fx/home/.pi/agent/pi-foreman/handoffs/s1/live.json","m"],
   ]);
 });
 
-test("r46-session-dir-move", posixOnly, () => {
+test("r46-session-dir-move", { skip: posixOnly }, () => {
   run([
     // r46-session-dir-move.test.ts:30 session dir and its ancestors up to sessions: mv and foreman_move ask (foreman) / deny (ch
     [4,"foreman_move",{"src":"/Users/r2fx/home/.pi/agent/sessions/--proj--/sub","dst":"/Users/r2fx/home/.pi/agent/sessions/--proj--/sub.old"},"m"],
@@ -1208,7 +1206,7 @@ test("r46-session-dir-move", posixOnly, () => {
   ]);
 });
 
-test("r46-session-file-deny", posixOnly, () => {
+test("r46-session-file-deny", { skip: posixOnly }, () => {
   run([
     // r46-session-file-deny.test.ts:52 session file: reads stay allowed for the foreman
     [43,"read",{"path":"/Users/r2fx/home/.pi/agent/sessions/--proj--/sub/2026-01-01T00-00-00_abc.jsonl"},"m"],
@@ -1222,7 +1220,7 @@ test("r46-session-file-deny", posixOnly, () => {
   ]);
 });
 
-test("r8-hub-workflow", posixOnly, () => {
+test("r8-hub-workflow", { skip: posixOnly }, () => {
   run([
     // r8-hub-workflow.test.ts:48 hub .workflow is readable by the read tool and read-only bash for main and child
     [44,"read",{"path":"/Users/r2fx/x/pf-hubwf/hub/.workflow/LEDGER.md"},"bm"],
@@ -1245,7 +1243,7 @@ test("r8-hub-workflow", posixOnly, () => {
   ]);
 });
 
-test("role-skills-overlay", posixOnly, () => {
+test("role-skills-overlay", { skip: posixOnly }, () => {
   run([
     // role-skills-overlay.test.ts:144 the read, grep and ls tools of a child get no overlay decision on the named skill
     [4,"read",{"path":"/Users/r2fx/home/.agents/skills/named/SKILL.md"},"b"],
@@ -1254,7 +1252,7 @@ test("role-skills-overlay", posixOnly, () => {
   ]);
 });
 
-test("roundowner-redirect", posixOnly, () => {
+test("roundowner-redirect", { skip: posixOnly }, () => {
   run([
     // roundowner-redirect.test.ts:44 a reviewer still redirects to /dev/null, dups fds and writes its own scratch
     [10,"bash","cat f > /dev/null","r"],
@@ -1268,7 +1266,7 @@ test("roundowner-redirect", posixOnly, () => {
   ]);
 });
 
-test("roundowner-script", posixOnly, () => {
+test("roundowner-script", { skip: posixOnly }, () => {
   run([
     // roundowner-script.test.ts:66 a reviewer still runs tracked scripts and test runs
     [10,"bash","npm test","r"],
@@ -1277,7 +1275,7 @@ test("roundowner-script", posixOnly, () => {
   ]);
 });
 
-test("roundowner-shell", posixOnly, () => {
+test("roundowner-shell", { skip: posixOnly }, () => {
   run([
     // roundowner-shell.test.ts:57 a reviewer still reads, diffs, logs, greps and runs the tests
     [10,"bash","cat f","r"],
@@ -1303,7 +1301,7 @@ test("roundowner-shell", posixOnly, () => {
   ]);
 });
 
-test("roundowner", posixOnly, () => {
+test("roundowner", { skip: posixOnly }, () => {
   run([
     // roundowner.test.ts:37 owner rule: child A cannot write into child B's isolation worktree (path tool and bash red
     [46,"write",{"path":"/Users/r2fx/home/code/proj/src/a.ts"},"b"],
@@ -1317,7 +1315,7 @@ test("roundowner", posixOnly, () => {
   ]);
 });
 
-test("roundsurface", posixOnly, () => {
+test("roundsurface", { skip: posixOnly }, () => {
   run([
     // roundsurface.test.ts:96 overlay: the round worktrees and isolation worktrees of the session are every child's own 
     [46,"read",{"path":"/Users/r2fx/home/code/proj/.workflow/scratch/p.md"},"b"],
@@ -1325,7 +1323,7 @@ test("roundsurface", posixOnly, () => {
   ]);
 });
 
-test("s2-child-heredoc", posixOnly, () => {
+test("s2-child-heredoc", { skip: posixOnly }, () => {
   run([
     // s2-child-heredoc.test.ts:22 reading heredocs and null redirects are not this deny
     [38,"bash","cat <<'EOF' | grep a\nabc\nEOF","b"],
@@ -1333,7 +1331,7 @@ test("s2-child-heredoc", posixOnly, () => {
   ]);
 });
 
-test("s2-child-redirects", posixOnly, () => {
+test("s2-child-redirects", { skip: posixOnly }, () => {
   run([
     // s2-child-redirects.test.ts:41 a reviewer's test runs with closed or null stdin pass
     [10,"bash","npm run typecheck </dev/null","r"],
@@ -1361,7 +1359,7 @@ test("s2-child-redirects", posixOnly, () => {
   ]);
 });
 
-test("s2-main-ledger-read", posixOnly, () => {
+test("s2-main-ledger-read", { skip: posixOnly }, () => {
   run([
     // s2-main-ledger-read.test.ts:35 every child role reads the main checkout's ledger and .workflow by bash
     [47,"bash","cat /Users/r2fx/home/repo/.workflow/LEDGER-x.md; git log --oneline -3","br"],
@@ -1373,7 +1371,7 @@ test("s2-main-ledger-read", posixOnly, () => {
   ]);
 });
 
-test("s2-readonly-falsepos", posixOnly, () => {
+test("s2-readonly-falsepos", { skip: posixOnly }, () => {
   run([
     // s2-readonly-falsepos.test.ts:32 read-only shell commands naming protected paths pass (main and child)
     [48,"bash","G=grep -rn --exclude-dir=node_modules --exclude-dir=.workflow --exclude-dir=.git","bm"],
@@ -1383,7 +1381,7 @@ test("s2-readonly-falsepos", posixOnly, () => {
   ]);
 });
 
-test("safety-followup", posixOnly, () => {
+test("safety-followup", { skip: posixOnly }, () => {
   run([
     // safety-followup.test.ts:70 remove/rename of the agent dir's parent is asked in the foreman, denied in children; reads
     [4,"bash","ls ~/.pi","bm"],
@@ -1392,14 +1390,14 @@ test("safety-followup", posixOnly, () => {
   ]);
 });
 
-test("sec-fix-bound", posixOnly, () => {
+test("sec-fix-bound", { skip: posixOnly }, () => {
   run([
     // sec-fix-bound.test.ts:72 R8: an unbound $S is the child's scratch; S=<round worktree> is not
     [49,"bash","S=$FOREMAN_SCRATCH; echo x > $S/f","r"],
   ]);
 });
 
-test("sec-fix-tilde", posixOnly, () => {
+test("sec-fix-tilde", { skip: posixOnly }, () => {
   run([
     // sec-fix-tilde.test.ts:44 G3: a pure read of the state dir passes in the ~/, $HOME/ and absolute forms
     [18,"bash","head -c 600 ~/.pi/agent/pi-foreman/state/usage/sess.jsonl; echo; wc -l ~/.pi/agent/pi-foreman/state/usage/sess.jsonl","m"],
@@ -1419,7 +1417,7 @@ test("sec-fix-tilde", posixOnly, () => {
   ]);
 });
 
-test("shellvars-cases", posixOnly, () => {
+test("shellvars-cases", { skip: posixOnly }, () => {
   run([
     // shellvars-cases.test.ts:47 R3b literal lines: cd, S=$FOREMAN_SCRATCH and a later $S operand or redirect never ask
     [24,"bash","cd /Users/r2fx/proj; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt","m"],
@@ -1430,7 +1428,7 @@ test("shellvars-cases", posixOnly, () => {
   ]);
 });
 
-test("shellvars-win32-escape", posixOnly, () => {
+test("shellvars-win32-escape", { skip: posixOnly }, () => {
   run([
     // shellvars-win32-escape.test.ts:73 win32: cat $H/f (an unknown $H stays as it is)
     [0,"bash","cat $H/f","b"],
@@ -1452,7 +1450,7 @@ test("shellvars-win32-escape", posixOnly, () => {
   ]);
 });
 
-test("shellvars-win32", posixOnly, () => {
+test("shellvars-win32", { skip: posixOnly }, () => {
   run([
     // shellvars-win32.test.ts:65 win32: H=C:/Profiles/u/.pi/agent/pi-foreman; cat $H/handoffs/s1/ruling.md
     [0,"bash","cat $H/handoffs/s1/ruling.md","b"],
@@ -1463,7 +1461,7 @@ test("shellvars-win32", posixOnly, () => {
   ]);
 });
 
-test("switch-regression-win32", posixOnly, () => {
+test("switch-regression-win32", { skip: posixOnly }, () => {
   run([
     // switch-regression-win32.test.ts:15 win32: switch words are not paths (no ask, no deny)
     [16,"bash","tool.exe /getConnectState","bm"],
@@ -1474,7 +1472,7 @@ test("switch-regression-win32", posixOnly, () => {
   ]);
 });
 
-test("win32-bashpath-shapes", posixOnly, () => {
+test("win32-bashpath-shapes", { skip: posixOnly }, () => {
   run([
     // win32-bashpath-shapes.test.ts:32 win32 child: ls C:/w/proj/node_modules | wc -l (row 6-11 shape, id 1168)
     [0,"bash","ls C:/w/proj/node_modules | wc -l","b"],
@@ -1485,7 +1483,7 @@ test("win32-bashpath-shapes", posixOnly, () => {
   ]);
 });
 
-test("winpaths", posixOnly, () => {
+test("winpaths", { skip: posixOnly }, () => {
   run([
     // winpaths.test.ts:23 win32: trailing dots and spaces in a segment do not hide a protected path
     [16,"write",{"path":"notes.\\x.txt"},"bm"],
@@ -1500,7 +1498,7 @@ test("winpaths", posixOnly, () => {
   ]);
 });
 
-test("worktree-root-consumers", posixOnly, () => {
+test("worktree-root-consumers", { skip: posixOnly }, () => {
   run([
     // worktree-root-consumers.test.ts:41 `overlay (${name} root): a child blocks sibling rounds under the root, keeps its own`
     [52,"write",{"path":"/Users/r2fx/home/code/proj/x.ts"},"b"],

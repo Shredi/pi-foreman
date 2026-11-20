@@ -187,6 +187,9 @@ export const LEDGER_BATCH_MAX = 32;
 
 export type LedgerPlan = { error: string } | { calls: string[][]; items: string; attested: boolean; upsert?: { item: string | null; text: string }; upserts?: { item: string | null; text: string }[] };
 
+/** An optional field that was not given: left out, null, an empty text or an empty list. Of two exclusive fields, an empty one counts as the one not given. */
+export const absent = (v: unknown): boolean => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+
 const oneLine = (v: unknown): string | null => (typeof v === "string" && v.trim() && !/[\r\n]/.test(v.trim()) ? v.trim() : null);
 
 /** The `texts` of an add call: 1 to LEDGER_BATCH_MAX one-line strings. */
@@ -232,7 +235,7 @@ function itemId(v: unknown): string | null {
 export function planLedgerCall(params: Record<string, unknown>, opts: { child?: boolean; gate: GateView; planPass?: boolean }): LedgerPlan {
   const action = params.action;
   if (typeof action !== "string" || !(LEDGER_ACTIONS as readonly string[]).includes(action)) return { error: `${LEDGER_TOOL}: action must be one of ${LEDGER_ACTIONS.join(", ")}.` };
-  const raw = params.items === undefined ? [] : Array.isArray(params.items) ? params.items : [params.items];
+  const raw = absent(params.items) ? [] : Array.isArray(params.items) ? params.items : [params.items];
   const items: string[] = [];
   for (const r of raw) {
     const id = itemId(r);
@@ -247,8 +250,8 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child?: 
     case "status":
       return { calls: [], items: "", attested: false };
     case "add": {
-      if (params.texts !== undefined) {
-        if (params.text !== undefined) return { error: `${LEDGER_TOOL}: give text or texts, not both.` };
+      if (!absent(params.texts)) {
+        if (!absent(params.text)) return { error: `${LEDGER_TOOL}: give text or texts, not both.` };
         const texts = addTexts(params.texts);
         if (!texts) return { error: `${LEDGER_TOOL}: texts is a list of 1 to ${LEDGER_BATCH_MAX} one-line strings.` };
         return { calls: texts.map((t) => ["add", t]), items: "", attested: false };
@@ -257,22 +260,22 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child?: 
       return { calls: [["add", text]], items: "", attested: false };
     }
     case "upsert": {
-      if (params.entries !== undefined) {
-        if (params.text !== undefined || (params.item !== undefined && params.item !== null)) return { error: `${LEDGER_TOOL}: give item and text, or entries, not both.` };
+      if (!absent(params.entries)) {
+        if (!absent(params.text) || !absent(params.item)) return { error: `${LEDGER_TOOL}: give item and text, or entries, not both.` };
         const entries = upsertEntries(params.entries);
         if (typeof entries === "string") return { error: entries };
         return { calls: [], items: entries.flatMap((e) => (e.item ? [e.item] : [])).join(","), attested: false, upserts: entries };
       }
       if (!text) return { error: `${LEDGER_TOOL}: upsert needs text.` };
-      if (params.item === undefined || params.item === null) return { calls: [], items: "", attested: false, upsert: { item: null, text } };
+      if (absent(params.item)) return { calls: [], items: "", attested: false, upsert: { item: null, text } };
       const id = itemId(params.item);
       if (!id) return { error: `${LEDGER_TOOL}: item is an item number or "V".` };
       return { calls: [], items: id, attested: false, upsert: { item: id, text } };
     }
     case "note":
     case "defer": {
-      const single = params.item === undefined || params.item === null ? null : itemId(params.item);
-      const id = single ? (items.length === 0 || (items.length === 1 && items[0] === single) ? single : null) : params.item === undefined || params.item === null ? one() : null;
+      const single = absent(params.item) ? null : itemId(params.item);
+      const id = single ? (items.length === 0 || (items.length === 1 && items[0] === single) ? single : null) : absent(params.item) ? one() : null;
       if (!id || !text) return { error: `${LEDGER_TOOL}: ${action} needs exactly one item (\`item\` or \`items: [n]\`) and text.` };
       if (action === "defer" && id === "V") return { error: `${LEDGER_TOOL}: V cannot be deferred; ${V_REFUSAL}.` };
       return { calls: [[action, id, text]], items: id, attested: false };

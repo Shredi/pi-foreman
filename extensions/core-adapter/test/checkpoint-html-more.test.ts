@@ -8,6 +8,7 @@ import { rmTestTmp } from "./_tmpbase.ts";
 import { planBody, readPlan, sha256 } from "../checkpoint.ts";
 import { ownerFactsLines } from "../ownertext.ts";
 import { PAGE_MAX_BYTES, renderHtmlPlanPage } from "../pages.ts";
+import { posixOnly } from "./_platform.ts";
 
 const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p>Goal: ship.</p></section><h2>Work</h2><p>x</p></body></html>";
 
@@ -40,7 +41,7 @@ test("html plan: a literal appendix marker line in the page, and a Ruling headin
   assert.notEqual(b.plan.hash, a.plan.hash, "an edit below the literal marker line is a new version");
 });
 
-test("html plan: a symlinked or hard-linked rulings sidecar is refused naming the rulings file", { skip: process.platform === "win32" }, (t) => {
+test("html plan: a symlinked or hard-linked rulings sidecar is refused naming the rulings file", { skip: posixOnly }, (t) => {
   const { root, scratch, opts } = workspace(t);
   fs.writeFileSync(path.join(root, "outside.md"), "x\n");
   fs.symlinkSync(path.join(root, "outside.md"), path.join(scratch, "rulings-widget.md"));

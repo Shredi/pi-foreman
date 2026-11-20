@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentBranch, deriveKey, mainCheckout, repoOf, sanitizeKey, workspaceKey, workspaceKeyOf } from "../workspacekey.ts";
+import { currentBranch, deriveKey, mainCheckout, realPath, repoOf, sanitizeKey, workspaceKey, workspaceKeyOf } from "../workspacekey.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -18,7 +18,7 @@ function pyKey(code: string, ...args: string[]): string {
 }
 
 const git = (cwd: string, ...a: string[]): string => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
-const tmp = (): string => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "wskey-")));
+const tmp = (): string => realPath(fs.mkdtempSync(path.join(os.tmpdir(), "wskey-")));
 
 test("deriveKey: known vectors for a POSIX, a case folding and a Windows path", () => {
   assert.equal(deriveKey("/Users/Me/Proj", "linux"), "Proj-37828794");
@@ -147,4 +147,20 @@ test("workspaceKey override: same result as Python workspace_key for each value"
     assert.equal(got, want, JSON.stringify(o));
   }
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("realPath: an existing path resolves like native realpath; a missing one is returned unchanged", () => {
+  const root = tmp();
+  try {
+    assert.equal(realPath(root), fs.realpathSync.native(root));
+    const missing = path.join(root, "missing");
+    assert.equal(realPath(missing), missing);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deriveKey on Windows ignores case and separators, so a long and a differently cased path agree", () => {
+  assert.equal(deriveKey("C:\\Users\\runneradmin\\Proj", "win32"), deriveKey("c:/users/RunnerAdmin/Proj", "win32"));
+  assert.notEqual(deriveKey("C:\\Users\\runneradmin\\Proj", "win32"), deriveKey("C:\\Users\\RUNNER~1\\Proj", "win32"));
 });

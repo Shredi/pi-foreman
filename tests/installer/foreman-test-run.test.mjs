@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "foreman_test_run.mjs");
-const { testConcurrency, nodeTestArgs } = await import(pathToFileURL(SCRIPT).href);
+const { testConcurrency, nodeTestArgs, acquireLock, LockWaitTimeout, killTree } = await import(pathToFileURL(SCRIPT).href);
 
 function tmp() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-test-run-")));
@@ -66,7 +66,7 @@ test("a second run waits with one line until the first releases", async () => {
     assert.match(second.out, /second ran/);
     const lines = second.err.trim().split("\n");
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /^waiting for the test lock held by pid \d+, started \d\d:\d\d$/);
+    assert.match(lines[0], /^waiting for the test lock held by pid \d+ \(cwd .+\), started \d\d:\d\d$/);
     assert.ok(!fs.existsSync(lockFile(dir)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -208,4 +208,319 @@ test("an abandoned takeover mutex does not block a stale-lock takeover", async (
 test("nodeTestArgs keeps leading options before --test", () => {
   assert.deepEqual(nodeTestArgs(["--import", "./h.mjs", "a/*.ts", "b/*.ts"], 2), ["--import", "./h.mjs", "--test", "--test-concurrency=2", "a/*.ts", "b/*.ts"]);
   assert.deepEqual(nodeTestArgs(["x.test.ts"], 1), ["--test", "--test-concurrency=1", "x.test.ts"]);
+});
+
+// --- time limit, bounded lock wait, kill path ---
+
+/** Runs the wrapper with raw arguments (wrapper options first). */
+function runRaw(dir, args, extra = {}) {
+  return spawn(process.execPath, [SCRIPT, ...args], { env: env(dir, extra), stdio: ["ignore", "pipe", "pipe"] });
+}
+
+const execArgs = (code) => ["--exec", "--", process.execPath, "-e", code];
+const marker = (dir) => path.join(dir, "ran");
+const touchMarker = (dir) => `require("fs").writeFileSync(${JSON.stringify(marker(dir))}, "x")`;
+const liveLock = (dir, cwd = "/x") => fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, started: new Date().toISOString(), cwd }));
+const gone = async (pid) => {
+  for (let i = 0; i < 50; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+};
+
+test("the time limit stops the run and a grandchild that ignores SIGTERM, releases the lock and exits 124", async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  try {
+    const grand = `process.on("SIGTERM", () => {}); require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+    const parent = `require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grand)}], { stdio: "ignore" }); setInterval(() => {}, 1000)`;
+    const r = await finish(runRaw(dir, ["--timeout", "3", ...execArgs(parent)]));
+    assert.equal(r.code, 124);
+    assert.match(r.err, /^foreman_test_run: time limit of 3 s reached after 3\.\d s; stopped the run\n$/);
+    assert.ok(!fs.existsSync(lockFile(dir)));
+    assert.ok(fs.existsSync(pidFile), "the grandchild started");
+    assert.ok(await gone(Number(fs.readFileSync(pidFile, "utf8"))), "the grandchild is gone");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the time limit through the env applies with the lock off", async () => {
+  const dir = tmp();
+  try {
+    const r = await finish(runRaw(dir, execArgs(`setInterval(() => {}, 1000)`), { FOREMAN_TEST_LOCK: "0", FOREMAN_TEST_TIMEOUT: "0.5" }));
+    assert.equal(r.code, 124);
+    assert.match(r.err, /time limit of 0\.5 s reached after 0\.\d s/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a limit that is not reached keeps the child exit code and prints nothing; the flag wins over the env", async () => {
+  const dir = tmp();
+  try {
+    const r = await finish(runRaw(dir, ["--timeout", "60", ...execArgs("process.exit(3)")], { FOREMAN_TEST_TIMEOUT: "abc" }));
+    assert.equal(r.code, 3);
+    assert.equal(r.err, "");
+    const e = await finish(runRaw(dir, execArgs("process.exit(5)"), { FOREMAN_TEST_TIMEOUT: "" }));
+    assert.equal(e.code, 5);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const [name, args, extra] of [
+  ["--timeout abc", ["--timeout", "abc"], {}],
+  ["--timeout 0", ["--timeout", "0"], {}],
+  ["--timeout -1", ["--timeout", "-1"], {}],
+  ["--timeout without a value", ["--timeout"], {}],
+  ["FOREMAN_TEST_TIMEOUT=abc", [], { FOREMAN_TEST_TIMEOUT: "abc" }],
+  ["FOREMAN_TEST_TIMEOUT=0", [], { FOREMAN_TEST_TIMEOUT: "0" }],
+]) {
+  test(`an invalid limit (${name}) exits 2 without running or taking the lock`, async () => {
+    const dir = tmp();
+    try {
+      const r = await finish(runRaw(dir, [...args, ...execArgs(touchMarker(dir))], extra));
+      assert.equal(r.code, 2);
+      assert.match(r.err, /^foreman_test_run: (--timeout|FOREMAN_TEST_TIMEOUT) needs a positive number of seconds\n$/);
+      assert.ok(!fs.existsSync(marker(dir)));
+      assert.ok(!fs.existsSync(lockFile(dir)));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a free lock prints no wait line", async () => {
+  const dir = tmp();
+  try {
+    const r = await finish(runRaw(dir, ["--timeout", "30", ...execArgs("")]));
+    assert.equal(r.code, 0);
+    assert.equal(r.err, "");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("acquireLock names a live holder, repeats the line and throws LockWaitTimeout after maxWaitMs", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/some/where");
+    let err = "";
+    const seen = [];
+    await assert.rejects(
+      acquireLock(lockFile(dir), { pollMs: 10, announceMs: 60, maxWaitMs: 300, stderr: { write: (s) => (err += s) }, onHolder: (h) => seen.push(h) }),
+      (e) => e instanceof LockWaitTimeout && e.holder.pid === process.pid && e.holder.cwd === "/some/where",
+    );
+    const lines = err.trim().split("\n");
+    assert.match(lines[0], /^waiting for the test lock held by pid \d+ \(cwd \/some\/where\), started \d\d:\d\d$/);
+    assert.ok(lines.length >= 2);
+    assert.match(lines[1], /^still waiting for the test lock held by pid \d+ \(cwd \/some\/where\), started \d\d:\d\d; waited [\d.]+ min$/);
+    assert.equal(seen[0].pid, process.pid);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a lock file without a cwd prints cwd unknown", async () => {
+  const dir = tmp();
+  try {
+    fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
+    let err = "";
+    await assert.rejects(acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 50, stderr: { write: (s) => (err += s) } }), LockWaitTimeout);
+    assert.match(err, /^waiting for the test lock held by pid \d+ \(cwd unknown\), started \d\d:\d\d\n$/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("acquireLock takes a dead holder's lock at once even with a short bound", async () => {
+  const dir = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: dead.pid, started: new Date().toISOString(), cwd: "/x" }));
+    const release = await acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 1000, stderr: { write() {} } });
+    release();
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a live holder that outlasts FOREMAN_TEST_LOCK_WAIT_MINUTES ends the run with 75 and the command is not run", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held/here");
+    const r = await finish(runRaw(dir, execArgs(touchMarker(dir)), { FOREMAN_TEST_LOCK_WAIT_MINUTES: "0.02" }));
+    assert.equal(r.code, 75);
+    assert.match(r.err, /^waiting for the test lock held by pid \d+ \(cwd \/held\/here\), started \d\d:\d\d\n/);
+    assert.match(r.err, /foreman_test_run: gave up waiting for the test lock after [\d.]+ min; held by pid \d+ \(cwd \/held\/here\), started \d\d:\d\d\n$/);
+    assert.ok(!fs.existsSync(marker(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the time limit during the lock wait exits 124, names the holder and does not run the command", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held/here");
+    const r = await finish(runRaw(dir, ["--timeout", "1", ...execArgs(touchMarker(dir))]));
+    assert.equal(r.code, 124);
+    assert.match(r.err, /time limit of 1 s reached after 1\.\d s; stopped the run; waited for the lock held by pid \d+ \(cwd \/held\/here\), started \d\d:\d\d\n$/);
+    assert.ok(!fs.existsSync(marker(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("killTree on Windows calls taskkill /pid <pid> /T /F by full path", async () => {
+  const calls = [];
+  await killTree(4242, { platform: "win32", env: { SystemRoot: "C:\\Windows" }, spawnSync: (cmd, args) => calls.push([cmd, args]) });
+  assert.deepEqual(calls, [[path.win32.join("C:\\Windows", "System32", "taskkill.exe"), ["/pid", "4242", "/T", "/F"]]]);
+  const bare = [];
+  await killTree(7, { platform: "win32", env: {}, spawnSync: (cmd, args) => bare.push([cmd, args]) });
+  assert.deepEqual(bare, [["taskkill", ["/pid", "7", "/T", "/F"]]]);
+});
+
+test("killTree on POSIX signals the tree with SIGTERM, then SIGKILLs the union of both listings after the grace", async () => {
+  const sent = [];
+  const before = [{ pid: 10, ppid: 1 }, { pid: 11, ppid: 10 }, { pid: 12, ppid: 11 }, { pid: 99, ppid: 1 }];
+  const after = [{ pid: 10, ppid: 1 }, { pid: 13, ppid: 10 }, { pid: 99, ppid: 1 }];
+  const lists = [before, after];
+  await killTree(10, { platform: "linux", list: () => lists.shift(), kill: (p, s) => sent.push([p, s]), graceMs: 20 });
+  const term = sent.filter(([, s]) => s === "SIGTERM").map(([p]) => p).sort();
+  const kill = sent.filter(([, s]) => s === "SIGKILL").map(([p]) => p).sort();
+  assert.deepEqual(term, [10, 11, 12]);
+  assert.deepEqual(kill, [10, 11, 12, 13]);
+  assert.ok(sent.findIndex(([, s]) => s === "SIGKILL") > sent.findLastIndex(([, s]) => s === "SIGTERM"));
+});
+
+test("killTree falls back to the child alone with a note when the process list fails", async () => {
+  const sent = [];
+  let err = "";
+  await killTree(10, { platform: "darwin", list: () => undefined, kill: (p, s) => sent.push([p, s]), graceMs: 5, stderr: { write: (s) => (err += s) } });
+  assert.deepEqual(sent, [[10, "SIGTERM"], [10, "SIGKILL"]]);
+  assert.match(err, /could not list processes; stopping the main test process only/);
+});
+
+const queueDir = (dir) => `${lockFile(dir)}.queue`;
+const tickets = (dir) => (fs.existsSync(queueDir(dir)) ? fs.readdirSync(queueDir(dir)).sort() : []);
+const until = async (cond, ms = 5000) => {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    assert.ok(Date.now() < end, "condition not reached in time");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+};
+const quiet = { write() {} };
+
+test("queue: three waiters behind a holder acquire in arrival order and leave no tickets", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held");
+    const order = [];
+    const waiters = [];
+    for (const n of [1, 2, 3]) {
+      waiters.push(
+        acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet }).then((release) => {
+          order.push(n);
+          release();
+        }),
+      );
+      await until(() => tickets(dir).length === n);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(order, []);
+    fs.rmSync(lockFile(dir));
+    await Promise.all(waiters);
+    assert.deepEqual(order, [1, 2, 3]);
+    assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a waiter touches its ticket as a heartbeat", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held");
+    const w = acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 400, stderr: quiet });
+    const caught = assert.rejects(w, LockWaitTimeout);
+    await until(() => tickets(dir).length === 1);
+    const file = path.join(queueDir(dir), tickets(dir)[0]);
+    const old = new Date(Date.now() - 20_000);
+    fs.utimesSync(file, old, old);
+    await until(() => fs.statSync(file).mtimeMs > Date.now() - 5000);
+    await caught;
+    assert.deepEqual(tickets(dir), [], "the ticket is removed on timeout");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a dead-pid ticket at the head is skipped and removed", async () => {
+  const dir = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    fs.mkdirSync(queueDir(dir), { recursive: true });
+    const name = `${"1".padStart(15, "0")}-000000-${dead.pid}.json`;
+    fs.writeFileSync(path.join(queueDir(dir), name), "{}");
+    const release = await acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 2000, stderr: quiet });
+    release();
+    assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a live ticket with a heartbeat older than 30 s is dropped, a fresh one keeps its place", async () => {
+  const dir = tmp();
+  try {
+    fs.mkdirSync(queueDir(dir), { recursive: true });
+    const stale = path.join(queueDir(dir), `${"1".padStart(15, "0")}-000000-${process.pid}.json`);
+    const fresh = path.join(queueDir(dir), `${"2".padStart(15, "0")}-000000-${process.pid}.json`);
+    fs.writeFileSync(stale, "{}");
+    fs.writeFileSync(fresh, "{}");
+    const old = new Date(Date.now() - 31_000);
+    fs.utimesSync(stale, old, old);
+    await assert.rejects(acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 200, stderr: quiet }), LockWaitTimeout);
+    assert.ok(!fs.existsSync(stale));
+    assert.ok(fs.existsSync(fresh));
+    assert.ok(!fs.existsSync(lockFile(dir)), "the waiter behind the fresh ticket did not take the lock");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a waiter whose ticket vanished queues again at the end", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held");
+    const order = [];
+    const take = (n) =>
+      acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet }).then((release) => {
+        order.push(n);
+        release();
+      });
+    const first = take(1);
+    await until(() => tickets(dir).length === 1);
+    const firstTicket = tickets(dir)[0];
+    const second = take(2);
+    await until(() => tickets(dir).length === 2);
+    fs.rmSync(path.join(queueDir(dir), firstTicket));
+    await until(() => tickets(dir).length === 2 && !tickets(dir).includes(firstTicket));
+    assert.equal(tickets(dir).length, 2);
+    fs.rmSync(lockFile(dir));
+    await Promise.all([first, second]);
+    assert.deepEqual(order, [2, 1]);
+    assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
