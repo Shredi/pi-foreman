@@ -39,8 +39,11 @@ const T = [
   "echo \"${HOME}/sudo reboot\" | wc -c",
 ];
 
+// per line of T: an interpreter fed on stdin or given inline code is judge-first, the rest runs
+const IC = "danger-inline-code";
+const EXPECT = [IC, IC, IC, IC, IC, IC, "run", IC, "run", IC, "run", "run"];
 test("trigger words in interpreter heredocs, inline code and quoted arguments of data programs fire no floor (inline code is judge-first), for the foreman and a child", () => {
-  for (const l of T) for (const child of [false, true]) assert.match(verdict(l, child), /^(run|danger-inline-code)$/, `${child ? "child" : "foreman"}: ${JSON.stringify(l)}`);
+  for (const [i, l] of T.entries()) for (const child of [false, true]) assert.equal(verdict(l, child), EXPECT[i], `${child ? "child" : "foreman"}: ${JSON.stringify(l)}`);
 });
 
 test("a publish word in a later statement of an unparsed line is no publish; the package program at a command position still is", () => {

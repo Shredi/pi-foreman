@@ -13,10 +13,16 @@ const SHAPES = [
   `python3 -m venv .venv .venv2 && .venv/bin/pip install -q -r req.txt | tail -2`,
   `$V/bin/pip -q install -r req.txt`,
   `"$FOREMAN_SCRATCH/v/bin/ruff" check .`,
+  `.venv/bin/python -m pip install -q -r req.txt`,
+  `./v/bin/python -m pip install -q -r req.txt | tail -2`,
+  `cd sub && .venv/bin/python -m pip install -r req.txt`,
 ];
+// a variable path in front of the program name: the literal basename (unquoted as the program lookup does) is the program, wrappers behind it unwrap
+const BYPASS = [`$V/bin/r"m" -rf /etc`, `$V/bin/'rm' -rf $Y`, `$V/bin/r\\m -rf $Y`, `$V/bin/env rm -rf $Y`, `$V/bin/xargs rm -rf < l`, `$V/bin/nohup rm -rf $Y`];
 const STILL = [`$RM -rf x`, `"$CMD" -r d`, `$V/bin/rm -rf "$Y"`];
 
 const env: FloorEnv = { cwd: "/w", home: "/h", agentDir: "/h/.pi/agent", writeRoots: ["/w"], scratch: ["/s"] };
+const parse = (line: string) => parseShell(line, { cwd: "/w", env: { FOREMAN_SCRATCH: "/s" } });
 const hit = (line: string) => unknownTargetDelete(line, parseShell(line, { cwd: "/w", env: { FOREMAN_SCRATCH: "/s" } }), env);
 
 const config = { providers: { fake: { roles: { review: { model: "m" } } } }, presence: { enabled: false } };
@@ -43,6 +49,18 @@ test("a bare variable command word with a recursive flag, and a variable-prefixe
   for (const line of STILL) assert.equal(hit(line)?.name, "danger-delete-unknown-target", line);
 });
 
+test("a variable path in front of a quoted or escaped program name, or of a wrapper, is that program: the delete hit stays", () => {
+  for (const line of BYPASS.filter((l) => !l.includes("/etc"))) assert.equal(hit(line)?.name, "danger-delete-unknown-target", line);
+  assert.equal(parse(BYPASS[0])[0].program, "rm");
+  assert.equal(parse(BYPASS[3])[0].program, "rm");
+  assert.deepEqual(parse(BYPASS[3])[0].wrappers, ["env"]);
+});
+
+test("a variable path in front of an interpreter is that interpreter (inline code is read by name)", () => {
+  assert.equal(parse(`$V/bin/python -c 1`)[0].program, "python");
+  assert.equal(parse(`$V/rm$S -rf x`)[0].program, "$V/rm$S");
+});
+
 for (const child of [false, true]) {
   const who = child ? "child" : "foreman";
   test(`the venv shapes run with no judge call (${who})`, async (t) => {
@@ -63,6 +81,13 @@ for (const child of [false, true]) {
 }
 
 for (const child of [false, true]) {
+  test(`the bypass forms keep a judge call or a refusal, an inline interpreter behind a variable path is judged (${child ? "child" : "foreman"})`, async (t) => {
+    for (const line of [...BYPASS, `$V/bin/python -c 1`]) {
+      const r = await rig(t, child);
+      const res = await r.call("bash", { command: line });
+      assert.ok(r.calls.length === 1 || res?.block, `${line}: judged or refused`);
+    }
+  });
   test(`the heredoc shape's judge call is for inline code, not a delete (${child ? "child" : "foreman"})`, async (t) => {
     const r = await rig(t, child);
     await r.call("bash", { command: SHAPES[2] });

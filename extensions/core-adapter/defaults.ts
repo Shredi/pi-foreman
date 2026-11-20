@@ -12,7 +12,6 @@ import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_N
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
 import { webReadAllow } from "./webread.ts";
-import { SHELLS } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
 
@@ -1274,7 +1273,7 @@ export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, rebase, amend of published work, stash drop, worktree removal, history rewrite) or runs a program or moves credentials through git", test: segs(gitSeg) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
-  { name: "danger-inline-code", reason: "runs code the harness cannot read: an interpreter one-liner (python -c, node -e, perl -e), a shell script built at run time, or an interpreter fed its program on stdin (a shell's stdin script is read by the walker)", test: (c) => (c.segments ?? []).some((s) => s.program !== "" && (inlineCode(s) || s.opaque === "nonliteral_script" || (s.opaque === "stdin_fed" && !SHELLS.has(progOf(s))))) },
+  { name: "danger-inline-code", reason: "runs code the harness cannot read: an interpreter one-liner (python -c, node -e), a script built at run time or fed on stdin to a shell or interpreter, or one run by a shell the harness does not parse (zsh, pwsh, cmd, script -c)", test: (c) => (c.segments ?? []).some((s) => s.program !== "" && (inlineCode(s) || s.opaque === "nonliteral_script" || s.opaque === "stdin_fed" || (s.opaque === "writing_wrapper" && progOf(s) === "script") || (s.opaque === "foreign_shell" && c.tool !== "powershell"))) },
   { name: "danger-remote", reason: "runs a command on another machine or in a container (ssh, docker or podman exec, kubectl exec), which the harness cannot check", test: (c) => (c.segments ?? []).some((s) => s.program !== "" && remoteCommand(s, progOf(s)) !== null) },
   { name: "danger-delete-unknown-target", reason: "a delete whose target the harness cannot read (a variable, a glob without a readable directory, a changed directory, input from another command, a PowerShell or cmd recursive delete)", test: (c, e) => !!c.segments && BASH_TOOL_NAMES.has(c.tool) && unknownTargetDelete(c.text ?? "", c.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null },
 ];

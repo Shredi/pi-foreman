@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
 
 const FORMS = ["python -c 'print(1)'", "python3 -c 'print(1)'", "node -e 'console.log(1)'", "node --eval 'console.log(1)'", "node -p '1+1'", "perl -e 'print 1'", "ruby -e 'puts 1'",
-  "bash -c \"$X\"", "python3 - <<'EOF'\nprint(1)\nEOF", "ssh host 'uptime'", "docker exec c ls", "podman exec c ls", "kubectl exec pod -- ls"];
+  "bash -c \"$X\"", "python3 - <<'EOF'\nprint(1)\nEOF", "ssh host 'uptime'", "docker exec c ls", "podman exec c ls", "kubectl exec pod -- ls",
+  "bash <<'EOF'\npython3 -c 1\nEOF", "bash <<'EOF'\nssh h ls\nEOF", "bash <<'EOF'\nnode -e 1\nEOF", "echo 'python3 -c 1' | bash", "printf 'ssh h ls' | sh",
+  "zsh -c \"$X\"", "zsh -c 'python3 -c 1'", "zsh -c 'ssh host uptime'", "fish -c 'ls'", "pwsh -c 'ls'", "cmd /c dir", "script -c 'node -e 1' /dev/null"];
 const PLAIN = ["python script.py", "node file.js", "bash -c 'ls'"];
 
 function registry(reply: string, count: { n: number }) {

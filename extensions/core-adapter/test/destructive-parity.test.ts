@@ -24,7 +24,6 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
   8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs; no text match, no program list" },
   10: { dir: "stricter", why: "coproc bodies are read (the Python guard and the floors at f0d8b980 looked inside none): a system delete in one is a floor" },
-  14: { dir: "looser", why: "builder round of 2026-11-19: under `xargs` the stdin text becomes arguments, never the program (`xargs bash <<'E'`): the Python text match refused it, the gate no longer reads the body as code" },
 };
 
 /** `looser`: refused or asked on before, runs now. `stricter`: allowed or asked on before, a floor now (a judge-first hit is the list taking a call over and needs no class). */

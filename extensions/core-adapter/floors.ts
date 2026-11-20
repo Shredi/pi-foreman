@@ -1039,9 +1039,11 @@ export function scratchGitConfigRead(word: string, env: FloorEnv): boolean {
 export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
   // curl's `@file` forms: `@.env`, `-d@.env`, `--data=@.env`, `f=@.env`, `name@.env` read the file after the first `@` (a prefix with a `/` is a path itself)
-  const at = /^([^@/\s]*)@(.+)$/.exec(w);
+  // and `-F` form values: `f=@.env;type=x`, `f=@.env\;filename=y` (the `;` parameters are no part of the file), `f=<.env` (the file's content as the value)
+  const at = /^([^@/\s]*)@(.+)$/.exec(w) ?? /^[^@/\s=]+=<(.+)$/.exec(w);
   if (at) {
-    const h = secretPath(at[2], env, read);
+    const file = at[at.length - 1].replace(/[\\/]?;.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
+    const h = secretPath(file, env, read);
     if (h) return h;
   }
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
@@ -1189,13 +1191,8 @@ export interface UnknownDelete {
 
 const UNKNOWN_DELETE = (why: string, floor = true): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})`, floor });
 const RM_RECURSIVE = /^-[A-Za-z]*[rR]|^--recursive$/;
-/** A command word that holds an expansion and names no program: `$X`, `"$CMD"`. `$V/bin/pip` ends in a literal basename, so it is that program, not an unknown one. */
-const varCommandWord = (p: string): boolean => {
-  if (!/[$`]/.test(p) || /[=\s]/.test(p)) return false;
-  const tail = (p.split(/[\\/]/).pop() ?? "").replace(/["']/g, "");
-  const literalTail = /[\\/]/.test(p) && tail !== "" && !/[$`]/.test(tail) && !/\$\(|`/.test(p);
-  return !literalTail;
-};
+/** A command word that holds an expansion and names no program: `$X`, `"$CMD"` (a word with a literal basename after the expansion, `$V/bin/pip`, reaches here as that program). */
+const varCommandWord = (p: string): boolean => /[$`]/.test(p) && !/[=\s]/.test(p);
 /** A recursive flag behind a command word that is itself a variable: short clusters only (`-rf`, `-R`), so a PowerShell parameter like `-Force` is none. */
 const VAR_CMD_RECURSIVE = /^-(?=[A-Za-z]{1,4}$)[A-Za-z]*[rR]|^--recursive$/;
 const EXEC_WORDS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
