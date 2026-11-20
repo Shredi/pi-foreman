@@ -12,7 +12,7 @@ import { rmTestTmp } from "./_tmpbase.ts";
 import { tick, world } from "./_r46world.ts";
 import { execFileSync } from "node:child_process";
 
-async function amendCase(t: Parameters<typeof world>[0], cleared: "no" | "other" | "same"): Promise<{ reason: string; alias: boolean }> {
+async function amendCase(t: Parameters<typeof world>[0], cleared: "no" | "other" | "same", o: { passAt?: number; removeC?: boolean } = {}): Promise<{ reason: string; alias: boolean }> {
   const w = world(t, { realSnapshot: true });
   const dir = w.project;
   fs.rmSync(path.join(dir, ".git"), { recursive: true, force: true });
@@ -39,8 +39,9 @@ async function amendCase(t: Parameters<typeof world>[0], cleared: "no" | "other"
     assert.notEqual(X, Y);
     const tree = (await commitTreeNoWorkflow(B, h1))!;
     assert.equal(await commitTreeNoWorkflow(B, X), tree);
-    const rec: ReviewRecord = { role: "reviewer", verdict: "pass", head: h1, cwd: B, kind: "code", occasion: "pre-pr", tree };
-    const run = { verdict: "fail" as const, head: Y, cwd: fs.realpathSync.native(C), revised: false, handed: false, cleared: cleared !== "no", clearedAt: cleared === "other" ? Z : cleared === "same" ? Y : undefined };
+    const rec: ReviewRecord = { role: "reviewer", verdict: "pass", head: h1, cwd: B, kind: "code", occasion: "pre-pr", tree, at: o.passAt ?? 1000 };
+    const run = { verdict: "fail" as const, head: Y, cwd: fs.realpathSync.native(C), failAt: 2000, revised: false, handed: false, cleared: cleared !== "no", clearedAt: cleared === "other" ? Z : cleared === "same" ? Y : undefined };
+    if (o.removeC) git(B, "worktree", "remove", "--force", C);
     const hs = { fired: { reasons: ["design"] }, runIds: [], runs: [run], bases: {} };
     w.entries.push({ type: "custom", customType: CEREMONY_ENTRY, data: buildCeremonyState({ plan: null, lineages: [], planPhase: false, reviews: [rec], highStakes: hs }) });
     const a = await w.adapter("startup");
@@ -66,8 +67,25 @@ test("a high-stakes FAIL cleared at a head of another tree still blocks the alia
   assert.notEqual(r.reason, "", "the PR is refused");
 });
 
-test("a high-stakes FAIL cleared at a head of the same tree no longer blocks the alias on its tree", async (t) => {
+test("a high-stakes FAIL cleared at a head of the same tree still blocks the alias of a PASS older than that FAIL", async (t) => {
   const r = await amendCase(t, "same");
+  assert.equal(r.alias, false);
+});
+
+test("an uncleared high-stakes FAIL whose checkout was removed gives no alias", async (t) => {
+  const r = await amendCase(t, "no", { removeC: true });
+  assert.equal(r.alias, false);
+  assert.notEqual(r.reason, "", "the PR is refused");
+});
+
+test("an uncleared high-stakes FAIL of reviewed uncommitted content, committed later in its checkout, gives no alias", async (t) => {
+  const r = await amendCase(t, "no", { passAt: 3000 });
+  assert.equal(r.alias, false);
+  assert.notEqual(r.reason, "", "the PR is refused");
+});
+
+test("a PASS made after the cleared high-stakes FAIL still gets the alias", async (t) => {
+  const r = await amendCase(t, "same", { passAt: 3000 });
   assert.equal(r.alias, true);
   assert.equal(r.reason, "");
 });

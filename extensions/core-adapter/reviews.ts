@@ -34,6 +34,8 @@ export interface ReviewRecord {
   tree?: string;
   /** `same_tree`: an alias of a PASS for a later commit whose tree equals the reviewed `tree` (index.ts coverHead); it is no review round. */
   via?: "same_tree";
+  /** When the record was appended (ms); absent in a record from before it. The same-tree alias reads it against the high-stakes FAILs of the session. */
+  at?: number;
 }
 
 export const MAX_REVIEWS = 50;
@@ -271,6 +273,7 @@ export function capSet<K, V>(m: Map<K, V>, k: K, v: V, max = MAX_REVIEWS): void 
 }
 
 export function appendReview(list: ReviewRecord[], rec: ReviewRecord): void {
+  if (rec.at === undefined) rec.at = Date.now();
   list.push(rec);
   if (list.length > MAX_REVIEWS) list.splice(0, list.length - MAX_REVIEWS);
 }
@@ -319,6 +322,7 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(r.occasion === "item" || r.occasion === "pre-pr" ? { occasion: r.occasion } : {}),
       ...(typeof r.tree === "string" && /^[0-9a-f]{40,64}$/.test(r.tree) ? { tree: r.tree } : {}),
       ...(r.via === "same_tree" ? { via: "same_tree" as const } : {}),
+      ...(typeof r.at === "number" && Number.isFinite(r.at) ? { at: r.at } : {}),
     });
   }
   return out.slice(-MAX_REVIEWS);

@@ -151,6 +151,7 @@ test("an alias keeps its via after a reload and the gate still passes; a review 
   assert.equal(await gate(again), "");
   recorded = 0;
   await review(again, "FAIL");
+  for (let i = 0; i < 100 && state(w).reviews?.at(-1)?.verdict !== "fail"; i++) await tick(50); // the FAIL record itself, not the count (0 after the reload)
   assert.equal(state(w).reviews?.at(-1)?.verdict, "fail");
 });
 

@@ -1658,18 +1658,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const first = cwd ? await rootOf(cwd) : null;
     const hs = s.hs.state();
     const failed = uncleared(hs) ? hs.runs[hs.runs.length - 1]?.cwd : undefined;
-    const failTrees = new Set<string>(); // the trees of the high-stakes FAILs of any checkout not cleared at a head of the same tree: that content was refused, a re-commit of it earns no alias
-    for (const x of hs.runs) {
-      const t = x.verdict === "fail" && x.head ? await commitTreeOf(x.cwd, x.head) : null;
-      if (!t) continue;
-      const at = x.cleared && x.clearedAt ? await commitTreeOf(x.cwd, x.clearedAt) : null;
-      if (at !== t) failTrees.add(t); // cleared only counts when it was cleared at a head of that very tree
-    }
-    const treeOf = async (co: string, h: string): Promise<string | null> => {
-      const t = await commitTreeOf(co, h);
-      return t && failTrees.has(t) ? null : t;
-    };
-    const made = await coverAliases(s.reviews, head, { first, blocked: (co) => co === failed, treeOf });
+    const fails = hs.runs.filter((x) => x.verdict === "fail");
+    if (fails.some((x) => !x.cleared)) return; // a high-stakes FAIL of any checkout still stands: its content may be what a commit holds, and no tree of it is known
+    const after = fails.length === 0 ? null : fails.some((x) => x.failAt === undefined) ? Infinity : Math.max(...fails.map((x) => x.failAt as number)); // a PASS older than a high-stakes FAIL never covers content that FAIL refused
+    const made = await coverAliases(s.reviews, head, { first, blocked: (co) => co === failed, after, treeOf: commitTreeOf });
     for (const { rec, from } of made) {
       appendReview(s.reviews, rec);
       if (from && s.sentBackHeads.includes(from)) s.sentBackHeads = [...new Set([...s.sentBackHeads, head])]; // a same-tree commit does not escape a send-back
