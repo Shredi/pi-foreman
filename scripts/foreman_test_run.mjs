@@ -25,7 +25,8 @@ import { withoutSessionEnv } from "./session_env.mjs";
 const PROC_WATCH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "extensions", "core-adapter", "test", "_proc-watch.cjs");
 
 const OPTIONS_WITH_VALUE = new Set(["--import", "--require", "-r", "--loader", "--env-file"]);
-const POLL_MS = 2000;
+const POLL_MS = 250;
+const TICKET_STALE_MS = 30_000;
 
 /** `--test-concurrency` value: FOREMAN_TEST_CONCURRENCY when a positive integer, else half the cores (at least 1). */
 export function testConcurrency({ env = process.env, cores = os.availableParallelism() } = {}) {
@@ -185,6 +186,68 @@ function staleReason(file, maxMs, now = Date.now()) {
   return undefined;
 }
 
+let ticketCounter = 0;
+const TICKET_NAME = /^(\d{15})-(\d+)-(\d+)\.json$/;
+
+/** Writes this waiter's ticket in `dir` (named by arrival time, so sorted names are arrival order) and returns its name. */
+function writeTicket(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  for (;;) {
+    const name = `${String(Date.now()).padStart(15, "0")}-${String(ticketCounter++).padStart(6, "0")}-${process.pid}.json`;
+    try {
+      fs.writeFileSync(path.join(dir, name), JSON.stringify({ pid: process.pid, cwd: process.cwd() }), { flag: "wx" });
+      return name;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+  }
+}
+
+/** Removes a ticket; false when that failed (Windows EPERM while the file is open), to retry at the next poll. */
+function removeTicket(dir, name) {
+  try {
+    fs.rmSync(path.join(dir, name), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One queue poll: touches `mine` (the heartbeat; writes a new ticket at the end when it is gone), drops tickets of dead pids and
+ * tickets whose heartbeat is older than TICKET_STALE_MS (never by queue age), and returns {mine, first}: first is true when
+ * `mine` is the first live ticket.
+ */
+function pollQueue(dir, mine, now = Date.now()) {
+  try {
+    const t = new Date(now);
+    fs.utimesSync(path.join(dir, mine), t, t);
+  } catch (e) {
+    if (e.code === "ENOENT") mine = writeTicket(dir);
+  }
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => TICKET_NAME.test(n)).sort();
+  } catch {}
+  for (const n of names) {
+    if (n === mine) continue;
+    let stale = !pidAlive(Number(TICKET_NAME.exec(n)[3]));
+    if (!stale) {
+      try {
+        stale = now - fs.statSync(path.join(dir, n)).mtimeMs > TICKET_STALE_MS;
+      } catch {
+        continue;
+      }
+    }
+    // a ticket that could not be removed is ignored now and retried at the next poll
+    if (stale) {
+      removeTicket(dir, n);
+      names = names.filter((x) => x !== n);
+    }
+  }
+  return { mine, first: names[0] === mine };
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Thrown by acquireLock when `maxWaitMs` passed while a live run held the lock; `holder` is {pid, started, cwd} or undefined. */
@@ -221,39 +284,48 @@ export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, std
   let waitStart;
   let lastAnnounce;
   let holder;
+  const queueDir = `${file}.queue`;
+  let ticket = writeTicket(queueDir);
+  const dropTicket = () => removeTicket(queueDir, ticket);
+  process.once("exit", dropTicket);
   for (;;) {
-    try {
-      fs.writeFileSync(file, body, { flag: "wx" });
-      return () => {
-        if (readLock(file)?.pid === process.pid) fs.rmSync(file, { force: true });
-      };
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
-    }
-    if (staleReason(file, maxMs)) {
-      // Takeovers are serialised by a short-lived mutex: staleness is re-checked while holding it, so a live lock that
-      // another waiter created after our first check is never removed. A mutex older than 10 s counts as abandoned.
-      const mutex = `${file}.takeover`;
-      let held = false;
+    const q = pollQueue(queueDir, ticket);
+    ticket = q.mine;
+    if (q.first) {
       try {
-        fs.writeFileSync(mutex, String(process.pid), { flag: "wx" });
-        held = true;
+        fs.writeFileSync(file, body, { flag: "wx" });
+        if (dropTicket()) process.removeListener("exit", dropTicket);
+        return () => {
+          if (readLock(file)?.pid === process.pid) fs.rmSync(file, { force: true });
+        };
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
-        try {
-          if (Date.now() - fs.statSync(mutex).mtimeMs > 10_000) fs.rmSync(mutex, { force: true });
-        } catch {}
       }
-      if (held) {
+      if (staleReason(file, maxMs)) {
+        // Takeovers are serialised by a short-lived mutex: staleness is re-checked while holding it, so a live lock that
+        // another waiter created after our first check is never removed. A mutex older than 10 s counts as abandoned.
+        const mutex = `${file}.takeover`;
+        let held = false;
         try {
-          if (staleReason(file, maxMs)) fs.rmSync(file, { force: true });
-        } finally {
-          fs.rmSync(mutex, { force: true });
+          fs.writeFileSync(mutex, String(process.pid), { flag: "wx" });
+          held = true;
+        } catch (e) {
+          if (e.code !== "EEXIST") throw e;
+          try {
+            if (Date.now() - fs.statSync(mutex).mtimeMs > 10_000) fs.rmSync(mutex, { force: true });
+          } catch {}
         }
+        if (held) {
+          try {
+            if (staleReason(file, maxMs)) fs.rmSync(file, { force: true });
+          } finally {
+            fs.rmSync(mutex, { force: true });
+          }
+          continue;
+        }
+        await sleep(Math.min(pollMs, 50));
         continue;
       }
-      await sleep(Math.min(pollMs, 50));
-      continue;
     }
     const now = Date.now();
     waitStart ??= now;
@@ -270,7 +342,11 @@ export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, std
       }
     }
     const left = maxWaitMs === undefined ? Infinity : maxWaitMs - (now - waitStart);
-    if (left <= 0) throw new LockWaitTimeout(holder, now - waitStart);
+    if (left <= 0) {
+      dropTicket();
+      process.removeListener("exit", dropTicket);
+      throw new LockWaitTimeout(holder, now - waitStart);
+    }
     await sleep(Math.min(pollMs, left));
   }
 }

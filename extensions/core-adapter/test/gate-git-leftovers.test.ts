@@ -126,7 +126,7 @@ test("item 6: a value-taking global option without its value swallows the subcom
   // git refuses each of these as written (exit 128/129, nothing changed; .workflow/scratch/git-refuses.md)
   const swallowed: Array<[string, string | null]> = [
     ["git --attr-source reset --hard", null], ["git --super-prefix reset --hard", null], ["git --attr-source fetch --upload-pack=x", null], ["git --attr-source clean -fd", null],
-    ["git --attr-source push --force origin main", null], ["git --namespace reset --hard", null], ["git --config-env reset --hard", "floor-git-config"],
+    ["git --attr-source push --force origin main", null], ["git --namespace reset --hard", null], ["git --config-env reset --hard", "danger-git-config"],
   ];
   for (const [l, floor] of swallowed) {
     for (const child of [false, true]) assert.equal(isDanger(l, child), false, `${l} child=${child}`);
@@ -139,8 +139,8 @@ test("item 6: a value-taking global option without its value swallows the subcom
 
 test("item 5: a character outside the BMP before the letter of a short cluster does not shift the position", () => {
   for (const child of [false, true]) assert.equal(isDanger("git clone -\u{1F600}u x u", child), true, `child=${child}`);
-  assert.equal(floorHit(`git clone -\u{1F600}c core.sshCommand=x ${U}`)?.rule, "floor-git-config");
-  assert.equal(floorHit(`git clone -\u{1F600}ccore.sshCommand=x ${U}`)?.rule, "floor-git-config");
+  assert.equal(floorHit(`git clone -\u{1F600}c core.sshCommand=x ${U}`)?.rule, "danger-git-config");
+  assert.equal(floorHit(`git clone -\u{1F600}ccore.sshCommand=x ${U}`)?.rule, "danger-git-config");
   const sp = (w: string[]) => gitOptSpellings(w, "--config", { short: "c", consume: true });
   assert.deepEqual(sp(["-\u{1F600}c", "k=v"]), ["k=v"]);
   assert.deepEqual(sp(["-\u{1F600}cx=1"]), ["x=1"]);
@@ -148,8 +148,8 @@ test("item 5: a character outside the BMP before the letter of a short cluster d
   assert.deepEqual(sp(["-nccore.x=1", "-c", "k=v", "-bc", "x"]), ["core.x=1", "k=v"]);
 });
 
-test("item 4: the floor message names the form used; the -c / --config-env text is byte-identical", () => {
-  const global = "pi-foreman: denied by the permission floor (git-config). Setting 'core.sshcommand' with -c or --config-env changes where code is fetched or pushed, which program git runs or which credentials it uses. Run git without it. No review, policy entry or dialog lifts this floor.";
+test("item 4: the judge-first reason names the form used; the -c / --config-env text is byte-identical", () => {
+  const global = "Setting 'core.sshcommand' with -c or --config-env changes where code is fetched or pushed, which program git runs or which credentials it uses.";
   for (const l of ["git -c core.sshcommand=x fetch", `git -c core.sshcommand=x clone ${U}`]) assert.equal(floorHit(l)?.reason, global, l);
   const clone = global.replace("with -c or --config-env", "with git clone -c or --config");
   for (const l of [`git clone -c core.sshcommand=x ${U}`, `git clone --config core.sshcommand=x ${U}`, `git clone --conf=core.sshcommand=x ${U}`]) assert.equal(floorHit(l)?.reason, clone, l);

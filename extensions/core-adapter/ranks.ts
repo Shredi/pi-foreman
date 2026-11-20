@@ -76,6 +76,25 @@ export function tierOf(ranks: Map<string, Rank[]>, model: string): number | null
   return null;
 }
 
+/**
+ * The role-map entry (`{model, thinking?}`, every role's `model` and `strong`) with the highest rank tier (the smallest
+ * number); the first one wins a tie. Null without ranks or when no mapped model is ranked. Names no model: the map decides.
+ */
+export function topRoleEntry(config: Json | undefined, roles: Record<string, Json>): Json | null {
+  const ranks = ranksOf(config);
+  if (ranks.size === 0) return null;
+  let best: { entry: Json; tier: number } | null = null;
+  for (const r of Object.values(roles)) {
+    if (!isObj(r)) continue;
+    for (const entry of [r, r.strong]) {
+      if (!isObj(entry) || typeof entry.model !== "string" || entry.model === "") continue;
+      const tier = tierOf(ranks, entry.model);
+      if (tier !== null && (best === null || tier < best.tier)) best = { entry, tier };
+    }
+  }
+  return best ? { model: best.entry.model, ...(best.entry.thinking !== undefined ? { thinking: best.entry.thinking } : {}) } : null;
+}
+
 export interface RankRefusal {
   policy: ChildPolicy;
   foreman: string;

@@ -35,7 +35,7 @@ const launchSpawner: Spawner = async (command, args, options) => {
       tool = i.tool_name ?? "";
       cmd = i.tool_input?.command ?? "";
     } catch { /* not a hook input: the real guard */ }
-    if (cmd === "pip install requests" || (tool === "Bash" && cmd.startsWith("cp ") && cmd.includes("/.workflow/scratch/y.md # ruling ")) || tool === "Agent") return { code: 0, stdout: "", stderr: "", timedOut: false };
+    if (cmd === "git branch -D old-topic" || (tool === "Bash" && cmd.startsWith("cp ") && cmd.includes("/.workflow/scratch/y.md # ruling ")) || tool === "Agent") return { code: 0, stdout: "", stderr: "", timedOut: false };
   }
   return inprocSpawner(command, args, options);
 };
@@ -58,10 +58,11 @@ const within = <X>(p: Promise<X>, ms = 5000): Promise<X> => {
   const cap = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms); });
   return Promise.race([p, cap]).finally(() => clearTimeout(timer));
 };
-const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: `because ${entry}` });
+// C: the judge answers clear or unsure; a judge-first line (git branch -D) the judge is unsure about asks the owner (a child: its parent)
+const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, reason: `because ${entry}` });
 const registry = (reply: string) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } }, presence: { enabled: false } };
-const ASK_FIELDS = { tool: "bash", payload: "pip install requests", cwd: "/w", session: "child-s", role: "builder", run: "L9" };
+const ASK_FIELDS = { tool: "bash", payload: "git branch -D old-topic", cwd: "/w", session: "child-s", role: "builder", run: "L9" };
 
 /** A ui whose confirm / select stay open until the test answers them. */
 const confirms: ((v: boolean) => void)[] = [];
@@ -91,13 +92,13 @@ const pairs = (r: Rig) => [r.events("blocked_open").length, r.events("blocked_cl
 const cleanups: (() => void | Promise<void>)[] = [];
 let shared: Rig;
 before(async () => {
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("ask", "package-install")) }, config, deps: { spawner: launchSpawner } });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("unsure", "package-install")) }, config, deps: { spawner: launchSpawner } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();
 }, { timeout: 20_000 });
 
-async function ownerRig(_t: T, reply = V("ask", "package-install")) {
+async function ownerRig(_t: T, reply = V("unsure", "package-install")) {
   confirms.length = 0;
   selects.length = 0;
   await liveBlocked(shared, undefined); // the live file of an earlier case may still show its last dialog
@@ -108,7 +109,7 @@ async function ownerRig(_t: T, reply = V("ask", "package-install")) {
 
 test("guard approval dialog (askOwner path): owner/approval in the live file, one open and one closed event", async (t) => {
   const r = await ownerRig(t);
-  const p = r.call("bash", { command: "pip install requests" });
+  const p = r.call("bash", { command: "git branch -D old-topic" });
   await until(() => r.selects.length === 1);
   const f = await liveBlocked(r, "owner");
   assert.equal(f.blockedKind, "approval");
@@ -123,7 +124,7 @@ test("guard approval dialog (askOwner path): owner/approval in the live file, on
 
 test("one event per dialog: Pi's prompt events around a classed dialog add no second pair", async (t) => {
   const r = await ownerRig(t);
-  const p = r.call("bash", { command: "pip install requests" });
+  const p = r.call("bash", { command: "git branch -D old-topic" });
   await until(() => r.selects.length === 1);
   await r.fire("ui_prompt_start", { title: "pi-foreman: bash asks", kind: "select" });
   r.selects[0]("allow once");
@@ -216,8 +217,8 @@ test("a subagent child's gate ask that waits on its parent is classed parent (tr
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("ask", "package-install")) }, config, child: true, deps: { spawner: launchSpawner } });
-  const p = r.call("bash", { command: "pip install requests" });
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("unsure", "package-install")) }, config, child: true, deps: { spawner: launchSpawner } });
+  const p = r.call("bash", { command: "git branch -D old-topic" });
   await until(() => fs.existsSync(path.join(dir, "ask.md")));
   assert.deepEqual(r.events("blocked_open").map((x) => [x.on, x.kind]), [["parent", "parent-ask"]]);
   assert.equal(fs.existsSync(liveDir(r.agentDir)), false, "no live file for a subagent child");

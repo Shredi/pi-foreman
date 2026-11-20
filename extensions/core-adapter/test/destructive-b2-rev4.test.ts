@@ -17,7 +17,7 @@ const roots = (child: boolean): GateRoots => ({ worktree: wt, scratch: [scr], tm
 const run = (command: string, child: boolean): string => {
   const o = gateEvaluate("bash", { command }, wt, { env: (cwd) => baseFloorEnv(cwd, { scratch: [scr], home: "/Users/fixture", ...(child ? { child: true, builder: true } : {}) }), roots: () => roots(child) });
   const x = o.result;
-  return x && "block" in x ? `${x.rule}:block` : x && "ask" in x ? `${x.rule}:ask` : "allow";
+  return x && "block" in x ? `${x.rule}:block` : x && "ask" in x ? `${x.rule}:ask` : o.danger ? `${o.danger.name}:judge` : "allow";
 };
 const refused = (line: string): void => {
   for (const child of [false, true]) assert.notEqual(run(line, child), "allow", `${child ? "child" : "foreman"}: ${line}`);

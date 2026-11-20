@@ -1,11 +1,10 @@
 // Floor narrowings of plan readonly-target C, every pin: RAW git-config (only GIT_CONFIG_GLOBAL=/dev/null passes), secretPath's scratch `.git/config` read
-// for a read-only child (and what stays floored), readclear's relative-token rule, and the replay of both sighting lines of 2026-11-17.
+// for a read-only child (and what stays floored; the readclear rule went with readclear.ts in PR C), and the replay of both sighting lines of 2026-11-17.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { lineFloors, pathFloors, rawFloors, secretPath, type FloorEnv } from "../floors.ts";
-import { readClearEntry } from "../readclear.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
@@ -27,7 +26,6 @@ const under = new RegExp(`${real.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\s'"]
 const fwd = (line: string): string => line.replace(under, (m) => m.replace(/\\/g, "/"));
 const segs = (line: string, cwd: string | undefined = W) => parseShell(line, { ...(cwd ? { cwd } : {}), env: { FOREMAN_SCRATCH: S } });
 const rule = (raw: string, e: FloorEnv = base, cwd: string | undefined = W): string | null => { const line = fwd(raw); return lineFloors(line, segs(line, cwd), e)?.rule ?? null; };
-const clears = (raw: string, e: FloorEnv = ro, cwd: string | undefined = W): boolean => { const line = fwd(raw); return readClearEntry({ tool: "bash", text: line, segments: segs(line, cwd), dangers: ["danger-opaque"], shellBash: () => true }, e); };
 
 // ------------------------------------------------------------------ C.1
 
@@ -43,18 +41,18 @@ test("C.1 git-config: every other value and key stays floored", () => {
     "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_COUNT=1 git x", "GIT_CONFIG_GLOBAL=/dev/null git a; GIT_CONFIG_GLOBAL=/tmp/g git b",
     "GIT_CONFIG_SYSTEM=/dev/null git x", "GIT_CONFIG_COUNT=1 git x", "GIT_CONFIG_KEY_0=a.b git x", "GIT_CONFIG_VALUE_0=v git x", "GIT_CONFIG_PARAMETERS='a=b' git x", "git --config-env=a.b=V x",
   ]) {
-    assert.equal(rawFloors(l)?.rule, "floor-git-config", l);
+    assert.equal(rawFloors(l)?.rule, "danger-git-config", l);
   }
 });
 
 test("C.1 git-config: the quoted \"/dev/null\" stays floored (stricter than the regex alone: the scan sees the line with its quotes masked)", () => {
-  assert.equal(rule('GIT_CONFIG_GLOBAL="/dev/null" git status'), "floor-git-config");
+  assert.equal(rule('GIT_CONFIG_GLOBAL="/dev/null" git status'), "danger-git-config");
 });
 
 test("C.1 git-config: GIT_CONFIG_GLOBAL=/dev/null passes for every role (builder, main, read-only child)", () => {
   for (const e of [base, { ...base, child: true }, ro]) {
-    assert.notEqual(rule("GIT_CONFIG_GLOBAL=/dev/null git status", e), "floor-git-config");
-    assert.equal(rule("GIT_CONFIG_GLOBAL='/dev/null' git status", e), "floor-git-config", "a single-quoted value reaches the line scan masked, like the double-quoted one");
+    assert.notEqual(rule("GIT_CONFIG_GLOBAL=/dev/null git status", e), "danger-git-config");
+    assert.equal(rule("GIT_CONFIG_GLOBAL='/dev/null' git status", e), "danger-git-config", "a single-quoted value reaches the line scan masked, like the double-quoted one");
   }
 });
 
@@ -81,7 +79,6 @@ test("C.2 stays floored: the same read by a builder and by the main session, a w
   assert.notEqual(rule(`grep url ${path.join(W, ".git", "config")}`, ro), null, "the live worktree");
   assert.notEqual(rule("grep url c/.git/config", ro, undefined), null, "relative, unknown cwd");
   assert.notEqual(rule(`grep url ${path.join(S, "d", ".git", "config")}`, ro), null, "a link in scratch to the live config");
-  assert.equal(clears(`grep url ${path.join(S, "d", ".git", "config")}`), false, "the same through readclear");
   assert.notEqual(rule("cat ~/.git/config", ro), null, "~/.git/config");
   assert.notEqual(rule(`cat ${path.join(HOME, ".git", "config")}`, ro), null, "the home .git/config");
   assert.notEqual(rule(`cat ${path.join(S, "sshclone", ".ssh", ".git", "config")}`, ro), null, "a word that matches another secret pattern too");
@@ -95,41 +92,20 @@ test("C.2 env.cwd keeps its meaning: `cd ~ && cat .ssh/id_ed25519.pub` is the sa
   assert.equal(rule(line, { ...base, child: true }, W), rule(line, { ...base, child: true, readOnlyChild: false }, W));
 });
 
-// ------------------------------------------------------------------ C.2 readclear
-
-test("C.2 readclear: a relative token is resolved by its own segments' cwd", () => {
-  assert.equal(clears(`cd ${S} && grep url c/.git/config`), true, "same segment cwd: cleared");
-  assert.equal(clears(`cd ${S} && grep url c/.git/config`, base), false, "a builder or the main session: not cleared");
-  assert.equal(clears(`cd ${S} && grep url c/.git/config; cd ${W} && grep url c/.git/config`), false, "segments with different cwds: a hit");
-  assert.equal(clears(`cd ${S} && grep url c/.git/config; grep -c x c/.git/config`), true, "the same cwd in every holder");
-  assert.equal(clears("grep url c/.git/config", ro, undefined), false, "unknown cwd: a hit");
-  assert.equal(clears(`cd ${S} && echo 'see c/.git/config'`), false, "a raw token that is in no segment's argv or redirects: a hit");
-  assert.equal(clears(`grep url ${CFG}`), true, "an absolute token needs no cwd");
-  assert.equal(clears(`grep url ${path.join(W, ".git", "config")}`), false, "the live worktree config is still a hit");
-});
-
-test("C.2 readclear: the SSH .pub exemption of the floors does not reach readclear", () => {
-  const pub = path.join(HOME, ".ssh", "id_ed25519.pub");
-  assert.equal(clears(`cat ${pub}`, ro), false);
-  assert.equal(clears(`cat ${pub}`, base), false);
-});
-
 // ------------------------------------------------------------------ C.3
 
 const L1 = `cd $FOREMAN_SCRATCH && mkdir 'a\\b' && git init -q --bare 'a\\b/o.git' && GIT_CONFIG_GLOBAL=/dev/null git clone -q "$PWD/a\\\\b/o.git" c 2>&1; grep url c/.git/config`;
 const L2 = `cd ${S} && ls; git clone -q "$PWD/a\\\\b/o.git" c 2>&1; grep url c/.git/config`;
 
-test("C.3 replay: both sighting lines get no floor verdict for a reviewer and pass readclear's token check", () => {
+test("C.3 replay: both sighting lines get no floor verdict for a reviewer", () => {
   for (const l of [L1, L2]) {
     assert.equal(rule(l, ro), null, l);
-    assert.equal(clears(l, ro), true, l);
   }
 });
 
 test("C.3 replay: the same lines stay refused for a builder (the .git/config read) and L1 needs the GIT_CONFIG_GLOBAL narrowing", () => {
   for (const l of [L1, L2]) {
     assert.notEqual(rule(l, base), null, l);
-    assert.equal(clears(l, base), false, l);
   }
-  assert.equal(rawFloors(L1.replace("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_GLOBAL=/tmp/g"))?.rule, "floor-git-config");
+  assert.equal(rawFloors(L1.replace("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_GLOBAL=/tmp/g"))?.rule, "danger-git-config");
 });

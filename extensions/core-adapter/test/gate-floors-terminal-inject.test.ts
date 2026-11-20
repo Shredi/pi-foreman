@@ -1,4 +1,5 @@
-// r79 item 4 (plan Addendum S3, S4): the terminal-inject floor and the perms-profile floor.
+// r79 item 4 (plan Addendum S3): the terminal-inject check. Since PR C a slash command, a short payload or a key name is a judge-first hit (`danger-inject`), no
+// deny; the perms-profile floor (S4) is gone with the profiles (policy-file and selfmod floors cover the files).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { lineFloors, type FloorEnv } from "../floors.ts";
@@ -7,7 +8,7 @@ import { parseShell } from "../shellast.ts";
 const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo", "/tmp"], protectedBranches: [], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const floor = (line: string): string | null => lineFloors(line, parseShell(line, { cwd: env.cwd }), env)?.rule ?? null;
 
-test("terminal-inject denies a slash command, a short payload and key names", () => {
+test("terminal-inject: a slash command, a short payload and key names are judge-first hits", () => {
   for (const l of [
     "herdr pane send-text 1-2 '/session'",
     "herdr pane send-text 1-2 '/model opus'",
@@ -24,10 +25,10 @@ test("terminal-inject denies a slash command, a short payload and key names", ()
     "tmux send-keys -t 1 Enter",
     "tmux send-keys -t 1 '/clear'",
     `osascript -e 'tell application "System Events" to keystroke "y"'`,
-  ]) assert.equal(floor(l), "floor-terminal-inject", l);
+  ]) assert.equal(floor(l), "danger-inject", l);
 });
 
-test("terminal-inject lets a full sentence through (danger-inject decides later); reads are no injection", () => {
+test("terminal-inject: a full sentence is no floor hit (the JUDGE_FIRST entry danger-inject still judges it); reads are no injection", () => {
   for (const l of [
     "herdr pane send-text 1-2 'please summarise the ledger and report back'",
     "herdr pane send-keys 1-2 'please summarise the ledger'",
@@ -38,17 +39,6 @@ test("terminal-inject lets a full sentence through (danger-inject decides later)
   ]) assert.equal(floor(l), null, l);
 });
 
-test("perms-profile: setting the variable or passing --profile to session open is denied", () => {
-  for (const l of [
-    "PI_FOREMAN_PERMS_PROFILE=steward pi",
-    "export PI_FOREMAN_PERMS_PROFILE=steward",
-    "env PI_FOREMAN_PERMS_PROFILE=steward foreman session open",
-    "bash -c 'PI_FOREMAN_PERMS_PROFILE=steward foreman session open'",
-    "foreman session open --profile steward",
-    "foreman session open x --profile steward",
-    "python3 scripts/foreman_session.py open --profile steward",
-    "$env:PI_FOREMAN_PERMS_PROFILE = 'steward'",
-    "unset PI_FOREMAN_PERMS_PROFILE",
-  ]) assert.equal(floor(l), "floor-perms-profile", l);
-  for (const l of ["foreman session open", "foreman session list", "echo $PI_FOREMAN_PERMS_PROFILE", "grep profile docs/permissions.md"]) assert.equal(floor(l), null, l);
+test("profiles are gone: the profile variable and --profile are no floor hit any more", () => {
+  for (const l of ["PI_FOREMAN_PERMS_PROFILE=steward pi", "foreman session open --profile steward", "unset PI_FOREMAN_PERMS_PROFILE", "foreman session open", "foreman session list"]) assert.equal(floor(l), null, l);
 });

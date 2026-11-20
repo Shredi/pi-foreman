@@ -1,8 +1,0 @@
-{
- "foreman": {
-  "d1": [
-   {"tools": [{"name": "bash", "arguments": {"command": "grep -n foo ./*.py | head -3"}}]},
-   {"text": "Done."}
-  ]
- }
-}

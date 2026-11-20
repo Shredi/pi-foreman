@@ -37,18 +37,17 @@ const walk = (el, out = []) => {
   return out;
 };
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
-const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard");
+const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const chipTexts = (el) => cards(el).flatMap((c) => texts(c.props.trigger)).filter((s) => s.startsWith("⎇"));
 
 const tree = (rootDots, kidDots) => treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5", dots: rootDots }, [sess("k", "kid", { hcTerminal: "t9", dots: kidDots })]));
 
-test("a top-level and a child row carry their chip in the title row, none on a line below", () => {
+test("a top-level and a child row carry their PR as a line below the row, no chip on the title row", () => {
   const out = render(tree([dot(16, "ok")], [dot(21, "fail")]));
   const rows = walk(out).filter((e) => /^(row:|agent:t5$)/.test(String(e.props?.id ?? "")));
-  const withChip = rows.filter((r) => cards(r).length > 0);
-  assert.equal(withChip.length, 2, "both session rows hold a chip");
-  assert.deepEqual(withChip.flatMap((r) => chipTexts(r)).sort(), ["⎇ #16", "⎇ #21"]);
-  assert.equal(cards(out).length, 2, "no chip anywhere else");
+  assert.equal(rows.filter((r) => cards(r).length > 0).length, 0, "no session row holds a chip");
+  assert.deepEqual(chipTexts(out).sort(), ["⎇ #16", "⎇ #21"]);
+  assert.equal(cards(out).length, 2, "one line each, no chip anywhere else");
   assert.ok(!texts(out).some((s) => /\d+ PRs?\b/.test(s)), "no summary line");
 });
 

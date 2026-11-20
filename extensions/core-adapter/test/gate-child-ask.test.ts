@@ -16,10 +16,11 @@ import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "builder", "reviewer"];
 const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: `because ${entry}` });
-const ASK = V("ask", "package-install");
+// the judge's answer for a call on the judge-first list: unsure, so the parent is asked
+const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
 // the ask file as the gate writes it (r79 item 5): a cause line and a reason line
 const writeRoundAsk = (dir: string, a: { cause: string; entry: string; reason: string }, f: Omit<Parameters<typeof writeChildAsk>[1], "cause" | "reason" | "entry">): number => writeChildAsk(dir, { ...f, cause: a.cause, reason: a.reason, entry: a.entry });
-const CMD = { command: "pip install requests" };
+const CMD = { command: "git branch -D old-branch" };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until<X>(f: () => X | undefined | false, ms = 4000): Promise<X> {
   for (let i = 0; i < ms / 10; i++) {
@@ -229,7 +230,7 @@ test("child ask: ask.md carries role and run; an ALLOW ruling lets the call run 
   const p = r.call("bash", CMD);
   const text = await until(() => (fs.existsSync(path.join(dir, "ask.md")) ? fs.readFileSync(path.join(dir, "ask.md"), "utf8") : false));
   assert.match(text, /^# Ask 1: /);
-  assert.match(text, /cause: danger-install/);
+  assert.match(text, /cause: danger-git/);
   assert.match(text, /role: builder/);
   assert.match(text, /run: L9/);
   assert.doesNotMatch(text, /^deadline:/m, "the gate writes no deadline");
@@ -238,7 +239,7 @@ test("child ask: ask.md carries role and run; an ALLOW ruling lets the call run 
   const d = r.events("dialog").at(-1)!;
   assert.deepEqual([d.cause, d.kind, d.decision], ["danger", "child", "parent-allow"]);
   const rec = logOf(r.agentDir).filter((x) => x.layer === "dialog").at(-1)!;
-  assert.deepEqual([rec.verdict, rec.rule === "danger-install" && rec.kind, rec.kind], ["allow", "child", "child"]);
+  assert.deepEqual([rec.verdict, rec.rule === "danger-git" && rec.kind, rec.kind], ["allow", "child", "child"]);
 });
 
 test("child ask: DENY blocks with the parent's reason (parent-deny); a foreign first line denies", async (t) => {
@@ -251,7 +252,7 @@ test("child ask: DENY blocks with the parent's reason (parent-deny); a foreign f
   assert.ok(res?.block);
   assert.match(String(res.reason), /denied by the parent: not this one/);
   assert.equal(r.events("dialog").at(-1)!.decision, "parent-deny");
-  const p2 = r.call("bash", { command: "pip install flask" });
+  const p2 = r.call("bash", { command: "git branch -D other-branch" });
   await until(() => /^# Ask 2: /.test(fs.readFileSync(path.join(dir, "ask.md"), "utf8")));
   fs.writeFileSync(path.join(dir, "ruling-2.md"), "maybe\n");
   assert.match(String((await p2)?.reason), /not ALLOW or DENY/);
@@ -275,16 +276,16 @@ test("child ask: an unusable classifier reply escalates, so the ask is written f
   const r = await childRig(t, dir, "this is not json");
   const p = r.call("bash", CMD);
   const text = await until(() => (fs.existsSync(path.join(dir, "ask.md")) ? fs.readFileSync(path.join(dir, "ask.md"), "utf8") : false));
-  assert.match(text, /cause: danger-install/);
+  assert.match(text, /cause: danger-git/);
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "DENY\n");
   assert.ok((await p)?.block);
 });
 
 test("child ask: gate.childAsk deny, or no askDir in the binding, denies with the no-pane text and writes no ask", async (t) => {
-  const text = /^pi-foreman: denied: nobody is at this session \(no pane\)\..*The call was: danger-install/;
+  const text = /^pi-foreman: denied: nobody is at this session \(no pane\)\..*The call was: danger-git/;
   const dir = tmpAskDir(t);
   const denied = await childRig(t, dir, ASK, { childAsk: "deny" });
-  const off = /^pi-foreman: denied: .*gate\.childAsk.*The call was: danger-install/;
+  const off = /^pi-foreman: denied: .*gate\.childAsk.*The call was: danger-git/;
   const offRes = await denied.call("bash", CMD);
   assert.equal(offRes?.block, true);
   assert.match(String(offRes?.reason), off);

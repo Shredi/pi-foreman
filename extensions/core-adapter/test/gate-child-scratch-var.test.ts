@@ -22,6 +22,8 @@ test("a child's cp into $FOREMAN_SCRATCH is not the opaque danger class", () => 
   assert.notEqual(out.danger?.name, "danger-opaque", JSON.stringify(out.danger));
 });
 
-test("the foreman's $FOREMAN_SCRATCH stays unbound: the same line is danger-opaque", () => {
-  assert.equal(run(false).danger?.name, "danger-opaque");
+test("the foreman's $FOREMAN_SCRATCH stays unbound: the same line is no default allow (and not on the judge-first list, so it runs)", () => {
+  const out = run(false);
+  assert.equal(out.result, undefined);
+  assert.equal(out.danger, null);
 });

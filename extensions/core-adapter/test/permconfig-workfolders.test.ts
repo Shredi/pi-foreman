@@ -102,16 +102,6 @@ test("11 layering: workFolders in a project or tracked file are reported dropped
   assert.deepEqual(r.workFolders, []);
   const notes = s.drainNotices();
   assert.equal(notes.filter((x) => /workFolders is not honoured in the (project|tracked) file; dropped/.test(x)).length, 2, notes.join("\n"));
-  assert.equal(r.rules.deny.length, 1);
-});
-
-test("11 layering: profiles.<name>.workFolders in the user file is reported dropped; the top-level key stays", () => {
-  const w = world();
-  w.user({ workFolders: [{ path: "~/git" }], profiles: { dev: { mode: "ask", workFolders: [{ path: "~/other" }] } } });
-  const s = w.store();
-  const r = s.resolve();
-  assert.deepEqual(r.workFolders, [{ path: path.join(w.home, "git"), mode: "auto" }]);
-  assert.ok(s.drainNotices().some((x) => /profiles\.dev\.workFolders is not honoured in the user file; dropped/.test(x)));
 });
 
 test("11 no user file or an invalid one: no folders", () => {

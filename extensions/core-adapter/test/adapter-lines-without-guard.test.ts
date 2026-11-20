@@ -4,12 +4,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
+import { r11Rig } from "./_r11rig.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { posixOnly } from "./_platform.ts";
 
 type T = Parameters<typeof r11Rig>[0];
-const ALLOW = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
+const ALLOW = JSON.stringify({ verdict: "clear", reason: "stub" });
 const ROLES = ["explorer", "builder", "reviewer"];
 const GUARD = /git[ -]?guard/i;
 
@@ -29,13 +29,12 @@ async function rig(t: T, kind: "main" | "child", extra: { config?: Record<string
     delete process.env[BINDINGS_ENV];
     delete process.env.FOREMAN_CHECKOUT;
   }
-  let classifier = 0;
+  let classifier = 0; // C: the judge stub; unreadable and false-alarm lines are no judge-first kind, so it is never asked
   let dialogs = 0;
   const modelRegistry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => { classifier++; return { content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }; } };
   const ui = { notify: () => undefined, confirm: async () => { dialogs++; return false; }, select: async () => { dialogs++; return "approve"; }, setStatus: () => undefined, setWidget: () => undefined };
   const config = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } }, ...extra.config };
-  const perms = { mode: "auto", allow: ["Write", "Edit"], classifier: { allow: ["Anything at all."] } };
-  const c = await r11Rig(t, {}, { ctx: { modelRegistry, ui, [RIG_PERMISSIONS]: perms }, config, child: kind === "child" });
+  const c = await r11Rig(t, {}, { ctx: { modelRegistry, ui }, config, child: kind === "child" });
   /** The foreman's checkout as the launch binding names it (read at each call): a sibling dir of the rig's project. */
   const checkout = path.join(c.project, "..", "main");
   const setCheckout = (): string => (process.env.FOREMAN_CHECKOUT = checkout);
@@ -43,24 +42,22 @@ async function rig(t: T, kind: "main" | "child", extra: { config?: Record<string
 }
 
 for (const kind of ["main", "child"] as const) {
-  test(`${kind}: sh -c "$X" and python3 -c naming git are handed to the classifier as dangerous class; no dialog, no guard text anywhere`, { skip: posixOnly }, async (t: T) => {
+  test(`${kind}: sh -c "$X" and python3 -c naming git run with no judge call (C: not judge-first); no dialog, no guard text anywhere`, { skip: posixOnly }, async (t: T) => {
     const r = await rig(t, kind);
-    let asked = 0;
     for (const command of ['sh -c "$X"', "python3 -c \"import subprocess; subprocess.run(['git','status'])\""]) {
       const res = await r.c.call("bash", { command });
       assert.ok(!res?.block, `${command}: ${JSON.stringify(res)}`);
-      asked++;
-      assert.equal(r.classifier(), asked, `${command}: the mode step (classifier) decided`);
+      assert.equal(r.classifier(), 0, `${command}: no judge call`);
     }
     assert.equal(r.dialogs(), 0);
     assert.doesNotMatch(JSON.stringify(r.c.trace()), GUARD);
   });
 
-  test(`${kind}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls runs with a classifier answering allow, and no dialog opens`, { skip: posixOnly }, async (t: T) => {
+  test(`${kind}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls runs with no judge call and no dialog`, { skip: posixOnly }, async (t: T) => {
     const r = await rig(t, kind);
     const res = await r.c.call("bash", { command: 'echo "wall $(( $(date +%s) - start ))s"; ls' });
     assert.ok(!res?.block, JSON.stringify(res));
-    assert.equal(r.classifier(), 1, "class opaque: the classifier decided");
+    assert.equal(r.classifier(), 0, "no judge call");
     assert.equal(r.dialogs(), 0);
     assert.doesNotMatch(JSON.stringify(r.c.trace()), GUARD);
   });

@@ -100,6 +100,7 @@ test("the re-ask of a plan_mode_question with plan mode off names ask_user_quest
 
 test("a hold set again after it ended gets its notice again, three times in a row", async (t) => {
   const { w, a } = await start(t);
+  t.mock.timers.enable({ apis: ["Date"], now: T0 }); // every hold gets the same `since`: only the reset in clearHold lets the notice come again
   for (let i = 0; i < 3; i++) {
     await hold(a, { note: `n${i}` });
     await settle(a);

@@ -71,9 +71,6 @@ class NoPiPackage(unittest.TestCase):
     def test_dialogs(self):
         self.check("dialogs", 0, "state_usage_read")
 
-    def test_perms(self):
-        self.check("perms", 2)
-
     def test_features(self):
         self.check("features", 2)
 

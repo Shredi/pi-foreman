@@ -7,8 +7,6 @@ import { gateDecide, type GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
-import { parseRule } from "../rules.ts";
-import type { RuleSets } from "../rules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 const base = fs.realpathSync.native(mkTestTmp("pf-gate-prot-"));
@@ -22,14 +20,11 @@ const roots: GateRoots = { worktree: wt, scratch: [scr], tmp: [path.join(base, "
 const env: FloorEnv = { cwd: wt, home: path.join(base, "home"), agentDir: agent, platform: process.platform, writeRoots: [wt, base] };
 const E = (kind: ProtectedEntry["kind"], glob: string, i: number): ProtectedEntry => ({ id: `P${i}`, kind, glob, source: "user" });
 const prot = [E("host", "prod-*.example.net", 1), E("path", "ops/playbooks/**", 2), E("command", "deploy-*", 3)];
-const rule = (t: string) => { const r = parseRule(t); if (!r.ok) throw new Error(t); return r.rule; };
-const sets = (o: { allow?: string[]; ask?: string[]; deny?: string[] }): RuleSets => ({ allow: (o.allow ?? []).map(rule), ask: (o.ask ?? []).map(rule), deny: (o.deny ?? []).map(rule) });
-const g = (tool: string, input: Record<string, unknown>, o: { entries?: ProtectedEntry[]; rules?: RuleSets } = {}): GateResult =>
+const g = (tool: string, input: Record<string, unknown>, o: { entries?: ProtectedEntry[] } = {}): GateResult =>
   gateDecide(tool, input, wt, {
     env: () => env,
     roots: () => roots,
     ...(o.entries ? { protected: o.entries } : {}),
-    ...(o.rules ? { rules: { sets: o.rules, env: { cwd: wt, home: env.home as string, platform: process.platform, checkout: wt } } } : {}),
   });
 const tag = (r: GateResult): string => (r ? ("ask" in r ? `ask:${r.cause}:${r.rule}` : "block" in r ? `block:${r.rule}` : `allow:${r.rule}`) : "pass");
 
@@ -45,18 +40,6 @@ test("a protected host match asks with cause protected and carries the match", (
 test("a path tool write to a protected path asks; a read of it does not", () => {
   assert.equal(tag(g("write", { path: "ops/playbooks/a.yml", content: "x" }, { entries: prot })), "ask:protected:protected:P2");
   assert.notEqual(tag(g("read", { path: "ops/playbooks/a.yml" }, { entries: prot })).split(":")[1], "protected");
-});
-
-test("a deny rule beats a protected match", () => {
-  const r = g("bash", { command: "ssh prod-1.example.net uptime" }, { entries: prot, rules: sets({ deny: ["Bash(ssh *)"] }) });
-  assert.equal(tag(r), "block:rule Bash(ssh *)");
-});
-
-test("a protected match is returned where an ask rule also matches", () => {
-  const r = g("bash", { command: "ssh prod-1.example.net uptime" }, { entries: prot, rules: sets({ ask: ["Bash(ssh *)"] }) });
-  assert.equal(tag(r), "ask:protected:protected:P1");
-  // without entries the ask rule answers as before
-  assert.equal(tag(g("bash", { command: "ssh prod-1.example.net uptime" }, { rules: sets({ ask: ["Bash(ssh *)"] }) })), "ask:rule:rule Bash(ssh *)");
 });
 
 test("a pending floor ask beats a protected match", () => {

@@ -79,9 +79,9 @@ function gate(command: string, child: boolean, withRoots = true): { result: { bl
 for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
   test(`gateEvaluate (${label}): a too-deep line is decided like an unreadable line`, () => {
     const want = gate(UNPARSABLE, child, withRoots);
-    // the unreadable line: nothing decided here (the mode step follows); with session roots it carries `danger` (measured: `danger-opaque`)
+    // the unreadable line: nothing decided here (C: there is no `danger-opaque`; an unreadable line is not on the judge-first list, so it runs)
     assert.equal(want.result, undefined);
-    if (withRoots) assert.ok(want.danger, "unreadable line carries danger");
+    assert.equal(want.danger, null, "an unreadable line is not judge-first");
     for (const [name, line] of Object.entries(DEEP)) {
       const got = gate(line, child, withRoots);
       assert.notEqual(got.result?.rule, "gate-error", name);

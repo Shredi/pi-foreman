@@ -44,7 +44,7 @@ const callOf = (line: string): ProtectedCall => ({ tool: "bash", payload: line, 
 
 async function check(line: string, replies: Reply[], over: Partial<ProtectedCheckCtx> = {}, found = true): Promise<ProtectedCheckResult & { calls: string[] }> {
   const reg = fakeRegistry(replies, found);
-  const c: ProtectedCheckCtx = { prose: { allow: [], deny: [] }, registry: reg.registry as never, config, provider: "fake", timeoutMs: 200, match: matchOf(line), task: "look at the queue", denyEntries: DENY, checkMode: "model", version: 1, away: false, ...over };
+  const c: ProtectedCheckCtx = { registry: reg.registry as never, config, provider: "fake", timeoutMs: 200, match: matchOf(line), task: "look at the queue", denyEntries: DENY, checkMode: "model", version: 1, away: false, ...over };
   const r = await new ProtectedCache().check(callOf(line), c);
   return { ...r, calls: reg.calls };
 }

@@ -39,7 +39,8 @@ test("A8: a quoted $(...) pattern is no danger-opaque; its inner segment is judg
   assert.equal(bad.result && "rule" in bad.result ? bad.result.rule : null, "floor-privilege");
 });
 
-test("A8: every other unknown word keeps the segment opaque", () => {
+// since PR C the opaque class is gone: the segment is no read (no default-read allow), and no judge-first entry names it, so the gate has no rule for it
+test("A8: every other unknown word keeps the segment opaque (no built-in allow)", () => {
   for (const l of [
     "grep -n $PAT src/a.ts", // unquoted: word splitting and globbing
     'grep -n foo "$F"', // path position
@@ -55,10 +56,10 @@ test("A8: every other unknown word keeps the segment opaque", () => {
     'cd "$D" && grep foo src/a.ts', // a cd operand
     'rg --pre "$X" foo src/a.ts',
   ]) {
-    assert.equal(rule(l), "danger-opaque", l);
+    assert.equal(rule(l), "none", l);
   }
-  // a redirect target that is a variable ends the command: the floor refuses it first (PR B2, the old Python delete check did)
-  assert.equal(rule('grep -n "$PAT" src/a.ts > "$OUT"'), "floor-unknown-write-target");
+  // a redirect target that is a variable ends the command: the judge looks first (PR C)
+  assert.equal(rule('grep -n "$PAT" src/a.ts > "$OUT"'), "danger-unknown-write-target");
 });
 
 test("A8: a relaxed pattern word does not hide a floored path", () => {
@@ -77,11 +78,11 @@ test("A8: npx <bin> with node_modules/.bin/<bin> under the nearest package.json 
   assert.notEqual(rule("npx mytool"), "default-build-test");
 });
 
-test("A8: npx stays danger-install for a missing bin, a package option, a version, --yes or a path", () => {
+test("A8: npx is no danger match any more for a missing bin, a package option, a version, --yes or a path (danger-install is gone, PR C)", () => {
   const at = (l: string, cwd = wt) => run(l, cwd).danger?.name ?? null;
   for (const l of ["npx other", "npx -p mytool mytool", "npx --package=mytool mytool", "npx mytool@1.2.3", "npx --yes mytool", "npx -y mytool", "npx ./mytool", "npx", "npx -c mytool"]) {
-    assert.equal(at(l), "danger-install", l);
+    assert.equal(at(l), null, l);
   }
-  assert.equal(at("npx mytool", bare), "danger-install", "no package.json above the cwd");
-  assert.equal(at("npx mytool", path.join(base, "tmp")), "danger-install");
+  assert.equal(at("npx mytool", bare), null, "no package.json above the cwd");
+  assert.equal(at("npx mytool", path.join(base, "tmp")), null);
 });

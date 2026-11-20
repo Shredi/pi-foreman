@@ -35,6 +35,7 @@ which relaunches it with `model: "strong"`:
   trigger is refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
   A builder launch may also carry `size` and `risk` (top-level keys of the `subagent` call, never inside `options` or `args`); the adapter reads and removes them and a large or risky
   task goes strong without a `reason` (see [ladder](ladder.md#launch-sizing)).
+- **`model: "top"`**: only an `explorer` launched by the steward session, with a `reason`, may use it (the strongest ranked model; every other use is refused `top_not_allowed`), see [ladder](ladder.md#the-keyword-top).
 - **Review FAIL**: a builder revision launched while the latest reviewer verdict is FAIL goes to the builder's
   strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
   `roles.<id>.strongOnRevision`, else `providers.<p>.strongOnRevision`, else `ladder.strongOnRevision` (default
@@ -89,7 +90,7 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 
 ## Auto review model
 
-The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-classifier)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
+The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-judge)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
 cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you.
 
 ## Review critic

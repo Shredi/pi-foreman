@@ -33,6 +33,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseAskHeader } from "./childask.ts";
 import { applyRemoteNotice, parseRemoteNotice } from "./remotesession.ts";
+import { HANDOFF_REPORTS } from "./reportsimport.ts";
 import type { RemoteNotice } from "./remotesession.ts";
 import { readRegistry, writeRegistry } from "./session.ts";
 import type { SessionEntry } from "./session.ts";
@@ -422,6 +423,8 @@ export interface WatchDeps {
   /** A trace record (`remote_notice_ignored`) for a label that does not follow the grammar. */
   trace?: (rec: Record<string, unknown>) => void;
   notify?: (message: string, level: "info" | "warning") => void;
+  /** Imports the bytes of the remote session's `reports.jsonl` into the parent repository's store (reportsimport.ts); unset: the file is not fetched. Best effort: a throw is dropped. */
+  importReports?: (data: Buffer) => void | Promise<void>;
   now?: () => number;
   timer?: (fn: () => void, ms: number) => Cancel;
 }
@@ -873,5 +876,25 @@ export class RemoteWatcher {
     const text = done.kind === "result" ? `${done.path.slice(0, Math.max(0, 300 - CLOSE_LINE(w).length)).trimEnd()}${CLOSE_LINE(w)}` : done.kind === "plan" || done.kind === "ask" ? `${done.path.slice(0, Math.max(0, 300 - ATTACH_LINE(w).length)).trimEnd()}${ATTACH_LINE(w)}` : done.path;
     this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${text ? ` ${text}` : ""}`, "info");
     this.d.wake(w.label, done.kind, text);
+    if (a.kind === "result" || a.kind === "update" || a.kind === "closed") await this.fetchReports(w);
+  }
+
+  /** The remote session's report copy (`reports.jsonl` in the remote handoff dir, the same dir as the notice files) is written to the session's mirror dir, then goes to `importReports`. Best effort: absent, unreadable or failing changes nothing. */
+  private async fetchReports(w: Watched): Promise<void> {
+    if (!this.d.importReports) return;
+    try {
+      const r = await this.hc(["file", "read", "--on", w.machine, remotePath(w, HANDOFF_REPORTS)], fetchTimeoutMs(this.d.fetchTimeoutSeconds?.()), this.abort.signal);
+      if (this.stopped || r.code !== 0 || r.timedOut || r.overflow || !r.stdout.length) return;
+      // the fetched text is kept in the mirror dir (not a mirrored notice file) so a failed import can be rerun with `foreman reports import <file>`
+      try {
+        const mirror = readRegistry(this.d.agentDir).sessions.find((e) => e.child === w.child)?.mirror;
+        if (typeof mirror === "string" && mirror) writeBytes(path.join(mirror, HANDOFF_REPORTS), r.stdout);
+      } catch {
+        // no mirror copy: the import goes on
+      }
+      await this.d.importReports(r.stdout);
+    } catch {
+      // a report copy never disturbs the notice
+    }
   }
 }

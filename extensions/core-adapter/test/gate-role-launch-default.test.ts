@@ -71,12 +71,10 @@ test("a launch the adapter's gates refuse stays refused (the default does not by
   assert.ok(gateRecs(r.trace()).some((x) => x.rule === "default-role-launch"), "the gate allowed it first");
 });
 
-test("the first classifier call that finds no model shows one notice naming the key; once per session", async (t) => {
+test("the first judge call that finds no model shows one notice naming the key; once per session", async (t) => {
   const r = await rig(t, { hasUI: false, mode: "print" });
-  fs.mkdirSync(path.join(r.agentDir, "pi-foreman"), { recursive: true });
-  fs.writeFileSync(path.join(r.agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ classifier: { allow: ["Apply terraform changes"] } }));
-  await r.call("bash", { command: "terraform apply -auto-approve" });
-  await r.call("bash", { command: "terraform destroy -auto-approve" });
+  await r.call("bash", { command: "git branch -D old-one" });
+  await r.call("bash", { command: "git branch -D old-two" });
   const n = notes.filter((m) => m.includes("providers.<p>.roles.review.model"));
   assert.equal(n.length, 1, JSON.stringify(notes));
   assert.equal(n[0], NO_MODEL_NOTICE);

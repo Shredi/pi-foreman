@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
 import { readRows, storeFor } from "../reports.ts";
 
-const ESCALATE = JSON.stringify({ verdict: "escalate", entry: null, reason: "unsure" });
+const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "unsure" });
+// C: a line that asks the owner is a judge-first one (git branch -D) the judge is unsure about; an install runs with no ask
 const registry = {
   find: () => ({ id: "m" }),
   getProviderAuthStatus: () => ({ configured: false }),
@@ -22,7 +23,7 @@ test("flag-ask: one owner report of kind permission with a masked, capped comman
   });
   await commands.get("foreman")!.handler("flag-ask", r.ctx);
   assert.equal(readRows(storeFor(r.project).file).length, 0, "nothing answered yet");
-  const cmd = `pip install requests --token=abcdef1234567890 ${"x".repeat(400)}`;
+  const cmd = `git branch -D old-topic --token=abcdef1234567890 ${"x".repeat(400)}`;
   assert.equal(await r.call("bash", { command: cmd }), undefined);
   await commands.get("foreman")!.handler("flag-ask needless", r.ctx);
   const rows = readRows(storeFor(r.project).file);
@@ -50,7 +51,7 @@ for (const [name, config, tail] of [
       config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } }, ...config },
       piExtra: { registerCommand: (n: string, d: { handler: (a: string, c: unknown) => Promise<void> }) => void commands.set(n, d) },
     });
-    assert.equal(await r.call("bash", { command: "pip install requests" }), undefined);
+    assert.equal(await r.call("bash", { command: "git branch -D old-topic" }), undefined);
     await commands.get("foreman")!.handler("flag-ask", r.ctx);
     const note = notes.find((n) => /flagged/.test(n))!;
     assert.ok(note.endsWith(tail), note);

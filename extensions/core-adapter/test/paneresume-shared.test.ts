@@ -28,18 +28,18 @@ const BASE_SHAPE = { v: 1, piSessionId: "s1", child: "child-1", parentLabel: nul
 test("identity: an entry without the new keys keeps today's exact shape; the new keys are written only when set", () => {
   assert.deepEqual(captureIdentity(HANDOFF, "s1", undefined), BASE_SHAPE);
   assert.deepEqual(Object.keys(captureIdentity(HANDOFF, "s1", undefined) as object), Object.keys(BASE_SHAPE));
-  const full = captureIdentity({ ...HANDOFF, PI_FOREMAN_PERMS_PROFILE: "mine", PI_FOREMAN_PLAN_PHASE: "1", PI_BG_FEATURES: "process,poll", PI_BG_B: "x", PI_BG_BAD: "a;b", PI_BG_lower: "x", OTHER: "y" }, "s1", undefined);
-  if (process.platform !== "win32") assert.deepEqual(full, { ...BASE_SHAPE, permsProfile: "mine", planPhase: "1", bgEnv: { PI_BG_B: "x", PI_BG_FEATURES: "process,poll" } });
+  const full = captureIdentity({ ...HANDOFF, PI_FOREMAN_PERMS_PROFILE: "mine" /* old variable: not captured */, PI_FOREMAN_PLAN_PHASE: "1", PI_BG_FEATURES: "process,poll", PI_BG_B: "x", PI_BG_BAD: "a;b", PI_BG_lower: "x", OTHER: "y" }, "s1", undefined);
+  if (process.platform !== "win32") assert.deepEqual(full, { ...BASE_SHAPE, planPhase: "1", bgEnv: { PI_BG_B: "x", PI_BG_FEATURES: "process,poll" } });
   assert.deepEqual(captureIdentity({ ...HANDOFF, PI_FOREMAN_PLAN_PHASE: "2" }, "s1", undefined), BASE_SHAPE, "a plan phase other than 1 is not captured");
   assert.equal(captureIdentity({ PI_FOREMAN_PERMS_PROFILE: "mine" }, "s1", undefined), null, "a plain session has no identity entry");
 });
 
 test("identity: latestIdentity reads the launch keys back, so an unchanged identity compares equal (no append); a changed one differs", () => {
-  const e = { PI_FOREMAN_PERMS_PROFILE: "mine", PI_FOREMAN_PLAN_PHASE: "1", PI_BG_FEATURES: "process" };
+  const e = { PI_FOREMAN_PLAN_PHASE: "1", PI_BG_FEATURES: "process" };
   const first = captureIdentity({ ...HANDOFF, ...e }, "s1", undefined);
   const stored = latestIdentity([{ type: "custom", customType: "pi-foreman-identity", data: JSON.parse(JSON.stringify(first)) }]);
   assert.equal(JSON.stringify(stored), JSON.stringify(captureIdentity({ ...HANDOFF, ...e }, "s1", undefined)), "unchanged: equal as JSON");
-  assert.notEqual(JSON.stringify(stored), JSON.stringify(captureIdentity({ ...HANDOFF, ...e, PI_FOREMAN_PERMS_PROFILE: "other" }, "s1", undefined)), "changed: a new entry");
+  assert.notEqual(JSON.stringify(stored), JSON.stringify(captureIdentity({ ...HANDOFF, ...e, PI_BG_FEATURES: "poll" }, "s1", undefined)), "changed: a new entry");
   const plain = latestIdentity([{ type: "custom", customType: "pi-foreman-identity", data: BASE_SHAPE }]);
   assert.deepEqual(plain, BASE_SHAPE);
   const dirty = latestIdentity([{ type: "custom", customType: "pi-foreman-identity", data: { ...BASE_SHAPE, planPhase: "x", bgEnv: { PI_BG_OK: "1", PI_BG_BAD: "a;b" } } }]);

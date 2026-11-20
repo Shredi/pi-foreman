@@ -64,22 +64,22 @@ test("shell mv, touch and mkdir on own names are an allow", { skip: posixOnly },
   assert.deepEqual(shell(`mkdir -p ${H}/work/d`), { allow: "default-write-in", danger: null });
 });
 
-test("shell writes of every other name stay write-outside", { skip: posixOnly }, () => {
+test("shell writes of every other name carry no label in C", { skip: posixOnly }, () => {
   for (const n of ["some-other.md", "ruling.md", "brief.md", "close.json", "parent", "child", "work/../x", "work/.git/HEAD", "work/.GIT/HEAD"]) {
     for (const l of [`echo x > ${H}/${n}`, `cp ${wt}/a ${H}/${n}`, `cat ${wt}/a > ${H}/${n}`, `mv ${wt}/a ${H}/${n}`]) {
       const s = shell(l);
       assert.equal(s.allow, undefined, l);
-      assert.equal(s.danger, "danger-write-outside", l);
+      assert.equal(s.danger, null, l); // C: no label
     }
   }
 });
 
-test("without ownHandoff the same shell writes stay write-outside", { skip: posixOnly }, () => {
-  for (const l of [`echo x > ${H}/result.md`, `cp ${wt}/a ${H}/result.md`]) assert.deepEqual(shell(l, { ownHandoff: undefined }), { danger: "danger-write-outside" }, l);
+test("without ownHandoff the same shell writes carry no label in C", { skip: posixOnly }, () => {
+  for (const l of [`echo x > ${H}/result.md`, `cp ${wt}/a ${H}/result.md`]) assert.deepEqual(shell(l, { ownHandoff: undefined }), { danger: null }, l); // C: no label
 });
 
 test("an earlier-call variable is no allow (opaque)", { skip: posixOnly }, () => {
   const s = shell(`cp ${wt}/a $D/result.md`);
   assert.equal(s.allow, undefined);
-  assert.equal(s.danger, "danger-opaque");
+  assert.equal(s.danger, null); // C: no label
 });
