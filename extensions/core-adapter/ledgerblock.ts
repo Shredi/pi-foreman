@@ -66,6 +66,12 @@ export function reReviewLine(sha: string | null): string {
 }
 
 const REVIEW_TAGS = /\[(high-stakes|pre-pr|second-opinion|plan-review)\]/gi;
+/** Strip the brackets of every review tag until none is left, so `[[pre-pr]]` does not become `[pre-pr]`. */
+function defuseTags(text: string): string {
+  let cur = text;
+  for (let next = cur.replace(REVIEW_TAGS, "$1"); next !== cur; next = cur.replace(REVIEW_TAGS, "$1")) cur = next;
+  return cur;
+}
 const FINDINGS_CAP = 8 * 1024;
 
 /** The text a FAIL leaves for its re-review: its `defect` and `now` findings, else the notes of its failed items; "" when it has neither. */
@@ -78,7 +84,7 @@ export function failFindingsText(findings: readonly VerdictFinding[], items: rea
 
 /** The earlier findings of a re-review task: fenced (the fence longer than any backtick run in the text), marked as data, review tags defused, cut at 8 KB; "" for no text. */
 export function earlierFindingsBlock(findings: string): string {
-  let text = findings.replace(REVIEW_TAGS, "$1").trim();
+  let text = defuseTags(findings).trim();
   if (!text) return "";
   if (text.length > FINDINGS_CAP) text = `${text.slice(0, FINDINGS_CAP)}\n… (cut)`;
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((r) => r.length));

@@ -4,7 +4,7 @@
 import type { ReviewRecord } from "./reviews.ts";
 
 /**
- * The alias records `head` earns, each with the head of the PASS it copies. Per checkout (the `cwd` of the records), when no record of it names `head`, its newest code review (aliases left
+ * The alias records `head` earns, each with the head of the PASS it copies. Per checkout (the `cwd` of the records), when no record of any checkout names `head`, its newest code review (aliases left
  * out) is a PASS with a `tree`, the checkout is not `blocked` (an uncleared high-stakes FAIL there) and `treeOf(checkout, head)` equals that tree.
  * `first` (a checkout) is searched first. A commit that does not resolve gives null from `treeOf`: no alias.
  */
@@ -13,7 +13,7 @@ export async function coverAliases(records: readonly ReviewRecord[], head: strin
   const out: { rec: ReviewRecord; from: string | null }[] = [];
   for (const co of checkouts) {
     const mine = records.filter((r) => r.cwd === co && r.kind !== "plan");
-    if (mine.some((r) => r.head === head)) continue;
+    if (records.some((r) => r.kind !== "plan" && r.head === head)) continue;
     const newest = mine.findLast((r) => !r.via);
     if (!newest || newest.verdict !== "pass" || !newest.tree || o.blocked(co)) continue;
     if ((await o.treeOf(co, head)) !== newest.tree) continue;

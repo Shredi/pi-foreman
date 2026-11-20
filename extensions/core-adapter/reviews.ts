@@ -420,7 +420,7 @@ async function siblingRefusal(session: string, dir: string, records: readonly Re
   if (heads.length === 0) return refuse("cwd_unreviewed", `no reviewer PASS is recorded for the checkout ${top}. Run a reviewer with cwd ${top} on its head, then retry pr_create {cwd}`);
   const cur = await commitOf(top, "HEAD");
   if (!cur || !heads.includes(cur)) return refuse("cwd_stale", `the recorded reviewer PASS for ${top} is for another commit than its HEAD (PASS ${heads[heads.length - 1]}, HEAD ${cur ?? "unreadable"}). Run a reviewer with cwd ${top} on the current head, then retry pr_create {cwd}`);
-  return (await prToolRefusal(top, heads, input)) ?? (hs ? hs(top, [cur]) : null);
+  return (await prToolRefusal(top, heads, input)) ?? (hs ? hs(top, [...new Set([cur, ...(await prHeads(top, input))])]) : null);
 }
 
 /** One line for the review panel block when the PR's checks failed ("" otherwise). */
