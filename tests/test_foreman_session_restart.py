@@ -32,6 +32,15 @@ def assign(key, value, win=None):
 def word(value, win=None):
     """One launch word (a flag or a path) as the platform's launch line spells it: bare, or single-quoted on win32."""
     return fsn.ps_quote(value) if (sys.platform == "win32" if win is None else win) else value
+
+
+def has_session_arg(argv, path, win=None):
+    """`--session <path>` in a `hc run` argv: two exact adjacent argv elements on POSIX, the exact quoted pair `'--session' '<path>'` ending the PowerShell launch text on win32 (the words before it are pi, or the pi fallback, plus an optional model)."""
+    if sys.platform == "win32" if win is None else win:
+        return (" ".join(argv)).endswith(" %s %s" % (word("--session", win=True), word(path, win=True)))
+    return any(a == "--session" and b == path for a, b in zip(argv, argv[1:]))
+
+
 PARENT_ID = "pid-parent-0001"
 SID = "sess-aaaa1111"
 
@@ -101,9 +110,9 @@ class RestartLocalTest(LocalRestartBase):
         self.assertIn("--keep", head)
         self.assertEqual(head[head.index("--name") + 1], fsn.hc_name(CHILD))
         self.assertEqual(head[head.index("--cwd") + 1], str(self.proj))
-        text = launch_text(argv)
-        self.assertIn(word(str(self.sfile)), text)
-        self.assertIn(word("--session"), text)
+        self.assertTrue(has_session_arg(argv, str(self.sfile)), argv)
+        if sys.platform != "win32":
+            self.assertIn(str(self.sfile), argv)
         stored = self.stored()
         self.assertEqual((stored["status"], stored["hc"]["address"]), ("open", "t2"))
 
