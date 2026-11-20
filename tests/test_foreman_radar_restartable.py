@@ -47,6 +47,7 @@ class Restartable(unittest.TestCase):
         js = self.only(entry(self.cwd, gone=True))
         self.assertEqual(js["state"], "closed")
         self.assertIs(js["restartable"], True)
+        self.assertEqual(js["child"], "fm-kid-33d451")
 
     def test_prune_closed_entry(self):
         self.assertIs(self.only(entry(self.cwd, status="closed", closedBy="prune"))["restartable"], True)
@@ -71,6 +72,7 @@ class Restartable(unittest.TestCase):
         js = self.only(e)
         self.assertEqual(js["state"], "finished")
         self.assertIs(js["restartable"], True)
+        self.assertEqual(js["child"], "fm-kid-33d451")
 
     def test_remote_live_terminal_is_not(self):
         e = entry(self.cwd, machine="alpha", hc={"address": "alpha/t7"}, remoteLive={"state": "idle", "seenAt": iso(10), "address": "alpha/t7"})

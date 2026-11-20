@@ -32,6 +32,7 @@ const T_HC_LOCAL = 10000;
 const T_HC_REMOTE = 15000;
 const T_ATTACH = 15000;
 const T_OPEN = 10000;
+const T_RESTART = 120000; // a remote restart probes and starts on the other machine
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
 const AGENT_GLYPH = "🤖"; // the mark of an agent row, an emoji like the ⏳ / ⚙ of the status lines
@@ -438,6 +439,18 @@ export default class ForemanAgents extends View {
     });
   }
 
+  // The Restart action of an ended child row radar flagged `restartable`: `foreman session restart <child id>` (a new kept terminal; no
+  // tab or pane is closed). The card joins the new terminal by its address once the registry holds it.
+  restartChild(child, cx) {
+    const bin = radarBinary(this.foremanProp, null);
+    cx.spawn(async () => {
+      try {
+        const r = await this.execT(bin, ["session", "restart", child], {}, T_RESTART);
+        if (r && typeof r.code === "number" && r.code !== 0) guard(() => notify({ title: "Could not restart the session", body: String(r.stderr || r.stdout || "").trim().split("\n")[0].slice(0, 200) || `exit ${r.code}`, level: "error" }));
+      } catch (e) { guard(() => notify({ title: "Could not restart the session", body: why(e), level: "error" })); }
+    });
+  }
+
   openUrl(url, cx) {
     if (!isSafeHttpsUrl(url)) return;
     const p = guard(() => window().platform, "");
@@ -655,6 +668,8 @@ export default class ForemanAgents extends View {
       .child(item.address !== undefined ? name.cursor_pointer().on_click((_e, cx) => { this.press(nameId, cx); return item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }); })
         : item.node?.machine && item.node?.hcTerminal ? name.cursor_pointer().on_click((_e, cx) => { this.press(nameId, cx); this.openRemote(item.node, cx); }) : name)
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
+      .when(Boolean(item.restart), (el) => el.child(div().id(`restart:${item.id}`).flex_none().cursor_pointer().text_size(10.5).text_color(t.working).child(this.pressing(`restart:${item.id}`) ? "Restart …" : "Restart")
+        .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(`restart:${item.id}`, cx); this.restartChild(item.restart, cx); })))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))

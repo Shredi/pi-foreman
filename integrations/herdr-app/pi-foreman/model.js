@@ -134,7 +134,7 @@ function normNode(raw, depth, budget) {
   return {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
-    hcTerminal: str(raw.hcTerminal), regOpen: raw.regOpen === true, pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
+    hcTerminal: str(raw.hcTerminal), regOpen: raw.regOpen === true, restartable: raw.restartable === true, child: str(raw.child), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
     repo: nameOf(raw.repo), branch: str(raw.branch),
@@ -469,6 +469,9 @@ export function totalCost(node) {
  *  A lost or stale one (heartbeat long silent) with a live hc terminal (`liveHc`, set by the render) or an open registry entry
  *  (`regOpen`) is only late, not over. */
 export const isEnded = (n) => n.state === "closed" || n.state === "finished" || ((n.state === "lost" || n.state === "stale") && !n.liveHc && !n.regOpen);
+/** The child id that `foreman session restart` takes for an ended node radar flagged `restartable` (radar decides; the mod only
+ *  checks the node is drawn as ended), else "". A lost remote node with a live terminal or an open entry is not ended. */
+export const restartChild = (n) => (isObj(n) && n.restartable === true && n.child && isEnded(n) ? n.child : "");
 
 export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;
@@ -1002,7 +1005,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, r
         if (child) kids.push(child);
       });
     }
-    if (closed && kids.length === 0) return null;
+    if (closed && kids.length === 0 && !restartChild(n)) return null; // a restartable ended child keeps its row
     const children = sortItems(kids);
     const isTop = root && top;
     const total = isTop ? totalCost(n) : num(n.cost);
@@ -1012,6 +1015,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, r
       sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
       urgent: urgentStatus([closed ? "idle" : status, ...children.map((c) => c.urgent)]), children,
       prs, summary: prSummary(prs), ...splitPrs(prs), recs: root ? listOf(recs) : recsOf ? listOf(recsOf(n)) : [],
+      ...(closed && restartChild(n) ? { restart: restartChild(n) } : {}),
     };
   };
   return build(node, nodeStatus(node, hcStatus, recs), rootId || node.key || node.name || "root", 0, true);
@@ -1095,8 +1099,9 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       if (isObj(r.node)) {
         item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], recsOf, remoteOf, skip, skipKeys, extra: below, top: false, id });
         const ended = isEnded(r.node);
-        if (ended && item.children.length === 0) return []; // an ended child with nothing live below leaves the tree
+        if (ended && item.children.length === 0 && !restartChild(r.node)) return []; // an ended child with nothing live below leaves the tree
         if (ended) item.dim = true; // one that keeps live descendants stays, dimmed
+        if (ended && restartChild(r.node)) item.restart = restartChild(r.node); // so does a restartable one: its row carries the Restart action
         item.status = ended ? "idle" : status;
         item.urgent = urgentStatus([status, ...item.children.map((c) => c.urgent)]);
       } else {

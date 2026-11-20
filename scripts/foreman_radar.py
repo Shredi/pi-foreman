@@ -727,8 +727,8 @@ def mark_restartable(e, n):
     else:
         pid = n.get("pid")
         ok = n["state"] == "closed" or (n["glyph"] == "lost" and isinstance(pid, int) and not isinstance(pid, bool) and not process_alive(pid))
-    if ok:
-        n["restartable"] = True
+    if ok and isinstance(e.get("child"), str) and e["child"]:
+        n["restartable"] = e["child"]  # the id `foreman session restart` takes (the node key can be the published id of the live file)
 
 
 def build(data, now):
@@ -1212,6 +1212,7 @@ def to_json_node(n, now, symbols):
             out["regOpen"] = True
         if n.get("restartable"):
             out["restartable"] = True
+            out["child"] = n["restartable"]
         out["sid"] = n["sid"]
         out["waits"] = n["waits"]
         out["started"] = n["started"]
