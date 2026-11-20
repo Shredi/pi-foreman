@@ -1,4 +1,4 @@
-// An env prefix does not hide an install: `FOO=1 npm ci` carries `danger-install` next to the `danger-opaque` the prefix gives. Other lines keep their labels.
+// C: installs and env-prefixed lines carry no label (`danger-install` and `danger-opaque` left the judge-first list): the gate decides nothing and names nothing for them, for every role.
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -18,22 +18,22 @@ const run = (command: string, role: string, readOnly: boolean) => gateEvaluate("
 
 const ROLES = [["foreman", false], ["builder", false], ["reviewer", true], ["explorer", true]] as const;
 
-// line -> labels, the same for the main session, a builder and a read-only role
+// line -> labels (none under C), the same for the main session, a builder and a read-only role
 const ROWS: [string, string[]][] = [
-  ["npm ci", ["danger-install"]],
-  ["FOO=1 npm ci", ["danger-install", "danger-opaque"]],
-  ["FOO=1 npm install", ["danger-install", "danger-opaque"]],
-  ["FOO=1 pnpm install", ["danger-install", "danger-opaque"]],
-  ["npm_config_registry=http://x.invalid npm ci", ["danger-install", "danger-opaque"]],
-  ["env FOO=1 npm ci", ["danger-install", "danger-opaque"]],
-  ["PATH=/x npm ci", ["danger-install", "danger-opaque"]],
-  ["FOO=$(npm ci) ls", ["danger-install", "danger-opaque"]],
-  ["FOO=1 npm test", ["danger-opaque"]],
-  ["FOO=1 npm run build", ["danger-opaque"]],
-  ["FOO=1 ls", ["danger-opaque"]],
-  ["FOO=1 git status", ["danger-opaque"]],
-  ["FOO=1 gh pr view 1", ["danger-opaque"]],
-  ["FOO=1", ["danger-opaque"]],
+  ["npm ci", []],
+  ["FOO=1 npm ci", []],
+  ["FOO=1 npm install", []],
+  ["FOO=1 pnpm install", []],
+  ["npm_config_registry=http://x.invalid npm ci", []],
+  ["env FOO=1 npm ci", []],
+  ["PATH=/x npm ci", []],
+  ["FOO=$(npm ci) ls", []],
+  ["FOO=1 npm test", []],
+  ["FOO=1 npm run build", []],
+  ["FOO=1 ls", []],
+  ["FOO=1 git status", []],
+  ["FOO=1 gh pr view 1", []],
+  ["FOO=1", []],
 ];
 
 for (const [line, labels] of ROWS) {

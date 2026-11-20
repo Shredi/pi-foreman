@@ -1,8 +1,8 @@
 """Replay: launch fields `reads` and `install` reach the child through the launch binding (R46 items 5 and 8).
 
 `reads: 4` raises the builder's read deny from the configured 3 to 4 (warn moves with it: 3 of 4, no deny) and the
-trace `child_read_budget` carries the allowance. A child `npm ci` outside an owned worktree asks either way, but the
-refusal names the `install: true` launch flag only when the launch did not set it.
+trace `child_read_budget` carries the allowance. A plain child `npm ci` runs (PR C); the child's line `git branch -D old-topic && npm ci` is
+judge-first, so it asks its parent, and the refusal names the `install: true` launch flag only when the launch did not set it.
 Same prerequisites and skips as test_replay.py."""
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from driver import PROVIDER_A, load_fixture, tool_results
 from test_replay import REASON, ReplayCase
 
 CFG = {"ceremony": {"launchWait": "block", "childReads": {"builder": {"warn": 2, "deny": 3}}}}
-# R41: a child's npm ci is the review's ask (package-install); the fake child-only reviewer asks, the gate adds the R46 text to the ask
+# the fake judge is unsure for a child only: the child's judge-first line asks its parent, the gate adds the R46 npm text to the ask
 CFG_ASK = {**CFG, "providers": {PROVIDER_A: {"review": {"model": "%s/review-child-ask" % PROVIDER_A}}}}
 HINT = "relaunch you with the launch flag `install: true`"
 

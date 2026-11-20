@@ -5,8 +5,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
 import type { FloorEnv } from "../floors.ts";
-import { parseRule } from "../rules.ts";
-import type { RuleSets } from "../rules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 const base = fs.realpathSync.native(mkTestTmp("pf-gate-pub-exp-"));
@@ -20,14 +18,8 @@ fs.writeFileSync(path.join(ssh, "k.pub"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI
 
 const roots = { worktree: work, scratch: [], tmp: [], scratchBase: path.join(base, "scr"), owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false } as never;
 const env: FloorEnv = { cwd: work, home, agentDir: agent, writeRoots: [work] };
-const rule = (t: string) => {
-  const r = parseRule(t);
-  if (!r.ok) throw new Error(t);
-  return r.rule;
-};
-const sets: RuleSets = { allow: ["Bash(echo *)", "Bash(wait *)", "Bash(compgen *)"].map(rule), ask: [], deny: [] };
 const decide = (command: string): GateResult =>
-  gateDecide("bash", { command }, work, { env: () => env, roots: () => roots, rules: { sets, env: { cwd: work, home, platform: process.platform, checkout: work } } });
+  gateDecide("bash", { command }, work, { env: () => env, roots: () => roots, rules: { env: { cwd: work, home, platform: process.platform, checkout: work } } });
 const allowedByPubkey = (r: GateResult): boolean => !!r && "allow" in r && /floor-pubkey-read/.test(r.rule ?? "");
 
 for (const line of [
@@ -46,7 +38,9 @@ for (const line of [
 }
 
 for (const line of ["echo 'cost $5'; cat ~/.ssh/k.pub", "echo '$(date)'; cat ~/.ssh/k.pub", "echo 'a `b`'; cat ~/.ssh/k.pub"]) {
-  test(`${line}: allowed as a public-key read`, () => {
-    assert.equal(allowedByPubkey(decide(line)), true);
+  // since PR C the pubkey allow names a lone read; a multi-segment line has no allow rule engine any more and just runs (no floor deny)
+  test(`${line}: no floor deny (the quoted $ is no expansion)`, () => {
+    const r = decide(line);
+    assert.equal(!!r && "block" in r && !!r.block, false);
   });
 }

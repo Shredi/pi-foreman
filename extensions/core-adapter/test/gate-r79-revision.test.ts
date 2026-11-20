@@ -33,7 +33,7 @@ const WT = shPath(wt);
 test("A: gh/glab api: the last method wins, a method override header is a write", () => {
   for (const l of ["gh api -X GET repos/o/r -X DELETE", "gh api --method GET repos/o/r --method POST", "gh api -X DELETE repos/o/r -X GET repos/o/r2", "gh api repos/o/r -H 'X-HTTP-Method-Override: DELETE'", "gh api repos/o/r -H 'x-http-method-override: PATCH'", "glab api projects/1 -X GET -X PUT", "gh api graphql -X PATCH -f query='query{viewer{login}}'"]) {
     if (l.includes("-X DELETE repos/o/r -X GET")) continue; // last wins -> GET: read
-    assert.equal(danger(l), "danger-forge", l);
+    assert.equal(danger(l), null, l); // PR C: the forge entry is gone, a write runs; only the built-in read allow stays exact
     assert.notEqual(deflt(l), "default-gh-read", l);
   }
   assert.equal(danger("gh api -X DELETE repos/o/r -X GET"), null, "the last -X is GET");
@@ -45,7 +45,7 @@ test("A: gh/glab api: the last method wins, a method override header is a write"
 
 test("B: git push of anything but an own branch is dangerous; an own-branch push stays routine", () => {
   for (const l of ["git push origin other-branch", "git push origin round/79-y:other", "git push origin v1.0", "git push origin tag v1.0", "git push --tags", "git push --mirror", "git push origin --delete round/79-x", "git push origin :round/79-x", "git push --all origin", "git push origin +round/79-x", "git push origin HEAD round/zzz"]) {
-    assert.equal(danger(l), "danger-git", l);
+    assert.equal(danger(l), null, l); // PR C: a push to another ref runs (the floors keep force and protected pushes)
   }
   for (const l of ["git push origin HEAD", "git push -u origin round/79-x", "git push origin round/79-y"]) {
     assert.equal(danger(l), null, l);
@@ -60,7 +60,8 @@ test("C: a write outside the worktree through the usual tools is danger-write-ou
     `dd if=a.txt of=${OUT}/f`, `sort -o ${OUT}/f a.txt`, `cp -t ${OUT} a.txt`, `install -m 644 a.txt ${OUT}/f`, `ln -sf a.txt ${OUT}/l`, `awk -i inplace '{print}' ${OUT}/f`,
     `patch ${OUT}/f p.diff`, `git -C ${OUT} commit -m x`, `npm --prefix ${OUT} install`, `cd ${OUT} && git commit -m x`, `rm -r ${SIB}`,
   ];
-  for (const l of out) assert.equal(danger(l), "danger-write-outside", l);
+  // PR C: danger-write-outside is the child's unresolved write target only; a resolved outside path is the child deny set's job (not the danger list)
+  for (const l of out) assert.equal(danger(l), null, l);
   const inside: string[] = [
     `sed -i s/a/b/ ${WT}/a.txt`, `sed -i s/a/b/ a.txt`, `sed -n 'w ${WT}/f' a.txt`, `truncate -s 0 ${WT}/f`, `perl -pi -e 's/a/b/' ${WT}/f`, `dd if=a.txt of=${WT}/f`, `sort -o ${WT}/f a.txt`,
     `cp -t ${WT}/src a.txt`, `install -m 644 a.txt ${WT}/f`, `ln -sf a.txt ${WT}/l`, `git -C ${WT} commit -m x`, `cd ${WT}/src && git commit -m x`, `sed -i s/a/b/ ${shPath(scr)}/f`,
@@ -68,12 +69,12 @@ test("C: a write outside the worktree through the usual tools is danger-write-ou
   for (const l of inside) assert.notEqual(danger(l), "danger-write-outside", l);
 });
 
-test("C: an interpreter one-liner is danger-opaque (it may write anywhere)", () => {
-  for (const l of [`python3 -c "open('${OUT}/f','w').write('x')"`, `node -e "require('fs').writeFileSync('${OUT}/f','x')"`, `perl -e 'open F,">${OUT}/f"'`, `ruby -e 'File.write(1,2)'`]) assert.equal(danger(l), "danger-opaque", l);
+test("C: an interpreter one-liner is no danger match any more (the opaque entry is gone, PR C)", () => {
+  for (const l of [`python3 -c "open('${OUT}/f','w').write('x')"`, `node -e "require('fs').writeFileSync('${OUT}/f','x')"`, `perl -e 'open F,">${OUT}/f"'`, `ruby -e 'File.write(1,2)'`]) assert.equal(danger(l), null, l);
 });
 
-test("C: a child's `cd .. && rm -r sibling` is danger-write-outside", () => {
-  assert.equal(danger("cd .. && rm -r sibling", wt, true), "danger-write-outside");
+test("C: a child's `cd .. && rm -r sibling` resolves to a path: no danger-write-outside (the child deny set decides)", () => {
+  assert.equal(danger("cd .. && rm -r sibling", wt, true), null);
   assert.notEqual(danger("cd src && rm -r build"), "danger-write-outside");
 });
 

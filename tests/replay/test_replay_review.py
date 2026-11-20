@@ -1,11 +1,9 @@
-"""The classifier on the dangerous class (safety wave, ledger items 7-9, decision D3; r79 rules-first gate).
+"""The judge on the judge-first list (PR C; docs/permissions.md).
 
 Run:  python -m unittest discover -s tests/replay -v
-The classifier model is a fake model on the fake provider (`review-<kind>`, see fake_provider.ts) that answers every
-request with a fixed verdict against the rig's two-sentence whitelist (A1 allow, D1 deny). The command `pip install requests`
-is the dangerous class `danger-install`; a routine command such as `uname -s` never reaches the classifier under mode auto.
-Expected: allow -> no prompt; deny -> denied with the whitelist rule's text; escalate (the model's own, a provider error,
-an invalid verdict, a timeout) -> the human prompt.
+The judge model is a fake model on the fake provider (`review-<kind>`, see fake_provider.ts) that answers every request with
+a fixed verdict. The command `git branch -D old-topic || true` is judge-first (`danger-git`); a routine command never reaches the judge.
+Expected: clear -> no prompt; unsure, a provider error, an invalid verdict, a timeout -> the owner dialog (the call runs once the owner allows it).
 """
 from __future__ import annotations
 
@@ -32,8 +30,7 @@ class TestModelReview(ReplayCase):
         if b_without_review:
             providers[PROVIDER_B] = {"review": {"model": None}}  # provider_map gives every provider a review model; this one has none
         rig = self.rig("review-" + kind, load_fixture("review"), providers=(PROVIDER_A, PROVIDER_B),
-                       permissions="baseline", config={"providers": providers})
-        self.user_permissions(rig, {"classifier": {"allow": ["Installing a package from the registry is allowed."], "deny": ["Reading secrets is never allowed."]}})
+                       config={"providers": providers})
         return rig
 
     def ask(self, pi, tag="r1"):
@@ -46,7 +43,7 @@ class TestModelReview(ReplayCase):
         return [r.get("decision") for recs in rig.traces().values() for r in recs if r.get("event") == "review"]
 
     def causes(self, rig):
-        """The classifier's gate-log records as (verdict, rule): an escalation's rule is its cause (model, provider_error, wrong_entry, timeout ...)."""
+        """The judge's gate-log records as (verdict, rule): a non-clear's rule is `judge:<cause>` (model, provider_error, invalid_verdict, timeout ...)."""
         log = rig.state_dir / "gate" / "log.jsonl"
         lines = [json.loads(x) for x in log.read_text("utf-8").splitlines() if x.strip()]
         return [(r.get("verdict"), r.get("rule")) for r in lines if r.get("layer") == "classifier"]
@@ -63,22 +60,14 @@ class TestModelReview(ReplayCase):
         self.assertTrue(dialog, "%s: no human prompt" % kind)
         self.assertEqual([e for e, _ in bash], [False], "%s: approved by the human, the command runs: %s" % (kind, bash))
         self.assertEqual(outcomes, ["escalate"])
-        self.assertEqual(causes, [("ask", cause)])
+        self.assertEqual(causes, [("ask", "judge:" + cause)])
 
-    def test_allow_runs_without_a_prompt(self):
+    def test_clear_runs_without_a_prompt(self):
         dialog, bash, outcomes, causes = self.run_path("allow")
         self.assertFalse(dialog)
         self.assertEqual([e for e, _ in bash], [False])
         self.assertEqual(outcomes, ["allow"])
-        self.assertEqual(causes, [("allow", "prose:A1")])
-
-    def test_deny_is_final(self):
-        dialog, bash, outcomes, causes = self.run_path("deny")
-        self.assertFalse(dialog)
-        self.assertEqual([e for e, _ in bash], [True])
-        self.assertIn("denied by whitelist rule D1", bash[0][1])
-        self.assertEqual(outcomes, ["deny"])
-        self.assertEqual(causes, [("deny", "prose:D1")])
+        self.assertEqual(causes, [("allow", "judge")])
 
     def test_ask_goes_to_the_human(self):
         self.assert_prompted("ask", "model")
@@ -90,8 +79,8 @@ class TestModelReview(ReplayCase):
         self.assert_prompted("error", "provider_error")
 
     def test_invalid_verdict_goes_to_the_human(self):
-        # an allow verdict citing a whitelist entry that does not exist is unusable: the classifier escalates, the human is asked
-        self.assert_prompted("invalid", "wrong_entry")
+        # a verdict outside clear / unsure is unusable: it is no clear, the human is asked
+        self.assert_prompted("invalid", "invalid_verdict")
 
     def test_timeout_goes_to_the_human(self):
         self.assert_prompted("hang", "timeout", timeout_ms=1500)
@@ -101,15 +90,15 @@ class TestModelReview(ReplayCase):
         pi = rig.start()
         self.assertFalse(self.ask(pi)[0])
         pi.request({"type": "set_model", "provider": PROVIDER_B, "modelId": "foreman"})
-        # another command: an identical allowed call would be answered from the classifier's cache without a model call
+        # another command: an identical cleared call would be answered from the judge's cache without a model call
         dialog, bash = self.ask(pi, "r2")
         pi.close()
         # provider B sets no review model: its auto-picked role-map model answers with the scripted text, which is not a verdict, so the
-        # classifier escalates and the human is asked; the switch is shown by the changed outcome
+        # judge is no clear and the human is asked; the switch is shown by the changed outcome
         self.assertTrue(dialog)
         self.assertEqual([e for e, _ in bash], [False])
         self.assertEqual(self.outcomes(rig), ["allow", "escalate"])
-        self.assertEqual(self.causes(rig), [("allow", "prose:A1"), ("ask", "invalid_verdict")])
+        self.assertEqual(self.causes(rig), [("allow", "judge"), ("ask", "judge:invalid_verdict")])
 
 
 if __name__ == "__main__":

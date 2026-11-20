@@ -892,6 +892,10 @@ def build(data, now):
                 n["name"] += "@" + e["machine"]
                 addr = (e.get("hc") or {}).get("address") if isinstance(e.get("hc"), dict) else None
                 n["hcTerminal"] = addr if isinstance(addr, str) and addr else None
+                # the local `hc attach` terminal the registry stored for this remote session (the sidebar merges it into the card)
+                att = e.get("attach")
+                local = att.get("address") if isinstance(att, dict) else None
+                n["attach"] = local if isinstance(local, str) and local else None
                 n["glyph"], n["state"] = remote_glyph(e, opened, now)
                 ask = e.get("ask")
                 # the number and topic come from the ask.md header the watcher stored; `seq` (the notice counter) is never shown
@@ -1208,6 +1212,8 @@ def to_json_node(n, now, symbols):
     if n["kind"] == "session":
         if n.get("machine"):
             out["machine"] = n["machine"]
+            if n.get("attach"):
+                out["attach"] = n["attach"]
         if n.get("regOpen"):
             out["regOpen"] = True
         if n.get("restartable"):

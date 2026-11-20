@@ -377,10 +377,10 @@ test("foreman_script: the dialogs counter counts surface script", async (t) => {
   assert.deepEqual(r.trace("dialog").map((x) => x.surface), ["script"]);
 });
 
-test("foreman_script: an open approval does not open the shell: a global install through bash is still stopped", { skip: posixOnly }, async (t) => {
+test("foreman_script: an open approval does not open the shell: a publish through bash is still stopped (C: an install runs, so the floored publish stands for it)", { skip: posixOnly }, async (t) => {
   // presence off: an owner dialog of the gate awaits the presence probe otherwise (as _r11rig.ts)
   const r = await rig(t, { answer: () => "approve", config: { trace: { enabled: true }, presence: { enabled: false } } });
-  const line = "npm install -g left-pad";
+  const line = "npm publish";
   const before = (await r.toolCall("bash", { command: line })) as { block?: boolean } | undefined;
   assert.equal(before?.block, true, "stopped before any approval");
   assert.equal(((await r.toolCall("bash", { command: "ls" })) as { block?: boolean } | undefined)?.block, undefined, "the rig's gate lets a harmless line through");

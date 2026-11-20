@@ -1,4 +1,5 @@
-// Ledger 18(a), 18(b): `danger-harness-folder` also fires for an unknown program naming the harness folder `<agent dir>/pi-foreman` itself or a path below it
+// PR C: `danger-harness-folder`, `danger-opaque`, `danger-install` and a main session's `danger-write-outside` left the judge-first list, so every row below carries
+// no label and keeps its verdict. Ledger 18(a), 18(b), as they were: `danger-harness-folder` also fired for an unknown program naming the harness folder `<agent dir>/pi-foreman` itself or a path below it
 // (label only), except the session's own handoff, scratch and wait folders; and pins of today's `danger-opaque` and `danger-install` labels. Each row compares the
 // literal verdict and the full sorted label list.
 import { test } from "node:test";
@@ -44,17 +45,16 @@ const got = (role: Role, line: string): Got => {
   const verdict = r?.block ? `block ${r.rule}` : r?.allow ? `allow ${r.rule}` : "undecided";
   return { verdict, labels: [...(o.dangers ?? [])].sort() };
 };
-const HFL = "danger-harness-folder";
 const row = (role: Role, line: string, verdict: string, labels: string[]): void => assert.deepEqual(got(role, line), { verdict, labels }, `${role}: ${line.replaceAll(base, "<base>")}`);
 
-test("A: an unknown program naming the harness folder itself is labelled danger-harness-folder, for main and builder; the verdict is unchanged", { skip: posixOnly }, () => {
+test("A: an unknown program naming the harness folder itself carries no label in C, for main and builder; the verdict is unchanged", { skip: posixOnly }, () => {
   for (const role of ["main", "builder"] as const) {
-    for (const l of [`ditto d ${HF}`, `bsdtar -xf a.tar -C ${HF}`, `gtar -xf a.tar -C ${HF}`, `rclone copy d ${HF}`, `foo x ${HF}`, `foo x ${HF}/`, `foo x ${HF}/other.txt`, `foo x ${HF}/handoffs`]) row(role, l, "undecided", [HFL]);
+    for (const l of [`ditto d ${HF}`, `bsdtar -xf a.tar -C ${HF}`, `gtar -xf a.tar -C ${HF}`, `rclone copy d ${HF}`, `foo x ${HF}`, `foo x ${HF}/`, `foo x ${HF}/other.txt`, `foo x ${HF}/handoffs`]) row(role, l, "undecided", []);
   }
 });
 
-test("A: the reviewer's unknown-program lines gain the label", { skip: posixOnly }, () => {
-  for (const l of [`ditto d ${HF}`, `foo x ${HF}`, `foo x ${HF}/other.txt`]) row("reviewer", l, "undecided", [HFL]);
+test("A: the reviewer's unknown-program lines carry no label", { skip: posixOnly }, () => {
+  for (const l of [`ditto d ${HF}`, `foo x ${HF}`, `foo x ${HF}/other.txt`]) row("reviewer", l, "undecided", []);
 });
 
 test("A: tar and rsync keep their floor; lines already blocked or labelled keep their outcome", { skip: posixOnly }, () => {
@@ -62,7 +62,7 @@ test("A: tar and rsync keep their floor; lines already blocked or labelled keep 
     for (const l of [`tar -xf a.tar -C ${HF}`, `rsync -a d ${HF}`, `rsync -a d ${HF}/state/`]) row(role, l, "block floor-overwrite-outside", []);
     for (const l of [`foo x ${HF}/permissions.json`, `foo ${HF}/*`]) row(role, l, "block floor-policy-file", []);
   }
-  for (const role of ["main", "builder"] as const) row(role, `mytool ${LT} ${HF}/managed.json`, "undecided", [HFL]);
+  for (const role of ["main", "builder"] as const) row(role, `mytool ${LT} ${HF}/managed.json`, "undecided", []);
 });
 
 test("A: known reads of the folder stay unlabelled", { skip: posixOnly }, () => {
@@ -72,10 +72,10 @@ test("A: known reads of the folder stay unlabelled", { skip: posixOnly }, () => 
 });
 
 test("A exclusion: the session's own handoff, its child's handoff and its scratch dir gain no label (outcome of the base commit)", { skip: posixOnly }, () => {
-  row("main", `echo x ${GT} ${OWN}/ask.md`, "undecided", ["danger-write-outside"]);
+  row("main", `echo x ${GT} ${OWN}/ask.md`, "undecided", []);
   row("main", `cat ${OWN}/brief.md`, "allow default-read", []);
   row("main", `foo ${OWN}/x`, "undecided", []);
-  row("main", `cp a ${OWN}/result.md`, "undecided", ["danger-write-outside"]);
+  row("main", `cp a ${OWN}/result.md`, "undecided", []);
   row("main", `foo ${CHILD}/x`, "undecided", []);
   row("builder", `echo x ${GT} ${CHILD}/ask.md`, "undecided", []);
   row("builder", `foo ${CHILD}/x`, "undecided", []);
@@ -97,32 +97,31 @@ test("A exclusion: the wait folder gains no label (outcome of the base commit)",
   row("builder", `foo ${W}`, "block selfmod-state-read", []);
 });
 
-test("A: another session's handoff dir is labelled (the harness folder, outside the session's own dirs)", { skip: posixOnly }, () => {
-  for (const role of ["main", "builder"] as const) row(role, `foo ${OTHER}/x`, "undecided", [HFL]);
-  row("reviewer", `foo ${OTHER}/x`, "undecided", [HFL]);
-  row("main", `echo x ${GT} ${OTHER}/x`, "undecided", [HFL, "danger-write-outside"]);
+test("A: another session's handoff dir carries no label", { skip: posixOnly }, () => {
+  for (const role of ["main", "builder"] as const) row(role, `foo ${OTHER}/x`, "undecided", []);
+  row("reviewer", `foo ${OTHER}/x`, "undecided", []);
+  row("main", `echo x ${GT} ${OTHER}/x`, "undecided", []);
   row("builder", `echo x ${GT} ${OTHER}/x`, "block child-write-outside", []);
-  row("main", `foo x ${GT} ${HF}/n.txt`, "undecided", [HFL, "danger-write-outside"]);
+  row("main", `foo x ${GT} ${HF}/n.txt`, "undecided", []);
 });
 
-test("A: a win32 spelling of the folder is labelled on a win32 rig", () => {
+test("A: a win32 spelling of the folder carries no label on a win32 rig", () => {
   const AG = "C:\\Users\\u\\.pi\\agent";
   const r = { worktree: "C:\\w\\proj", scratch: [], tmp: [], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false, agentDir: AG, home: "C:\\Users\\u", realpath: () => null } as never;
   const floor: FloorEnv = { platform: "win32", cwd: "C:\\w\\proj", home: "C:\\Users\\u", agentDir: AG, resolver: () => null };
   const env = { roots: r, platform: "win32", cwd: "C:\\w\\proj", facts, floor };
   // the shell parser of a posix host drops unquoted backslashes: the backslash spellings are quoted words
   const label = (line: string): string | null => dangerSegment(parseShell(line, { cwd: "C:\\w\\proj", platform: "win32" })[0], env);
-  assert.equal(label(`foo x '${AG}\\pi-foreman'`), HFL);
-  assert.equal(label(`foo x '${AG}\\pi-foreman\\other.txt'`), HFL);
-  assert.equal(label("foo x C:/USERS/U/.pi/agent/PI-FOREMAN/other.txt"), HFL);
+  assert.equal(label(`foo x '${AG}\\pi-foreman'`), null);
+  assert.equal(label(`foo x '${AG}\\pi-foreman\\other.txt'`), null);
+  assert.equal(label("foo x C:/USERS/U/.pi/agent/PI-FOREMAN/other.txt"), null);
   assert.equal(label("foo x a.txt"), null);
 });
 
 // ------------------------------------------------------------------ part B: pins of today's labels
-const OPAQUE = "danger-opaque";
 const nl = (...l: string[]): string => l.join("\n");
 
-test("B1: a heredoc or pipe fed to a shell is labelled danger-opaque for every role", () => {
+test("B1: a heredoc or pipe fed to a shell carries no label for every role", () => {
   const lines = [
     nl("cat <<'EOT' | sh", `cat ${SECRET}`, "EOT"),
     nl("sh <<EOT", `cat ${SECRET}`, "EOT"),
@@ -131,7 +130,7 @@ test("B1: a heredoc or pipe fed to a shell is labelled danger-opaque for every r
     `echo 'cat ${SECRET}' | sh -s`,
   ];
   for (const l of lines) {
-    for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, l, "undecided", [OPAQUE]);
+    for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, l, "undecided", []);
   }
 });
 
@@ -143,11 +142,11 @@ test("B1: an unclosed heredoc fed to cat (no end line) gets no label either", ()
   for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`), "undecided", []);
 });
 
-test("B2: an opaque line that is not an assignment prefix gets no install label; an env prefix does get it", () => {
+test("B2: an opaque line and an env-prefixed install carry no label", () => {
   for (const role of ["main", "builder"] as const) {
-    row(role, "npm ci $X", "undecided", [OPAQUE]);
-    row(role, "FOO=1 npm ci", "undecided", ["danger-install", OPAQUE]);
-    row(role, "npm ci", "undecided", ["danger-install"]);
+    row(role, "npm ci $X", "undecided", []);
+    row(role, "FOO=1 npm ci", "undecided", []);
+    row(role, "npm ci", "undecided", []);
   }
-  for (const role of ["reviewer", "explorer"] as const) row(role, "npm ci $X", "undecided", [OPAQUE]);
+  for (const role of ["reviewer", "explorer"] as const) row(role, "npm ci $X", "undecided", []);
 });

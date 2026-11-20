@@ -13,7 +13,7 @@
       "additionalProperties": false,
       "description": "The rules-first permission system.",
       "properties": {
-        "profile": { "type": ["string", "null"], "description": "The permission profile. Honoured in the user, organisation and default layers only." }
+        "profile": { "type": ["string", "null"], "description": "Removed: permission profiles are gone. Accepted and ignored; the doctor prints an INFO line while it is set." }
       }
     },
     "rankTiers": { "type": "object", "description": "Preset template only (config/presets/inexpensive.json): roles named by rank tier, resolved to models by `foreman config apply-preset` and removed from the written file. The runtime never reads it." },
@@ -411,6 +411,17 @@
         "workspaceKey": { "type": ["string", "null"], "description": "Workspace key of this repository ('/' makes subdirectories). null means <basename>-<hash of the workspace root>. User or overlay config only." },
         "expireDays": { "type": "integer", "minimum": 1, "description": "Days without a sighting after which an open report entry expires." },
         "startNote": { "type": "boolean", "description": "Send a main session without a parent one message at its first prompt that lists the open report entries seen by two or more sessions (default true)." }
+      }
+    },
+    "steward": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "description": "Allow /foreman steward on: one main session per repository owns the report list, groups it, starts one analysis helper on the strongest ranked model and proposes rounds that the owner confirms one by one (default false)." },
+        "minNew": { "type": "integer", "minimum": 1, "description": "Ungrouped open reports since the last pass that wake the steward (default 3)." },
+        "maxWaitHours": { "type": "integer", "minimum": 1, "description": "Hours after the last pass at which one new open report wakes the steward (default 24)." },
+        "checkMinutes": { "type": "integer", "minimum": 1, "description": "Minutes between the steward's checks of the report list (default 30)." },
+        "maxProposals": { "type": "integer", "minimum": 1, "description": "Rounds the steward proposes in one pass (default 3)." }
       }
     },
     "intercom": {

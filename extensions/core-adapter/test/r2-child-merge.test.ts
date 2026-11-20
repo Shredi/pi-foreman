@@ -1,4 +1,4 @@
-// A child never merges a pull or merge request: `child-pr-merge`, built like `child-pr-create`. The main session keeps today's verdict (danger-forge).
+// A child never merges a pull or merge request: `child-pr-merge`, built like `child-pr-create`. The main session gets no verdict and no label (C removed danger-forge).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -51,10 +51,10 @@ for (const l of MERGES) {
     }
   });
 
-  test(`main keeps danger-forge for ${JSON.stringify(l)}`, { skip: posixOnly }, () => {
+  test(`main has no verdict and no label (danger-forge gone) for ${JSON.stringify(l)}`, { skip: posixOnly }, () => {
     const o = run(l, "foreman");
     assert.deepEqual(res(o), {});
-    assert.equal(o.danger?.name, l.startsWith("FOO=1 ") ? "danger-opaque" : "danger-forge");
+    assert.equal(o.danger, null, "C: danger-forge and danger-opaque are gone, main runs it with no judge");
   });
 }
 
@@ -84,7 +84,7 @@ test("gh pr create stays child-pr-create; a variable program word is not refused
   for (const l of ["$X pr merge 1", "$X pr create"]) {
     const o = run(l, "builder");
     assert.deepEqual(res(o), {}, l);
-    assert.equal(o.danger?.name, "danger-opaque", l);
+    assert.equal(o.danger, null, l);
   }
 });
 
@@ -93,7 +93,7 @@ test("gh pr merge --help is refused for a child like gh pr create --help; main k
   assert.equal(res(run("gh pr create --help", "builder")).rule, "child-pr-create");
   const o = run("gh pr merge --help", "foreman");
   assert.deepEqual(res(o), {});
-  assert.equal(o.danger?.name, "danger-forge");
+  assert.equal(o.danger, null);
 });
 
 test("not covered: a GraphQL merge mutation gets no child-pr-merge", { skip: posixOnly }, () => {

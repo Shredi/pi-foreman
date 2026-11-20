@@ -132,11 +132,11 @@ test("sessionTree: agents and sessions as siblings, finished agents dropped, ski
   assert.equal(agent.type, "agent");
   assert.equal(agent.status, "working");
   assert.equal(mid.costText, "$2.00");
-  assert.deepEqual(mid.inline.map((p) => p.number), [21, 20]);
+  assert.deepEqual(mid.below.map((p) => p.number), [21, 20]);
   assert.deepEqual(sessionTree(top, { skip: new Set([top.sessions[0]]) }).children.map((i) => i.label), ["builder sonnet-4-5"]);
 });
 
-test("PR sort and summary for 0, 1, 2 and 5 PRs; inline split at 2", () => {
+test("PR sort and summary for 0, 1, 2 and 5 PRs; always below", () => {
   const pr = (number, ...checks) => ({ number, checks });
   assert.equal(prSummary([]), "");
   assert.equal(prSummary(undefined), "");
@@ -146,7 +146,7 @@ test("PR sort and summary for 0, 1, 2 and 5 PRs; inline split at 2", () => {
   assert.deepEqual(sortPrs(five).map((p) => p.number), [5, 3, 2, 4, 1]);
   assert.equal(prSummary(five), "5 PRs · 2 failing · 1 pending");
   assert.deepEqual(sortPrs([]), []);
-  assert.deepEqual(splitPrs([pr(1, "ok"), pr(2, "fail")]), { inline: [pr(2, "fail"), pr(1, "ok")], below: [] });
+  assert.deepEqual(splitPrs([pr(1, "ok"), pr(2, "fail")]), { inline: [], below: [pr(2, "fail"), pr(1, "ok")] });
   assert.equal(splitPrs(five).inline.length, 0);
   assert.equal(splitPrs(five).below.length, 5);
   assert.deepEqual(splitPrs([]), { inline: [], below: [] });

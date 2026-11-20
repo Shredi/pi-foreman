@@ -26,6 +26,6 @@ const env: DangerEnv = { roots, platform: process.platform, cwd: wt, facts };
 const hit = (line: string): string | null => dangerMatch({ tool: "bash", input: { command: line }, text: line, segments: parseShell(line, { cwd: wt }) }, env)?.name ?? null;
 const OUT = shPath(outside);
 
-test("owner: rm / mv of an outside link that points into the worktree is a write outside", { skip: posixOnly }, () => {
-  for (const l of [`rm ${OUT}/lnk`, `rm -f ${OUT}/lnk`, `mv ${OUT}/lnk moved`, `mv ${OUT}/lnk ${shPath(wt)}/moved`]) assert.equal(hit(l), "danger-write-outside", l);
+test("owner: rm / mv of an outside link that points into the worktree carries no label in C (it runs)", { skip: posixOnly }, () => {
+  for (const l of [`rm ${OUT}/lnk`, `rm -f ${OUT}/lnk`, `mv ${OUT}/lnk moved`, `mv ${OUT}/lnk ${shPath(wt)}/moved`]) assert.equal(hit(l), null, l); // C: the label is gone, a write outside by the owner session runs
 });

@@ -65,8 +65,9 @@ const pathRow = (p: string, exp: Exp): void => {
 const CWO = "block child-write-outside";
 const PI = "block selfmod-project-pi";
 const ASKPI = "ask selfmod-project-pi";
-const WO = 'undecided ["danger-write-outside"]';
-const OPQ = 'undecided ["danger-opaque"]';
+// C: the main session's shell writes carry no label (no `danger-write-outside` for it, no `danger-opaque`); the foreman's shell-write refusal rules in index.ts
+const WO = "undecided []";
+const OPQ = "undecided []";
 const NONE = "undecided []";
 const ALLOW = "allow path-write-worktree";
 const ALLOW_READ = "allow path-read-worktree";

@@ -38,6 +38,7 @@
         "footer-ui": true,
         "retro": true,
         "reports": true,
+        "steward": true,
         "trace": true
       }
     }

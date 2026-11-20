@@ -22,11 +22,11 @@ const ro: FloorEnv = { ...base, readOnlyChild: true };
 const floor = (line: string, e: FloorEnv = base): string | null => lineFloors(line, parseShell(line, { cwd: e.cwd }), e)?.rule ?? null;
 
 test("git-config floor: only the exact GIT_CONFIG_GLOBAL=/dev/null passes", () => {
-  assert.notEqual(floor("GIT_CONFIG_GLOBAL=/dev/null git status"), "floor-git-config");
+  assert.notEqual(floor("GIT_CONFIG_GLOBAL=/dev/null git status"), "danger-git-config");
   // the quoted spelling reaches the floor with its quotes masked, so it stays floored (stricter than the regex alone)
-  assert.equal(floor('GIT_CONFIG_GLOBAL="/dev/null" git status'), "floor-git-config");
+  assert.equal(floor('GIT_CONFIG_GLOBAL="/dev/null" git status'), "danger-git-config");
   for (const l of ["GIT_CONFIG_GLOBAL=/tmp/x git status", "GIT_CONFIG_GLOBAL=/dev/nullx git status", "GIT_CONFIG_SYSTEM=/dev/null git status", "GIT_CONFIG_COUNT=1 git status", "GIT_CONFIG_GLOBAL=$HOME/.gitconfig git status"]) {
-    assert.equal(floor(l), "floor-git-config", l);
+    assert.equal(floor(l), "danger-git-config", l);
   }
 });
 

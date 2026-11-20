@@ -1,7 +1,7 @@
 """Child permissions under the rules-first gate (delegation D4): bg_wait and contact_supervisor
 run without an ask; a routine line (`cd` and a project command) runs under mode auto, a child's write outside its worktree
-is refused by the child deny set (`child-write-outside`), and a dangerous line (an unreadable shell form, a network write)
-goes to the parent's dialog, which the rig dismisses.
+is refused by the child deny set (`child-write-outside`), and an unreadable shell form or a network write is no longer
+on the judge-first list, so it runs with no dialog (PR C).
 Same prerequisites and skips as test_replay.py."""
 from __future__ import annotations
 
@@ -34,9 +34,8 @@ class TestChildBaseline(ReplayCase):
         pi = rig.start()
         sid = pi.session_id()
         pi.prompt("[[replay:b1]] go", timeout=60)
-        # r79: the gate decides the seven lines, no review call stands in for them: a routine line runs (`mode:no-rule`), a write outside
-        # the worktree is refused by the child deny set before any dialog, and a dangerous line (`{ cd "$D"; ls; }`: unbound variable;
-        # `curl x`: network) is asked of the parent, whose dialog the rig dismisses. The package's own dialogs the rig still loads are not asserted.
+        # PR C: the gate decides the seven lines, no review call stands in for them: a write outside the worktree is refused by the child
+        # deny set, every other line runs (`mode:no-rule`): an opaque form (`{ cd "$D"; ls; }`) and a network write (`curl x`) are not on the judge-first list.
         notice, recs = pi.wait_child_notify(timeout=120, answers=[{"confirmed": False}, {"value": "No"}, {"value": "No"}])
         pi.close()
         self.assertIn("builder child finished", notice)
@@ -47,9 +46,9 @@ class TestChildBaseline(ReplayCase):
             ("blocked", "child-write-outside"),  # cd /usr && cargo test
             ("allowed", "mode:no-rule"),  # cd ../.. && ls (a read: only writes outside the worktree are refused)
             ("allowed", "mode:no-rule"),  # cd sub && cd ../.. && ls
-            ("blocked", "danger-opaque"),  # { cd "$D"; ls; }: $D is unbound, the line cannot be read exactly
+            ("allowed", "mode:no-rule"),  # { cd "$D"; ls; }: opaque, no longer judged
             ("allowed", "mode:no-rule"),  # cd nonexist/deeper; cd ../.. && ls
-            ("blocked", "danger-net-write"),  # cd sub && curl x
+            ("allowed", "mode:no-rule"),  # cd sub && curl x: no longer judged
         ], gate)
         sup = [r["decision"] for r in rig.traces()["trace-" + sid] if r.get("event") == "supervisor_request"]
         self.assertEqual(sup, ["open", "replied"])

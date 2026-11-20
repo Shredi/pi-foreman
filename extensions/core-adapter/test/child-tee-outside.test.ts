@@ -32,12 +32,13 @@ test("tee to the null device and the standard sinks is exempt", { skip: posixOnl
   for (const l of [`echo x | tee /dev/null`, `echo x | tee /dev/stdout`, `echo x | tee /dev/stderr`, `echo x | tee -a /dev/null`]) assert.notEqual(seen(l), "block:child-write-outside", l);
 });
 
-test("tee inside the worktree, the scratch dir or onto a handoff name keeps today's result (mode step, opaque)", { skip: posixOnly }, () => {
-  for (const l of [`echo x | tee ${wt}/f`, `echo x | tee ${scr}/f`, `echo x | tee ${H}/result.md`, `echo x | tee ${H}/work/n.txt`, `echo x | tee out.txt`]) assert.equal(seen(l), "none:danger-opaque", l);
+test("tee inside the worktree, the scratch dir or onto a handoff name gets no verdict and no label (C: danger-opaque is gone)", { skip: posixOnly }, () => {
+  for (const l of [`echo x | tee ${wt}/f`, `echo x | tee ${scr}/f`, `echo x | tee ${H}/result.md`, `echo x | tee ${H}/work/n.txt`, `echo x | tee out.txt`]) assert.equal(seen(l), "none:-", l);
 });
 
 test("forms that cannot be resolved stay at the mode step (left open)", { skip: posixOnly }, () => {
-  for (const l of [`echo x | tee $HOME/f`, `echo x | tee $D/f`, `echo x | tee "$(pwd)/f"`]) assert.equal(seen(l), "none:danger-opaque", l);
+  // C: no danger-opaque; an unresolvable tee target of a child is judge-first danger-write-outside
+  for (const l of [`echo x | tee $HOME/f`, `echo x | tee $D/f`, `echo x | tee "$(pwd)/f"`]) assert.equal(seen(l), "none:danger-write-outside", l);
 });
 
 test("a session that is no subagent child keeps today's result", { skip: posixOnly }, () => {

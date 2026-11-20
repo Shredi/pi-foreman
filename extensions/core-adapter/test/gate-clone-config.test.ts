@@ -29,8 +29,9 @@ test("clone config: every spelling of -c and --config with a floored key is refu
     `git -C .. clone -c core.fsmonitor=x ${U}`,
     "git clone --config core.sshCommand=true /x y",
   ]) {
-    assert.equal(floor(l), "floor-git-config", l);
-    assert.equal(floor(l, { ...env, child: true }), "floor-git-config", l);
+    // the judge-first kind `danger-git-config` (the judge reads the call; no deny)
+    assert.equal(floor(l), "danger-git-config", l);
+    assert.equal(floor(l, { ...env, child: true }), "danger-git-config", l);
   }
 });
 
@@ -53,24 +54,24 @@ test("clone config: git clone without config is unchanged", () => {
 });
 
 type T = Parameters<typeof r11Rig>[0];
-const ALLOW = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
+const verdictText = (verdict: string): string => JSON.stringify({ verdict, reason: "stub" });
 const ROLES = ["explorer", "builder", "reviewer"];
 
 for (const kind of ["main", "child"] as const) {
-  for (const mode of ["auto", "allow"] as const) {
-    test(`clone config end to end: ${kind} in mode ${mode} is blocked by floor-git-config, a harmless clone is not`, async (t: T) => {
+  for (const verdict of ["unsure", "clear"] as const) {
+    test(`clone config end to end: ${kind}, judge says ${verdict}: ${verdict === "unsure" ? "a floored key asks (no owner answer or parent: refused)" : "a floored key runs"}, a harmless clone never reaches the judge`, async (t: T) => {
       const saved = { b: process.env[BINDINGS_ENV], c: process.env.FOREMAN_CHECKOUT };
       t.after(() => {
         if (saved.b === undefined) delete process.env[BINDINGS_ENV]; else process.env[BINDINGS_ENV] = saved.b;
         if (saved.c === undefined) delete process.env.FOREMAN_CHECKOUT; else process.env.FOREMAN_CHECKOUT = saved.c;
       });
-      if (kind === "child") process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "builder", launchId: "l1", kind: "first", workspace: "", perms: { mode, childDeny: true } } });
+      if (kind === "child") process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "builder", launchId: "l1", kind: "first", workspace: "" } });
       else delete process.env[BINDINGS_ENV];
       delete process.env.FOREMAN_CHECKOUT;
-      const modelRegistry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+      const modelRegistry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: verdictText(verdict) }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
       const ui = { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined };
       const config = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } } };
-      const c = await r11Rig(t, {}, { ctx: { modelRegistry, ui, [RIG_PERMISSIONS]: { mode, allow: ["Write", "Edit"], classifier: { allow: ["Anything at all."] } } }, config, child: kind === "child" });
+      const c = await r11Rig(t, {}, { ctx: { modelRegistry, ui }, config, child: kind === "child" });
       const g = (...a: string[]) => execFileSync("git", ["-C", c.project, "-c", "user.name=p", "-c", "user.email=p@x", ...a], { stdio: "ignore" });
       g("init", "-q", "-b", "feature");
       fs.writeFileSync(path.join(c.project, "f.txt"), "x");
@@ -80,16 +81,18 @@ for (const kind of ["main", "child"] as const) {
       const rule = async (command: string): Promise<{ blocked: boolean; rule?: string }> => {
         const n0 = c.trace().length;
         const res = (await c.call("bash", { command })) as { block?: boolean } | undefined;
-        const recs = c.trace().slice(n0).filter((x) => x.event === "guard" && x.guard === "gate");
+        const recs = c.trace().slice(n0).filter((x) => (x.event === "guard" && x.guard === "gate") || x.event === "dialog");
         return { blocked: res?.block === true, rule: (recs[recs.length - 1] as { rule?: string } | undefined)?.rule };
       };
       for (const l of [`git clone --config core.sshCommand=x ${U}`, `git clone ${U} -c core.hooksPath=h`]) {
         const r = await rule(l);
-        assert.equal(r.blocked, true, l);
-        assert.equal(r.rule, "floor-git-config", l);
+        assert.equal(r.blocked, verdict === "unsure", l);
+        if (verdict === "unsure") assert.equal(r.rule, "danger-git-config", l);
+        else assert.equal(r.rule, "judge:danger-git-config", l);
       }
       const ok = await rule(`git clone -c user.name=x ${U}`);
-      assert.notEqual(ok.rule, "floor-git-config");
+      assert.equal(ok.blocked, false);
+      assert.ok(!String(ok.rule).includes("git-config"), String(ok.rule));
     });
   }
 }

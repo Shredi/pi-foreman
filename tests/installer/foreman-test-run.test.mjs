@@ -408,3 +408,119 @@ test("killTree falls back to the child alone with a note when the process list f
   assert.deepEqual(sent, [[10, "SIGTERM"], [10, "SIGKILL"]]);
   assert.match(err, /could not list processes; stopping the main test process only/);
 });
+
+const queueDir = (dir) => `${lockFile(dir)}.queue`;
+const tickets = (dir) => (fs.existsSync(queueDir(dir)) ? fs.readdirSync(queueDir(dir)).sort() : []);
+const until = async (cond, ms = 5000) => {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    assert.ok(Date.now() < end, "condition not reached in time");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+};
+const quiet = { write() {} };
+
+test("queue: three waiters behind a holder acquire in arrival order and leave no tickets", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held");
+    const order = [];
+    const waiters = [];
+    for (const n of [1, 2, 3]) {
+      waiters.push(
+        acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet }).then((release) => {
+          order.push(n);
+          release();
+        }),
+      );
+      await until(() => tickets(dir).length === n);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(order, []);
+    fs.rmSync(lockFile(dir));
+    await Promise.all(waiters);
+    assert.deepEqual(order, [1, 2, 3]);
+    assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a waiter touches its ticket as a heartbeat", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held");
+    const w = acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 400, stderr: quiet });
+    const caught = assert.rejects(w, LockWaitTimeout);
+    await until(() => tickets(dir).length === 1);
+    const file = path.join(queueDir(dir), tickets(dir)[0]);
+    const old = new Date(Date.now() - 20_000);
+    fs.utimesSync(file, old, old);
+    await until(() => fs.statSync(file).mtimeMs > Date.now() - 5000);
+    await caught;
+    assert.deepEqual(tickets(dir), [], "the ticket is removed on timeout");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a dead-pid ticket at the head is skipped and removed", async () => {
+  const dir = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    fs.mkdirSync(queueDir(dir), { recursive: true });
+    const name = `${"1".padStart(15, "0")}-000000-${dead.pid}.json`;
+    fs.writeFileSync(path.join(queueDir(dir), name), "{}");
+    const release = await acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 2000, stderr: quiet });
+    release();
+    assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a live ticket with a heartbeat older than 30 s is dropped, a fresh one keeps its place", async () => {
+  const dir = tmp();
+  try {
+    fs.mkdirSync(queueDir(dir), { recursive: true });
+    const stale = path.join(queueDir(dir), `${"1".padStart(15, "0")}-000000-${process.pid}.json`);
+    const fresh = path.join(queueDir(dir), `${"2".padStart(15, "0")}-000000-${process.pid}.json`);
+    fs.writeFileSync(stale, "{}");
+    fs.writeFileSync(fresh, "{}");
+    const old = new Date(Date.now() - 31_000);
+    fs.utimesSync(stale, old, old);
+    await assert.rejects(acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 200, stderr: quiet }), LockWaitTimeout);
+    assert.ok(!fs.existsSync(stale));
+    assert.ok(fs.existsSync(fresh));
+    assert.ok(!fs.existsSync(lockFile(dir)), "the waiter behind the fresh ticket did not take the lock");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("queue: a waiter whose ticket vanished queues again at the end", async () => {
+  const dir = tmp();
+  try {
+    liveLock(dir, "/held");
+    const order = [];
+    const take = (n) =>
+      acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet }).then((release) => {
+        order.push(n);
+        release();
+      });
+    const first = take(1);
+    await until(() => tickets(dir).length === 1);
+    const firstTicket = tickets(dir)[0];
+    const second = take(2);
+    await until(() => tickets(dir).length === 2);
+    fs.rmSync(path.join(queueDir(dir), firstTicket));
+    await until(() => tickets(dir).length === 2 && !tickets(dir).includes(firstTicket));
+    assert.equal(tickets(dir).length, 2);
+    fs.rmSync(lockFile(dir));
+    await Promise.all([first, second]);
+    assert.deepEqual(order, [2, 1]);
+    assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

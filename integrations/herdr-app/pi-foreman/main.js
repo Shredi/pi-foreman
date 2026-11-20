@@ -7,9 +7,9 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
-  radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
@@ -25,6 +25,8 @@ const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
 const PRESS_MS = 1500; // a clicked element shows its pending state this long (the 1 s timer then redraws it)
 const RENDER_NOTICE_MS = 600000; // the render notice comes at most this often
 const OPEN_PR_FOLD_AT = 15; // with more Open PRs than this, the groups without a failing check or a conflict start folded
+const OPEN_PR_GROUP_LINES = 8; // a group open for a failing check or a conflict draws this many lines, then "+N more"
+const LEGEND_LEAVE_MS = 1000; // the legend's content is dropped this long after the pointer left the "?"
 // exec `timeout` (ms) per job; the Promise.race watchdogs stay as the backstop for an app that ignores the option (Herdr app 0.1.13)
 const T_RADAR = 30000;
 const T_PRS = 600000; // the cap of exec
@@ -139,7 +141,7 @@ export default class ForemanAgents extends View {
     this.hcProp = given.hc;
     // The sample view (docs/development.md): the radar comes from sample.mjs once; nothing is polled and nothing is started.
     this.sample = given.sample === true;
-    this.manyPrs = given.manyPrs === true; // with the sample: the ~40-PR feed of sample.mjs (SAMPLE_MANY) instead of the legend's
+    this.manyPrs = given.manyPrs === true; // with the sample: the 52-PR feed of sample.mjs (SAMPLE_MANY) instead of the legend's
     if (this.sample) {
       const doc = parseRadarDoc(JSON.stringify(this.manyPrs ? SAMPLE_MANY.radar : SAMPLE.radar));
       this.radar.set("local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: null, tried: Date.now() });
@@ -154,10 +156,14 @@ export default class ForemanAgents extends View {
     this.failed = new Set(); // keys of runs whose last try failed: one error notice per failure, not per retry
     this.pressed = new Map(); // element id -> when it was clicked: the next render shows it pending (visible feedback, same frame)
     this.seenChips = new Set();
+    this.clocks = new Map(); // id -> a shown age and how to read it again (see clock)
+    this.expanded = new Set(); // repositories whose capped Open PRs group shows all its lines
+    this.legendHot = false; // the pointer rests on the legend's "?": only then is its content built
+    this.legendLeft = null; // when it left (the content goes LEGEND_LEAVE_MS later)
     this.hotCard = null; // id of the PR chip the pointer last rested on, cleared when that chip is no longer drawn: the only chip whose hover card is built
     this.poll(cx);
     this.pollPrs(cx, Date.now());
-    cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); this.unpress(cx); });
+    cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); this.unpress(cx); this.tickClocks(cx); });
   }
 
   // A click gives feedback in the render it causes: the element lights up and shows "…" until PRESS_MS has passed.
@@ -176,6 +182,23 @@ export default class ForemanAgents extends View {
     let gone = false;
     for (const [id, at] of this.pressed ?? []) if (Date.now() - at >= PRESS_MS) { this.pressed.delete(id); gone = true; }
     if (gone) cx.notify();
+  }
+
+  // A shown age that comes from now (a row's time in its status, a plan or note age, the Open PRs header) is a clock: render records the text it
+  // drew and how to get it again, and the 1 s timer redraws only when one of them reads differently. Their steps are minutes.
+  clock(id, text, now) {
+    const shown = text(now);
+    this.clocks ??= new Map();
+    this.clocks.set(id, { text, shown });
+    return shown;
+  }
+
+  tickClocks(cx) {
+    const now = Date.now();
+    let changed = false;
+    for (const c of this.clocks?.values() ?? []) if (c.text(now) !== c.shown) changed = true;
+    if (this.legendHot && this.legendLeft !== null && now - this.legendLeft >= LEGEND_LEAVE_MS) { this.legendHot = false; changed = true; }
+    if (changed) cx.notify();
   }
 
   machines() {
@@ -256,7 +279,12 @@ export default class ForemanAgents extends View {
         this.radar.set(key, next);
         this.busy.delete(key);
         this.publish();
-        cx.notify();
+        // Stored always (fresh ages and `tried`); redrawn only when what it shows changed (ages by their label, see radarKey).
+        this.radarKeys ??= new Map();
+        const shown = radarKey(next);
+        const same = this.radarKeys.get(key) === shown;
+        this.radarKeys.set(key, shown);
+        if (!same) cx.notify();
       });
     }
     this.pollRecords(cx, now);
@@ -336,9 +364,10 @@ export default class ForemanAgents extends View {
           };
           const plan = s.plan === undefined ? null : await one("plan.json");
           const note = s.note === undefined ? null : await one("note.json");
+          const before = this.shows.get(id);
           this.shows.set(id, { hint, read: Date.now(), plan, note });
           this.busy.delete(bk);
-          cx.notify();
+          if (JSON.stringify([before?.plan ?? null, before?.note ?? null]) !== JSON.stringify([plan, note])) cx.notify();
         });
       }
     }
@@ -409,8 +438,11 @@ export default class ForemanAgents extends View {
           if (r.code === 0) { recs = parseRecords(r.stdout); attach = parseAttachTarget(r.stdout); }
         } catch { /* no hc here: no records */ }
         this.busy.delete(`hc:${addr}`);
-        if (this.childPi.has(addr) || this.remoteTargets?.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, attach, tried: Date.now() });
-        cx.notify();
+        if (this.childPi.has(addr) || this.remoteTargets?.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) {
+          const before = this.recs.get(addr);
+          this.recs.set(addr, { recs, attach, tried: Date.now() });
+          if (recsKey(before?.recs) !== recsKey(recs) || (before?.attach ?? "") !== attach) cx.notify();
+        }
       });
     }
   }
@@ -466,65 +498,54 @@ export default class ForemanAgents extends View {
     });
   }
 
-  // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one dot; a click opens its
-  // page when radar gave a URL (or a repository URL to derive it from). Resting on the chip opens the hover card.
-  // `line` ({title}) draws it as an Open PRs line instead (see openPrGroup): full width, no pill, the title after the dot.
-  prChip(t, pr, href, key, line = null) {
+  // A PR is a line: number, the conflict mark and the dot, the title. A click opens its page when radar gave a URL (or a repository URL to
+  // derive it from). Resting on the line opens the hover card; the tooltip names the state in words. `line` is {title, numW}: the title and the width of the number cell.
+  prChip(t, pr, href, key, line = {}) {
     return this.prGuard(() => this.prChipRaw(t, pr, href, key, line), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
   }
 
-  prChipRaw(t, pr, href, key, line = null) {
+  prChipRaw(t, pr, href, key, line) {
     const st = prDotState(pr);
     const red = st.fill === "red";
     const label = `⎇ #${pr.number}`;
-    const chip = (line
-      ? h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
-      : h_flex().flex_none().h(18).px(6).gap(4).items_center().rounded(9).border(1).border_color(red ? t.blocked : t.border).bg(t.raised).text_size(10.5).font_medium())
+    // The marks cell has a fixed width (the conflict slot stays as blank space without a conflict), so the titles stand at one x.
+    const chip = h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
       .text_color(red ? t.blocked : t.muted)
-      .child(line ? div().flex_none().w(52).child(label) : div().child(label))
-      // A line keeps the titles at one x: the marks cell has a fixed width (the conflict slot stays as blank space without a conflict), and
-      // the unreviewed token goes behind the title.
-      .when(Boolean(line), (el) => el.child(h_flex().flex_none().w(30).gap(2).items_center()
+      .child(div().flex_none().w(line.numW ?? 52).whitespace_nowrap().child(label))
+      .child(h_flex().flex_none().w(30).gap(2).items_center()
         .child(st.conflict ? conflictMark(t) : div().flex_none().size(11))
-        .child(prDot(t, st))))
-      .when(!line, (el) => el
-        .when(st.conflict, (e) => e.child(conflictMark(t)))
-        .when(pr.unreviewed === true, (e) => e.child(div().text_color(tones(t).amber).child(UNREVIEWED)))
         .child(prDot(t, st)))
-      .when(Boolean(line?.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
-      .when(Boolean(line) && pr.unreviewed === true, (el) => el.child(div().flex_none().text_color(tones(t).amber).child(UNREVIEWED)));
-    const c = prCard(pr);
+      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)));
     const id = `pr-${key}-${pr.number}`;
-    // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
+    // The pointer on the line tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
     const onMove = (e, cx) => guard(() => {
       // The size is the one render stored (this.vp); a live read from the handler refreshes it after a resize when the host allows it.
       const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
-      // The pointer rests on this chip: its card is built by the render that follows (the chip id is stable across data changes).
+      // The pointer rests on this line: its card is built by the render that follows (the line id is stable across data changes).
       let redraw = this.hotCard !== id;
       this.hotCard = id;
       if (b && pos && loc && vp) {
-        const { anchor, maxH } = placeCardBox({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
+        const { anchor, maxH } = placeCardBox({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(prCard(pr)) });
         this.cardAnchor ??= new Map();
         this.cardMaxH ??= new Map();
         if (this.cardAnchor.get(id) !== anchor || this.cardMaxH.get(id) !== maxH) { this.cardAnchor.set(id, anchor); this.cardMaxH.set(id, maxH); redraw = true; }
       }
       if (redraw) cx.notify?.();
     }, undefined);
-    // The tooltip names the state in words (the dot's colours); the hover card adds the details.
-    const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
+    const trigger = chip.id(id).tooltip(prTooltip(pr)).on_mouse_move(onMove)
       .when(Boolean(href), (el) => el.cursor_pointer()
-        .hover((x) => (line ? x.bg(t.hover) : x.border_color(t.working).text_color(t.foreground)))
+        .hover((x) => x.bg(t.hover))
         .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(id, cx); this.openUrl(href, cx); }))
       .when(!href, (el) => el.on_click((_e, cx) => {
         cx.stop_propagation?.();
         guard(() => notify({ title: "No link for this pull request", body: `#${pr.number} has no page address yet.`, level: "info" }));
       }));
     this.seenChips?.add(id);
-    // The id carries a hash of the card's content: a card is not reused when its content changed.
-    // Only the hot chip builds its card (cardView is about 15 elements, each one host call); the others hold an empty element.
-    return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
+    // The id carries a short key of the card's content (prCardKey): a card is not reused when its content changed.
+    // Only the hot line builds its card (cardView is about 15 elements, each one host call); the others hold an empty element.
+    return HoverCard.new(`card-${key}-${pr.number}-${hashOf(prCardKey(pr))}`).open_delay(300).close_delay(200)
       .anchor(this.cardAnchor?.get(id) ?? "top_center")
-      .trigger(trigger).content(this.hotCard === id ? (this.prGuard(() => this.cardView(t, c, this.cardMaxH?.get(id)), null) ?? div()) : div());
+      .trigger(trigger).content(this.hotCard === id ? (this.prGuard(() => this.cardView(t, prCard(pr), this.cardMaxH?.get(id)), null) ?? div()) : div());
   }
 
   // The hover card of a PR: title, description excerpt, conflict line, the jobs grouped failed / running / passed.
@@ -557,19 +578,12 @@ export default class ForemanAgents extends View {
     return this.prGuard(() => enrichPrs(prs, this.feed), prs);
   }
 
-  // The PR chips of a session row, on the right of its title row for every row: up to INLINE_MAX chips. A row with more PRs has none
-  // here; its PRs are lines below the row (prLines).
-  rowChips(t, item) {
-    const shown = this.enrich(splitPrs(item.prs ?? []).inline);
-    return shown.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id).mr(3));
-  }
-
-  // The PRs of a session row with more than INLINE_MAX PRs: one Open PRs line each (number, marks, dot, title), in sorted order, indented
-  // like the row's sub-rows. Hover and click are the chip's.
+  // The PRs of a session row: one line each (number, marks, dot, title), in sorted order, indented like the row's sub-rows. Hover and click are the line's.
   prLines(t, item, below, ind) {
     const lines = this.enrich(below);
+    const numW = numberCellWidth(lines);
     return v_flex().flex_none().pl(ind + 20).pr(8).gap(1)
-      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "" })));
+      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "", numW })));
   }
 
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
@@ -587,7 +601,7 @@ export default class ForemanAgents extends View {
     const folded = state ? state.folded : this.folded.has(id);
     return h_flex().flex_none().size(16).items_center().justify_center().rounded(4)
       .when(kids && !state, (el) => el.id(`fold:${id}`).cursor_pointer().hover((x) => x.bg(t.hover))
-        .on_click((_e, cx) => { if (this.folded.has(id)) this.folded.delete(id); else this.folded.add(id); cx.notify(); }))
+        .on_click((_e, cx) => { cx.stop_propagation?.(); if (this.folded.has(id)) this.folded.delete(id); else this.folded.add(id); cx.notify(); }))
       .when(kids, (el) => el.child(svg(folded ? CHEVRON.closed : CHEVRON.open).size(11).text_color(t.dim)));
   }
 
@@ -612,7 +626,7 @@ export default class ForemanAgents extends View {
     return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0, carded).flex_1().min_w(0));
   }
 
-  // Under a session row: with more than two PRs, one line per PR (`splitPrs(item.prs).below` via prLines; the row then has no chips, see rowChips), then the show lines, then the status line.
+  // Under a session row: one line per PR (`splitPrs(item.prs).below` via prLines), then the show lines, then the status line.
   // `x` is the left of the connector line when children follow (see rail): every extras row then carries it, so the line runs
   // unbroken from the row's chevron through these rows to the first child.
   extras(t, item, ind, x = null) {
@@ -620,7 +634,9 @@ export default class ForemanAgents extends View {
     const detail = detailLine(item.node, item.recs);
     const line = statusLine(detail);
     const blocked = detail.blocked;
-    const shows = item.node?.show ? showRows(item.node.show, this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`), Date.now()) : [];
+    const meta = item.node?.show ? this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`) : null;
+    const shows = item.node?.show ? showRows(item.node.show, meta, Date.now()) : [];
+    if (shows.length) this.clock(`show:${item.id}`, (n) => showRows(item.node.show, meta, n).map((r) => r.text).join("\n"), Date.now());
     const below = splitPrs(item.prs ?? []).below;
     const rows = [
       ...(below.length ? [this.prGuard(() => this.prLines(t, item, below, ind), div())] : []),
@@ -662,18 +678,20 @@ export default class ForemanAgents extends View {
     const active = item.address !== undefined && item.address === this.shown;
     const nameId = `name:${item.id}`;
     const nameOn = this.pressing(nameId);
+    // A click anywhere on the row opens the session (the fold slot and the PR lines keep their own clicks); the name's own handler stops it there.
+    const open = item.address !== undefined ? (_e, cx) => { this.press(nameId, cx); return item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }); }
+      : item.node?.machine && item.node?.hcTerminal ? (_e, cx) => { this.press(nameId, cx); this.openRemote(item.node, cx); } : null;
     const name = div().id(nameId).flex_1().min_w(0).truncate().text_color(nameOn ? t.working : item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(nameOn ? `${stripPi(item.label)} …` : stripPi(item.label));
     return row
       .when(active && root, (el) => el.bg(t.raised).rounded(6)) // a card carries the selection itself (see node)
-      .child(item.address !== undefined ? name.cursor_pointer().on_click((_e, cx) => { this.press(nameId, cx); return item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }); })
-        : item.node?.machine && item.node?.hcTerminal ? name.cursor_pointer().on_click((_e, cx) => { this.press(nameId, cx); this.openRemote(item.node, cx); }) : name)
+      .when(open !== null, (el) => el.cursor_pointer().on_click(open))
+      .child(open !== null ? name.cursor_pointer().on_click((e, cx) => { cx.stop_propagation?.(); return open(e, cx); }) : name)
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
       .when(Boolean(item.restart), (el) => el.child(div().id(`restart:${item.id}`).flex_none().cursor_pointer().text_size(10.5).text_color(t.working).child(this.pressing(`restart:${item.id}`) ? "Restart …" : "Restart")
         .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(`restart:${item.id}`, cx); this.restartChild(item.restart, cx); })))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))
-      .children(this.prGuard(() => this.rowChips(t, item), []))
       .child(glyphRight)
       .when(x !== null, (el) => el.relative().child(this.rail(t, `${item.id}/row`, x, Math.floor(((root ? 22 : 26) + 16) / 2))));
   }
@@ -724,8 +742,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(root?.costText), (el) => el.child(div().text_size(11).text_color(t.muted).child(root.costText)))
       .when(root !== null && root.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${root.sessions} sessions`)))
       .when(host !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(host)))
-      .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(now - since))))
-      .children(root ? this.prGuard(() => this.rowChips(t, root), []) : [])
+      .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(this.clock(`since:${a.address}`, (n) => fmtSince(n - since), now))))
       .child(statusGlyph(t, shownStatus));
   }
 
@@ -740,8 +757,8 @@ export default class ForemanAgents extends View {
   }
 
   // "Open PRs": PRs no agent works on, one foldable group per repository (openPrGroup). Groups with a failing check or a conflict come
-  // first and start open; with more than OPEN_PR_FOLD_AT PRs the others start folded. Folding by hand (`this.folded`, `this.unfolded`)
-  // lasts while Herdr is open. A group that fails to build is replaced by a plain row (its name and count), so one repository does not
+  // first and start open, drawing OPEN_PR_GROUP_LINES lines at most (the problem ones first) and then a "+N more" line; with more than
+  // OPEN_PR_FOLD_AT PRs the others start folded. Folding by hand (`this.folded`, `this.unfolded`) lasts while Herdr is open. A group that fails to build is replaced by a plain row (its name and count), so one repository does not
   // take the section down.
   openPrRows(t, groups, age = "") {
     if (!groups.length) return [];
@@ -763,10 +780,11 @@ export default class ForemanAgents extends View {
   // folded, one line per PR. The heading row is the click target; the group's element keeps the id `op-<repo>` with its lines inside.
   openPrGroup(t, { g, prs, failing, conflicts }, auto) {
     const fid = `opg:${g.repo}`;
+    this.expanded ??= new Set();
     const folded = this.folded.has(fid) || (auto && !this.unfolded.has(fid));
     const n = prs.length; // throws for a group without a PR list: the caller's fallback row takes it
     const toggle = (_e, cx) => {
-      if (folded) { this.folded.delete(fid); this.unfolded.add(fid); } else { this.folded.add(fid); this.unfolded.delete(fid); }
+      if (folded) { this.folded.delete(fid); this.unfolded.add(fid); } else { this.folded.add(fid); this.unfolded.delete(fid); this.expanded.delete(g.repo); }
       cx.notify();
     };
     const counts = h_flex().flex_none().text_size(10).text_color(t.dim).child(`${n} ${n === 1 ? "PR" : "PRs"}`)
@@ -779,8 +797,16 @@ export default class ForemanAgents extends View {
       .child(counts);
     const group = v_flex().id(`op-${g.repo}`).flex_none().mt(5).pt(3).border_t(1).border_color(t.border).child(head);
     if (folded) return group;
+    // A group open for a failing check or a conflict is capped: the conflicting PRs first (they are few and sort among the quiet ones), then the
+    // failing, then the rest in order, then "+N more" until a click shows all.
+    const capped = (failing > 0 || conflicts > 0) && n > OPEN_PR_GROUP_LINES && !this.expanded.has(g.repo);
+    const shown = capped ? [...prs.filter(prConflict), ...prs.filter((p) => !prConflict(p) && prFailing(p)), ...prs.filter((p) => !prConflict(p) && !prFailing(p))].slice(0, OPEN_PR_GROUP_LINES) : prs;
+    const numW = numberCellWidth(prs);
+    const more = (_e, cx) => { this.expanded.add(g.repo); cx.notify(); };
     return group.child(v_flex().flex_none().pl(20).pr(8).gap(1)
-      .children(prs.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "" }))));
+      .children(shown.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "", numW })))
+      .when(capped, (el) => el.child(h_flex().id(`opm-${g.repo}`).flex_none().h(18).px(4).items_center().rounded(4).cursor_pointer().text_size(10.5).text_color(t.dim)
+        .hover((x) => x.bg(t.hover)).on_click(more).child(`+${n - shown.length} more`))));
   }
 
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.
@@ -789,6 +815,35 @@ export default class ForemanAgents extends View {
     return h_flex().id(`op-${g?.repo}`).pl(8).pr(8).py(2).flex_none().items_center().gap_x(5).text_size(11)
       .child(div().text_color(t.dim).truncate().max_w(140).child(String(g?.repo ?? "")))
       .child(div().text_color(t.dim).child(`${n} ${n === 1 ? "PR" : "PRs"}`));
+  }
+
+  // The legend: a "?" in the title bar; resting on it lists every PR dot with its words. The content is built only while the pointer rests there.
+  legend(t) {
+    const trigger = h_flex().id("legend-open").h(22).w(22).mr(4).items_center().justify_center().rounded(11).cursor_pointer().text_size(11).text_color(t.muted)
+      .hover((el) => el.bg(t.hover).text_color(t.foreground))
+      .on_hover((hovered, cx) => this.legendOver("trigger", hovered, cx))
+      .child("?");
+    return HoverCard.new("legend-card").open_delay(200).close_delay(200).anchor("top_center")
+      .trigger(trigger).content(this.legendHot ? this.legendView(t).on_hover((hovered, cx) => this.legendOver("card", hovered, cx)) : div());
+  }
+
+  // The pointer is on the "?" or on the open card: the content stays while it is on either, and goes LEGEND_LEAVE_MS after it left both.
+  legendOver(part, hovered, cx) {
+    this.legendIn ??= new Set();
+    if (hovered) this.legendIn.add(part); else this.legendIn.delete(part);
+    if (this.legendIn.size > 0) { this.legendLeft = null; if (!this.legendHot) { this.legendHot = true; cx?.notify?.(); } } else this.legendLeft = Date.now();
+  }
+
+  legendView(t) {
+    const rows = PR_LEGEND.map((e) => {
+      const st = prDotState(e.sample);
+      return h_flex().gap(6).items_center()
+        .child(h_flex().flex_none().w(30).gap(2).items_center().child(e.key === "pr-conflict" ? conflictMark(t) : div().flex_none().size(11)).child(prDot(t, st)))
+        .child(div().flex_1().min_w(0).child(e.words));
+    });
+    return v_flex().w(300).p(10).gap(4).bg(t.popover).border(1).border_color(t.border).rounded(8).text_size(11).text_color(t.muted)
+      .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Pull request dots"))
+      .children(rows);
   }
 
   render(cx) {
@@ -805,6 +860,7 @@ export default class ForemanAgents extends View {
     const shown = guard(() => focused()?.agent, null);
     this.shown = shown;
     this.seenChips = new Set(); // the PR chips this render draws (see prChipRaw)
+    this.clocks = new Map(); // the shown ages this render draws (see clock)
     const spaceList = guard(() => (this.sample ? SAMPLE.spaces : spaces()), []);
     // The window's measurements are legal from render by contract (typings.rs), so the hover-card placement reads the size here.
     this.vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
@@ -866,6 +922,8 @@ export default class ForemanAgents extends View {
       }
     }
     for (const addr of guard(() => attachNests(list, all, radarTargets, (a) => this.recs.get(a)?.attach ?? ""), new Set())) nested.add(addr);
+    // The local attach terminal a registry node stored (radar's `attach`) is that node's card, listed with a pane or not.
+    for (const x of [...remoteNodes, ...endedNodes]) if (x.attach && list.some((a) => a.address === x.attach)) nested.add(x.attach);
     const twins = guard(() => remoteTwins(list, remoteNodes), new Set());
     const listedBy = new Map(list.map((a) => [a.address, a]));
     // `<machine>/<t>` targets already drawn as a session (radar nodes, listed agents): an attach of one is not drawn again.
@@ -918,12 +976,14 @@ export default class ForemanAgents extends View {
     const orphanGroups = this.prGuard(() => openPrGroups(this.feed, tops, shownSet([...joined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
-    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
+    const age = listedAt ? this.clock("open-prs-age", (n) => openPrsAge(listedAt, n), now) : "";
+    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
       .child(div().text_size(12).font_semibold().text_color(t.dim).child("Agents"))
       .child(div().flex_1())
+      .child(this.prGuard(() => this.legend(t), div()))
       .child(h_flex().id("plan-open").h(22).px(8).items_center().rounded(11).cursor_pointer().text_size(11).text_color(t.muted)
         .hover((el) => el.bg(t.hover).text_color(t.foreground))
         .on_click((_e, cx) => { this.press("plan-open", cx); this.openPanel(null, null); }).child(this.pressing("plan-open") ? "📄 Plan …" : "📄 Plan"));

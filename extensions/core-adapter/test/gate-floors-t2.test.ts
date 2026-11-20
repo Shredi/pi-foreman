@@ -105,13 +105,13 @@ test("O4: PowerShell and cmd deletes of the home, the root or a system folder ar
 test("O4: any other recursive PowerShell or cmd delete is judge-first, not refused; so are -EncodedCommand and iex of a computed string", () => {
   const winEnv: FloorEnv = { ...env, home: "C:\\Users\\me" };
   for (const l of ["Remove-Item -Recurse C:\\Users\\me\\proj\\build", "rd /s /q build", "Get-ChildItem | Remove-Item -Recurse -Force", "Remove-Item @args -Recurse", "pwsh -EncodedCommand abc", "iex $s", "Invoke-Expression $s"]) {
-    // the old Python check asked for all but the relative `rd` (PR B2): an ask-kind floor, which the judge replaces
-    assert.equal(lineFloors(l, segsOf(l, "powershell"), winEnv)?.kind ?? null, l === "rd /s /q build" ? null : "ask", `ps tool floor: ${l}`);
+    // the old Python check asked for all but the relative `rd` (PR B2): a judge-first hit now (PR C)
+    assert.equal(lineFloors(l, segsOf(l, "powershell"), winEnv)?.kind ?? null, l === "rd /s /q build" ? null : "judge", `ps tool floor: ${l}`);
     assert.equal(unknownTargetDelete(l, segsOf(l, "powershell"), winEnv)?.name, LABEL, `ps tool: ${l}`);
   }
-  // a variable operand is a floor until the permission modes go (PR B2); the label is read as well
+  // a variable operand is judge-first (PR C); the label is read as well
   const viaBash = `pwsh -c "Remove-Item -Recurse $p"`;
-  assert.equal(lineFloors("Remove-Item -Recurse $p", segsOf("Remove-Item -Recurse $p", "powershell"), winEnv)?.rule, "floor-delete-unknown-target");
+  assert.equal(lineFloors("Remove-Item -Recurse $p", segsOf("Remove-Item -Recurse $p", "powershell"), winEnv)?.rule, LABEL);
   assert.equal(unknownTargetDelete("Remove-Item -Recurse $p", segsOf("Remove-Item -Recurse $p", "powershell"), winEnv)?.name, LABEL);
   assert.equal(unknownTargetDelete(viaBash, segsOf(viaBash), winEnv)?.name, LABEL);
   assert.equal(unknownTargetDelete("cmd /c rd /s /q build", segsOf("cmd /c rd /s /q build"), winEnv)?.name, LABEL);
@@ -160,12 +160,10 @@ const gate = (tool: string, command: string, child = false) => gateEvaluate(tool
 
 test("gate: an unknown-target delete is the danger label; a child's own-scratch delete is not; a floor line is refused first", () => {
   // an opaque line (a variable, xargs input) is asked as danger-opaque, which comes first; the label shows where the line parses clean
-  // (until the permission modes go these forms are also the floor `floor-delete-unknown-target`, refused first; the label shows for the forms the floor leaves)
-  const ruleOf = (o: ReturnType<typeof gate>): string | undefined => (o.result as { rule?: string } | undefined)?.rule;
-  for (const l of ['rm -rf "$X"/*', "cd $D && rm -rf *", "ls | xargs rm -rf", "find build -exec rm -rf {} +"]) assert.equal(ruleOf(gate("bash", l)), "floor-delete-unknown-target", l);
-  // git clean with a variable operand is a floor again (PR B2: the old Python check denied it), so no label shows
-  assert.equal(ruleOf(gate("bash", "git clean -fd $X")), "floor-delete-unknown-target");
-  assert.equal(ruleOf(gate("powershell", "Remove-Item -Recurse $p")), "floor-delete-unknown-target");
+  // (PR C: these forms are judge-first with the label, no longer the floor `floor-delete-unknown-target`)
+  const nameOf = (o: ReturnType<typeof gate>): string | undefined => o.danger?.name;
+  for (const l of ['rm -rf "$X"/*', "cd $D && rm -rf *", "ls | xargs rm -rf", "find build -exec rm -rf {} +", "git clean -fd $X"]) assert.equal(nameOf(gate("bash", l)), LABEL, l);
+  assert.equal(nameOf(gate("powershell", "Remove-Item -Recurse $p")), LABEL);
   for (const l of ["S=$FOREMAN_SCRATCH; rm -rf $S/p", "rm -rf $FOREMAN_SCRATCH/p"]) {
     const o = gate("bash", l, true);
     assert.equal(o.danger?.name ?? null, null, l);
@@ -177,8 +175,8 @@ test("gate: an unknown-target delete is the danger label; a child's own-scratch 
 
 // ------------------------------------------------------------------ pins: fs-scan (judge-first in PR C) and a builder in its own checkout
 
-test("pin: floor-fs-scan fires on `/`, `~` and `find ~`; a relative root and a subdirectory pass", () => {
-  for (const l of ["grep -r x /", "grep -r x ~", "find ~ -name x"]) assert.equal(floor(l), "floor-fs-scan", l);
+test("pin: danger-fs-scan (judge-first) fires on `/`, `~` and `find ~`; a relative root and a subdirectory pass", () => {
+  for (const l of ["grep -r x /", "grep -r x ~", "find ~ -name x"]) assert.equal(floor(l), "danger-fs-scan", l);
   for (const l of ["grep -n x -r docs | head", "grep -rl x docs", "find docs -name x", "grep -r x sub/dir", "grep -rn x ."]) assert.equal(floor(l), null, l);
 });
 

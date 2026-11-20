@@ -30,7 +30,8 @@ test("A1: other text floors stay masked in a cat/tee body beside a runner segmen
 
 test("A1: a body fed straight to a shell or interpreter stays visible", () => {
   assert.equal(rule("bash <<'EOF'\nsudo rm -rf /tmp/x\nEOF"), "floor-privilege");
-  assert.equal(rule("python3 - <<'EOF'\nsudo id\nEOF"), "floor-privilege");
-  assert.equal(rule("node <<'EOF'\nsudo id\nEOF"), "floor-privilege");
+  // PR C: an interpreter's stdin is its own code, not shell text: the body is data (r2-text-floors-data.test.ts)
+  assert.equal(rule("python3 - <<'EOF'\nsudo id\nEOF"), null);
+  assert.equal(rule("node <<'EOF'\nsudo id\nEOF"), null);
   assert.equal(rule("cat <<'EOF' | bash\nsudo id\nEOF"), "floor-privilege");
 });

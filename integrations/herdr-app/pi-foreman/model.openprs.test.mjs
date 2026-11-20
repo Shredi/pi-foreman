@@ -43,7 +43,7 @@ test("openPrsAt is read as a time and shown as an age", () => {
   const parsed = parseRadarDoc(doc([], { openPrsAt: at }));
   assert.equal(parsed.openPrsAt, Date.parse(at));
   assert.equal(openPrsAge(parsed.openPrsAt, Date.parse(at) + 12 * 60_000 + 5000), "updated 12m ago");
-  assert.equal(openPrsAge(parsed.openPrsAt, Date.parse(at) - 5000), "updated 0s ago");
+  assert.equal(openPrsAge(parsed.openPrsAt, Date.parse(at) - 5000), "updated <1m ago");
   assert.equal(openPrsAge(null, 1), "");
   assert.equal("openPrsAt" in parseRadarDoc(doc([], { openPrsAt: "nope" })), false);
   assert.equal("openPrsAt" in parseRadarDoc(doc([])), false);

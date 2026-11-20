@@ -143,8 +143,9 @@ class RestartLocalTest(LocalRestartBase):
         words = launch_text(argv)
         for key, value in (("PI_FOREMAN_HANDOFF_DIR", str(self.hand)), ("PI_FOREMAN_PARENT_INTERCOM", PARENT_ID),
                            ("PI_INTERCOM_STABLE_ID", CHILD), ("PI_FOREMAN_PARENT_LABEL", "boss"),
-                           ("PI_FOREMAN_PERMS_PROFILE", "strict"), ("PI_FOREMAN_PLAN_PHASE", "1"), ("PI_BG_SHELL", "zsh")):
+                           ("PI_FOREMAN_PLAN_PHASE", "1"), ("PI_BG_SHELL", "zsh")):
             self.assertIn(assign(key, value), words)
+        self.assertNotIn("PI_FOREMAN_PERMS_PROFILE", words)  # profiles are gone: an old identity's permsProfile is ignored
 
     def test_finished_old_terminal_is_removed(self):
         with mock.patch.object(fsn, "hc_terminal_addresses", return_value=set()):

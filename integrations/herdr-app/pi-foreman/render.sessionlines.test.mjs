@@ -42,7 +42,7 @@ const walk = (el, out = []) => {
 };
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const hasText = (el, text) => (el.kids ?? []).includes(text);
-const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard");
+const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 // The line (or chip) of PR `n`: the HoverCard whose trigger draws "⎇ #n".
 const lineOf = (root, n) => cards(root).find((c) => walk(c.props.trigger).some((e) => hasText(e, `⎇ #${n}`)));
 const checkOf = (line) => walk(line.props.trigger).find((e) => hasText(e, "✓"));
@@ -72,12 +72,11 @@ test("more than two PRs: no \"#n +k\" text anywhere, and no chip on the session'
   assert.equal(cards(root).length, 3, "three lines, one per PR");
 });
 
-test("a two-PR session keeps its two chips on the title row", () => {
+test("a two-PR session draws two lines below the row, none on the title row", () => {
   const root = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(201, "ok"), dot(202, "fail")] })], OPEN.slice(0, 2)).render({});
   const rows = walk(root).filter((e) => /^(row:|agent:t5$)/.test(String(e.props?.id ?? "")));
-  const chips = rows.flatMap((r) => (r.kids ?? []).filter((k) => k.kind === "HoverCard"));
-  assert.deepEqual(chips.map((c) => walk(c.props.trigger).find((e) => /^⎇/.test(e.kids?.[0] ?? ""))?.kids[0]), ["⎇ #202", "⎇ #201"], "failing first, on the row");
-  assert.equal(cards(root).length, 2, "no line below");
+  assert.equal(rows.flatMap((r) => (r.kids ?? []).filter((k) => k.kind === "HoverCard")).length, 0, "no chip on the row");
+  assert.deepEqual(cards(root).map((c) => walk(c.props.trigger).find((e) => /^⎇/.test(e.kids?.[0] ?? ""))?.kids[0]), ["⎇ #202", "⎇ #201"], "failing first, as lines");
 });
 
 test("hovering a session line builds its card; a click opens its page", () => {

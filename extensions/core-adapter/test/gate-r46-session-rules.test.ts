@@ -135,14 +135,14 @@ for (const child of [false, true]) {
   });
 }
 
-test("a child's npm ci is not a default allow: an unreachable or escalating classifier denies it", async (t) => {
+test("a child's npm ci is not a default allow; since PR C it is not judge-first either, so it runs with no dialog", async (t) => {
   for (const o of [{}, { reviewAsks: true }]) {
     const r = await rig(t, { child: true, ...o });
     const res = await r.call("bash", { command: "npm ci" });
     const guard = r.events("guard").filter((g) => g.guard === "gate");
     const last = guard[guard.length - 1];
     assert.ok(!(last && last.decision === "allowed" && String(last.rule).startsWith("default-")), `a default allowed it: ${JSON.stringify(last)}`);
-    assert.ok(res && res.block, `an unreachable or asking review denies a child's npm ci ${JSON.stringify(o)}`);
+    assert.equal(res, undefined, `a child's npm ci runs ${JSON.stringify(o)}`);
     assert.deepEqual(r.titles, []);
   }
 });
