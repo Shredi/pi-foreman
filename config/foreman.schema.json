@@ -406,23 +406,11 @@
       "additionalProperties": false,
       "properties": {
         "proposalMinReviews": { "type": "integer", "minimum": 1, "description": "Reviews needed before a retro proposal. User or overlay config only." },
-        "enabled": { "type": ["boolean", "null"], "description": "Run retro and record backlog findings. null means auto: on in interactive (tui, rpc) sessions, off in json and print mode." },
+        "enabled": { "type": ["boolean", "null"], "description": "Run the retro extras: the compaction Retro section, child traces for the retro and the model retro of /retro. null means auto: on in interactive (tui, rpc) sessions, off in json and print mode." },
         "report": { "type": "boolean", "description": "Offer the foreman_report tool to every role (default true). false: the tool is not offered and the report store is not written." },
-        "workspaceKey": { "type": ["string", "null"], "description": "Backlog key of this workspace ('/' makes subdirectories). null means <basename>-<hash of the workspace root>. User or overlay config only." },
-        "backlogDir": { "type": ["string", "null"], "description": "Central backlog directory. null means <agentDir>/pi-foreman/state/retro/backlog. User or overlay config only." },
-        "repoBacklog": {
-          "type": "array",
-          "description": "Workspaces (absolute path or glob) whose backlog lives in <workspace>/.workflow/retro-backlog.md. commit: true lets sync commit it. User or overlay config only.",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path", "commit"],
-            "properties": { "path": { "type": "string" }, "commit": { "type": "boolean" } }
-          }
-        },
-        "expireDays": { "type": "integer", "minimum": 1, "description": "Days without a sighting after which an open or planned backlog entry expires." },
-        "askThreshold": { "type": "integer", "minimum": 1, "description": "Permission asks in one run that make a backlog finding." },
-        "panelThreshold": { "type": "integer", "minimum": 1, "description": "Unique accepted findings of a shadow reviewer model that make a review-model backlog candidate. User or overlay config only." }
+        "workspaceKey": { "type": ["string", "null"], "description": "Workspace key of this repository ('/' makes subdirectories). null means <basename>-<hash of the workspace root>. User or overlay config only." },
+        "expireDays": { "type": "integer", "minimum": 1, "description": "Days without a sighting after which an open report entry expires." },
+        "startNote": { "type": "boolean", "description": "Send a main session without a parent one message at its first prompt that lists the open report entries seen by two or more sessions (default true)." }
       }
     },
     "intercom": {

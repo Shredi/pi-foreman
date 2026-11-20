@@ -399,66 +399,36 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(rep["files"], ["notes/a.md"])
         self.assertEqual((g(self.work, "rev-parse", "HEAD"), g(self.work, "status", "--porcelain"), self.remote_head()), before)
 
-    def backlog_config(self, commit, paths=("notes/*",), backlog_path=None):
-        cfg = {"sync": {"repos": [{"path": str(self.work), "branch": "main", "paths": list(paths)}], "runRetro": True},
-               "retro": {"repoBacklog": [{"path": backlog_path or str(self.work), "commit": commit}]}}
+    def test_sync_commits_no_backlog_file_and_config_with_repo_backlog_still_runs(self):
+        cfg = {"sync": {"repos": [{"path": str(self.work), "branch": "main", "paths": ["notes/*"]}]},
+               "retro": {"repoBacklog": [{"path": str(self.work), "commit": True}]}}
         (self.agent / "foreman.json").write_text(json.dumps(cfg))
-
-    def fake_retro(self):
-        """run_retro stand-in that writes the repo backlog: committed only if retro runs before the repo sync."""
-        def fake(args, agent_dir):
-            self.write(".workflow/retro-backlog.md", "# Retro backlog: k\n")
-            return "retro ok"
-        return mock.patch.object(fs, "run_retro", fake)
-
-    def test_repo_backlog_commit_true_in_sync_commit(self):
-        self.write(".gitignore", ".workflow/\n")
-        g(self.work, "add", ".gitignore")
-        g(self.work, "commit", "-q", "-m", "ignore workflow")
-        self.backlog_config(True, backlog_path=str(self.tmp / "wor*"))
         self.write("notes/a.md", "note\n")
-        with self.fake_retro():
-            code, rep = self.run_sync()
+        self.write(".workflow/retro-backlog.md", "# Retro backlog: k\n")
+        code, rep = self.run_sync()
         self.assertEqual((code, rep["status"]), (0, "pushed"), rep)
-        self.assertEqual(sorted(g(self.work, "show", "--name-only", "--format=", "HEAD").split()),
-                         [".workflow/retro-backlog.md", "notes/a.md"])
+        self.assertEqual(g(self.work, "show", "--name-only", "--format=", "HEAD").split(), ["notes/a.md"])
+        self.assertEqual(rep.get("warnings") or [], [])
 
-    def test_repo_backlog_commit_false_excluded_once(self):
-        self.backlog_config(False, paths=("notes/*", ".workflow/*"))
-        self.write("notes/a.md", "note\n")
-        with self.fake_retro():
-            self.run_sync()
-            self.write("notes/b.md", "note\n")
-            code, rep = self.run_sync()
-        self.assertEqual(code, 0, rep)
-        exclude = Path(self.work / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
-        self.assertEqual(exclude.count("/.workflow/retro-backlog.md"), 1)
-        self.assertNotIn(".workflow/retro-backlog.md", g(self.work, "log", "--name-only", "--format="))
-        self.assertTrue((self.work / ".workflow" / "retro-backlog.md").is_file())
-
-    def test_repo_backlog_commit_true_outside_sync_repos_warns(self):
-        self.backlog_config(True, backlog_path=str(self.tmp / "elsewhere"))
-        out = io.StringIO()
-        with self.fake_retro(), contextlib.redirect_stdout(out):
-            fs.main(["--cwd", str(self.work), "--state", str(self.state), "--session", SESSION, "--json"])
-        warnings = json.loads(out.getvalue())["warnings"]
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("not a sync.repos entry, not committed", warnings[0])
-
-    def test_retro_forwards_backlog_flags(self):
+    def test_retro_forwards_trace_files_only(self):
         seen = {}
 
         def fake_run(cmd, **kw):
             seen["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0, b"ok", b"")
-        args = fs.build_parser().parse_args(["--cwd", ".", "--state", ".", "--session", "s", "--backlog-workspace", "W",
-                                             "--workspace-key", "bench/t", "--backlog-session", "r1", "--no-backlog",
+        args = fs.build_parser().parse_args(["--cwd", ".", "--state", ".", "--session", "s",
                                              "--trace", "T1", "--trace", "T2"])
         with mock.patch.object(fs.subprocess, "run", fake_run):
             fs.run_retro(args, "A")
-        self.assertEqual(seen["cmd"][-7:], ["--backlog-workspace", "W", "--workspace-key", "bench/t",
-                                            "--backlog-session", "r1", "--no-backlog"])
+        self.assertFalse([a for a in seen["cmd"] if a.startswith("--backlog") or a in ("--workspace-key", "--no-backlog")])
         self.assertEqual(seen["cmd"][6:10], ["--trace", "T1", "--trace", "T2"])  # every trace file is forwarded
+
+    def test_retired_backlog_flags_of_an_old_adapter_parse_and_run(self):
+        # the value shapes of retroInputs at 5f55a015: workspace root, key, a bare --no-backlog
+        for flags in (["--backlog-workspace", str(self.work)], ["--workspace-key", "proj"], ["--backlog-session", "s1"],
+                      ["--no-backlog"], ["--backlog-workspace", str(self.work), "--workspace-key", "proj", "--no-backlog"]):
+            code, _rep = self.run_sync(*flags)
+            self.assertIn(code, (0, 1), flags)  # a repo status, never argparse exit 2
 
     def test_banned_argv_shapes_absent(self):
         src = (SCRIPTS / "foreman_sync.py").read_text(encoding="utf-8")

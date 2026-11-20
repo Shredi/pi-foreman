@@ -135,7 +135,7 @@ test("a missing loader refuses MCP in that child: trace mcp_child_unsupported, t
   assert.deepEqual(active, ["read", "tool_search"]);
   const event = { prompt: "go", systemPromptOptions: { sections: {} as Record<string, string> } };
   await rig.fire("before_agent_start", event);
-  assert.match(event.systemPromptOptions.sections["pi-foreman-mcp"] ?? "", /MCP is not available in this child .*Friction/);
+  assert.match(event.systemPromptOptions.sections["pi-foreman-mcp"] ?? "", /MCP is not available in this child .*foreman_report/);
 });
 
 test("a child whose MCP works gets no MCP prompt line", async (t) => {

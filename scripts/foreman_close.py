@@ -22,7 +22,7 @@ of `<state>/sessions/<S>/manifest.json` and `close.json` (docs/close.md):
     manifest  {v:1, session, entries:[{path, kind, class, owner, branch?, base?, ts, removed?}], dropped:[path]}
 
 Entries are additive and deduplicated by realpath; writes hold `<file>.lock` (O_CREAT|O_EXCL, as
-foreman_backlog) and go through a temp file plus os.replace (retried on Windows). A directory
+foreman_config.locked) and go through a temp file plus os.replace (retried on Windows). A directory
 `<state>/scratch/<S>/` is an implicit private scratch entry; handoff entries are durable (kept).
 An entry this session removed is marked `removed: <ts>` (never deleted from the manifest), so every
 later report of the session lists it under `removed` again and never as a handover.
@@ -50,7 +50,6 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import foreman_backlog as fb  # noqa: E402
 import foreman_config as fc  # noqa: E402
 import foreman_sync as fsync  # noqa: E402
 import safe_ops  # noqa: E402
@@ -153,7 +152,7 @@ def record(state, sid, kind, path, cls=None, owner=None, branch=None, base=None)
         raise Usage("--class must be one of %s" % "|".join(CLASSES))
     full = os.path.abspath(os.path.expanduser(path))
     mp = manifest_path(state, sid)
-    with fb.locked(mp):
+    with fc.locked(mp):
         m = load_manifest(state, sid)
         k = key(full)
         for e in m["entries"]:
@@ -182,7 +181,7 @@ def take(state, sid, path):
         kind = "worktree" if os.path.isfile(os.path.join(full, ".git")) else "scratch"
     e = record(state, sid, kind, full, branch=(found or {}).get("branch"))
     mp = manifest_path(state, sid)
-    with fb.locked(mp):
+    with fc.locked(mp):
         m = load_manifest(state, sid)
         m["dropped"] = [p for p in m["dropped"] if key(p) != key(full)]
         write_json(mp, m)
@@ -193,7 +192,7 @@ def drop(state, sid, path):
     """Parent decides nobody keeps a child's handover: never listed again, nothing removed."""
     full = os.path.abspath(os.path.expanduser(path))
     mp = manifest_path(state, sid)
-    with fb.locked(mp):
+    with fc.locked(mp):
         m = load_manifest(state, sid)
         if all(key(p) != key(full) for p in m["dropped"]):
             m["dropped"].append(full)
@@ -531,7 +530,7 @@ def mark_removed(state, sid, paths):
     if not paths:
         return
     mp = manifest_path(state, sid)
-    with fb.locked(mp):
+    with fc.locked(mp):
         m = load_manifest(state, sid)
         changed = False
         for p in paths:
@@ -956,7 +955,7 @@ def main(argv=None):
     except Usage as exc:
         print("foreman close: %s" % exc, file=sys.stderr)
         return 2
-    except fb.LockTimeout as exc:
+    except fc.LockTimeout as exc:
         print("foreman close: %s" % exc, file=sys.stderr)
         return 1
     cwd = os.path.abspath(a.cwd or os.getcwd())

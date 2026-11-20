@@ -113,8 +113,11 @@ export function misplacedHint(errorText: string): string | null {
   return `pi-foreman: size and risk are top-level keys of the subagent call, not options or args. ${FIX}`;
 }
 
+/** The launch keys read from a call's top level; `liftSizing` moves these (not `mcp`, which stays refused inside `options`). */
+const LIFTED_KEYS = ["size", "risk", "reason", "occasion", "items", "reads", "install"] as const;
+
 /**
- * Move a misplaced `size`/`risk`/`reason` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
+ * Move a misplaced `size`/`risk`/`reason`/`occasion`/`items`/`reads`/`install` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
  * a value already at the top level wins and the misplaced one is dropped. Covers the call and every tasks/chain/parallel entry.
  * `from` lists where values were found and moved; `left` is true when one stays where pi-subagents reads it (args with a workflow).
  */
@@ -126,11 +129,12 @@ export function liftSizing(input: Json): { from: ("options" | "args")[]; left: b
       const box = e[key];
       if (!isObj(box)) continue;
       if (key === "args" && e.workflow !== undefined) {
-        if (box.size !== undefined || box.risk !== undefined || box.reason !== undefined || box.occasion !== undefined) left = true;
+        // a workflow's own `args` may carry any key, so only the keys misplaced launches used to carry count here
+        if (["size", "risk", "reason", "occasion"].some((f) => box[f] !== undefined)) left = true;
         continue;
       }
       let moved = false;
-      for (const f of ["size", "risk", "reason", "occasion"] as const) {
+      for (const f of LIFTED_KEYS) {
         if (box[f] === undefined) continue;
         if (e[f] === undefined) e[f] = box[f];
         delete box[f];

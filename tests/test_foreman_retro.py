@@ -244,85 +244,37 @@ class RetroTest(unittest.TestCase):
             for fam in ("vim ~/.gitconfig", "vim ~\\.gitconfig", "vim C:\\Users\\T\\.gitconfig"):
                 self.assertTrue(fr.touches_protected(fam, wprot), fam)
 
-    def backlog_run(self, session, *extra):
+    def retro_run(self, *extra):
         trace = self.write("trace.jsonl", [
-            {"event": "ask", "role": "builder", "runId": "run-%s" % session, "toolFamily": "bash", "decision": "child"},
-            {"event": "ask", "role": "builder", "runId": "run-%s" % session, "toolFamily": "bash", "decision": "child"},
-            {"event": "friction", "role": "builder", "runId": "run-%s" % session, "kind": "rule",
-             "note": "the test command was missing from /tmp/%s/notes.md" % session},
+            {"event": "ask", "role": "builder", "runId": "run-1", "toolFamily": "bash", "decision": "child"},
+            {"event": "ask", "role": "builder", "runId": "run-1", "toolFamily": "bash", "decision": "child"},
+            {"event": "rereview", "role": "reviewer"},
+            {"event": "report", "role": "builder", "kind": "rule", "subject": "guard x", "effect": "blocked", "id": "abc"},
         ])
-        agent = self.tmp / "agent"
-        return self.run_cli("--trace", trace, "--agent-dir", str(agent), "--backlog-workspace", str(self.tmp / "ws"),
-                            "--workspace-key", "proj", "--backlog-session", session, *extra)
+        return self.run_cli("--trace", trace, "--agent-dir", str(self.tmp / "agent"), *extra)
 
-    def entries(self):
-        import foreman_backlog as bl
-        return bl.load(str(self.tmp / "agent" / "pi-foreman" / "state" / "retro" / "backlog" / "proj.md"))
-
-    def test_backlog_two_candidates_bump_on_a_second_session_and_stay_stable(self):
-        out = self.backlog_run("s1")
-        self.assertIn("backlog: 2 new, 0 bumped (proj.md)", out)
-        first = self.entries()
-        self.assertEqual(len(first), 2)
-        self.assertEqual({e["kind"] for e in first}, {"permission", "rule"})
-        self.assertIn("backlog: 0 new, 2 bumped (proj.md)", self.backlog_run("s2"))
-        second = self.entries()
-        self.assertEqual(sorted(e["id"] for e in second), sorted(e["id"] for e in first))
-        self.assertEqual([e["count"] for e in second], [2, 2])
-        self.assertGreaterEqual(second[0]["last_seen"], first[0]["last_seen"])
-        text = json.dumps(second)
-        self.assertNotIn("/tmp", text)
-        self.assertNotIn(str(self.tmp), text)
-        self.assertNotIn("run-s1", text)
-
-    def test_no_backlog_and_retro_disabled_write_nothing(self):
-        out = self.backlog_run("s1", "--no-backlog")
+    def test_retro_creates_no_entries_and_keeps_its_report(self):
+        out = self.retro_run()
+        self.assertIn("friction: rereviews=1", out)
         self.assertNotIn("backlog:", out)
         self.assertFalse((self.tmp / "agent" / "pi-foreman").exists())
-        (self.tmp / "agent").mkdir()
-        (self.tmp / "agent" / "foreman.json").write_text(json.dumps({"version": 1, "retro": {"enabled": False}}))
-        self.backlog_run("s2")
+        self.assertEqual(json.loads(self.retro_run("--json"))["trace"]["rereviews"], 1)
         self.assertFalse((self.tmp / "agent" / "pi-foreman").exists())
 
-    def test_child_trace_file_gives_a_per_role_ask_candidate(self):
-        fore = self.write("trace-F1.jsonl", [{"event": "ask", "toolFamily": "Bash", "decision": "ask"}])
-        child = self.write("trace-L1.jsonl", [
-            {"event": "ask", "role": "builder", "runId": "L1", "toolFamily": "Bash", "decision": "child"},
-            {"event": "ask", "role": "builder", "runId": "L1", "toolFamily": "Bash", "decision": "child"}])
-        out = self.run_cli("--trace", fore, "--trace", child, "--agent-dir", str(self.tmp / "agent"),
-                           "--backlog-workspace", str(self.tmp / "ws"), "--workspace-key", "proj")
-        self.assertIn("backlog: 1 new", out)
-        [e] = self.entries()
-        self.assertEqual((e["kind"], e["candidate"], e["sessions"]), ("permission", "builder runs hit >=2 permission asks", ["F1"]))
+    def test_report_events_are_counted_by_kind(self):
+        t = fr.trace_metrics([{"event": "report", "kind": "rule"}, {"event": "report", "kind": "rule"}, {"event": "report", "kind": "skill"}, {"event": "friction", "kind": "rule"}])
+        self.assertEqual(t["reports"], {"rule": 2, "skill": 1})
+        self.assertIn("reports: rule=1", self.retro_run())
 
-    def test_candidate_classes_from_trace_usage_and_session_tools(self):
-        trace = [{"event": "child_read_budget", "role": "explorer", "action": "deny"},
-                 {"event": "rereview", "role": "reviewer"}, {"event": "rung_up", "role": "builder", "reason": "context"},
-                 {"event": "ask", "toolFamily": "bash"}, {"event": "ask", "toolFamily": "bash"}]
-        usage = [{"role": "builder", "launchId": "l%d" % i, "cost": {"total": c}} for i, c in enumerate((1, 1, 1, 9))]
-        usage.append({"role": "builder", "launchId": "x", "kind": "retro", "cost": {"total": 99}})
-        rep = {"review": {"denials_overridden": 1}, "proposals": [{"pattern": "git fetch *", "example_family": "git fetch", "approvals": 5, "sessions": 2}]}
-        got = {c["candidate"]: c["kind"] for c in fr.candidates(rep, trace, usage, {"repeated_bash_families": {"git fetch": 3, "make test": 4}})}
-        self.assertEqual(got["session runs hit >=2 permission asks"], "permission")
-        self.assertEqual(got["explorer runs hit the child read budget"], "agent")
-        self.assertEqual(got["reviewer needed a rereview after changes"], "agent")
-        self.assertEqual(got["builder climbed a model rung (context)"], "routing")
-        self.assertEqual(got["builder run cost over 2x the role median"], "routing")
-        self.assertEqual((got["repeated bash family: git fetch"], got["repeated bash family: make test"]), ("permission", "rule"))
-        self.assertEqual(got["allow bash pattern git fetch *"], "permission")
-        self.assertEqual(got["denied permission asks were later approved for the same command family"], "permission")
+    def test_the_old_backlog_flags_are_accepted_and_do_nothing(self):
+        out = self.retro_run("--backlog-workspace", str(self.tmp / "ws"), "--workspace-key", "proj", "--backlog-session", "s1", "--no-backlog")
+        self.assertIn("friction: rereviews=1", out)
+        self.assertFalse((self.tmp / "agent" / "pi-foreman").exists())
+        self.assertFalse((self.tmp / "ws").exists())
 
-    def test_bulk_read_candidates_from_session(self):
-        def call(path):
-            return {"type": "toolCall", "name": "read", "arguments": {"path": path}}
-        calls = [call("/a/b/big.py")] * 3 + [call("C:\\x\\other.py")] + [call("/f%d.txt" % i) for i in range(46)]
-        sess = [{"type": "message", "message": {"role": "assistant", "content": calls}}]
-        m = fr.session_metrics(sess)
-        self.assertEqual((m["read_calls"], m["repeated_reads"]), (50, {"big.py": 3}))
-        got = {c["candidate"]: (c["kind"], c["evidence"]) for c in fr.candidates({}, [], [], m)}
-        self.assertEqual(got["repeated reads of big.py"][0], "agent")
-        self.assertEqual(got["bulk reads: >=50 read calls in one session"], ("agent", "50 read calls"))
-        self.assertEqual(fr.candidates({}, [], [], fr.session_metrics(sess[:0])), [])
+    def test_retro_has_no_candidate_generation(self):
+        for name in ("candidates", "emit_backlog", "FRICTION_KINDS", "DEFAULT_ASK_THRESHOLD"):
+            self.assertFalse(hasattr(fr, name), name)
 
     def test_default_agent_dir_is_the_suite_temp_dir(self):
         import os
@@ -332,10 +284,9 @@ class RetroTest(unittest.TestCase):
         home = self.tmp / "home"
         home.mkdir()
         with mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}):
-            self.run_cli("--trace", trace, "--backlog-workspace", str(self.tmp / "ws"), "--workspace-key", "iso",
-                         "--backlog-session", "iso1")
+            self.run_cli("--trace", trace)
         self.assertEqual(list(home.rglob("*")), [])
-        self.assertTrue((Path(_isolation.AGENT_DIR) / "pi-foreman" / "state" / "retro" / "backlog" / "iso.md").exists())
+        self.assertFalse((Path(_isolation.AGENT_DIR) / "pi-foreman" / "state" / "retro" / "backlog").exists())
 
     def test_selftest(self):
         out = io.StringIO()

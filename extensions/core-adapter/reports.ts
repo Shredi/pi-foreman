@@ -176,14 +176,14 @@ export function foldRows(rows: readonly Json[]): Entry[] {
     for (const k of keys) alias.set(k, target);
     alias.set(target, target);
   }
-  const entries = new Map<string, Entry & { sessions: Set<string> }>();
+  const entries = new Map<string, Entry & { sessions: Set<string>; counted: number }>();
   for (const r of rows) {
     if (isReport(r)) {
       const key = canon(r.key as string);
       const ts = str(r.ts) ?? "";
       let e = entries.get(key);
       if (!e) {
-        e = { key, keys: [], name: null, kind: "", subject: "", what: "", effect: "", suggest: null, state: "open", label: null, pr: null, reason: null, stateTs: null, count: 0, first: ts, last: ts, ids: [], sessions: new Set() };
+        e = { key, keys: [], name: null, kind: "", subject: "", what: "", effect: "", suggest: null, state: "open", label: null, pr: null, reason: null, stateTs: null, count: 0, first: ts, last: ts, ids: [], sessions: new Set(), counted: 0 };
         entries.set(key, e);
       }
       if (!e.keys.includes(r.key as string)) e.keys.push(r.key as string);
@@ -193,10 +193,13 @@ export function foldRows(rows: readonly Json[]): Entry[] {
       e.effect = str(r.effect) ?? "note";
       e.suggest = str(r.suggest);
       if (ts && (e.first === "" || ts < e.first)) e.first = ts;
+      const firstSeen = str(r.firstSeen); // a migrated row: the old first sighting; `last` stays the row's own time, so expiry starts at the move
+      if (firstSeen && (e.first === "" || firstSeen < e.first)) e.first = firstSeen;
       if (ts > e.last) e.last = ts;
       e.ids.push(r.id as string);
       const session = str(r.session);
-      if (session) e.sessions.add(session);
+      if (typeof r.count === "number" && Number.isInteger(r.count) && r.count >= 1) e.counted += r.count; // a migrated row stands for `count` sessions
+      else if (session) e.sessions.add(session);
       if (e.state === "expired") Object.assign(e, { state: "open", stateTs: null, label: null, pr: null, reason: null });
       else if (e.state === "done") Object.assign(e, { state: "open", stateTs: null, label: null, pr: null, reason: `reopened after done${e.pr ? ` (PR #${e.pr})` : ""}` }); // the done row stays in the file; show prints this reason
     } else if (r.row === "state") {
@@ -212,7 +215,7 @@ export function foldRows(rows: readonly Json[]): Entry[] {
     const e = keys.length ? entries.get(canon(keys[0])) : undefined;
     if (e && str(r.name)) e.name = str(r.name);
   }
-  return [...entries.values()].map(({ sessions, ...e }) => ({ ...e, count: sessions.size }));
+  return [...entries.values()].map(({ sessions, counted, ...e }) => ({ ...e, count: sessions.size + counted }));
 }
 
 /** An entry by its key, any key of its group, or a unique prefix of 4 or more characters; null when none or ambiguous. */
@@ -251,7 +254,7 @@ export interface ReportInput {
   suggest?: unknown;
 }
 
-export type RecordResult = { status: "recorded" | "seen"; id: string; key: string } | { status: "limit" } | { status: "invalid"; error: string };
+export type RecordResult = { status: "recorded" | "seen"; id: string; key: string; kind: string; subject: string; effect: string } | { status: "limit" } | { status: "invalid"; error: string };
 
 const oneOf = <T extends string>(list: readonly T[], v: unknown): v is T => typeof v === "string" && (list as readonly string[]).includes(v);
 
@@ -266,6 +269,7 @@ export function recordReport(w: Writer, input: ReportInput, store: Store = store
   if (!subject || !what) return { status: "invalid", error: "subject and what must not be empty" };
   const suggest = typeof input.suggest === "string" ? cleanText(input.suggest, CAPS.suggest) || null : null;
   const kind = input.kind;
+  const effect = input.effect;
   const key = keyOf(kind, subject);
   const now = w.now ?? Date.now();
   return withFileLock(store.lock, (): RecordResult => {
@@ -273,15 +277,27 @@ export function recordReport(w: Writer, input: ReportInput, store: Store = store
     expireDaily(store, now, w.expireDays ?? DEFAULT_EXPIRE_DAYS);
     const rows = readRows(store.file);
     const dup = rows.find((r) => isReport(r) && r.key === key && r.session === w.session);
-    if (dup) return { status: "seen", id: dup.id as string, key };
+    if (dup) return { status: "seen", id: dup.id as string, key, kind, subject, effect };
     if (w.limits) {
       const mine = rows.filter((r) => isReport(r) && r.source === "agent" && r.session === w.session && (w.runId ? r.runId === w.runId : !r.runId)).length;
       if (mine >= (w.runId ? LIMIT_PER_RUN : LIMIT_PER_SESSION)) return { status: "limit" };
     }
     const id = crypto.randomBytes(5).toString("hex");
-    const row = { row: "report", id, key, kind, subject, what, effect: input.effect, suggest, repo: w.repo, workspace: w.workspace, branch: w.branch, role: w.role, session: w.session, runId: w.runId, version: harnessVersion(), ts: new Date(now).toISOString(), source: w.source };
+    const row = { row: "report", id, key, kind, subject, what, effect, suggest, repo: w.repo, workspace: w.workspace, branch: w.branch, role: w.role, session: w.session, runId: w.runId, version: harnessVersion(), ts: new Date(now).toISOString(), source: w.source };
     fs.appendFileSync(store.file, `${JSON.stringify(row)}\n`);
-    return { status: "recorded", id, key };
+    return { status: "recorded", id, key, kind, subject, effect };
+  });
+}
+
+/** Appends the report rows whose `id` is in neither the store nor its archive, under the lock; returns how many were appended. Callers build and check the rows. */
+export function importRows(store: Store, rows: readonly Json[]): number {
+  if (!rows.length) return 0;
+  return withFileLock(store.lock, () => {
+    ensureDir(store);
+    const have = new Set([...readRows(store.file), ...readRows(store.archive)].map((r) => str(r.id)).filter((i): i is string => i !== null));
+    const fresh = rows.filter((r) => !have.has(r.id as string));
+    if (fresh.length) fs.appendFileSync(store.file, fresh.map((r) => `${JSON.stringify(r)}\n`).join(""));
+    return fresh.length;
   });
 }
 

@@ -74,7 +74,7 @@ and `foreman:ready`. There is no second handshake.
 | Child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
-| Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
+| Retro reports | `retro.workspaceKey` sets the workspace key written on a report row (see [retro](retro.md)). User or overlay config only. |
 | Sidebar status | `sidebar.statusCommand` and `sidebar.statusSeconds` show a program's items as extra dots on the Herdr sidebar (see [External sidebar status](#external-sidebar-status)). User or overlay config only. |
 | PR sources and wake rules | `tools.prSources` names scripts the PR tracker runs per open PR for checks and comments GitHub lacks, and `tools.prWake` picks which watch events wake the session (see [PR sources and wake rules](#pr-sources-and-wake-rules)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |

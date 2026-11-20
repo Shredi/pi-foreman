@@ -15,7 +15,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import _isolation  # noqa: E402,F401  (agent dir -> temp)
-import foreman_backlog as fb  # noqa: E402
+import foreman_config as fb  # noqa: E402
 import foreman_findings as ff  # noqa: E402
 import foreman_retro as fr  # noqa: E402
 import foreman_review_bench as rb  # noqa: E402
@@ -227,7 +227,7 @@ class Models(unittest.TestCase):
         tool = dict(line, kind="tool-usage", cost={"total": 9.0})
         self.assertEqual(ff.models_table(recs, usage=lambda s: [line, tool])["rows"], base)
 
-    def test_backlog_candidate_at_threshold(self):
+    def test_models_command_writes_no_backlog(self):
         tmp = Path(tempfile.mkdtemp(prefix="findings_models_"))
         self.addCleanup(shutil.rmtree, tmp, True)
         repo, c0, c1 = make_repo(tmp)
@@ -240,15 +240,11 @@ class Models(unittest.TestCase):
         ff._append_lines(str(agent / "pi-foreman" / "state" / "findings" / "s1.jsonl"), recs)
         table = ff.models_table(ff.load_records(str(agent)), hunks=ff.git_hunks(str(repo)))
         self.assertEqual(table["shadows"]["shadow"]["uniqueAccepted"], 3)
-        self.assertEqual(ff.shadow_candidates(table, 4), [])
-        [cand] = ff.shadow_candidates(table, 3)
-        self.assertEqual(cand["kind"], "review-model")
+        self.assertFalse(hasattr(ff, "shadow_candidates"))
         rc, out, _e = run(fr.main, ["models", "--agent-dir", str(agent), "--cwd", str(repo), "--json"])
         self.assertEqual(rc, 0)
         self.assertEqual(json.loads(out)["shadows"]["shadow"]["uniqueAccepted"], 3)
-        [entry] = fb.load(fb.store_path_for("review-model", workspace_root=str(repo), cfg={},
-                                            agent_dir=str(agent))[0])
-        self.assertEqual((entry["kind"], entry["candidate"]), ("review-model", cand["candidate"]))
+        self.assertFalse((agent / "pi-foreman" / "state" / "retro").exists())
 
 
 class WorkspaceKey(unittest.TestCase):

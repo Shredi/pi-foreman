@@ -1,5 +1,5 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs). reports takes list|show|set|expire|migrate (old backlog import).
 # native Windows path under MSYS (node and python get `C:/...`, not `/c/...`): pwd -W, then cygpath -m, then pwd
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && { pwd -W 2>/dev/null || cygpath -m "$(pwd)" 2>/dev/null || pwd; })
 sub="${1:-}"
@@ -75,12 +75,12 @@ case "$sub" in
     radar) script="$here/../scripts/foreman_radar.py" ;;
     config) script="$here/../scripts/foreman_config.py" ;;
     bench) script="$here/../scripts/foreman_bench.py" ;;
-    backlog) script="$here/../scripts/foreman_backlog.py" ;;
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
     machine) script="$here/../scripts/foreman_session.py"; set -- machine "$@" ;; # `foreman machine setup <name>` is a session verb
-    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]" >&2; exit 2 ;;
+    *) case "$sub" in backlog) echo "foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)" >&2; exit 2 ;; esac
+       echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

@@ -58,6 +58,8 @@ export interface ToolText {
   text: string;
   isError: boolean;
   decision: string;
+  /** The `report` trace event of a recorded report: kind, subject, effect and id, never the text. */
+  event?: { kind: string; subject: string; effect: string; id: string };
 }
 
 const done = (text: string, decision: string, isError = false): ToolText => ({ text, isError, decision });
@@ -70,7 +72,7 @@ export async function runReport(s: ReportSession, params: Record<string, unknown
     const r = recordReport({ cwd: s.cwd, role: s.role, session: s.foremanSession, runId: s.isChild ? s.launchId ?? s.id : null, source: "agent", limits: true, ...(s.expireDays !== undefined ? { expireDays: s.expireDays } : {}), ...ctx }, params as never);
     if (r.status === "invalid") return done(`${REPORT_TOOL}: ${r.error}`, "invalid", true);
     if (r.status === "limit") return done("limit reached", "limit");
-    return done(`${r.status} ${r.id}`, r.status);
+    return { ...done(`${r.status} ${r.id}`, r.status), ...(r.status === "recorded" ? { event: { kind: r.kind, subject: r.subject, effect: r.effect, id: r.id } } : {}) };
   } catch (err) {
     return done(`${REPORT_TOOL}: not recorded (${/^locked/.test((err as Error).message) ? "the list is busy" : "the list is not writable"}); carry on with the task.`, "failed");
   }

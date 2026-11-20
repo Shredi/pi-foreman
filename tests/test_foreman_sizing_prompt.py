@@ -140,6 +140,11 @@ class SizingPromptTest(unittest.TestCase):
             for old_text, new_text in ROLE_PAIRS:
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
+            # launch fields: a numbered item beyond the failed ones is reviewed against the whole change
+            old_items = "a review did not cover, and only after you have checked the evidence on disk."
+            new_items = old_items + " A numbered item in `items` outside the current failed items is reviewed against the whole change."
+            self.assertIn(old_items, want)
+            want = want.replace(old_items, new_items)
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))

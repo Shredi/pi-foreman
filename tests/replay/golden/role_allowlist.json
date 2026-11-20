@@ -105,10 +105,6 @@
    "exit": 0
   },
   {
-   "event": "friction",
-   "role": "builder"
-  },
-  {
    "event": "llm",
    "model": "foreman-fake/foreman"
   },

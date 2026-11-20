@@ -117,13 +117,13 @@ export interface McpChildOpts {
 
 const PRELOAD_WAIT_MS = 10_000;
 
-export const unsupportedNote = (reason: string): string => `pi-foreman: MCP is not available in this child (${reason}). Do not look for MCP tools; name the missing MCP tool under Friction in your report.`;
+export const unsupportedNote = (reason: string): string => `pi-foreman: MCP is not available in this child (${reason}). Do not look for MCP tools; report the missing MCP tool with foreman_report.`;
 
 export const cappedNote = (count: number, cap: number): string =>
-  `pi-foreman: the ${count} MCP tools allowed to this child are over the cap of ${cap} (mcp.directMaxTools), so nothing is declared up front: they stay deferred and you find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). Do not rely on MCP tools being in your tool list; under Friction in your report write that ${count} MCP tools were over the cap of ${cap}, and that the launch should name the tools the task needs next to the server (mcp: ["server", "server/tool"]; mcp: ["server/tool"] alone narrows to them) or the owner raise mcp.directMaxTools.`;
+  `pi-foreman: the ${count} MCP tools allowed to this child are over the cap of ${cap} (mcp.directMaxTools), so nothing is declared up front: they stay deferred and you find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). Do not rely on MCP tools being in your tool list; report with foreman_report that ${count} MCP tools were over the cap of ${cap}, and that the launch should name the tools the task needs next to the server (mcp: ["server", "server/tool"]; mcp: ["server/tool"] alone narrows to them) or the owner raise mcp.directMaxTools.`;
 
 export const namedCapNote = (count: number, cap: number): string =>
-  `pi-foreman: the ${count} MCP tools named for this child are over the cap of ${cap} (mcp.directMaxTools), so none was declared up front. Do not rely on MCP tools; under Friction in your report write that ${count} named MCP tools were over the cap of ${cap}.`;
+  `pi-foreman: the ${count} MCP tools named for this child are over the cap of ${cap} (mcp.directMaxTools), so none was declared up front. Do not rely on MCP tools; report with foreman_report that ${count} named MCP tools were over the cap of ${cap}.`;
 
 /**
  * The prompt line of a launch that named MCP: which MCP tools are up front (`upfront` tool names, then `whole` servers
@@ -150,12 +150,12 @@ export function upfrontLine(
       : silent.length > 0
         ? "No other MCP tool is declared in this launch."
         : "No other MCP tool is reachable in this launch.";
-  const lacking = missing.length > 0 ? ` Named but not found on the server: ${missing.join(", ")}; name it under Friction in your report.` : "";
-  const unavailable = hidden.length > 0 ? ` Named but not available in this child (hidden in the MCP config): ${hidden.join(", ")}; name it under Friction in your report.` : "";
+  const lacking = missing.length > 0 ? ` Named but not found on the server: ${missing.join(", ")}; report it with foreman_report.` : "";
+  const unavailable = hidden.length > 0 ? ` Named but not available in this child (hidden in the MCP config): ${hidden.join(", ")}; report it with foreman_report.` : "";
   const quiet = silent
-    .map((s) => ` MCP server ${s.server} registered no tool: it did not answer in time or it is hidden in the MCP config${s.tools.length > 0 ? `, so its named tools (${s.tools.join(", ")}) are not declared` : ""}; name it under Friction in your report.`)
+    .map((s) => ` MCP server ${s.server} registered no tool: it did not answer in time or it is hidden in the MCP config${s.tools.length > 0 ? `, so its named tools (${s.tools.join(", ")}) are not declared` : ""}; report it with foreman_report.`)
     .join("");
-  const over = overCap ? ` ${overCap.named > 0 ? `With the ${overCap.named} named tool${overCap.named === 1 ? "" : "s"}, the` : "The"} ${overCap.bulk} MCP tools of the servers named whole are over the cap of ${overCap.cap} (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.` : "";
+  const over = overCap ? ` ${overCap.named > 0 ? `With the ${overCap.named} named tool${overCap.named === 1 ? "" : "s"}, the` : "The"} ${overCap.bulk} MCP tools of the servers named whole are over the cap of ${overCap.cap} (mcp.directMaxTools), so they are not declared and found with tool_search; report that with foreman_report.` : "";
   return `pi-foreman: MCP tools declared in your tool list: ${have}. ${rest}${lacking}${unavailable}${quiet}${over}`;
 }
 

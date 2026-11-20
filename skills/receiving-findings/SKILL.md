@@ -1,6 +1,6 @@
 ---
 name: receiving-findings
-description: 'Triages defect reports, bug reports and findings handed over to act on, before any is fixed: from another installation or a user, an owner''s photo or screenshot of a fault, retro or backlog entries, a child''s "I also saw" list, review leftovers. Use when told "new findings", "another one", "here is a defect report", "got a bug report", "take up the backlog entries", or given defects with suggested fixes. Checks each against the current code and earlier decisions, sorts it and takes it to the owner before any round gets it. Not for fixing one bug the user already diagnosed, not for review findings on the session''s own diff (the review loop handles those), and not for security reviews or security reports that need a private channel.'
+description: 'Triages defect reports, bug reports and findings handed over to act on, before any is fixed: from another installation or a user, an owner''s photo or screenshot of a fault, retro or report entries, a child''s "I also saw" list, review leftovers. Use when told "new findings", "another one", "here is a defect report", "got a bug report", "take up the reports", or given defects with suggested fixes. Checks each against the current code and earlier decisions, sorts it and takes it to the owner before any round gets it. Not for fixing one bug the user already diagnosed, not for review findings on the session''s own diff (the review loop handles those), and not for security reviews or security reports that need a private channel.'
 ---
 
 # Receiving findings

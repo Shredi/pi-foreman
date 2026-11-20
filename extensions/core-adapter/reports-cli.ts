@@ -1,10 +1,12 @@
-// `foreman reports list|show|set|expire` (bin/foreman, .cmd, .ps1): the report store of the repository the current folder belongs to (reports.ts, docs/retro.md#foreman-reports).
+// `foreman reports list|show|set|expire|migrate` (bin/foreman, .cmd, .ps1): the report store of the repository the current folder belongs to (reports.ts, docs/retro.md#foreman-reports).
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { get, loadMergedConfig } from "./config.ts";
 import { piAgentDir } from "./env.ts";
 import { resolvePython } from "./python.ts";
-import { DATA_LINE, DEFAULT_EXPIRE_DAYS, ARCHIVE_DAYS, STATES, SETTABLE, expireLocked, findEntry, foldRows, quoted, readRows, renderList, setState, storeFor } from "./reports.ts";
+import { DATA_LINE, DEFAULT_EXPIRE_DAYS, ARCHIVE_DAYS, STATES, SETTABLE, expireLocked, findEntry, foldRows, importRows, quoted, readRows, renderList, reportContext, setState, storeFor } from "./reports.ts";
+import { archiveDir, planMigration, renderPlan } from "./reports-migrate.ts";
+import { mainCheckout } from "./workspacekey.ts";
 import { defaultSpawner } from "./spawn.ts";
 
 export const USAGE = [
@@ -12,6 +14,8 @@ export const USAGE = [
   "       foreman reports show KEY [--json]",
   "       foreman reports set KEY open|planned|done|dropped [--label TEXT] [--pr N] [--reason TEXT]",
   "       foreman reports expire [--days N] [--archive-days N]",
+  "       foreman reports migrate [--from DIR] [--workspace GLOB]... [--all] [--exclude GLOB]... [--min-count 2] [--within-days 30] [--archive] [--apply]",
+  "         --archive renames the whole folder named by --from (the old store by default) with all it holds, selected or not",
 ].join("\n");
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -21,6 +25,10 @@ export interface ReportsDeps {
   now(): number;
   /** `retro.expireDays` of the merged config for `cwd`; undefined when none or the config does not load. */
   expireDays(): Promise<number | undefined>;
+  /** The directory of the retired retro backlog (`migrate --from` default). */
+  oldStore?(): string;
+  /** `owner/name` of the repository for `cwd`, stored on migrated rows. */
+  repo?(): Promise<string | null>;
 }
 
 export function realDeps(env: NodeJS.ProcessEnv = process.env): ReportsDeps {
@@ -28,6 +36,8 @@ export function realDeps(env: NodeJS.ProcessEnv = process.env): ReportsDeps {
   return {
     cwd,
     now: Date.now,
+    oldStore: () => path.join(piAgentDir(env, env.HOME ?? env.USERPROFILE ?? ""), "pi-foreman", "state", "retro", "backlog"),
+    repo: async () => (await reportContext(cwd)).repo,
     expireDays: async () => {
       try {
         const spawner = defaultSpawner;
@@ -63,6 +73,25 @@ function parse(argv: string[], valued: readonly string[]): { pos: string[]; opt:
   return { pos, opt, json };
 }
 
+/** Options of `migrate`: `--workspace` and `--exclude` repeat; `--all`, `--archive` and `--apply` take no value. Null on an unknown option or a missing value. */
+function parseMigrate(argv: string[]): { from?: string; workspace: string[]; exclude: string[]; all: boolean; archive: boolean; apply: boolean; minCount?: string; withinDays?: string } | null {
+  const o = { workspace: [] as string[], exclude: [] as string[], all: false, archive: false, apply: false } as NonNullable<ReturnType<typeof parseMigrate>>;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--all" || a === "--archive" || a === "--apply") o[a.slice(2) as "all" | "archive" | "apply"] = true;
+    else if (a === "--from" || a === "--workspace" || a === "--exclude" || a === "--min-count" || a === "--within-days") {
+      const v = argv[++i];
+      if (v === undefined || v === "") return null;
+      if (a === "--workspace") o.workspace.push(v);
+      else if (a === "--exclude") o.exclude.push(v);
+      else if (a === "--from") o.from = v;
+      else if (a === "--min-count") o.minCount = v;
+      else o.withinDays = v;
+    } else return null;
+  }
+  return o;
+}
+
 const positive = (v: string | undefined): number | null => (v !== undefined && /^\d{1,6}$/.test(v) && Number(v) >= 1 ? Number(v) : null);
 
 /** The CLI: argv after `reports`. Returns the exit code. */
@@ -91,7 +120,7 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
       }
       const lines = [DATA_LINE, `key ${e.key}${e.keys.length > 1 ? ` (group of ${e.keys.join(", ")})` : ""}`, `state ${e.state}${e.label ? ` round ${quoted(e.label, 60)}` : ""}${e.pr ? ` PR #${e.pr}` : ""}${e.reason ? ` reason ${quoted(e.reason, 200)}` : ""}`, `kind ${e.kind}, effect ${e.effect}, ${e.count} session${e.count === 1 ? "" : "s"}, first ${e.first}, last ${e.last}`, `subject ${quoted(e.subject, 400)}`, `what ${quoted(e.what, 400)}`];
       if (e.suggest) lines.push(`suggest ${quoted(e.suggest, 400)}`);
-      for (const r of readRows(store.file)) if (r.row === "report" && e.keys.includes(String(r.key))) lines.push(`- ${String(r.ts)} ${String(r.id)} ${String(r.role)} session ${quoted(String(r.session), 80)} branch ${quoted(String(r.branch), 80)} ${String(r.source)}`);
+      for (const r of readRows(store.file)) if (r.row === "report" && e.keys.includes(String(r.key))) lines.push(`- ${String(r.ts)} ${String(r.id)} ${String(r.role)} session ${quoted(String(r.session), 80)} branch ${quoted(String(r.branch), 80)} ${String(r.source)}${typeof r.lastSeen === "string" ? ` last seen ${quoted(r.lastSeen, 40)}` : ""}${typeof r.count === "number" ? ` x${r.count}` : ""}`);
       out(`${lines.join("\n")}\n`);
       return 0;
     }
@@ -111,6 +140,25 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
       const days = positive(a.opt.days) ?? (await d.expireDays()) ?? DEFAULT_EXPIRE_DAYS;
       const r = expireLocked(store, d.now(), days, positive(a.opt["archive-days"]) ?? ARCHIVE_DAYS);
       out(`expired ${r.expired}, archived ${r.archived}\n`);
+      return 0;
+    }
+    if (cmd === "migrate") {
+      const a = parseMigrate(rest);
+      if (!a || (a.minCount !== undefined && positive(a.minCount) === null) || (a.withinDays !== undefined && positive(a.withinDays) === null)) return usage(err);
+      const from = path.resolve(a.from ?? d.oldStore?.() ?? "");
+      if (!a.from && !d.oldStore) return usage(err);
+      const selection = a.all || a.workspace.length > 0;
+      const minCount = positive(a.minCount) ?? 2;
+      const withinDays = positive(a.withinDays) ?? 30;
+      const have = new Set([...readRows(store.file), ...readRows(store.archive)].map((r) => String(r.id)));
+      const plan = planMigration({ from, repoFile: path.join(mainCheckout(d.cwd), ".workflow", "retro-backlog.md"), workspace: a.workspace, all: a.all, exclude: a.exclude, minCount, withinDays, now: d.now(), repo: (await d.repo?.()) ?? null, have });
+      const text = [a.apply ? "migrate" : "migrate dry run (nothing is changed; add --apply)", renderPlan(plan, { minCount, withinDays }, selection)];
+      if (a.apply && selection) {
+        text.push(`imported ${importRows(store, plan.rows)}`);
+        if (a.archive && plan.fromExists) text.push(`archived ${from} as ${archiveDir(from, d.now())}`);
+        else if (a.archive) text.push("archive skipped: the old store does not exist");
+      } else if (a.archive) text.push(a.apply ? "archive skipped: no workspace selected" : `would rename ${from} to backlog-archive-<date> beside it`);
+      out(`${text.join("\n")}\n`);
       return 0;
     }
   } catch (e) {

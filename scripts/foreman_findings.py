@@ -164,8 +164,8 @@ def _git(cwd, *args):
 
 
 def _append_lines(path, lines):
-    import foreman_backlog as bl
-    with bl.locked(path):
+    import foreman_config as fc
+    with fc.locked(path):
         with open(path, "a", encoding="utf-8", newline="\n") as fh:
             fh.write("".join(json.dumps(ln, sort_keys=True) + "\n" for ln in lines))
 
@@ -282,14 +282,13 @@ def main_checkout(cwd):
 
 
 def _here_key(args):
-    import foreman_backlog as bl
     import foreman_config as fc
     root = main_checkout(os.getcwd())
     try:
         cfg = fc.load_config(args.agent_dir, root)["config"]
     except Exception:  # noqa: BLE001 - a config that does not load only loses the override
         cfg = {}
-    return bl.workspace_key(root, cfg)
+    return fc.workspace_key(root, cfg)
 
 
 def cmd_list(args):
@@ -658,13 +657,6 @@ def models_table(records, *, usage=None, rates=None, hunks=None, since=None, sou
     return {"rows": out, "timeToClean": {"items": len(ttc), "medianSecs": _median(ttc),
                                          "p90Secs": _nearest_rank(ttc, 0.9)},
             "shadows": {m: {"uniqueAccepted": len(ids), "ids": ids} for m, ids in shadow.items()}}
-
-
-def shadow_candidates(table, threshold=3):
-    """Backlog candidates (kind review-model) for shadows whose unique accepted count reaches `threshold`."""
-    return [{"kind": "review-model", "evidence": ", ".join(s["ids"]),
-             "candidate": "shadow %s found %d unique accepted findings; consider it as primary or rung" % (m, s["uniqueAccepted"])}
-            for m, s in sorted(table["shadows"].items()) if s["uniqueAccepted"] >= threshold]
 
 
 def render_models(table):
