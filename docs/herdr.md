@@ -573,7 +573,9 @@ Three decisions:
   `hc rm` removes it.
 
 A local child gets no `herdr.space` or `herdr.tab` label, so herdr-app shows it as a sub-agent (a floating window) of the
-parent's tab, not in a tab of its own. Keeping it as a tab stays available to the user in herdr-app.
+parent's tab, not in a tab of its own: it is a sidebar row under the parent, never a Herdr tab. Keeping it as a tab stays available to the user in herdr-app.
+
+**Typing into a terminal.** `hc send` from inside an hc terminal wraps the text as a message to the receiving terminal; to send literal input, run it with `HC_TERMINAL_ID`, `HC_SCOPE` and `HC_TERMINAL_SOCKET` unset. `hc keys` cannot type `_` or an uppercase letter. So `foreman session restart` never types a command into an existing shell: it starts a new kept terminal (`hc run --keep`) with Pi as its program, as the open does, and the old finished terminal is removed with `hc rm` (a live shell left in it is killed first, only when it still carries the child's name). Nothing closes a tab or a pane.
 
 A remote child (`--machine`) lives under the remote machine's hc. When the opener runs inside an hc terminal, a second, local
 terminal is started for it: `hc run … --rm … -- hc attach <machine>/<t>`, named `fm-<machine>-<slug>-<hex4>` (machine lowercased, other characters `-`; at most 32 characters, slug cut first, then machine; so herdr-app shows the machine), with no herdr labels, so
