@@ -145,8 +145,7 @@ class TestCheckpoint(ReplayCase):
         # PR C: a tasks / chain launch is not on the judge-first list, so no owner dialog opens; the heavy builder gate refuses it alone
         recs = pi.prompt("[[replay:forms]] build it", timeout=90)
         res = tool_results(recs)
-        asks = [d for d in dialogs(recs) if "cause: danger-launch-outside" in str(d.get("title"))]
-        self.assertEqual(asks, [])
+        self.assertEqual([d for d in dialogs(recs) if d.get("method") == "select"], [])
         self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("write", False), ("subagent", True), ("subagent", True), ("subagent", True), ("subagent", False)], res)
         for _, _, text in res[2:5]:
             self.assertIn("[launch_refused:plan_required]", text)

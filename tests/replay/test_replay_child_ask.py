@@ -21,9 +21,11 @@ def is_child_ask(rec):
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestChildAsk(ReplayCase):
-    def run_child(self, kind, answer_child):
+    def run_child(self, kind, answer_child, gate=None):
         review = {"model": "%s/review-%s" % (PROVIDER_A, kind)}
         config = {"providers": {PROVIDER_A: {"review": review}}}
+        if gate:
+            config["gate"] = gate
         rig = self.rig("child-ask-" + kind, load_fixture("child_ask"), config=config)
         pi = rig.start()
         pi.prompt("[[replay:f1]] go", timeout=60, answers=[ALLOW])
@@ -73,6 +75,13 @@ class TestChildAsk(ReplayCase):
         self.assertEqual(seen, [])
         self.assertEqual([d.get("decision") for d in dialogs], [])
         self.assertIn("builder child finished", notice)
+
+    def test_child_ask_deny_keeps_the_old_deny_without_a_parent_dialog(self):
+        seen, dialogs, _, events = self.run_child("ask", ALLOW, gate={"childAsk": "deny"})
+        self.assertEqual(seen, [])
+        self.assertEqual([d.get("decision") for d in dialogs], ["no-parent"])
+        gate = [(r.get("decision"), r.get("rule")) for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("role") == "builder"]
+        self.assertEqual(gate, [("blocked", "danger-git")], gate)
 
 
 if __name__ == "__main__":
