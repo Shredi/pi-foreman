@@ -3101,8 +3101,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const items = failedItemIds(r.items);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
-              if (r.verdict === "fail" && (r.occasion === "item" || r.occasion === "pre-pr")) s.lastFailFindings = failFindingsText(r.findings, r.items) || null;
-              else if (r.verdict === "pass") s.lastFailFindings = null;
+              if (r.occasion === "item" || r.occasion === "pre-pr") {
+                if (r.verdict === "fail") s.lastFailFindings = failFindingsText(r.findings, r.items) || null;
+                else if (r.verdict === "pass") s.lastFailFindings = null;
+              }
               if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
             }
             // Lane 3g: the real end of each role of the run, with the run's priced cost and duration from the presence row.

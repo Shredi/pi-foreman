@@ -68,3 +68,19 @@ test("lastFailFindings persists with the ceremony state", () => {
   assert.equal(buildCeremonyState({ plan: null, lineages: [], planPhase: false, lastFailFindings: null }).lastFailFindings, undefined);
   assert.equal(latestCeremonyState([{ type: "custom", customType: CEREMONY_ENTRY, data: e }])?.lastFailFindings, "- a");
 });
+
+test("a [second-opinion] PASS and a [plan-review] PASS after a FAIL keep the findings; the next re-review still carries the block", async (t) => {
+  const a = await failed(t, "Overall verdict: FAIL\n1. FAIL src/a.ts:1 kept problem\n");
+  let n = 0;
+  for (const task of ["[second-opinion] a look", "[plan-review] the plan"]) {
+    const o = { agent: "reviewer", task };
+    const l = await a.launch(o);
+    const run = `run-x${++n}`;
+    await a.started(l.id, o, run);
+    a.end({ runId: run, agent: "reviewer", status: "completed", success: true, output: "Overall verdict: PASS\n" });
+  }
+  const next = { agent: "reviewer", task: "review items 1" };
+  await a.launch(next);
+  assert.ok(next.task.includes(BLOCK), next.task);
+  assert.match(next.task, /kept problem/);
+});
