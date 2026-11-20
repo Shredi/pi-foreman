@@ -305,6 +305,7 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
   for (const s of reg.sessions) {
     if (s.handoff && path.basename(s.handoff) === path.basename(handoff) && s.status !== "closed") {
       s.status = "closed";
+      s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
       changed = true;
     }
   }

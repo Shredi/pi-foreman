@@ -162,14 +162,13 @@ class RestartLocalTest(LocalRestartBase):
 
     def test_refused_when_the_restart_lock_is_held(self):
         lock = self.padir / "pi-foreman" / "state" / "restart" / ("%s.lock" % CHILD)
-        lock.parent.mkdir(parents=True)
-        lock.write_text("x", "utf-8")
-        code, out, err = self.restart()
+        with fsn.FileLock(lock):  # an OS lock held by another open file description
+            code, out, err = self.restart()
         self.assertEqual(code, 1)
         self.assertIn("another restart", out + err)
         self.assertEqual(self.hc_calls("run"), [])
 
-    def test_a_stale_restart_lock_is_replaced(self):
+    def test_an_old_restart_lock_file_is_no_lock(self):
         lock = self.padir / "pi-foreman" / "state" / "restart" / ("%s.lock" % CHILD)
         lock.parent.mkdir(parents=True)
         lock.write_text("x", "utf-8")
@@ -177,7 +176,6 @@ class RestartLocalTest(LocalRestartBase):
         os.utime(lock, (old, old))
         code, out, err = self.restart()
         self.assertEqual(code, 0, err)
-        self.assertFalse(lock.exists())
 
     def test_refused_when_the_cwd_is_missing(self):
         shutil.rmtree(self.proj)

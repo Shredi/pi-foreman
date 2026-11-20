@@ -1396,9 +1396,10 @@ def open_session(p, remote=None):
             code = 2
     else:
         say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
-    reg = read_registry(adir)
-    reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
-    write_registry(adir, reg)
+    with registry_lock(adir):
+        reg = read_registry(adir)
+        reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
+        write_registry(adir, reg)
     herdr_ids = {k: entry[k] for k in ("workspace", "tab", "pane")} if "pane" in entry else None
     return code, dict(info, status=entry["status"], launch=launch, herdr=herdr_ids, hc=entry.get("hc"))
 
@@ -2245,9 +2246,10 @@ def cmd_open_remote(a):
         # may run there is named for cleanup by hand
         why = "remote reported no usable terminal address"
         row.update(status="failed", lastError=why)
-        reg = read_registry(adir)
-        reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [row]
-        write_registry(adir, reg)
+        with registry_lock(adir):
+            reg = read_registry(adir)
+            reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [row]
+            write_registry(adir, reg)
         raise Refused(close_created_spaces(created, "%s (%s); a session may still be running on %s: if so, end it on %s by hand"
                                            % (why, strip_control(made.get("address"))[:80], name, name)))
     if made:
@@ -2260,9 +2262,10 @@ def cmd_open_remote(a):
         if local:
             row["attach"] = {"address": local}
             attach_line = local
-    reg = read_registry(adir)
-    reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [row]
-    write_registry(adir, reg)
+    with registry_lock(adir):
+        reg = read_registry(adir)
+        reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [row]
+        write_registry(adir, reg)
     if status == "open":
         print("opened under hc on %s" % name)
         if row.get("hc"):
@@ -2416,31 +2419,28 @@ def remote_brief(a, adir, entry):
         reply = hc_exec_verb(binary, name, argv, "deliver", payload, DELIVER_TIMEOUT)
     except Refused as e:
         why = str(e) if isinstance(e, Unreachable) or not e.code else "[%s] %s" % (e.code, e)
+        mark_entry(adir, entry, lastError=why)
+        sys.stderr.write("pi-foreman session: brief to %s@%s not sent (%s).\n" % (entry.get("label"), name, why))
+        return 1
+    with registry_lock(adir):
         reg = read_registry(adir)
         for s in reg["sessions"]:
             if isinstance(s, dict) and s.get("child") == entry.get("child"):
-                s["lastError"] = why
+                s["briefs"] = int(s.get("briefs") or 0) + 1
+                s["lastError"] = None
+                s["lastDeliverAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+                ruling = re.fullmatch(r"ruling-(\d+)\.md", file_name)
+                # the answer to a remote ask is a brief (or a `ruling-<n>.md` from a parent on the old footer); the watcher clears an ask on `answers`
+                # going up. A plan ruling (`ruling.md`, `ruling-plan.md`) and a steer never answer it.
+                if kind == "brief" or ruling:
+                    s["answers"] = int(s.get("answers") or 0) + 1
+                ask = s.get("ask")
+                if isinstance(ask, dict):
+                    known = isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool)
+                    # a delivered brief answers the ask; so does a ruling whose number reaches the ask's, or when the ask's number is unknown
+                    if kind == "brief" or (ruling and (not known or int(ruling.group(1)) >= ask["n"])):
+                        s["ask"] = None
         write_registry(adir, reg)
-        sys.stderr.write("pi-foreman session: brief to %s@%s not sent (%s).\n" % (entry.get("label"), name, why))
-        return 1
-    reg = read_registry(adir)
-    for s in reg["sessions"]:
-        if isinstance(s, dict) and s.get("child") == entry.get("child"):
-            s["briefs"] = int(s.get("briefs") or 0) + 1
-            s["lastError"] = None
-            s["lastDeliverAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-            ruling = re.fullmatch(r"ruling-(\d+)\.md", file_name)
-            # the answer to a remote ask is a brief (or a `ruling-<n>.md` from a parent on the old footer); the watcher clears an ask on `answers`
-            # going up. A plan ruling (`ruling.md`, `ruling-plan.md`) and a steer never answer it.
-            if kind == "brief" or ruling:
-                s["answers"] = int(s.get("answers") or 0) + 1
-            ask = s.get("ask")
-            if isinstance(ask, dict):
-                known = isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool)
-                # a delivered brief answers the ask; so does a ruling whose number reaches the ask's, or when the ask's number is unknown
-                if kind == "brief" or (ruling and (not known or int(ruling.group(1)) >= ask["n"])):
-                    s["ask"] = None
-    write_registry(adir, reg)
     print("pi-foreman session: %s delivered to %s@%s (%s bytes%s)." % (
         file_name, entry.get("label"), name, reply.get("bytes"), "" if reply.get("woke") else "; the child was not woken"))
     return 0
@@ -2544,11 +2544,12 @@ def cmd_close_remote(a):
 
 
 def mark_entry(adir, entry, **fields):
-    reg = read_registry(adir)
-    for s in reg["sessions"]:
-        if isinstance(s, dict) and s.get("child") == entry.get("child"):
-            s.update(fields)
-    write_registry(adir, reg)
+    with registry_lock(adir):
+        reg = read_registry(adir)
+        for s in reg["sessions"]:
+            if isinstance(s, dict) and s.get("child") == entry.get("child"):
+                s.update(fields)
+        write_registry(adir, reg)
 
 
 STALE_BEAT = 900.0  # seconds without a heartbeat after which a live file with no pid counts as a dead process
@@ -2672,13 +2673,24 @@ def cmd_prune(a):
     if any(isinstance(s, dict) and s.get("status") in ("open", "closing") and not s.get("machine") for s in reg["sessions"]):
         hc_addr, herdr_ids = hc_terminal_addresses(), herdr_pane_ids()
     gone = [s for s in reg["sessions"] if isinstance(s, dict) and entry_gone(s, live, now, hc_addr, herdr_ids)]
-    for s in gone:
-        print("%s%s  %s  %s" % ("would prune " if a.dry_run else "pruned ", s.get("label"), s.get("child"), s.get("status")))
-        if not a.dry_run:
-            s.update(status="closed", note=PRUNE_NOTE, closedBy="prune")
-    print("%d %s" % (len(gone), "would be pruned" if a.dry_run else "pruned"))
+    marked = []
     if gone and not a.dry_run:
-        write_registry(adir, reg)
+        # the probes above were slow: re-read under the lock and mark only an entry still as it was probed (a restart that
+        # reopened it meanwhile changed its address or `restartedEpoch`)
+        with registry_lock(adir):
+            cur_reg = read_registry(adir)
+            for cur in cur_reg["sessions"]:
+                for s in gone:
+                    if isinstance(cur, dict) and cur.get("child") == s.get("child") and cur.get("status") == s.get("status") \
+                            and cur.get("hc") == s.get("hc") and cur.get("restartedEpoch") == s.get("restartedEpoch"):
+                        cur.update(status="closed", note=PRUNE_NOTE, closedBy="prune")
+                        marked.append(s)
+            write_registry(adir, cur_reg)
+    else:
+        marked = gone
+    for s in marked:
+        print("%s%s  %s  %s" % ("would prune " if a.dry_run else "pruned ", s.get("label"), s.get("child"), s.get("status")))
+    print("%d %s" % (len(marked), "would be pruned" if a.dry_run else "pruned"))
     if not a.dry_run:
         prune_remote_terminals(adir)
         reap_local_closed(adir)
@@ -2736,14 +2748,15 @@ def leftover_proof(entry, notice):
 def settle_entry(adir, entry, **fields):
     """Write `fields` to the entry only when its status and tried time are still what the caller read (the watcher's own
     write in between wins). True when written."""
-    reg = read_registry(adir)
-    for s in reg["sessions"]:
-        if isinstance(s, dict) and s.get("child") == entry.get("child"):
-            if s.get("status") != entry.get("status") or s.get("closeTriedAt") != entry.get("closeTriedAt"):
-                return False
-            s.update(fields)
-            write_registry(adir, reg)
-            return True
+    with registry_lock(adir):
+        reg = read_registry(adir)
+        for s in reg["sessions"]:
+            if isinstance(s, dict) and s.get("child") == entry.get("child"):
+                if s.get("status") != entry.get("status") or s.get("closeTriedAt") != entry.get("closeTriedAt"):
+                    return False
+                s.update(fields)
+                write_registry(adir, reg)
+                return True
     return False
 
 
@@ -3028,67 +3041,67 @@ def lock_fresh(path, stale=None):
 
 
 class FileLock:
-    """A lock file created exclusively (`O_EXCL`). A stale one (older than `stale` seconds) is taken over by renaming it
-    away (atomic: one run wins) and re-checking what was renamed: a fresh lock that another run created in between is put
-    back, never removed. `wait` seconds are spent polling a held lock; `busy` is raised when it stays held."""
+    """An exclusive OS lock on a lock file (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows) opened once per use. The OS
+    frees it when the holder dies, so it never goes stale. `wait` seconds are spent polling a non-blocking attempt;
+    `busy` is raised when it stays held. The file itself is left in place."""
 
-    def __init__(self, path, stale=None, wait=0.0, busy=None):
-        self.path, self.stale, self.wait, self.busy = Path(path), stale, wait, busy
+    def __init__(self, path, wait=0.0, busy=None):
+        self.path, self.wait, self.busy, self.fd = Path(path), wait, busy, None
+
+    def _try(self, fd):
+        try:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            return False
 
     def __enter__(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
         end = time.time() + self.wait
-        while True:
-            try:
-                os.close(os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-                return self
-            except FileExistsError:
-                pass
-            if lock_fresh(self.path, self.stale):
-                if time.time() >= end:
-                    raise self.busy or Refused("a lock is held: %s" % self.path.name, "busy")
-                time.sleep(0.05)
-                continue
-            tomb = self.path.with_name("%s.stale-%d-%s" % (self.path.name, os.getpid(), secrets.token_hex(4)))
-            try:
-                os.rename(str(self.path), str(tomb))
-            except OSError:
-                continue  # another run took it over first: try the exclusive create again
-            if lock_fresh(tomb, self.stale):  # a fresh lock was renamed by mistake: put it back
-                try:
-                    os.link(str(tomb), str(self.path))
-                except OSError:
-                    pass
-            try:
-                os.unlink(str(tomb))
-            except OSError:
-                pass
+        while not self._try(fd):
+            if time.time() >= end:
+                os.close(fd)
+                raise self.busy or Refused("a lock is held: %s" % self.path.name, "busy")
+            time.sleep(0.05)
+        self.fd = fd
+        return self
 
     def __exit__(self, *exc):
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return
         try:
-            os.unlink(str(self.path))
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         except OSError:
             pass
+        os.close(fd)  # POSIX: closing the descriptor releases the flock
 
 
-REGISTRY_LOCK_STALE = 30  # seconds after which a registry lock counts as left behind
-
-
-def registry_lock(adir):
+def registry_lock(adir, wait=10.0):
     """The lock of a read-modify-write of sessions.json by a pass that must not overwrite a concurrent restart."""
-    return FileLock(registry_path(adir).with_name("sessions.lock"), REGISTRY_LOCK_STALE, wait=10.0,
+    return FileLock(registry_path(adir).with_name("sessions.lock"), wait=wait,
                     busy=Refused("the session registry is busy", "registry_busy"))
 
 
 class RestartLock(FileLock):
-    """`<state>/restart/<child>.lock`: two restarts of one child never race. A lock older than RESTART_LOCK_STALE seconds is
-    replaced."""
+    """`<state>/restart/<child>.lock`: two restarts of one child never race."""
 
     def __init__(self, adir, child):
         super().__init__(Path(adir) / "pi-foreman" / "state" / "restart" / ("%s.lock" % re.sub(r"[^A-Za-z0-9._-]", "_", child)),
                          busy=Refused("another restart of this session is running", "restart_busy"))
 
 
+RESTART_REGISTRY_RETRY = 60.0  # seconds restart_local waits for the registry after its new terminal started
 RESTART_START_GRACE = 60  # seconds after a restart during which its Pi may not have written its live file yet
 
 
@@ -3101,8 +3114,8 @@ def starting_refusal(entry, now=None):
     return None
 
 
-def update_entry(adir, child, fields, drop=()):
-    with registry_lock(adir):
+def update_entry(adir, child, fields, drop=(), wait=10.0):
+    with registry_lock(adir, wait):
         reg = read_registry(adir)
         for s in reg["sessions"]:
             if isinstance(s, dict) and s.get("child") == child:
@@ -3217,9 +3230,20 @@ def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
         except HcError as e:
             raise Refused("%s was not restarted: %s" % (label, e), "restart_failed")
         hc_new = {"address": made["address"], "parent": made["parent"], "space": space}
-        update_entry(adir, child, {"status": "open", "hc": hc_new, "backend": "hc",
-                                   "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"), "restartedEpoch": time.time(), "lastError": None},
-                     drop=("closedBy", "note", "reaped", "passRetryAt", "worktreePending"))
+        fields = {"status": "open", "hc": hc_new, "backend": "hc", "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                  "restartedEpoch": time.time(), "lastError": None}
+        drop = ("closedBy", "note", "reaped", "passRetryAt", "worktreePending")
+        try:
+            update_entry(adir, child, fields, drop)
+        except Refused as busy:
+            if busy.code != "registry_busy":
+                raise
+            try:  # the new Pi is running: wait longer rather than leave the entry on the old address
+                update_entry(adir, child, fields, drop, wait=RESTART_REGISTRY_RETRY)
+            except Refused as e:
+                raise Refused("%s was restarted in terminal %s (parent %s) but the registry could not be updated (%s); its entry "
+                              "still names the old address, and the new session is left running"
+                              % (label, made["address"], made["parent"], e), "registry_busy")
     say("restarted %s under herdr-core: %s (%s)" % (label, made["address"], "parent %s" % made["parent"] if made["parent"]
                                                     else "not nested: no parent terminal"))
     return {"child": child, "label": label, "status": "open", "address": made["address"], "parent": made["parent"], "hc": hc_new}
