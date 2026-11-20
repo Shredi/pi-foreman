@@ -149,6 +149,8 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
+import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, runReport, runReports, type ReportSession } from "./reportstool.ts";
+import { recordReport, reportContext } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
@@ -2057,6 +2059,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
+    if (hidesDeclaredTools(s.isChild) && get(s.config.config, "retro.report") === false && pi.getActiveTools().includes(REPORT_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== REPORT_TOOL)); // retro.report: false = the tool is not offered (a child keeps a declared tool; execute refuses there)
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
@@ -2578,6 +2581,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // Multi-session plan for a heavy task with several phases (sessions.md; "off" only renders the eee843d baseline).
       multiSession: "on",
       "tools.pr": s.prPack ? "on" : "off",
+      // The foreman_report rule (retro.report: false takes the tool away, so the rule goes too).
+      "retro.report": get(s.config.config, "retro.report") === false ? "off" : "on",
       // Foreman rulings never put a diff fact in scope (review rule; "off" only renders the eee843d baseline).
       factRulings: "on",
       // Launch skeletons and tier rules (retro-harvest; "off" only renders the eee843d baseline).
@@ -6469,6 +6474,55 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   } as never);
 
+  // Report tools (reportstool.ts, docs/retro.md): `foreman_report` is registered in every adapter process, so a child gets it through its tool list; `retro.report: false`
+  // takes it off the active tools at session start and the call refuses. `foreman_reports` (list, group, set) is deferred and refuses in a child.
+  const reportSession = (s: Session): ReportSession => {
+    const expire = get(s.config.config, "retro.expireDays");
+    return {
+      cwd: s.cwd,
+      isChild: s.isChild,
+      id: s.id,
+      foremanSession: s.usage.line.foremanSession,
+      role: s.usage.line.role,
+      launchId: s.usage.line.launchId,
+      enabled: get(s.config.config, "retro.report") !== false,
+      expireDays: typeof expire === "number" && expire >= 1 ? expire : undefined,
+      workspaceOverride: get(s.config.config, "retro.workspaceKey"),
+    };
+  };
+  /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
+  const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<boolean> => {
+    const rs = reportSession(s);
+    if (!rs.enabled) return false;
+    try {
+      const r = recordReport({ cwd: s.cwd, role: "foreman", session: rs.foremanSession, runId: null, source: "owner", ...(rs.expireDays !== undefined ? { expireDays: rs.expireDays } : {}), ...(await reportContext(s.cwd, rs.workspaceOverride)) }, { kind: "permission", subject: rec.family, what: rec.command, effect: "slowed", suggest: rec.note });
+      return r.status === "recorded" || r.status === "seen";
+    } catch {
+      // a report never fails the command
+      return false;
+    }
+  };
+  pi.registerTool({
+    name: REPORT_TOOL,
+    label: "Report a fault",
+    description: REPORT_DESCRIPTION,
+    parameters: REPORT_PARAMS as never,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      const r = await runReport(reportSession(await ensureSession(ctx)), params);
+      return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
+    },
+  } as never);
+  pi.registerTool({
+    name: REPORTS_TOOL,
+    label: "Reports",
+    description: REPORTS_DESCRIPTION,
+    parameters: REPORTS_PARAMS as never,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      const r = runReports(reportSession(await ensureSession(ctx)), params);
+      return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
+    },
+  } as never);
+
   // Ledger helper (ledgercall.ts, ceremony.ledgerHelper): registered inactive; the foreman activates
   // it at session start unless the knob is off, reviewer children get it through their tool list.
   pi.registerTool({
@@ -7234,7 +7288,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         const rec = askFlag.flag(s.id, rest.join(" "));
         if (rec) s.trace?.emit(rec);
-        ctx.ui.notify(rec ? `pi-foreman: flagged the last answered ask (${rec.family}${s.trace ? "" : "; tracing is off, nothing was written"}).` : "pi-foreman: no ask answered in this session yet; nothing flagged.", rec ? "info" : "warning");
+        const reportWritten = rec ? await flagReport(s, rec) : false;
+        ctx.ui.notify(rec ? `pi-foreman: flagged the last answered ask (${rec.family}${s.trace ? "" : `; tracing is off, ${reportWritten ? "the report was written" : "nothing was written"}`}).` : "pi-foreman: no ask answered in this session yet; nothing flagged.", rec ? "info" : "warning");
         return;
       }
       if (sub === "dialogs") {

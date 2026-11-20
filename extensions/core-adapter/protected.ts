@@ -104,7 +104,7 @@ export function sampleAway(sample: { outcome: string; at: number } | null, prese
 
 // ------------------------------------------------------------------ matching
 
-const SSH_ARG = new Set(["p", "i", "J", "l", "o", "F", "e", "S", "P", "b", "c", "D", "L", "R", "W", "w", "E", "I", "m", "O", "Q", "B"]);
+export const SSH_ARG = new Set(["p", "i", "J", "l", "o", "F", "e", "S", "P", "b", "c", "D", "L", "R", "W", "w", "E", "I", "m", "O", "Q", "B"]);
 const CMD_OPTION = /^(?:proxycommand|localcommand|remotecommand)(?:[=\s]|$)/i;
 const SHELL_PROGS = new Set(["ssh", "scp", "sftp", "rsync"]);
 const URL_HOST = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/\s]*@)?(\[[^\]]+\]|[^:/?#\s]+)/i;

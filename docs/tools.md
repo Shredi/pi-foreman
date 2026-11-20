@@ -487,6 +487,12 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 `foreman_wait` (timers, files, processes, CI runs, children) is foreman-only; see
 [sessions](sessions.md#background-runs). The bundled add-on's `bg_run` is guarded like `bash`.
 
+### foreman_report and foreman_reports
+
+`foreman_report({kind, subject, what, effect, suggest?})` writes one row into the report store of the repository (`.workflow/reports/` in the main checkout, never committed) at the moment a session hits a fault of the harness, a rule, a prompt, a permission, routing or a skill. Every role has it (foreman, explorer, builder, reviewer; children get it through their tool list), it is declared, not deferred, and it costs no model call. `retro.report: false` takes it away. The answer is one line, `recorded <id>`, `seen <id>` or `limit reached` (5 per child run, 20 per main session). Secrets are masked and paths cut to file names before the row is stored. See [retro](retro.md#reporting-at-the-source).
+
+`foreman_reports({action, ...})` manages the list in the foreman session (deferred, found with `tool_search`; a child is refused): `list` shows the entries of one state (default `open`) after a fixed line that says the texts are data from other sessions, `group` merges entries (`keys`) that describe one fault, `set` moves an entry (`key`) to `open`, `planned` (`label`), `done` (`pr`) or `dropped` (`reason`). The same actions are `foreman reports list|show|set|expire` on the command line.
+
 ### foreman_script
 
 `foreman_script({action, path?, description?, risk?, undo?, timeoutSeconds?})` asks the owner to approve a script for a change the guards close to every agent, then runs it (foreman sessions only, never a subagent child; a deferred tool, found with `tool_search`). The script is POSIX sh with LF line endings, lies in the scratch dir, does not rely on `$0` or sibling files and honours `--dry-run` or `DRY_RUN=1`.
