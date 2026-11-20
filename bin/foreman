@@ -1,5 +1,5 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs). reports takes list|show|set|expire|migrate (old backlog import).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs). reports takes list|show|set|expire|migrate (old backlog import).
 # native Windows path under MSYS (node and python get `C:/...`, not `/c/...`): pwd -W, then cygpath -m, then pwd
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && { pwd -W 2>/dev/null || cygpath -m "$(pwd)" 2>/dev/null || pwd; })
 sub="${1:-}"
@@ -32,6 +32,14 @@ if [ "$sub" = "prs" ]; then
         exit 1
     fi
     exec node --no-warnings --experimental-strip-types "$here/../extensions/core-adapter/prs-cli.ts" "$@"
+fi
+if [ "$sub" = "pages" ]; then
+    shift
+    if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)' 2>/dev/null; then
+        echo "foreman pages needs Node >= 22.6 (--experimental-strip-types)" >&2
+        exit 1
+    fi
+    exec node --no-warnings --experimental-strip-types "$here/../extensions/core-adapter/pages-cli.ts" "$@"
 fi
 if [ "$sub" = "rounds" ]; then
     shift
@@ -80,7 +88,7 @@ case "$sub" in
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
     machine) script="$here/../scripts/foreman_session.py"; set -- machine "$@" ;; # `foreman machine setup <name>` is a session verb
     *) case "$sub" in backlog) echo "foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)" >&2; exit 2 ;; esac
-       echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]" >&2; exit 2 ;;
+       echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"
