@@ -8,8 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import foreman_radar as fr  # noqa: E402
-from test_foreman_radar_remote_terminal import NOW, Base, stamp  # noqa: E402
+import foreman_radar as fr
+from test_foreman_radar_remote_terminal import NOW, Base, stamp
 
 
 class RemoteAttach(Base):
