@@ -23,7 +23,8 @@ test("bash: a relative or in-worktree search root is no scan hit", () => {
 });
 
 test("bash: `/`, `~`, and the home dir still hit", () => {
-  for (const l of ["grep -r x /", "grep -r x ~", `grep -r x ${home}`]) assert.equal(bash(l), "danger-fs-scan", l);
+  // the home dir is quoted: the unquoted backslashes of a win32 path are escapes to the shell parser
+  for (const l of ["grep -r x /", "grep -r x ~", `grep -r x '${home}'`]) assert.equal(bash(l), "danger-fs-scan", l);
 });
 
 test("grep, find tools: a relative path field is checked as a path; the pattern and glob are text", () => {
