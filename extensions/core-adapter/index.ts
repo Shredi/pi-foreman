@@ -80,7 +80,7 @@ import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
-import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
+import { BRIDGE_PROVIDER, BridgeIsolation, bridgeAuthNotice, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, rowModelOf, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { gateMigrationLines } from "./gatemigrate.ts";
@@ -146,8 +146,9 @@ import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
+import { importEvent, importText } from "./reportsimport.ts";
 import { REPORT_DESCRIPTION, REPORT_PARAMS, REPORT_TOOL, REPORTS_DESCRIPTION, REPORTS_PARAMS, REPORTS_TOOL, emitPendingLessons, retroCounters, runReport, runReports, type ReportSession } from "./reportstool.ts";
-import { recordReport, reportContext } from "./reports.ts";
+import { recordReport, reportContext, storeFor } from "./reports.ts";
 import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
@@ -255,7 +256,7 @@ import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSiz
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncRunDirs, bashOutputLogs, recordBashOutputLog, childSurface, hubWorkflowDirs, mainWorkflowReadable, ownTaskReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
-import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender } from "./intercomguard.ts";
+import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender, remoteChildAddress } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -2135,6 +2136,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
         notify: (msg, level) => ctx.ui.notify(msg, level),
         trace: (rec) => s.trace?.emit(rec),
+        importReports: get(s.config.config, "retro.report") === false ? undefined : async (data) => {
+          try {
+            const counts = importText(storeFor(s.cwd), (await reportContext(s.cwd)).repo, data.toString("utf8"));
+            s.trace?.emit(importEvent(counts, "remote"));
+          } catch {
+            s.trace?.emit({ event: "reports_import", from: "remote", failed: true });
+          }
+        },
       });
       remoteWatch.start();
     }
@@ -2320,6 +2329,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sessions.delete(s.id);
   });
 
+  // An expired claude-bridge login: one notice per process, from the response status (never message text).
+  let bridgeAuthShown = false;
+  pi.on("after_provider_response", (event, ctx) => {
+    if (bridgeAuthShown) return;
+    const text = bridgeAuthNotice(ctx.model?.provider, event.status, isolationOn(isoSetting, ctx.model?.provider) ? isolationDir(sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir())) : null);
+    if (!text) return;
+    bridgeAuthShown = true;
+    ctx.ui.notify(text, "error");
+  });
   pi.on("model_select", async (event, ctx) => {
     const ps = sessionFor(ctx);
     if (ps) tracePoint(ps, event.model);
@@ -3806,7 +3824,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === INTERCOM_TOOL) {
       try {
         const s = await ensureSession(ctx);
-        const reason = intercomBlock(event.toolName, event.input, { isChild: s.isChild, allowRemote: get(s.config.config, "intercom.allowRemote") === true, allowOpenPane: get(s.config.config, "intercom.allowOpenPane") === true });
+        const reason = intercomBlock(event.toolName, event.input, { isChild: s.isChild, allowRemote: get(s.config.config, "intercom.allowRemote") === true, allowOpenPane: get(s.config.config, "intercom.allowOpenPane") === true, remoteAddressOf: (to) => remoteChildAddress(s.agentDir, to) });
         s.trace?.emit({ event: "guard", guard: "intercom", toolFamily: "intercom", decision: reason ? "blocked" : "allowed" });
         if (reason) return { block: true, reason };
       } catch (err) {
@@ -6417,7 +6435,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       expireDays: typeof expire === "number" && expire >= 1 ? expire : undefined,
       workspaceOverride: get(s.config.config, "retro.workspaceKey"),
       emit: (event, payload) => pi.events?.emit(event, payload),
+      ...(handoffDirOf(s) ? { handoffDir: handoffDirOf(s) as string } : {}),
     };
+  };
+  /** The handoff dir of a parent-opened session: a child gets it from its launch binding (its env lost the variable), a main session from `PI_FOREMAN_HANDOFF_DIR`. */
+  const handoffDirOf = (s: Session): string | null => {
+    const d = (s.isChild ? launchBinding?.handoffDir : process.env.PI_FOREMAN_HANDOFF_DIR)?.trim();
+    return d && (path.isAbsolute(d) || path.win32.isAbsolute(d)) ? d : null;
   };
   /** `/foreman flag-ask` (askflag.ts) also writes a report: kind permission, subject the family, what the command (masked, paths cut, 300 characters); the full command stays in the trace. */
   const flagReport = async (s: Session, rec: Record<string, unknown>): Promise<"recorded" | "seen" | null> => {
@@ -6440,6 +6464,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = await ensureSession(ctx);
       const r = await runReport(reportSession(s), params);
       if (r.event) s.trace?.emit({ event: "report", role: s.usage.line.role, ...r.event });
+      if (r.handoff && r.event) s.trace?.emit({ event: "report_handoff_failed", id: r.event.id });
       return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.isError ? { isError: true } : {}) };
     },
   } as never);

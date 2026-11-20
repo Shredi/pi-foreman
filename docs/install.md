@@ -585,6 +585,14 @@ claude setup-token                                                 # then export
 `/foreman doctor` fails if the folder holds host config and reports whether a login is present
 (never its value).
 
+**Renewing the login on a remote machine.** A child that runs on another machine with `claude-bridge` uses that machine's own isolated folder, and its OAuth login expires there. When a request of the provider `claude-bridge` fails with an authorization error, pi-foreman prints one notice that names the folder. Renew the login on that machine:
+
+```sh
+CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude auth login
+```
+
+`<agent dir>/pi-foreman/claude-config` is the isolated folder `/foreman doctor` shows for that machine; run the command there (for example through `hc exec --on <machine>` or in a terminal on it), not on the parent's machine.
+
 ## Checks inside Pi
 
 - `/foreman doctor` checks Python, that the generated block is in sync, required child extensions and auth per

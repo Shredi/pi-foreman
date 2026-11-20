@@ -34,6 +34,7 @@ const T_HC_LOCAL = 10000;
 const T_HC_REMOTE = 15000;
 const T_ATTACH = 15000;
 const T_OPEN = 10000;
+const T_RESTART = 120000; // a remote restart probes and starts on the other machine
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
 const AGENT_GLYPH = "🤖"; // the mark of an agent row, an emoji like the ⏳ / ⚙ of the status lines
@@ -269,7 +270,7 @@ export default class ForemanAgents extends View {
             this.execT(radarBinary(this.foremanProp, machine), ["radar", "--json"], { on: machine }, T_RADAR),
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
-          const doc = r.code === 0 ? parseRadarDoc(r.stdout) : null;
+          const doc = r.code === 0 ? parseRadarDoc(r.stdout, machine) : null;
           next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : null;
         } catch {
           next = null;
@@ -467,6 +468,18 @@ export default class ForemanAgents extends View {
       try {
         await this.execT(hc, ["run", "--json", "--bg", "--no-notify", "--rm", "--name", plan.name, "--", hc, "attach", plan.target], {}, T_ATTACH);
       } catch (e) { guard(() => notify({ title: "Could not open the remote session", body: why(e), level: "error" })); }
+    });
+  }
+
+  // The Restart action of an ended child row radar flagged `restartable`: `foreman session restart <child id>` (a new kept terminal; no
+  // tab or pane is closed). The card joins the new terminal by its address once the registry holds it.
+  restartChild(child, cx) {
+    const bin = radarBinary(this.foremanProp, null);
+    cx.spawn(async () => {
+      try {
+        const r = await this.execT(bin, ["session", "restart", child], {}, T_RESTART);
+        if (r && typeof r.code === "number" && r.code !== 0) guard(() => notify({ title: "Could not restart the session", body: String(r.stderr || r.stdout || "").trim().split("\n")[0].slice(0, 200) || `exit ${r.code}`, level: "error" }));
+      } catch (e) { guard(() => notify({ title: "Could not restart the session", body: why(e), level: "error" })); }
     });
   }
 
@@ -674,6 +687,8 @@ export default class ForemanAgents extends View {
       .when(open !== null, (el) => el.cursor_pointer().on_click(open))
       .child(open !== null ? name.cursor_pointer().on_click((e, cx) => { cx.stop_propagation?.(); return open(e, cx); }) : name)
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
+      .when(Boolean(item.restart), (el) => el.child(div().id(`restart:${item.id}`).flex_none().cursor_pointer().text_size(10.5).text_color(t.working).child(this.pressing(`restart:${item.id}`) ? "Restart …" : "Restart")
+        .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(`restart:${item.id}`, cx); this.restartChild(item.restart, cx); })))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))

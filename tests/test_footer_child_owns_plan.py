@@ -74,9 +74,10 @@ class RemoteFooterTest(unittest.TestCase):
     def test_a_remote_child_sends_nothing_before_the_checkpoint(self):
         text = flat(fsn.remote_footer("demo", True))
         self.assertNotIn("waits on the owner at its plan checkpoint", text)
-        self.assertIn("Run no notice before it: the parent learns from its own check that you wait on the owner.", text)
+        self.assertIn("Run no other notice before the checkpoint.", text)
+        self.assertIn("# Ask <n>: checkpoint: attach to answer", text)
         notices = [l.strip() for l in fsn.remote_footer("demo", True).splitlines() if " remote notice " in l]
-        self.assertEqual([n.rsplit(" ", 1)[1] for n in notices], ["plan", "result", "update", "ask"])
+        self.assertEqual([n.rsplit(" ", 1)[1] for n in notices], ["plan", "ask", "result", "update", "ask"])
 
 
 if __name__ == "__main__":
