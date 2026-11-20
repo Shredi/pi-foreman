@@ -1378,9 +1378,10 @@ export function prCardKey(pr) {
   if (!isObj(pr)) return "";
   const body = str(pr.bodyText);
   const rev = isObj(pr.review) ? `${str(pr.review.state)}@${str(pr.review.head)}${pr.review.noChecks ? "!" : ""}` : "";
-  const jobs = (listOf(pr.jobs).length ? pr.jobs : listOf(pr.checks)).map(jobOf).filter(Boolean).map((j) => `${j.name}:${j.state}`).join(",");
+  const jobs = (listOf(pr.jobs).length ? pr.jobs : listOf(pr.checks)).map(jobOf).filter(Boolean).map((j) => `${j.name}:${j.state}${j.phase ? `:${j.phase}` : ""}`).join(",");
+  const gate = isObj(pr.gate) ? `${str(pr.gate.state)}:${listOf(pr.gate.waiting).join(",")}` : "";
   return [pr.number, str(pr.title), body.length, body.slice(0, 40), str(pr.baseRef), str(pr.mergeable), str(pr.mergeState), str(pr.head), str(pr.state),
-    pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(",")].join("|");
+    pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(","), gate, pr.gated === true ? 1 : 0].join("|");
 }
 
 /** Width in px of the number cell of a PR line: 52 for numbers up to 4 digits, 7 more for each further digit of the widest number in `prs`. */
