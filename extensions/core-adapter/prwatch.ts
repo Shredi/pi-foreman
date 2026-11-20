@@ -1554,19 +1554,18 @@ export class PrWatches {
     }
   }
 
-  /** False when the live phase-rules source throws (the label step then adds nothing this tick). */
-  private phasesReadable(): boolean {
+  /** The live phase rules, or null when the source throws (the label step then does nothing this tick). */
+  private phasesOrNull(): readonly PhaseRule[] | null {
     try {
-      this.deps.phaseRules?.();
-      return true;
+      return this.deps.phaseRules?.() ?? [];
     } catch {
-      return false;
+      return null;
     }
   }
 
   /** The label name of watch `w` now ("" = off): the repository's merge label, else tools.prReadyLabel. */
-  private labelName(w: Watch): string {
-    const merge = mergeLabelOf(this.phases(), w.key.repo);
+  private labelName(w: Watch, rules: readonly PhaseRule[] = this.phases()): string {
+    const merge = mergeLabelOf(rules, w.key.repo);
     if (merge) return merge;
     try {
       const v = this.deps.readyLabel?.();
@@ -1577,15 +1576,18 @@ export class PrWatches {
   }
 
   /** The ready label's target of the watch now (prready.ts labelTarget over the watch state and the snapshot); null: no change, or no review-facts source. */
-  private labelTargetOf(w: Watch, snap: WatchSnapshot): boolean | null {
+  private labelTargetOf(w: Watch, snap: WatchSnapshot, rules: readonly PhaseRule[]): boolean | null {
     const facts = this.deps.reviewFacts?.(snap.head);
     if (!facts) return null;
     // a snap stored before the tracker saw the live rules: classify with them too, so a gate run never counts and a gated repository never labels a head with no phase-1 run
-    const rules = this.phases();
-    // a run counts as phase 1 when the stored tag or the live rules say so (fail closed both ways)
+    // phases alone change a run: an untagged run keeps its own `gates` unless the live rules move it out of phase 1; a tagged run counts again when the live rules say phase 1,
+    // unless its source is non-gating (the tracker's stored per-source record; a source with no record counts: fail closed)
     const classify = (r: Run): Run => {
-      if (phaseOf(rules, w.key.repo, r) === 1) return r.phase || r.gates === false ? (({ phase: _p, gates: _g, ...rest }) => rest)(r) : r;
-      return r.phase || r.gates === false ? r : { ...r, gates: false };
+      const one = phaseOf(rules, w.key.repo, r) === 1;
+      if (!r.phase) return one || r.gates === false ? r : { ...r, gates: false };
+      if (!one) return r;
+      const { phase: _p, gates: _g, ...rest } = r;
+      return r.source && snap.sources?.[r.source]?.gates === false ? { ...rest, gates: false } : rest;
     };
     const live: WatchSnapshot = { ...snap, ...(snap.gated || gatedRepo(rules, w.key.repo) ? { gated: true as const } : {}), runs: snap.runs.map((r) => classify(r)) };
     return labelTarget({ facts, checks: checksOf(w.state, live, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
@@ -1602,7 +1604,9 @@ export class PrWatches {
   private async labelStep(w: Watch, snap: WatchSnapshot): Promise<void> {
     try {
       if (w.ended || !this.deps.label || w.key.repo === "") return;
-      const name = this.labelName(w);
+      const rules = this.phasesOrNull();
+      if (!rules) return; // fail closed: no label call and the label record untouched while the live phase rules cannot be read
+      const name = this.labelName(w, rules);
       const old = w.state.label;
       if (old && old.name.toLowerCase() !== name.toLowerCase()) {
         const { label: _dropped, ...rest } = w.state;
@@ -1610,8 +1614,7 @@ export class PrWatches {
         this.persist();
       }
       if (!name || w.labeling || w.labelStopped || snap.state !== "open" || !snap.head) return;
-      if (!this.phasesReadable()) return; // fail closed: no label of any kind while the live phase rules cannot be read
-      const target = this.labelTargetOf(w, snap);
+      const target = this.labelTargetOf(w, snap, rules);
       if (target === null) return;
       const head = snap.head;
       const rec: LabelRecord = w.state.label ?? { name, own: false, onHead: "", selfOff: "" };
