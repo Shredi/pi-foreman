@@ -150,3 +150,11 @@ test("the re-ask text asks again, carries the question and no answer, and says n
   assert.match(text, /call ask_user_question again with the same questions: .*A or B\?/);
   assert.match(text, /call foreman_checkpoint again with that path/);
 });
+
+test("the re-ask of an approval is worded for the child run's call: the call was the child's, the child asks again or the run is relaunched", () => {
+  const text = reAskText([dialogOf("approval", "Allow?", { tool: "bash", summary: "rm -rf build" }, new Date(T0))]);
+  assert.match(text, /approval for a child run's call to bash \(rm -rf build\)/);
+  assert.match(text, /that call was the child's, not yours/);
+  assert.match(text, /Wait for the child to ask again, or relaunch the run/);
+  assert.doesNotMatch(text, /make the call again/);
+});

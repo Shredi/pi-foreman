@@ -4996,7 +4996,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const cross = (m.details as { message?: { crossMachine?: unknown } } | undefined)?.message?.crossMachine;
       if (parent && sender === parent && !cross) {
         (s.workAtPrompt = { ...s.work }), savePause(s);
-        ownAskFor(s).messaged(); // D125: the parent's plain message answers the open ask.md; its blocked source (blockedOn parent) closes
+        ownAskFor(s).typed(); // D125: the parent's plain message answers the open ask.md; its blocked source (blockedOn parent) closes
       }
     }
     if (m.customType === INTERCOM_MESSAGE_TYPE) noteQuestion(s, m.details);
@@ -6567,7 +6567,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return { content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true };
       };
       const b = launchBinding;
-      if (!s.isChild || !b || !REVIEW_ROLES.includes(b.role) || !b.verdictDir || !fs.existsSync(b.verdictDir)) return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman). The usual cause is a session that started before an update of the foreman: it needs a restart ("foreman session restart <label>", run by your parent), then it gets the channel. Stop and tell your parent; a verdict in prose does not count.`, "no_channel");
+      if (!s.isChild || !b || !REVIEW_ROLES.includes(b.role) || !b.verdictDir || !fs.existsSync(b.verdictDir)) {
+        // the session that launched this run must restart: an opened child by its parent's command, any other by the owner at its pane
+        const launcher = b?.handoffDir ? labelOfHandoff(b.handoffDir) : null;
+        const restart = b?.handoffDir ? `"foreman session restart ${launcher ?? "<label>"}", run by your parent` : `the owner quits that session (/quit) and resumes it with "pi --session ${b?.foremanSession ?? "<id>"}"`;
+        return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman). The usual cause is a session that started before an update of the foreman: it needs a restart (${restart}), then it gets the channel. Stop and tell your parent; a verdict in prose does not count.`, "no_channel");
+      }
       const allowed = allowedItems(b.items, b.highStakes === true);
       const c = checkVerdictCall(params, allowed);
       if ("error" in c) return refuse(c.error, "invalid");
@@ -6575,7 +6580,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       try {
         replaced = writeRecord(b.verdictDir, recordOf(b.launchId, c.call)).replaced;
       } catch {
-        return refuse(`${VERDICT_TOOL}: the record could not be written; give the verdict in your report.`, "write_failed");
+        return refuse(`${VERDICT_TOOL}: the record could not be written; call it again, and tell your parent if it fails again.`, "write_failed");
       }
       s.trace?.emit({ event: "review_verdict_call", accepted: true, verdict: c.call.verdict, items: c.call.items.length, findings: c.call.findings.length });
       const given = new Set(c.call.items.map((i) => String(i.id)));

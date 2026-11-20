@@ -1,11 +1,15 @@
 """The Python twin of extensions/core-adapter/harnessid.mjs: the same fixture and the same lines as test/d105-older-sessions.test.ts."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,6 +58,24 @@ class OlderSessions(unittest.TestCase):
     def test_this_process_is_skipped(self):
         out = uc.older_sessions(self.d, CURRENT, now=NOW, alive=lambda pid: True, me=101)
         self.assertNotIn("child", [s["sessionId"] for s in out])
+
+    def test_main_reads_the_agent_dir_of_the_environment(self):
+        live = Path(self.d) / "pi-foreman" / "state" / "live"
+        for f in live.glob("*.json"):
+            f.unlink()
+        beat = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        rec = {"sessionId": "mine", "label": "env-job", "pid": os.getppid(), "parentIntercom": "fm-parent", "heartbeatAt": beat, "state": "idle"}
+        (live / "mine.json").write_text(json.dumps(rec), encoding="utf-8")
+        lock = Path(self.d) / "lock.json"
+        lock.write_text(json.dumps({"schema": 1, "packages": []}), encoding="utf-8")
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": self.d}), contextlib.redirect_stdout(out):
+            self.assertEqual(uc.main(["--lock", str(lock), "--json"]), 0)
+        self.assertEqual([s["sessionId"] for s in json.loads(out.getvalue())["olderSessions"]], ["mine"])
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": os.path.join(self.d, "empty")}), contextlib.redirect_stdout(out):
+            self.assertEqual(uc.main(["--lock", str(lock), "--json"]), 0)
+        self.assertEqual(json.loads(out.getvalue())["olderSessions"], [])
 
 
 if __name__ == "__main__":

@@ -399,7 +399,8 @@ export class LiveState {
   /** An owner dialog returned (an answer, or a dismissal): stored in the live file, no dialog text. */
   recordAnswer(kind: BlockKind, outcome: "answered" | "dismissed"): void {
     this.lastAnswer = { kind, at: new Date().toISOString(), outcome };
-    this.flush();
+    // written at once (the answer must be on disk before a restart can read it) without flush(): that clears the throttle timer, which a stale handle can alias to another timer
+    if (!this.done) this.write();
   }
 
   /** `foreman_hold` on or off: while on, the session waits on the owner (`blockedOn` owner, kind `hold`, presence needs-you) without a dialog. */

@@ -125,7 +125,7 @@ export function removeOpenDialogs(agentDir: string, sessionId: string): void {
 function lineOf(d: OpenDialog): string {
   if (d.kind === "checkpoint") return `- plan checkpoint${d.path ? ` of ${d.path}` : ""}: call foreman_checkpoint again with that path.`;
   if (d.kind === "question" || d.tool === "ask_user_question") return `- question to the owner: call ask_user_question again with the same questions${d.questions !== undefined ? `: ${JSON.stringify(d.questions)}` : ""}.`;
-  if (d.kind === "approval") return `- approval of ${d.tool ?? "a call"}${d.summary ? ` (${d.summary})` : ""}: make the call again if you still need it; the owner is asked again.`;
+  if (d.kind === "approval") return `- approval for a child run's call to ${d.tool ?? "a tool"}${d.summary ? ` (${d.summary})` : ""}: the restart ended it, and that call was the child's, not yours. Wait for the child to ask again, or relaunch the run if you still need it; the owner is asked then.`;
   if (d.kind === "script") return `- owner script approval: propose the script again with foreman_script if you still need it.`;
   return `- ${d.kind} dialog${d.label ? ` "${d.label}"` : ""}${d.tool ? ` of ${d.tool}` : ""}: repeat the step that opened it if you still need it.`;
 }
