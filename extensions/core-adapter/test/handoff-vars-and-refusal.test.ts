@@ -40,7 +40,7 @@ test("a same-line variable that resolves to the session's own child dir (also op
     for (const l of [`D=${MINE}; echo x > "$D/ruling.md"`, `D=${MINE} && cp ${wt}/f "$D/ruling.md"`]) {
       const s = run(l, parent(o));
       assert.equal(s.allow, undefined, l);
-      assert.equal(s.danger, "danger-write-outside", l);
+      assert.equal(s.danger, null, l); // C: no label
     }
   }
 });

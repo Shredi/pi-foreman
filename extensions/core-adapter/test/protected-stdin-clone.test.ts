@@ -35,7 +35,7 @@ test("a spread-cloned ssh segment with no feed reads as fed: remote_opaque; the 
   assert.equal(mp?.remoteOpaque, false);
   const call: ProtectedCall = { tool: "bash", payload: line, kind: "owner", role: "foreman", cwd: "/w", worktree: "/w", branch: "main", remotes: [] };
   const run = async (match: NonNullable<typeof mc>) => {
-    const c: ProtectedCheckCtx = { prose: { allow: [], deny: [] }, registry: registry as never, config: { providers: { fake: { roles: { review: { model: "fake/m" } } } } }, provider: "fake", timeoutMs: 200, match, task: "look", denyEntries: [], checkMode: "model", version: 1, away: false };
+    const c: ProtectedCheckCtx = { registry: registry as never, config: { providers: { fake: { roles: { review: { model: "fake/m" } } } } }, provider: "fake", timeoutMs: 200, match, task: "look", denyEntries: [], checkMode: "model", version: 1, away: false };
     return new ProtectedCache().check(call, c);
   };
   const rc = await run(mc!);

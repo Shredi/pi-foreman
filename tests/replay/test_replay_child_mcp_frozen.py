@@ -31,7 +31,7 @@ CHILD_PROVIDER = "foreman-fake"
 class TestChildMcpFrozenToolList(ReplayCase):
     def run_child(self, name, config):
         rig = self.rig(name, load_fixture("child_mcp_frozen"), config=config)
-        # `echo` is not a read name, so an MCP call of it is the dangerous class `danger-mcp-act` (asked of the parent); this case is about
+        # `echo` is not a read name, so an MCP call of it is the dangerous class `danger-mcp-act` (in a child it runs); this case is about
         # the frozen tool list, so a user allow rule lets the call through
         self.user_permissions(rig, {"allow": ["mcp__fx__echo"]})
         servers = {}

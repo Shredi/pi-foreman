@@ -14,11 +14,11 @@ const LABEL = "danger-delete-unknown-target";
 test("Remove-Item with a splatted list and a delete fed by a recursive listing are judge-first (powershell tool, pwsh -c)", () => {
   for (const l of ["Remove-Item @p", "ri @p", "Get-ChildItem C:\\x -Recurse | Remove-Item -Force"]) {
     assert.equal(label(l, "powershell"), LABEL, `ps tool: ${l}`);
-    // the old Python check asked for these (PR B2): an ask-kind floor until the judge decides
-    assert.equal(floor(l, "powershell"), "floor-ps-unreadable", `ps tool floor: ${l}`);
+    // the old Python check asked for these (PR B2): the line goes to the judge first now
+    assert.equal(floor(l, "powershell"), LABEL, `ps tool floor: ${l}`);
     const bash = `pwsh -c '${l}'`;
     assert.equal(label(bash), LABEL, `pwsh -c: ${l}`);
-    assert.equal(floor(bash), "floor-ps-unreadable", `pwsh -c floor: ${l}`);
+    assert.equal(floor(bash), LABEL, `pwsh -c floor: ${l}`);
   }
   for (const l of ["Remove-Item x.txt", "Get-ChildItem C:\\x | Remove-Item y.txt", "Get-ChildItem -Recurse"]) assert.equal(label(l, "powershell"), null, l);
 });

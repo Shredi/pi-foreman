@@ -1,6 +1,6 @@
 // Round 2, step 6a: deny and ask pins of the old permission layer's kept guarantees, ported to the gate. Each row is an input the old layer denied or asked about; the
 // gate answers it with the block or ask and the rule name listed (m = foreman, b = builder, r = round reviewer). The comment above a group names the old test file and
-// test line. Rows the gate answers with a judge label only, with no decision, or with an allow are not here (see the step 6a gap table). The rows were captured from the
+// test line. Rows the gate answers with a judge label only (PR C: fs-scan and git-config moved there; their judge-first pins live in gate-floors-t2, gate-fs-scan-relative and the destructive-* files), with no decision, or with an allow are not here (see the step 6a gap table). The rows were captured from the
 // old tests' own calls; paths are rewritten to fixed fixture strings (nothing is created on disk).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -437,68 +437,10 @@ test("permoverlay-grep", { skip: posixOnly }, () => {
 test("permoverlay-r41", { skip: posixOnly }, () => {
   run([
     // permoverlay-r41.test.ts:50 
-    [29,"bash","find / -name x","bm","block:floor-fs-scan"],
-    [29,"bash","find /Users/pf41home -name x","bm","block:floor-fs-scan"],
-    [29,"bash","find $HOME -name x","bm","block:floor-fs-scan"],
-    [29,"bash","find ~ -name x","bm","block:floor-fs-scan"],
-    [29,"bash","find /Users/pf41home/code -name x","bm","block:floor-fs-scan"],
-    [29,"bash","find /Users -name x","bm","block:floor-fs-scan"],
-    [29,"bash","grep -r foo /","bm","block:floor-fs-scan"],
-    [29,"bash","grep -r foo /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","grep -r foo $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","grep -r foo ~","bm","block:floor-fs-scan"],
-    [29,"bash","grep -r foo /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","grep -r foo /Users","bm","block:floor-fs-scan"],
-    [29,"bash","grep -Rn foo /","bm","block:floor-fs-scan"],
-    [29,"bash","grep -Rn foo /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","grep -Rn foo $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","grep -Rn foo ~","bm","block:floor-fs-scan"],
-    [29,"bash","grep -Rn foo /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","grep -Rn foo /Users","bm","block:floor-fs-scan"],
-    [29,"bash","egrep -r foo /","bm","block:floor-fs-scan"],
-    [29,"bash","egrep -r foo /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","egrep -r foo $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","egrep -r foo ~","bm","block:floor-fs-scan"],
-    [29,"bash","egrep -r foo /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","egrep -r foo /Users","bm","block:floor-fs-scan"],
-    [29,"bash","rg foo /","bm","block:floor-fs-scan"],
-    [29,"bash","rg foo /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","rg foo $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","rg foo ~","bm","block:floor-fs-scan"],
-    [29,"bash","rg foo /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","rg foo /Users","bm","block:floor-fs-scan"],
-    [29,"bash","fd . /","bm","block:floor-fs-scan"],
-    [29,"bash","fd . /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","fd . $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","fd . ~","bm","block:floor-fs-scan"],
-    [29,"bash","fd . /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","fd . /Users","bm","block:floor-fs-scan"],
-    [29,"bash","du -sh /","bm","block:floor-fs-scan"],
-    [29,"bash","du -sh /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","du -sh $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","du -sh ~","bm","block:floor-fs-scan"],
-    [29,"bash","du -sh /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","du -sh /Users","bm","block:floor-fs-scan"],
-    [29,"bash","ls -R /","bm","block:floor-fs-scan"],
-    [29,"bash","ls -R /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","ls -R $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","ls -R ~","bm","block:floor-fs-scan"],
-    [29,"bash","ls -R /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","ls -R /Users","bm","block:floor-fs-scan"],
-    [29,"bash","tree -L 2 /","bm","block:floor-fs-scan"],
-    [29,"bash","tree -L 2 /Users/pf41home","bm","block:floor-fs-scan"],
-    [29,"bash","tree -L 2 $HOME","bm","block:floor-fs-scan"],
-    [29,"bash","tree -L 2 ~","bm","block:floor-fs-scan"],
-    [29,"bash","tree -L 2 /Users/pf41home/code","bm","block:floor-fs-scan"],
-    [29,"bash","tree -L 2 /Users","bm","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:60 
-    [29,"bash","bash -c 'find / -name x'","m","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:61 
-    [29,"bash","cd /tmp && find /","m","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:62 
-    [29,"find",{"path":"/","pattern":"*.ts"},"m","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:63 
-    [29,"grep",{"path":"/Users/pf41home","pattern":"x"},"m","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:95 
     [29,"write",{"path":"/pf41/agent/pi-foreman/permissions.json","content":"x","newText":"x"},"bm","block:floor-policy-file"],
     [29,"edit",{"path":"/pf41/agent/pi-foreman/permissions.json","content":"x","newText":"x"},"bm","block:floor-policy-file"],
@@ -790,7 +732,6 @@ test("permoverlay-r41", { skip: posixOnly }, () => {
     [31,"bash","rm -rf /Users/pf41home/.pi/agent/..","bm","block:floor-delete-outside"],
     [31,"bash","mv /Users/pf41home/.pi/agent/.. /tmp/x","m","ask:selfmod-agent-dir"],
     [31,"bash","find /Users/pf41home/.pi/agent/.. -delete","bm","block:floor-delete-outside"],
-    [31,"bash","find ~ -exec rm {} +","bm","block:floor-fs-scan"],
     [31,"bash","rm -rf /Users/pf41home","bm","block:floor-rm-system"],
     [31,"bash","rm -rf ~","bm","block:floor-rm-system"],
     [31,"bash","rm -rf $HOME","bm","block:floor-rm-system"],
@@ -803,12 +744,10 @@ test("permoverlay-r41", { skip: posixOnly }, () => {
     [31,"bash","rm -rf ../..","bm","block:floor-delete-outside"],
     [31,"bash","mv /Users/pf41home/.pi/agent/.. /tmp/x","b","block:selfmod-agent-dir"],
     // permoverlay-r41.test.ts:475 
-    [31,"bash","du -sh ~","bm","block:floor-fs-scan"],
-    [31,"bash","find ~ -name x","bm","block:floor-fs-scan"],
     // permoverlay-r41.test.ts:493 
     [29,"bash","bash -c 'rm -rf /pf41/agent/pi-foreman/state'","m","block:floor-delete-outside"],
-    [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","m","block:floor-delete-unknown-target"],
-    [29,"bash","rm -rf $'/pf41/agent/pi-foreman/managed.json'","m","block:floor-delete-unknown-target"],
+    [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","m","ask:floor-policy-file"],
+    [29,"bash","rm -rf $'/pf41/agent/pi-foreman/managed.json'","m","ask:floor-policy-file"],
     // permoverlay-r41.test.ts:494 
     [29,"bash","bash -c 'rm -rf /pf41/agent/pi-foreman/state'","b","block:floor-delete-outside"],
     [29,"bash","sh -c \"x=/pf41/agent/pi-foreman/state/approvals; rm -rf $x\"","b","block:floor-policy-file"],
@@ -899,7 +838,6 @@ test("permoverlay", { skip: posixOnly }, () => {
     // permoverlay.test.ts:169 
     [13,"bash","grep -r x ~/.aws","m","block:floor-secret-path"],
     // permoverlay.test.ts:170 
-    [13,"bash","grep -r x ~","m","block:floor-fs-scan"],
     // permoverlay.test.ts:172 
     [13,"powershell",{"command":"Get-Content .env"},"m","block:floor-secret-path"],
     // permoverlay.test.ts:173 
@@ -992,7 +930,7 @@ test("permoverlay", { skip: posixOnly }, () => {
 test("probescan", { skip: posixOnly }, () => {
   run([
     // probescan.test.ts:133 
-    [18,"bash","git config core.hooksPath $FOREMAN_SCRATCH/h","r","block:floor-git-config"],
+    [18,"bash","git config core.hooksPath $FOREMAN_SCRATCH/h","r","block:child-readonly-write"],
     [18,"bash","git config user.name v","r","block:child-readonly-write"],
     [18,"bash","git config --file x.cfg user.name v","r","block:child-readonly-write"],
     [18,"bash","git config -f x.cfg --list","r","block:child-readonly-write"],
@@ -1003,8 +941,8 @@ test("probescan", { skip: posixOnly }, () => {
     [18,"bash","git config --replace-all a.b c","r","block:child-readonly-write"],
     [18,"bash","git config --rename-section a b","r","block:child-readonly-write"],
     [18,"bash","git config --remove-section a","r","block:child-readonly-write"],
-    [18,"bash","git config --edit","r","block:floor-git-config"],
-    [18,"bash","git config -e","r","block:floor-git-config"],
+    [18,"bash","git config --edit","r","block:child-readonly-write"],
+    [18,"bash","git config -e","r","block:child-readonly-write"],
     [18,"bash","git config set a.b c","r","block:child-readonly-write"],
     [18,"bash","git config unset a.b","r","block:child-readonly-write"],
     [18,"bash","git config --get a.b c d","r","block:child-readonly-write"],

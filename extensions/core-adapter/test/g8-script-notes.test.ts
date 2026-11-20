@@ -29,8 +29,8 @@ test("a script that only calls tools with prose holding release, upload and rest
   assert.equal(call("codemode", { code: "await sh('sudo ls')" }), undefined, "script text is data; the nested call is what is judged");
 });
 
-test("the nested calls of a script are refused one by one: a release, a disk format, an injected git config, a secret write", () => {
-  for (const command of ["npm publish", "mkfs.ext4 /dev/sda1", "GIT_CONFIG_COUNT=1 git --version", "rm -rf /", "sudo ls", "reboot"]) {
+test("the nested calls of a script are refused one by one: a release, a disk format, a secret write", () => {
+  for (const command of ["npm publish", "mkfs.ext4 /dev/sda1", "rm -rf /", "sudo ls", "reboot"]) {
     assert.ok(call("bash", { command })?.block, command);
   }
   assert.ok(call("write", { path: KEY, content: "x" })?.block);
@@ -90,7 +90,7 @@ const root = fs.realpathSync(mkTestTmp("g8-notetools-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 let n = 0;
 
-function store(files: { user?: unknown; project?: unknown; tracked?: unknown }, profile: string | null = null): PermStore {
+function store(files: { user?: unknown; project?: unknown; tracked?: unknown }): PermStore {
   const base = path.join(root, `w${++n}`);
   const agentDir = path.join(base, "agent");
   const main = path.join(base, "main");
@@ -103,13 +103,13 @@ function store(files: { user?: unknown; project?: unknown; tracked?: unknown }, 
     if (args[0] === "worktree") return { status: 0, stdout: `worktree ${main}\nHEAD abc\n\nworktree ${wt}\nHEAD abc\n` };
     return { status: args[0] === "check-ignore" ? 0 : 1, stdout: "" }; // untracked and ignored: a trusted project file
   };
-  const env: PermEnv = { agentDir, cwd: wt, home: path.join(base, "home"), git, profile };
+  const env: PermEnv = { agentDir, cwd: wt, home: path.join(base, "home"), git };
   return new PermStore(env);
 }
 
-test("floors.noteTools is read from the user file and from its selected profile", () => {
-  const s = store({ user: { floors: { noteTools: ["a_note"] }, profiles: { p: { floors: { noteTools: ["b_note"] } }, q: { floors: { noteTools: ["c_note"] } } } } }, "p");
-  assert.deepEqual(s.resolve().noteTools, ["a_note", "b_note"]);
+test("floors.noteTools is read from the user file", () => {
+  const s = store({ user: { floors: { noteTools: ["a_note"] } } });
+  assert.deepEqual(s.resolve().noteTools, ["a_note"]);
   assert.deepEqual(store({ user: { floors: { noteTools: ["a_note"] } } }).resolve().noteTools, ["a_note"]);
   assert.deepEqual(store({}).resolve().noteTools, []);
 });
@@ -124,17 +124,14 @@ test("floors.noteTools in the project file (trusted or not) and in the tracked f
 
 import { r11RigNoSpawn } from "./_g8rig.ts";
 
-test("a nested shell call of a script carrying an injected git-config variable in front of a version query is refused with the tool and the fragment", async (t) => {
+// C: the GIT_CONFIG_* injection is judge-first, not a floor: the nested call is not floor-denied and goes the judge's way
+test("a nested shell call of a script carrying an injected git-config variable is no floor denial (judge-first in C); the script text is not blocked either", async (t) => {
   const r = await r11RigNoSpawn(t);
   const fire = async (toolName: string, toolCallId: string, input: Record<string, unknown>) =>
     (await r.fire("tool_call", { toolName, toolCallId, input })) as { block?: boolean; reason?: string } | undefined;
   const command = "GIT_CONFIG_COUNT=0 git version";
   const nested = await fire("bash", "cm9/1", { command });
-  assert.equal(nested?.block, true);
-  const sentence =
-    "pi-foreman: denied by the permission floor (git-config). Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials. Run git without them. No review, policy entry or dialog lifts this floor.";
-  assert.ok(nested?.reason?.startsWith(sentence));
-  assert.equal(nested?.reason, `${sentence} (tool: bash; matched: GIT_CONFIG_COUNT=)`);
+  assert.doesNotMatch(nested?.reason ?? "", /denied by the permission floor/);
   const code = `await tools.bash({command: ${JSON.stringify(command)}});`;
   assert.notEqual((await fire("codemode", "cm9", { code }))?.block, true, "the script text itself is not blocked; its nested call is");
 });

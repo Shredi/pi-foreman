@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results
+from driver import PROVIDER_A, load_fixture, tool_results
 from test_replay import REASON, ReplayCase
 from test_replay_ceremony_gate import events
 
@@ -82,13 +82,12 @@ class TestLedgerHelper(ReplayCase):
         self.assertIn("- [x] 2. b", self.ledger(rig, "lf"))  # the second ledger bash ran: no recheck budget refuses it
 
     def test_permission_denied_ledger_bash_traced_not_allowed(self):
-        # r79: a ledger line is routine under mode auto and runs (the other tests here), so the denial comes from a user deny rule,
-        # `Bash(ledger *)`: the gate text is "pi-foreman: ..." and both lines are traced as not allowed
-        rig = self.rig("lh-h", load_fixture("ledger_helper"), permissions="baseline")
-        self.user_permissions(rig, {"deny": ["Bash(ledger *)"]})
+        # PR C: a ledger line runs (the other tests here), so the denial comes from the judge: both lines end in `git branch -D old-topic`
+        # (judge-first), the judge answers unsure and the owner dismisses the dialog: the gate text is "pi-foreman: ..." and both lines are traced as not allowed
+        rig = self.rig("lh-h", load_fixture("ledger_helper"), config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pi = rig.start()
         sid = pi.session_id()
-        res = tool_results(pi.prompt("[[replay:h1]] go", timeout=60), "bash")
+        res = tool_results(pi.prompt("[[replay:h1]] go", answers=[{"cancelled": True}] * 2, timeout=60), "bash")
         pi.close()
         self.assertEqual([e for _, e, _ in res], [True, True], res)
         self.assertIn("pi-foreman:", res[0][2])

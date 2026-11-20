@@ -7,7 +7,6 @@ import { gateDecide, type GateResult } from "../gate.ts";
 import type { GitFacts } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
-import { parseRule, type ParsedRule, type RuleSets } from "../rules.ts";
 import { readToolsOf, unknownReadTools, warnUnknownReadTools } from "../readtools.ts";
 import { slashForm } from "../pathnorm.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
@@ -28,19 +27,13 @@ const absRule = (p: string) => `${platform === "win32" ? "//" : "/"}${slashForm(
 const env: FloorEnv = { cwd: wt, home, agentDir: path.join(base, "agent"), platform, protectedBranches: ["main"], currentBranch: () => "x", remoteHead: () => "main", writeRoots: [wt] };
 const MAP = { ffgrep: "path", fffind: "root", fffmulti: null } as const;
 
-const g = (tool: string, input: Record<string, unknown>, map?: Record<string, string | null>, sets?: RuleSets): GateResult =>
+const g = (tool: string, input: Record<string, unknown>, map?: Record<string, string | null>): GateResult =>
   gateDecide(tool, input, wt, {
     env: () => env,
     roots: () => roots,
     facts,
     ...(map ? { readTools: map } : {}),
-    ...(sets ? { rules: { sets, env: { cwd: wt, home, platform, checkout: wt } } } : {}),
   });
-const rl = (t: string) => {
-  const r = parseRule(t);
-  assert.ok(r.ok, t);
-  return (r as { ok: true; rule: ParsedRule }).rule;
-};
 
 const verdict = (r: GateResult): string => (r === undefined ? "none" : "block" in r ? `block:${r.rule}` : "allow" in r ? `allow:${r.rule}` : JSON.stringify(r));
 
@@ -68,14 +61,6 @@ test("a mapped tool pointing at a secret path hits the floor; the search pattern
   assert.ok(kdbx && "block" in kdbx);
   const p = g("ffgrep", { pattern: "/h/me/.ssh/id_rsa", path: owned }, { ...MAP });
   assert.ok(p && "allow" in p);
-});
-
-test("Read rules cover a mapped tool on its path field", () => {
-  const sets: RuleSets = { allow: [], ask: [], deny: [rl(`Read(${absRule(outside)})`)] };
-  const r = g("ffgrep", { pattern: "x", path: path.join(outside, "a") }, { ...MAP }, sets);
-  assert.ok(r && "block" in r, "deny rule applies");
-  const none = g("ffgrep", { pattern: "x", path: path.join(outside, "a") }, undefined, sets);
-  assert.equal(none, undefined, "unmapped: the Read rule does not cover the tool");
 });
 
 test("readToolsOf keeps valid entries only; unknown names are listed and traced once", () => {
@@ -113,7 +98,6 @@ test("a mapped tool keeps the payload floors on its other fields, exactly as unm
 });
 
 test("gate.readTools never remaps built-in tools", () => {
-  const sets: RuleSets = { allow: [rl(`Read(${absRule(outside)})`)], ask: [], deny: [] };
   const dst = path.join(home, ".ssh", "authorized_keys");
   const calls: [string, Record<string, unknown>, string][] = [
     ["foreman_copy", { src: path.join(wt, "a"), dst }, "src"],
@@ -124,11 +108,11 @@ test("gate.readTools never remaps built-in tools", () => {
     ["bash", { command: `cat ${SSH}` }, "command"],
   ];
   for (const [tool, inp, field] of calls) {
-    assert.equal(verdict(g(tool, inp, { [tool]: field }, sets)), verdict(g(tool, inp, undefined, sets)), tool);
+    assert.equal(verdict(g(tool, inp, { [tool]: field })), verdict(g(tool, inp, undefined)), tool);
   }
   assert.match(verdict(g("foreman_copy", { src: path.join(wt, "a"), dst }, { foreman_copy: "src" })), /^block:floor-secret-path/);
-  const w = g("write", { path: path.join(outside, "a"), content: "x" }, { write: "path" }, sets);
-  assert.ok(!(w && "allow" in w), "a Read rule does not cover write");
+  const w = g("write", { path: path.join(outside, "a"), content: "x" }, { write: "path" });
+  assert.ok(!(w && "allow" in w), "write into outside is not allowed");
 });
 
 test("remapped built-in names are ignored with one warning naming them", () => {

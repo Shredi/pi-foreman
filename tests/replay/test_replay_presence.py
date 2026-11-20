@@ -13,7 +13,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results, wait_until
+from driver import PROVIDER_A, load_fixture, tool_results, wait_until
 from test_replay import REASON, ReplayCase
 
 
@@ -21,7 +21,7 @@ from test_replay import REASON, ReplayCase
 class TestPresenceStates(ReplayCase):
     def setUp(self):
         super().setUp()
-        self.rig_ = self.rig("presence", load_fixture("presence_states"), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        self.rig_ = self.rig("presence", load_fixture("presence_states"), config={"wait": {"batchWindowSeconds": 0}, "providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
 
     def _file(self, pi):
         return self.rig_.agent / "pi-foreman" / "state" / "live" / ("%s.json" % pi.session_id())
@@ -68,8 +68,7 @@ class TestPresenceStates(ReplayCase):
         pi.close()
 
     def test_replay_presence_needs_you(self):  # an own permission ask is needs-you since round 73 (was waiting-owner)
-        # the ask is a user rule: Pi no longer runs the vendored destructive guard, which used to ask on `find -delete`
-        self.user_permissions(self.rig_, {"mode": "ask", "ask": ["Bash(find *)"]})
+        # the ask is the owner dialog of a judge-first line (`git branch -D old-topic`) the fake judge is unsure about
         pi = self.rig_.start()
         path = self._file(pi)
         seen = []

@@ -53,22 +53,23 @@ test("git-config: a repo under the own scratch is not the repo's config", () => 
 
 test("git-config: a linked worktree, a gitfile or a symlink under the scratch writes the real repo's shared config, so no exemption", () => {
   const f = (line: string): string | null => lineFloors(line, parseShell(line, { cwd: renv.cwd }), renv)?.rule ?? null;
-  assert.equal(f(`git -C ${SRSCR}/linked config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`cd ${SRSCR}/linked && git config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`git -C ${SRSCR}/gf config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`git -C ${SRSCR}/sym config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`git --git-dir=${SRSCR}/gf/.git config core.hooksPath /x`), "floor-git-config");
-  // a repo that does not exist (yet) has no config file to judge: floored
-  assert.equal(f(`git -C ${SRSCR}/nothing config core.hooksPath /x`), "floor-git-config");
+  // PR C: the git-config hit is judge-first (rule danger-git-config), no deny
+  assert.equal(f(`git -C ${SRSCR}/linked config core.hooksPath /x`), "danger-git-config");
+  assert.equal(f(`cd ${SRSCR}/linked && git config core.hooksPath /x`), "danger-git-config");
+  assert.equal(f(`git -C ${SRSCR}/gf config core.hooksPath /x`), "danger-git-config");
+  assert.equal(f(`git -C ${SRSCR}/sym config core.hooksPath /x`), "danger-git-config");
+  assert.equal(f(`git --git-dir=${SRSCR}/gf/.git config core.hooksPath /x`), "danger-git-config");
+  // a repo that does not exist (yet) has no config file to judge: judge-first
+  assert.equal(f(`git -C ${SRSCR}/nothing config core.hooksPath /x`), "danger-git-config");
   // a plain key stays allowed everywhere
   assert.equal(f(`git -C ${SRSCR}/linked config user.name x`), null);
 });
 
 test("git-config: the worktree, the global and the system config are unchanged", () => {
-  assert.equal(floor("git config core.hooksPath /x"), "floor-git-config");
+  assert.equal(floor("git config core.hooksPath /x"), "danger-git-config");
   assert.equal(floor("git config user.email a@b"), null);
-  assert.equal(floor(`git -C /w/repo config core.hooksPath ${SCR}/h`), "floor-git-config");
-  assert.equal(floor("git config --global core.hooksPath /x"), "floor-git-config");
-  assert.equal(floor("git config --system credential.helper x"), "floor-git-config");
-  assert.equal(floor(`git -C ${SCR}/repo config --global core.hooksPath /x`), "floor-git-config");
+  assert.equal(floor(`git -C /w/repo config core.hooksPath ${SCR}/h`), "danger-git-config");
+  assert.equal(floor("git config --global core.hooksPath /x"), "danger-git-config");
+  assert.equal(floor("git config --system credential.helper x"), "danger-git-config");
+  assert.equal(floor(`git -C ${SCR}/repo config --global core.hooksPath /x`), "danger-git-config");
 });

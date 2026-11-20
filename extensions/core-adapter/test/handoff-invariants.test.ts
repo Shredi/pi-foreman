@@ -7,7 +7,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { baseFloorEnv, gateDecide, gateEvaluate, type GateResult } from "../gate.ts";
 import { childHandoffWrite, pathDecide, type GateRoots } from "../pathrules.ts";
-import { parseRule } from "../rules.ts";
 import type { RuleSets } from "../rules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { posixOnly } from "./_platform.ts";
@@ -55,7 +54,7 @@ test("session-level child, write tool: .., bare work and work/ are no allow", ()
   for (const n of SPELLINGS) assert.equal(pathDecide("write", { path: `${H}/${n}` }, wt, ownRoots()), undefined, n);
 });
 
-test("session-level child, shell: .., bare work and work/ are write-outside, never an allow", { skip: posixOnly }, () => {
+test("session-level child, shell: .., bare work and work/ are never an allow and never judge-first (the shell-write refusal rules)", { skip: posixOnly }, () => {
   const r = ownRoots();
   for (const n of SPELLINGS) {
     // cp and mv onto the existing dir `work` put the file below it, a name of its own: only the redirect form is judged for the bare entry
@@ -64,29 +63,24 @@ test("session-level child, shell: .., bare work and work/ are write-outside, nev
       const o = gateEvaluate("bash", { command: l }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: false }), roots: () => r });
       const res = o.result as { allow?: boolean } | undefined;
       assert.notEqual(res?.allow, true, l);
-      assert.equal(o.danger?.name, "danger-write-outside", l);
+      // C: danger-write-outside is a child-session label (judge-first); this session is not a subagent, so the foreman's shell-write refusal (index.ts shellWriteBlock) rules, not the judge
+      assert.ok(!o.danger, l);
     }
   }
 });
 
-const rule = (t: string) => {
-  const r = parseRule(t);
-  if (!r.ok) throw new Error(t);
-  return r.rule;
-};
-const allowAll: RuleSets = { allow: ["Bash(*)", "Write", "Edit"].map(rule), ask: [], deny: [] };
-const sub = (tool: string, input: Record<string, unknown>, cwd = wt, sets: RuleSets | undefined = allowAll): GateResult =>
+const sub = (tool: string, input: Record<string, unknown>, cwd = wt): GateResult =>
   gateDecide(tool, input, cwd, {
     env: (c) => baseFloorEnv(c, { child: true }),
     roots: () => subRoots(),
-    ...(sets ? { rules: { sets, env: { cwd, home: path.join(base, "home"), platform: process.platform, checkout: wt } } } : {}),
+    rules: { env: { cwd, home: path.join(base, "home"), platform: process.platform, checkout: wt } },
   });
 const tag = (r: GateResult): string => (r ? ("ask" in r ? `ask:${r.rule}` : "block" in r ? `block:${r.rule}` : `allow:${r.rule}`) : "pass");
 
 test("subagent: a literal write outside the checkout stays blocked with an allow-everything rule set (child deny before allow)", { skip: posixOnly }, () => {
   for (const [tool, input] of [["bash", { command: `echo x > ${out}/f` }], ["bash", { command: `cp ${wt}/a ${out}/f` }], ["bash", { command: `mv ${wt}/a ${out}/f` }], ["write", { path: `${out}/f`, content: "x" }]] as const) {
     assert.equal(tag(sub(tool, { ...input })), "block:child-write-outside", JSON.stringify(input));
-    assert.equal(tag(sub(tool, { ...input }, wt, undefined)), "block:child-write-outside", `${JSON.stringify(input)} without rules`);
+    assert.equal(tag(sub(tool, { ...input }, wt)), "block:child-write-outside", `${JSON.stringify(input)} again`);
   }
 });
 
@@ -96,5 +90,5 @@ test("pin: a plain redirect outside the checkout from a subagent is blocked (not
 });
 
 test("pin: git pull --ff-only in the worktree is not blocked by the child floor", { skip: posixOnly }, () => {
-  assert.notEqual(tag(sub("bash", { command: "git pull --ff-only" }, wt, undefined)).split(":")[0], "block");
+  assert.notEqual(tag(sub("bash", { command: "git pull --ff-only" }, wt)).split(":")[0], "block");
 });

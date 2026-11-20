@@ -37,7 +37,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 `bin/foreman session open|list` (`.cmd` and `.ps1` on Windows) runs `scripts/foreman_session.py`:
 
 - `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] [--print-all] [--parent-id ID] [--profile NAME] [--agent-dir DIR]`.
-  `--profile NAME` starts the session under a permissions profile (the built-in `steward` or a key of `profiles` in the user `permissions.json`; see [permissions](permissions.md#profiles)). It is a command-line choice only, there is no tool parameter, an unknown name is refused with the list of known names, `--machine` refuses it, and the `perms-profile` floor stops an agent from passing it.
+  `--profile NAME` is accepted and ignored: permissions profiles are gone (see [permissions](permissions.md#profiles)). The launcher prints one notice on stderr.
   A session opened by another session asks for a gate decision in its own pane, like an owner session; it no longer files `ask.md` to its parent for that. A subagent child it launches asks in the pane of this session. Without a human at the pane (no UI) the call is denied at once. An owner who is away does not deny it: the dialog waits for the owner.
   Who is asked in a session opened with `--plan-first`: defects and gaps found by its plan review are revised and reviewed again, not asked about; a real decision of the owner's goes to the owner with `ask_user_question` (shown at the child's own pane, it is not routed to the parent); everything else goes to the parent in a message (see [a question to the parent](#a-question-to-the-parent)), by file (`ask.md`) only where intercom cannot reach it. A question is asked once: to the parent, or to the owner as a dialog when a human is at the pane and it is the owner's to decide, never both. At a `[review_loop]` stop the child reports the open findings to the parent in a message and ends its turn; the parent lifts the stop with a brief (see [ceremony](ceremony.md)). A remote child asks by file (`ask.md`), says at its pane that it waits and ends its turn; the answer comes as a brief and starts its next turn.
   `--print-all` prints both the POSIX and the PowerShell command. With `--machine`, `--print-all` is refused (`remote_option`); `--plan-mode` and `--first-command` go to the remote, which checks them; `--focus` runs `herdr-app do agent.focus` here. The parent id is `--parent-id`, else
@@ -79,7 +79,7 @@ A label that already has a registry entry that is not closed or failed is not op
 - `brief.md`: your brief plus a footer telling the child how to report back (below).
 - `parent`: the opener's intercom id, one line. The child's routing, close check and replies read it every time ([re-point an orphaned child](#safety)). The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
-- later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md` and files below `work/`; no dialog in any mode for the write tool and `cp` (in mode `ask` an `echo >`, `printf >` or heredoc redirect still reaches the mode step). A subagent of a child session may write the same names.
+- later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md` and files below `work/`; no dialog for the write tool, `cp` and an `echo >`, `printf >` or heredoc redirect to these names. A subagent of a child session may write the same names.
 - `live.json`: `{intercomId, piSessionId, at}`, written by the child's adapter at each session start. It binds the handoff dir to the Pi session. It is write-ask, like `parent` and `child`.
 
 #### Identity after a restart
@@ -303,7 +303,7 @@ A heavy task with several phases may run as a multi-session plan: one child sess
 
 ### Parallel rounds
 
-Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Its commits and pushes happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree; the gate labels `npm ci` `danger-install` and the mode step decides on it). Children on POSIX may run the exact `npm ci` in their own worktree.
+Every orchestrator session works in its own worktree (`git worktree add …`) and never switches the shared main checkout. Its commits and pushes happen from the session's worktree, so two sessions running in parallel cannot move each other's branch or working tree. Run `npm ci` in the new worktree after `git worktree add`; never symlink `node_modules` to another checkout (`.gitignore` ignores `node_modules` either way, but a later `npm ci` would wipe the linked tree; the gate has no install rule, so `npm ci` runs without a dialog). Children on POSIX may run the exact `npm ci` in their own worktree.
 
 A security revision after the final review is cap-exempt: one more Opus builder is allowed.
 Builders commit per numbered item.
@@ -507,7 +507,7 @@ A child that is gone (a hung Pi): `close-remote --force <label>` also accepts an
 
 **Trust of the remote close.** The remote only receives the parent's hc calls. It gets no credential and never connects back. `close.json` is trusted only as far as the remote handoff dir is: any process running as the remote user can write it (see [safety](safety.md)).
 
-**Permission ask.** The footer's notice command is not a built-in allow ([permissions](permissions.md#built-in-allows)), so in the remote pane it can raise a permission ask when it falls in the dangerous class; with nobody at that pane the call is denied at once. Add an `allow` rule for that exact command to the remote machine's user `permissions.json`.
+**Permission ask.** The footer's notice command is not a built-in allow ([permissions](permissions.md#built-in-allows)), so it runs under default allow; only a judge-first call in the remote pane can raise a permission ask, and with nobody at that pane it is denied at once.
 
 ### Windows remotes
 

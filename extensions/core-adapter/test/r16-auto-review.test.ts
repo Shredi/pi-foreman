@@ -112,7 +112,8 @@ const bash = (line: string, o: { reply?: string | (() => Promise<Reply>) } = {})
 const ASK = verdict("ask", "tool-config-edit");
 const OK = "allowed:mode:no-rule";
 // a line of the dangerous class (here: a toolchain probe / a write outside the worktree) reaches the classifier, whose stub allows with A1
-const CLASSIFIED = "allowed:classifier:A1";
+// C: no judge call for these (an interpreter one-liner, a pipe, a loop are no judge-first kind)
+const CLASSIFIED = OK;
 /** [outcome, dialogs, calls, blocked by a later guard]: what the gate decides for a fixture line under the named stub. */
 type Expect = [string, number, number, boolean?];
 
@@ -120,14 +121,14 @@ type Expect = [string, number, number, boolean?];
 // later guard (self_ruling, the shell write guard) still refuses is marked blocked: the gate's allow does not skip those.
 const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
-  own_async_results_python_read: [CLASSIFIED, 0, 1], // r79 revision (finding C): an interpreter one-liner is danger-opaque, the classifier decides
-  handoff_ruling_for_cat: [CLASSIFIED, 0, 1],
+  own_async_results_python_read: [CLASSIFIED, 0, 0], // r79 revision (finding C): an interpreter one-liner is danger-opaque, the classifier decides
+  handoff_ruling_for_cat: [CLASSIFIED, 0, 0],
   cp_ruling_into_scratch: [OK, 0, 0],
   usage_ls_grep_node_version: [OK, 0, 0],
   pi_scratch_read: ["allowed:default-read", 0, 0],
   own_bg_output_chain: [OK, 0, 0],
   r16_f1_ruling_append_and_cp: [OK, 0, 0],
-  toolchain_probe_pipe: [CLASSIFIED, 0, 1],
+  toolchain_probe_pipe: [CLASSIFIED, 0, 0],
   project_settings_read_mention: [OK, 0, 0],
   other_session_state_read: [OK, 0, 0],
 };
@@ -153,11 +154,11 @@ test("r16 rig: the main rig's handoff and agent dir are outside the literal /tmp
 
 test("r16 hard_deny cp_into_child_handoff_ruling: the gate allows (mode auto), the self_ruling guard still refuses", async () => {
   const r = await bash(FX.hardDeny[1].line);
-  assert.deepEqual([r.outcome, r.block?.block, r.recs.some((x) => x.event === "guard" && x.guard === "self_ruling")], [CLASSIFIED, true, true], JSON.stringify(r.block));
+  assert.deepEqual([r.outcome, r.block?.block, r.recs.some((x) => x.event === "guard" && x.guard === "self_ruling")], [OK, true, true], JSON.stringify(r.block));
 });
 
 // a call of the dangerous class: the only kind that reaches the classifier
-const DANGEROUS = "terraform apply -auto-approve";
+const DANGEROUS = "git branch -D old-topic";
 
 // R41: the self-modification writes are a dialog by rule (selfmod.ts, plan 2.5): the owner gets one gate dialog and no model is called,
 // whatever the stub answers. tee into the agent extensions is one of them.
@@ -203,12 +204,12 @@ for (const c of FX.selfModTool) {
 }
 
 // item 6: the closed verdict. Every reply is checked with a line of its own (a deny is cached per session by input).
+// C: the judge answers only clear or unsure; every fixture reply (the old allow/deny/escalate shapes included) is no valid clear and asks the owner
 FX.verdicts.forEach((c, i) => {
-  test(`r16 verdict ${c.name}: ${c.gate}`, async () => {
+  const want = "dialog:danger:comment";
+  test(`r16 verdict ${c.name}: ${want}`, async () => {
     const r = await bash(`${DANGEROUS} # v${i}`, { reply: c.reply });
-    const calls1 = c.gate.startsWith("dialog") ? 1 : 0;
-    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [c.gate, calls1, 1, true]);
-    if (c.gate.startsWith("blocked:prose:")) assert.match(r.block?.reason ?? "", /^pi-foreman: denied by whitelist rule D1/);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [want, 1, 1, true]);
   });
 });
 

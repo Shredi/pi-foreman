@@ -12,14 +12,14 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture
+from driver import PROVIDER_A, load_fixture
 from test_replay import REASON, ReplayCase
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestChildEffects(ReplayCase):
     def test_test_restore_and_chain_allowed_without_model(self):
-        rig = self.rig("child-effects", load_fixture("child_effects"), permissions="baseline")
+        rig = self.rig("child-effects", load_fixture("child_effects"), config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pkg = rig.project / "pkg"
         pkg.mkdir()
         (pkg / "hub.go").write_text("package pkg\n", "utf-8")
@@ -43,7 +43,7 @@ class TestChildEffects(ReplayCase):
         # ledger item 26: the owner's subagent launch is allowed by the gate default `default-role-launch` (a guard record, no review call), so it no longer shows as a review 'allow'
         launch = [r for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
         self.assertTrue(any(r.get("decision") == "allowed" and r.get("rule") == "default-role-launch" for r in launch), launch)
-        self.assertEqual([r.get("decision") for r in reviews], ["escalate"], reviews)  # r79: the classifier escalates the restore at once (empty whitelist, no model call)
+        self.assertEqual([r.get("decision") for r in reviews], ["escalate"], reviews)  # PR C: the judge (fake, unsure) does not clear the restore
         self.assertEqual([r.get("role") for r in reviews], ["builder"], reviews)
         gate = [r for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "bash"]
         self.assertEqual([(r.get("decision"), r.get("rule")) for r in gate], [("blocked", "danger-git"), ("allowed", "default-read")], gate)

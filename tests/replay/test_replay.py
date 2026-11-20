@@ -178,20 +178,17 @@ class TestDestructiveGuard(ReplayCase):
 
 
 class TestAskHandling(ReplayCase):
-    """A guard `ask`: RPC answers it through extension_ui_request; print/JSON mode blocks it.
-    The command is `true || find … -delete`: the guard asks because of `find -delete`, and the
-    `true ||` short-circuit means find never runs even when the ask is approved."""
+    """A judge-first ask: RPC answers it through extension_ui_request; print/JSON mode blocks it.
+    The command is `git branch -D old-topic`: on the judge-first list, and the fake judge (`review-ask`) is unsure, so the owner is asked."""
 
     def test_ask_rpc_approve_deny_and_no_ui(self):
-        rig = self.rig("ask", load_fixture("ask"))
-        # the ask comes from a user `ask` rule: Pi no longer runs the vendored destructive guard, so `find -delete` is no ask of its own
-        self.user_permissions(rig, {"mode": "ask", "ask": ["Bash(find *)"]})
+        rig = self.rig("ask", load_fixture("ask"), config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:d1]] approve", answers=[{"value": "allow once"}], timeout=60)
         asks = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select"]
         self.assertEqual(len(asks), 1)
-        self.assertIn("find", asks[0].get("title", "") + asks[0].get("message", ""))
+        self.assertIn("git branch -D", asks[0].get("title", "") + asks[0].get("message", ""))
         [(_, err, _)] = tool_results(recs, "bash")
         self.assertFalse(err)
         recs = pi.prompt("[[replay:d1]] deny", answers=[{"value": "deny and stop"}], timeout=60)

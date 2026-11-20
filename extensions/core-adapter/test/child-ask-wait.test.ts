@@ -227,11 +227,11 @@ async function childRig(t: T, askDir: string, ctx: Record<string, unknown> = {})
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const escalate = JSON.stringify({ verdict: "ask", entry: "package-install", reason: "because" });
+  const escalate = JSON.stringify({ verdict: "unsure", reason: "because" });
   const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: escalate }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   return r11Rig(t, {}, { ctx: { modelRegistry: reg, ...ctx }, config: cfg({ gate: { askTimeoutMs: 50 } }), child: true });
 }
-const CMD = { command: "pip install requests" };
+const CMD = { command: "git branch -D old-topic" };
 
 test("child gate: a missing ask dir is the gone denial; the child creates no dir and no ask.md", async (t) => {
   const dir = path.join(tmp(t), "no-such-dir");

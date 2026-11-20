@@ -35,7 +35,7 @@ function ctx(replies: Reply[], over: Partial<ProtectedCheckCtx> = {}, found = tr
   const reg = fakeRegistry(replies, found);
   const notes: string[] = [];
   const usage: { role?: string }[] = [];
-  const c: ProtectedCheckCtx = { prose: { allow: [], deny: [] }, registry: reg.registry as never, config, provider: "fake", notify: (t) => notes.push(t), recordUsage: (u) => usage.push(u as never), timeoutMs: 200, match: MATCH(), task: "tidy up", denyEntries: DENY, checkMode: "model", version: 1, away: false, ...over };
+  const c: ProtectedCheckCtx = { registry: reg.registry as never, config, provider: "fake", notify: (t) => notes.push(t), recordUsage: (u) => usage.push(u as never), timeoutMs: 200, match: MATCH(), task: "tidy up", denyEntries: DENY, checkMode: "model", version: 1, away: false, ...over };
   return { c, reg, notes, usage };
 }
 

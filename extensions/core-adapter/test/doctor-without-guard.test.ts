@@ -82,3 +82,11 @@ test("a configured entry with another id is kept next to the adapter (the filter
   assert.match(text, /required child extension pi-foreman-other:/);
   assert.equal(extensionLines(text).length, 2);
 });
+
+test("doctor: a leftover permissions.profile loads and prints the no-longer-used INFO line once; unset prints none", async (t: T) => {
+  const text = await doctor(t, { permissions: { profile: "danger" } });
+  assert.match(text, /^INFO permissions: permissions\.profile is no longer used and is ignored/m);
+  assert.equal(text.split("\n").filter((l) => l.includes("permissions.profile")).length, 1);
+  assert.match(text, /^OK +config loaded \(0 warning\(s\)\)$/m);
+  assert.doesNotMatch(await doctor(t), /permissions\.profile/);
+});

@@ -106,7 +106,7 @@ test("the parent writes the child's ruling by redirect, cp and the write tool: t
 
 test("the parent writes the child's ruling by a glob: no self-ruling refusal (the gate gives no allow)", { skip: posixOnly }, () => {
   const input = { command: `cp a ${H}/ruling*.md` };
-  assert.equal(show("bash", input), 'undecided  ["danger-opaque"]');
+  assert.equal(show("bash", input), "undecided  []"); // C: no danger-opaque label
   assert.equal(selfRulingRefusal("bash", input, wt, parentDirs), undefined);
 });
 

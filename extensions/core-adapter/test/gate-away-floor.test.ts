@@ -52,9 +52,9 @@ test("away (owner): a real ask opens the dialog and the owner's answer applies; 
   const { r } = await awayRig(t, false, { ui });
   const keepAlive = setInterval(() => undefined, 50); // the probe child is detached on posix, attached on win32, and unref'd: hold the loop while the gate awaits it
   try {
-    assert.equal(await r.call("bash", { command: "npm install left-pad" }), undefined);
+    assert.equal(await r.call("bash", { command: "git branch -D old-one" }), undefined);
     assert.equal(opened.length, 1, "the dialog opened although the sample says away");
-    const res = await r.call("bash", { command: "npm install right-pad" });
+    const res = await r.call("bash", { command: "git branch -D old-two" });
     assert.equal(res?.block, true, "a dismissed dialog still denies");
     assert.match(res?.reason ?? "", /denied by the user/);
     assert.ok(!(res?.reason ?? "").includes(OWNER_AWAY_TEXT));
