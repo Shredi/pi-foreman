@@ -6,6 +6,8 @@ register("../pi-foreman/stubs-hooks.mjs", import.meta.url);
 const stubs = await import("../pi-foreman/stubs.mjs");
 const { default: Mod } = await import("./main.js");
 const { world } = stubs;
+// the `<foreman> pages url <file>` call of the served-page path is not an opener call
+const execs = () => world.execCalls.filter((c) => !(c[1][0] === "pages" && c[1][1] === "url"));
 
 const SLOT = (n) => `/app/mods/pi-foreman-plan/cache/pages/slot-${n}.html`;
 const entry = (file, o = {}) => ({ id: file.replace(/\.html$/, ""), kind: "plan", title: file, state: "draft", version: 1, at: "2026-11-06T10:00:00Z", file, ...o });
@@ -42,7 +44,7 @@ test("a local page is read, its relative src and poster are made absolute, and o
   const { m, cx } = await boot();
   await click(m, cx, "plan");
   assert.deepEqual(world.writes, [[SLOT(0), '<img src="file:///s/fm/pages/d/a%20b.png"><video poster="file:///s/fm/pages/p.png" src="https://e.org/v.mp4"></video><a href="x.html">x</a><img src="#a"><img src="/abs.png">']]);
-  assert.deepEqual(world.execCalls, [["open", [SLOT(0)], { timeout: 10000 }]]);
+  assert.deepEqual(execs(), [["open", [SLOT(0)], { timeout: 10000 }]]);
   assert.deepEqual(world.notices, []);
 });
 
@@ -52,7 +54,7 @@ test("the copies go round the eight slots and overwrite", async () => {
   const { m, cx } = await boot();
   for (let i = 0; i < 9; i++) await click(m, cx, "plan");
   assert.deepEqual(world.writes.map((w) => w[0]), [0, 1, 2, 3, 4, 5, 6, 7, 0].map(SLOT));
-  assert.deepEqual(world.execCalls.map((c) => c[1][0]), [0, 1, 2, 3, 4, 5, 6, 7, 0].map(SLOT));
+  assert.deepEqual(execs().map((c) => c[1][0]), [0, 1, 2, 3, 4, 5, 6, 7, 0].map(SLOT));
 });
 
 test("the platform opener follows the platform; Linux and Windows argv", async () => {
@@ -61,7 +63,7 @@ test("the platform opener follows the platform; Linux and Windows argv", async (
   const { m, cx } = await boot();
   world.platform = "linux"; await click(m, cx, "plan");
   world.platform = "windows"; await click(m, cx, "plan");
-  assert.deepEqual(world.execCalls.map((c) => [c[0], c[1]]), [["xdg-open", [SLOT(0)]], ["rundll32", ["url.dll,FileProtocolHandler", SLOT(1)]]]);
+  assert.deepEqual(execs().map((c) => [c[0], c[1]]), [["xdg-open", [SLOT(0)]], ["rundll32", ["url.dll,FileProtocolHandler", SLOT(1)]]]);
 });
 
 test("a remote page is read on its machine and copied as it is", async () => {
@@ -72,7 +74,7 @@ test("a remote page is read on its machine and copied as it is", async () => {
   await click(m, cx, "plan");
   assert.ok(world.reads.some(([p, on]) => p === "/s/fm/pages/plan.html" && on === "box"), "the page is read on the machine");
   assert.deepEqual(world.writes, [[SLOT(0), '<img src="d/a.png">']], "no rewrite, written locally");
-  assert.deepEqual(world.execCalls.map((c) => c[1]), [[SLOT(0)]]);
+  assert.deepEqual(execs().map((c) => c[1]), [[SLOT(0)]]);
   assert.ok(!world.reads.some(([p, on]) => p === SLOT(0) && on === "box"));
 });
 
@@ -102,7 +104,7 @@ test("a page that cannot be read or is over 1 MiB raises one notice each and wri
   assert.match(world.notices[1].body, /1 MiB/);
   assert.equal(world.notices.length, 2);
   assert.deepEqual(world.writes, []);
-  assert.deepEqual(world.execCalls, []);
+  assert.deepEqual(execs(), []);
 });
 
 test("an opener that fails raises one notice with its failure line", async () => {

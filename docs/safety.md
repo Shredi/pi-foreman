@@ -1,6 +1,6 @@
 # Safety and permissions
 
-> Covers the shell-write guard, what the gate floors cover for git and forge commands, the PR gate, the tool gate with its floors and judge, child environment stripping, bridge isolation, the known `/sync` limit and what an install runs on your machine.
+> Covers the shell-write guard, what the gate floors cover for git and forge commands, the PR gate, the tool gate with its floors and judge, child environment stripping, bridge isolation, the known `/sync` limit and what an install runs on your machine (including the page server).
 > Read it when a command is refused or asked about, or before you loosen a rule.
 > A project file can only tighten these rules; the scanners work on command strings and are not a sandbox.
 
@@ -378,6 +378,7 @@ This is what `foreman setup` and Pi run when you install pi-foreman, and where t
 - **Add-ons.** Setup installs the add-ons you accept at exact versions. It switches install scripts off for these installs. The add-ons bring their own dependencies, and those are not locked: a new release of a dependency can be picked up at install time. If Pi installs a missing add-on by itself at start, or you run `pi install` yourself, scripts run unless you turn them off. To do that, set `ignore-scripts=true` in your user-level npm config (`npm config set ignore-scripts true`).
 - **Your own overlay.** Setup installs an overlay package you name with its install scripts on, because you vouch for it. An overlay is usually your own scripts and tools and needs no install script. Setting `ignore-scripts=true` in your user-level npm config covers the overlay and every install Pi starts, and is the recommended setting. Overlay authors should not rely on install scripts.
 - **Files setup writes.** Setup writes the marked resume block (and an add-on env block) into your shell startup files or PowerShell profile, the agent directory and, on `--mods`, the herdr-app mods folder. When the Node test runner starts setup (`NODE_TEST_CONTEXT` is set), setup refuses to write the real versions of these places unless `PI_FOREMAN_ALLOW_REAL_HOME=1` is set, so a test cannot change your home.
+- **The page server.** The first page link of a session (or the herdr-app Agents mod at start) starts `foreman pages serve`, a background process that listens on `127.0.0.1` (port 47317 by default) and serves the harness pages behind a secret per page folder. It runs as you, reads only the pages a session registered, stops after 12 hours of no use or when `pages.server.enabled` is false, and opens a network address only when your own user config sets `pages.server.bind`; see [pages](pages.md) for the threat statement. Switch it off with `pages.server.enabled: false`; links are then file links.
 - **Pi's tool download.** Pi downloads the search tools `fd` and `rg` from GitHub releases the first time it starts. pi-foreman does not control that download.
 - **No updates by themselves.** Nothing updates until you run `pi update` or `foreman update-check` and act on it.
 - **Other package managers.** If you set Pi to use pnpm or bun, neither the lockfile nor the `.npmrc` settings apply to the clone.

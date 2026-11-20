@@ -59,3 +59,7 @@ if (process.platform !== "win32") {
   globalThis[Symbol.for("pi-foreman.herdr-app-home")] = { seed: appHome };
   process.on("exit", () => fs.rmSync(appHome, { recursive: true, force: true }));
 }
+
+// No test may start the page server (pageserver.ts): the session code asks pagelinks.ts, whose seed here answers "no served URL" (file links stay).
+// Tests of served links set `pageLinks.url` themselves.
+globalThis[Symbol.for("pi-foreman.page-url-seed")] = async () => null;

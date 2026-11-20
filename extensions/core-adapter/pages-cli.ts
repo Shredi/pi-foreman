@@ -5,14 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piAgentDir } from "./env.ts";
+import { ID_RE } from "./show.ts";
 import { countRoots, ensureServer, httpHealth, IDLE_CHECK_MS, loadPagesConfig, PKG_ROOT, pagesStateDir, readServer, realEnsureDeps, realServeDeps, RECHECK_MS, registerRoot, rotateRoots, servedUrl, startPageServer } from "./pageserver.ts";
 import type { CfgResult, EnsureDeps, Health, ServeDeps, ServerRecord } from "./pageserver.ts";
 
 export const USAGE = "usage: foreman pages serve|ensure|url <path>|status|stop|rotate";
 
-/** show.ts ID_RE: the session id segment of a show dir. */
-const SHOW_ID = /^[A-Za-z0-9._-]{1,128}$/;
-/** pi-foreman-plan/model.js PAGE_FILE: the names pages.ts fileOfId makes. */
+/** Copy of PAGE_FILE in integrations/herdr-app/pi-foreman-plan/model.js:148 (a mod cannot import this package): the names `fileOfId` in pages.ts makes. */
 const PAGE_FILE = /^(?:plan|result|note-\d{1,6})\.html$/;
 
 export interface CliDeps {
@@ -36,7 +35,7 @@ export function pageFileOf(p: string): string | null {
     const real = fs.realpathSync.native(p);
     const parts = real.split(/[\\/]/);
     const n = parts.length;
-    if (n < 5 || parts[n - 4] !== "show" || !SHOW_ID.test(parts[n - 3]) || parts[n - 3] === "." || parts[n - 3] === ".." || parts[n - 2] !== "pages" || !PAGE_FILE.test(parts[n - 1])) return null;
+    if (n < 5 || parts[n - 4] !== "show" || !ID_RE.test(parts[n - 3]) || parts[n - 3] === "." || parts[n - 3] === ".." || parts[n - 2] !== "pages" || !PAGE_FILE.test(parts[n - 1])) return null;
     const st = fs.statSync(real);
     return st.isFile() && st.nlink === 1 ? real : null;
   } catch {
