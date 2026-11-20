@@ -63,7 +63,11 @@ test("real session: the request declares the launch fields on subagent, and a ca
   });
   await resourceLoader.reload();
   const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model: modelRuntime.getModel("fake", "m1"), resourceLoader, sessionManager: SessionManager.inMemory(cwd), settingsManager });
-  t.after(() => session.dispose?.());
+  // dispose() does not emit session_shutdown; pi-subagents closes its supervisor-channel watchers there, and an open FSWatcher keeps the process alive on Linux
+  t.after(async () => {
+    await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" } as never);
+    session.dispose?.();
+  });
   await session.bindExtensions?.({});
   await session.prompt("launch the builder");
 
