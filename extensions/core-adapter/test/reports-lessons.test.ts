@@ -4,12 +4,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { realPath } from "../workspacekey.ts";
 import { main, type ReportsDeps } from "../reports-cli.ts";
 import { LESSON_EVENT, claimLessons, readRows, recordReport, setState, storeFor, type Lesson, type Writer } from "../reports.ts";
 import { emitPendingLessons, runReports, type ReportSession } from "../reportstool.ts";
 
 function tmp(t: { after(fn: () => void): void }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-lessons-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-lessons-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

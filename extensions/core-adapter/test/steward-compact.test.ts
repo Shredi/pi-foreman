@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { realPath } from "../workspacekey.ts";
 import { retroCounters } from "../reportstool.ts";
 import { STEWARD_ENTRY, STEWARD_TEXT_TYPE, StewardWatch, stewardSettings, type StewardDeps, type StewardEntry } from "../steward.ts";
 import { resolvePython } from "../python.ts";
@@ -17,7 +18,7 @@ const skip = !py.ok ? "no Python >= 3.13" : false;
 type T = { after(fn: () => void | Promise<void>): void };
 const INSTRUCTION = fs.readFileSync(path.resolve(import.meta.dirname, "..", "..", "..", "instructions", "steward.md"), "utf8");
 function tmp(t: T): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-steward-cmp-")));
+  const dir = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-steward-cmp-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
