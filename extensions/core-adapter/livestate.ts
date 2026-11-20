@@ -14,6 +14,7 @@ import { HEARTBEAT_MS, LIVE_DEAD_MS, liveDir } from "./paneresume-core.ts";
 // the constants and the directory live in paneresume-core.ts (the pane-resume command reads live records without this module's imports)
 export { HEARTBEAT_MS, LIVE_DEAD_MS, liveDir };
 const WRITE_GAP_MS = 1000;
+const HOLD_CLASS: BlockClass = { on: "owner", kind: "hold" };
 const MAX_RUNS = 20;
 const MAX_WAITS = 20;
 const MAX_DOTS = 14;
@@ -90,6 +91,10 @@ export interface LiveFile {
   branch?: string;
   /** The owner's last answer to this session's plan checkpoint (decision word and ISO time; no plan or note text); present once an answer was given. */
   lastCheckpoint?: { decision: "approve" | "revise" | "reject"; at: string };
+  /** The owner's last answer to any dialog of this session (kind word, ISO time, outcome); no dialog text. A parent says "answered" about a dialog only when this holds an answer at or after the episode start. Present once a dialog returned. */
+  lastAnswer?: LiveAnswer;
+  /** The pi-foreman code this session loaded (package version and checkout commit; null where unknown); `foreman setup` and the update check list a running session whose stamp differs from the installed code. */
+  harness?: { version: string | null; commit: string | null };
   /** Written only by the last write of a session that ended on SIGHUP/SIGTERM (`LiveInit.endedBy`): its pane note stays, so a crash restart can read the record. */
   endedBy?: "signal";
   /** env HERDR_PANE_ID, else null. */
@@ -118,6 +123,13 @@ export interface LiveFile {
   owner?: OwnerState;
   /** The show dir (show.ts) and the versions published there; `dir` is an absolute path and is never truncated. Absent when the scratch root is disabled. */
   show?: LiveShow;
+}
+
+/** One owner dialog that returned: `dismissed` when nothing came back (Esc, a cancel). */
+export interface LiveAnswer {
+  kind: BlockKind;
+  at: string;
+  outcome: "answered" | "dismissed";
 }
 
 /** The versions are hints: the reader re-reads plan.json and note.json in `dir`. */
@@ -178,6 +190,8 @@ export interface LiveInit {
   mode: string | undefined;
   env: Record<string, string | undefined>;
   pid?: number;
+  /** The code stamp written to the file (harnessid.mjs `harnessId`). */
+  harness?: { version: string | null; commit: string | null };
   /** Read by `stop()` for its last write: "signal" when the session ends on SIGHUP/SIGTERM. */
   endedBy?: () => "signal" | undefined;
   /** A running task that is not running any more (started before this boot, or its pid is gone): left out of the record's `tasks`. */
@@ -196,6 +210,7 @@ export class LiveState {
   private readonly taskEnded: ((task: AddonTask) => boolean) | undefined;
   private endedBy: "signal" | undefined;
   private lastCheckpoint: { decision: "approve" | "revise" | "reject"; at: string } | undefined;
+  private lastAnswer: LiveAnswer | undefined;
   private lastEventMs = this.startedMs;
   private working = false;
   /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
@@ -269,6 +284,7 @@ export class LiveState {
       pid: init.pid ?? process.pid,
       mode,
       startedAt: new Date(this.startedMs).toISOString(),
+      ...(init.harness ? { harness: { version: init.harness.version, commit: init.harness.commit } } : {}),
       paneId: (init.env.HERDR_PANE_ID ?? "").trim() || null,
       hcTerminal: (init.env.HERDR_PANE_ID ?? "").trim() ? null : (init.env.HC_TERMINAL_ID ?? "").trim() || null,
     };
@@ -374,8 +390,22 @@ export class LiveState {
 
   /** The owner answered the plan checkpoint: the decision word is published in the live file for the parent's information line. */
   recordCheckpoint(decision: "approve" | "revise" | "reject"): void {
-    this.lastCheckpoint = { decision, at: new Date().toISOString() };
+    const at = new Date().toISOString();
+    this.lastCheckpoint = { decision, at };
+    this.lastAnswer = { kind: "checkpoint", at, outcome: "answered" };
     this.flush();
+  }
+
+  /** An owner dialog returned (an answer, or a dismissal): stored in the live file, no dialog text. */
+  recordAnswer(kind: BlockKind, outcome: "answered" | "dismissed"): void {
+    this.lastAnswer = { kind, at: new Date().toISOString(), outcome };
+    this.flush();
+  }
+
+  /** `foreman_hold` on or off: while on, the session waits on the owner (`blockedOn` owner, kind `hold`, presence needs-you) without a dialog. */
+  setHold(on: boolean): void {
+    if (on) this.classOf.set("hold", HOLD_CLASS);
+    this.setBlocked(on, "hold");
   }
 
   /** An own source opened or closed: filed under the class it declared (`holdOn`), an unclassed one counts as an owner wait. */
@@ -505,7 +535,7 @@ export class LiveState {
     }
     const blockedOn: BlockOn | undefined = this.ownerKinds.size > 0 ? "owner" : this.parentKinds.size > 0 ? "parent" : undefined;
     const blockedKind = blockedOn === "owner" ? this.ownerKind : blockedOn === "parent" ? [...this.parentKinds.values()][0] : null;
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.lastCheckpoint ? { lastCheckpoint: this.lastCheckpoint } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.lastCheckpoint ? { lastCheckpoint: this.lastCheckpoint } : {}), ...(this.lastAnswer ? { lastAnswer: this.lastAnswer } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
   }
 
   private schedule(): void {

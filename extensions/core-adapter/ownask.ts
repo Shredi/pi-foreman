@@ -74,6 +74,11 @@ export class OwnAsk {
     this.evaluate();
   }
 
+  /** An intercom message from the parent (the caller checked the sender id and that it is not cross-machine): the open version counts as answered (D125), as for a brief. */
+  messaged(): void {
+    this.typed();
+  }
+
   /** Release the source (session shutdown). */
   releaseAll(): void {
     this.drop();

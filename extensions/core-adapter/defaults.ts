@@ -43,7 +43,7 @@ export interface DefaultCtx {
 
 /** pi-foreman's own tools that carry no file path and no shell or message payload (plan Addendum 2, "B, own-tools default"). */
 export const OWN_TOOLS: ReadonlySet<string> = new Set([
-  "plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "review_verdict", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_script", "foreman_wait", "foreman_protect", "foreman_report", "foreman_reports",
+  "plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "review_verdict", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_script", "foreman_wait", "foreman_hold", "foreman_protect", "foreman_report", "foreman_reports",
   "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill",
   "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch",
   "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable",

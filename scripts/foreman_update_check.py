@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -83,6 +86,75 @@ def entries(lock):
     return out
 
 
+def harness_id(root=ROOT):
+    """{version, commit} of the package at root (None where unreadable); the twin of extensions/core-adapter/harnessid.mjs."""
+    version = commit = None
+    try:
+        v = json.loads((Path(root) / "package.json").read_text(encoding="utf-8")).get("version")
+        version = v if isinstance(v, str) and v else None
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=3)
+        c = r.stdout.strip() if r.returncode == 0 else ""
+        commit = c if re.fullmatch(r"[0-9a-f]{7,64}", c) else None
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {"version": version, "commit": commit}
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def older_sessions(agent_dir, current, now=None, alive=_pid_alive, me=None):
+    """Running sessions (fresh heartbeat, live pid) whose live-file `harness` stamp differs from current or is missing:
+    [{sessionId, label, cwd, pid, restart}]. The twin of olderSessions in harnessid.mjs."""
+    now = time.time() if now is None else now
+    me = os.getpid() if me is None else me
+    out = []
+    live = Path(agent_dir) / "pi-foreman" / "state" / "live"
+    try:
+        names = sorted(n for n in os.listdir(live) if n.endswith(".json"))
+    except OSError:
+        return out
+    from datetime import datetime
+    for n in names:
+        try:
+            f = json.loads((live / n).read_text(encoding="utf-8"))
+            beat = datetime.fromisoformat(str(f["heartbeatAt"]).replace("Z", "+00:00")).timestamp()
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if not isinstance(f, dict) or not isinstance(f.get("sessionId"), str) or not isinstance(f.get("pid"), int) or f["pid"] == me:
+            continue
+        if now - beat > 90 or f.get("state") == "done" or not alive(f["pid"]):
+            continue
+        h = f.get("harness")
+        if isinstance(h, dict) and h.get("version") == current["version"] and h.get("commit") == current["commit"]:
+            continue
+        label = f.get("label") if isinstance(f.get("label"), str) else None
+        cwd = f.get("cwd") if isinstance(f.get("cwd"), str) else ""
+        if label and isinstance(f.get("parentIntercom"), str):
+            restart = "foreman session restart %s" % label
+        else:
+            restart = "quit it (/quit), then in %s: pi --session %s" % (cwd, f["sessionId"])
+        out.append({"sessionId": f["sessionId"], "label": label, "cwd": cwd, "pid": f["pid"], "restart": restart})
+    return out
+
+
+def older_lines(sessions):
+    if not sessions:
+        return []
+    k = len(sessions)
+    return ["%d running session%s still run%s older pi-foreman code (an update does not reach a running session); restart %s:" % (k, "" if k == 1 else "s", "s" if k == 1 else "", "it" if k == 1 else "each")] + ["  %s: %s" % (s["label"] or s["sessionId"], s["restart"]) for s in sessions]
+
+
 def render(rows):
     lines = []
     for r in rows:
@@ -120,10 +192,14 @@ def main(argv=None, fetcher=fetch):
     pinned = entries(lock)
     names = {e.get("name") for e in pinned}
     rows = [check(e, fetcher) for e in pinned] + [check(e, fetcher) for e in UNPINNED if e["name"] not in names]
+    agent = os.environ.get("PI_CODING_AGENT_DIR") or str(Path.home() / ".pi" / "agent")
+    older = older_sessions(agent, harness_id())
     if args.json:
-        print(json.dumps({"packages": rows, "note": FOOTER}, indent=2))
+        print(json.dumps({"packages": rows, "note": FOOTER, "olderSessions": older}, indent=2))
     else:
         print(render(rows))
+        for line in older_lines(older):
+            print(line)
     return 0
 
 
