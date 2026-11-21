@@ -80,7 +80,7 @@ function rig(over: Record<string, unknown> = {}) {
   return { dir, w, reg, put, queue, send, probe, calls, wakes, probes, writes, state, failing, messages, flushes: () => flushes };
 }
 
-test("queuePlan and parseQueue: records above lastSeq up to the label, ascending; the label alone when the queue has no record for it; bad lines skipped", () => {
+test("queuePlan and parseQueue: every record above lastSeq, ascending; the label alone when the queue has no record for it; bad lines skipped", () => {
   const h = "a".repeat(64);
   const bad: string[] = [];
   const records = parseQueue([JSON.stringify({ seq: 2, kind: "plan", sha256: h, bytes: 3 }), "not json", JSON.stringify({ seq: 1, kind: "result", sha256: h, bytes: 3 }), JSON.stringify({ seq: 3, kind: "plan", sha256: "x", bytes: 1 }), JSON.stringify({ seq: 4, kind: "refused", sha256: null, bytes: 0, reason: "no-run" }), JSON.stringify({ seq: 5, kind: "closed", sha256: null, bytes: 0 })].join("\n"), (l) => bad.push(l));
@@ -264,6 +264,23 @@ test("hs2: queue 1,2 with the label at 1 delivers both, once, in poll mode and a
   await live.send(labelOf(1, "plan", a));
   assert.equal(live.reg().noticeSeq, 2);
   assert.equal(live.wakes.length, 2);
+});
+
+test("hs2: label 1 without a queue record and a record 2: both delivered, 1 then 2, receipt 2 after both", async () => {
+  const a = "plan one\n";
+  const b = "the result\n";
+  const r = rig();
+  r.put("plan.md", a); // single-file path for seq 1
+  r.put("notices/2-result.md", b);
+  r.queue(rec(2, "result", b));
+  r.state.getLabels = { "fm.notice": labelOf(1, "plan", a) };
+  r.w.start();
+  await r.w.idle();
+  assert.deepEqual(r.wakes.map((x) => x.split(" ")[0]), ["plan", "result"]);
+  assert.equal(r.reg().noticeSeq, 2);
+  assert.equal(r.reg().lastError, null);
+  assert.equal(r.writes.length, 1);
+  assert.equal((JSON.parse(r.writes[0].body) as { seq: number }).seq, 2, "the receipt names 2, written after both");
 });
 
 test("hs2: a hostile child id writes no contact file outside state/remote-contact", async () => {

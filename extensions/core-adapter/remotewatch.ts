@@ -331,7 +331,7 @@ export function parseQueue(text: string, bad?: (line: string) => void): QueueRec
 
 /**
  * The notices to apply for a label naming `label.seq`: every queue record above `lastSeq` (labels can arrive out of order, so also those above the label's seq), ascending (one per seq, the first
- * line wins), then the label's own notice by the single-file path when the queue holds no record for its seq (a queue write failed).
+ * line wins), plus the label's own notice by the single-file path, in its seq position, when the queue holds no record for its seq (a queue write failed).
  */
 export function queuePlan(lastSeq: number, records: QueueRecord[], label: ParsedLabel): PlanStep[] {
   const bySeq = new Map<number, QueueRecord>();
@@ -339,7 +339,10 @@ export function queuePlan(lastSeq: number, records: QueueRecord[], label: Parsed
   const out: PlanStep[] = [...bySeq.values()]
     .sort((a, b) => a.seq - b.seq)
     .map((r): PlanStep => (r.kind === "refused" ? { seq: r.seq, kind: "refused", slug: r.reason as string } : { seq: r.seq, kind: r.kind, sha256: r.sha256 ?? "-", bytes: r.bytes, queued: true }));
-  if (!bySeq.has(label.seq) && label.seq > lastSeq) out.push(label.kind === "refused" ? { seq: label.seq, kind: "refused", slug: label.slug } : { seq: label.seq, kind: label.kind, sha256: label.sha256, bytes: label.bytes, queued: false });
+  if (!bySeq.has(label.seq) && label.seq > lastSeq) {
+    out.push(label.kind === "refused" ? { seq: label.seq, kind: "refused", slug: label.slug } : { seq: label.seq, kind: label.kind, sha256: label.sha256, bytes: label.bytes, queued: false });
+    out.sort((a, b) => a.seq - b.seq);
+  }
   return out;
 }
 
