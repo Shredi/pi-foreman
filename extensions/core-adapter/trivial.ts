@@ -189,10 +189,10 @@ export async function checkTrivial(dirs: readonly [string, string | null][], cwd
 }
 
 /**
- * `git status --porcelain` of the whole checkout of `cwd` (`:/`), without the `.workflow/` folders from `cwd` up to the toplevel and the scratch dir
+ * `git status --porcelain -z` (NUL-separated, paths unquoted; callers test emptiness or use `statusPaths`) of the whole checkout of `cwd` (`:/`), without the `.workflow/` folders from `cwd` up to the toplevel and the scratch dir
  * (structured pathspecs, anchored at the toplevel, literal). Null when git fails or `cwd` is no work tree (fail closed).
  */
-export async function cleanTreeStatus(cwd: string, scratchDir: string, platform: string = process.platform, z = false): Promise<string | null> {
+export async function cleanTreeStatus(cwd: string, scratchDir: string, platform: string = process.platform): Promise<string | null> {
   const topRaw = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
   if (!topRaw) return null;
   let top: string;
@@ -206,7 +206,7 @@ export async function cleanTreeStatus(cwd: string, scratchDir: string, platform:
   const excludes = workflowDirs(realCwd, top, platform).map((d) => path.relative(top, d).split(path.sep).join("/"));
   const parts = scratchParts(scratchDir);
   if (parts && parts[0] !== ".workflow") excludes.push(parts.join("/"));
-  return git(cwd, ["status", "--porcelain", ...(z ? ["-z"] : []), "--", ":/", ...excludes.map((e) => `:(top,exclude,literal)${e}`)]);
+  return git(cwd, ["status", "--porcelain", "-z", "--", ":/", ...excludes.map((e) => `:(top,exclude,literal)${e}`)]);
 }
 
 /** The paths of `git status --porcelain -z` output (unquoted, so a non-ASCII name matches); a rename's origin is skipped. */
@@ -233,7 +233,7 @@ export async function checkoutBaseline(cwd: string, scratchDir: string, platform
   const top = tree === null ? null : (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
   const staged = top ? await git(top, ["ls-files", "--stage", "-z"]) : null;
   if (!top || staged === null) return null;
-  const dirtyPaths = statusPaths((await cleanTreeStatus(cwd, scratchDir, platform, true)) ?? "");
+  const dirtyPaths = statusPaths(status);
   const subs = staged.split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1)).filter((p) => p !== "" && dirtyPaths.has(p));
   const inner: string[] = [];
   for (const p of subs) inner.push(`${p}=${(await worktreeTree(path.join(top, p))) ?? "?"}`);

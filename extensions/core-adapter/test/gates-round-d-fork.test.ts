@@ -69,3 +69,11 @@ test("13: a dirty submodule with a non-ASCII path is fingerprinted (a further ed
   fs.writeFileSync(path.join(w.project, "vendor", "süb", "s.txt"), "dirty twice\n");
   assert.notEqual(await checkoutBaseline(w.project, ".workflow/scratch"), one);
 });
+
+test("13: a resume of a session with no stored ceremony entry takes no fingerprint (a dirty checkout is not a no-change)", async (t) => {
+  const { a, w } = await setup(t, { tier: "standard", before: dirtyFile });
+  assert.equal(await settle(a), ""); // a brand-new session on a dirty checkout takes one and finishes
+  w.entries.splice(0, w.entries.length);
+  const r = await w.adapter("resume");
+  assert.match(await settle(r), /requires builder, reviewer/);
+});
