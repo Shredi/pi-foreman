@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "foreman_test_run.mjs");
-const { testConcurrency, nodeTestArgs, acquireLock, LockWaitTimeout, killTree } = await import(pathToFileURL(SCRIPT).href);
+const { testConcurrency, nodeTestArgs, acquireLock, LockWaitTimeout, killTree, targetedSettings, slotPaths } = await import(pathToFileURL(SCRIPT).href);
 
 const MADE = [];
 after(() => {
@@ -800,7 +800,6 @@ test("the give-up timer counts from the last holder change: no progress ends the
 
 // ---- targeted mode: shared slots ----
 
-const { targetedSettings, slotPaths } = await import(pathToFileURL(SCRIPT).href);
 const T2 = { FOREMAN_TEST_TARGETED_SLOTS: "2" };
 const slotFile = (dir, k) => path.join(dir, `test-slot-${k}`);
 

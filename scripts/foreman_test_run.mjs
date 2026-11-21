@@ -1011,6 +1011,11 @@ async function main(rawArgv, env = process.env) {
   let acquiredAt = lockDisabled(env) ? started : undefined; // epoch ms the lock was taken; with the lock off the enqueue time
   process.on("exit", (exitCode) => {
     const ended = Date.now();
+    if (runRoot) {
+      const left = leftovers(runRoot);
+      if (left.length) process.stderr.write(`test-run: ${left.length} temp entries left by this run: ${left.slice(0, 5).join(", ")}\n`);
+      removeRunRoot(runRoot);
+    }
     try {
       fs.mkdirSync(historyDir, { recursive: true });
       const doneFile = path.join(historyDir, `${id}.done.json`);
@@ -1022,11 +1027,6 @@ async function main(rawArgv, env = process.env) {
       try {
         fs.rmSync(f, { force: true });
       } catch {}
-    }
-    if (runRoot) {
-      const left = leftovers(runRoot);
-      if (left.length) process.stderr.write(`test-run: ${left.length} temp entries left by this run: ${left.slice(0, 5).join(", ")}\n`);
-      removeRunRoot(runRoot);
     }
     appendHistory(historyDir, {
       id,
