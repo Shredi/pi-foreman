@@ -5,6 +5,7 @@ import { test } from "node:test";
 import * as fs from "node:fs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -21,10 +22,16 @@ const SESSION: Record<string, string> = {
 
 test("the hermetic preload clears the session variables and prefix families in a child process", () => {
   const env = { ...process.env, ...SESSION, PI_FOREMAN_PYTHON: "/usr/bin/python3" };
-  const run = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, "-e", "process.stdout.write(JSON.stringify(Object.keys(process.env)))"], { env, encoding: "utf8" });
+  const run = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, "-e", "process.stdout.write(JSON.stringify(process.env))"], { env, encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
-  const seen = JSON.parse(run.stdout) as string[];
+  const childEnv = JSON.parse(run.stdout) as Record<string, string>;
+  const seen = Object.keys(childEnv);
   for (const k of ["PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PARENT_INTERCOM", "HERDR_ENV", "PI_SUBAGENT_EXTENSION_BINDINGS", "PI_SUBAGENT_CHILD"]) assert.ok(k in SESSION, `${k} is set by the test`);
-  for (const k of Object.keys(SESSION)) assert.ok(!seen.includes(k), `${k} reached the child`);
+  // the preload sets PI_CODING_AGENT_DIR itself (a temp agent dir), never the session's value
+  const agentDir = childEnv.PI_CODING_AGENT_DIR;
+  assert.ok(agentDir && agentDir !== SESSION.PI_CODING_AGENT_DIR, "PI_CODING_AGENT_DIR is the preload's own value");
+  assert.ok(path.basename(agentDir).startsWith("pf-agent-dir-"), agentDir);
+  assert.equal(path.dirname(agentDir), fs.realpathSync(os.tmpdir()));
+  for (const k of Object.keys(SESSION).filter((k) => k !== "PI_CODING_AGENT_DIR")) assert.ok(!seen.includes(k), `${k} reached the child`);
   assert.ok(seen.includes("PI_FOREMAN_PYTHON"), "PI_FOREMAN_PYTHON is kept on purpose");
 });
