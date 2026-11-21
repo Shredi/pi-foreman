@@ -20,6 +20,10 @@
 // Env: FOREMAN_TEST_LOCK=0 (or a truthy CI) skips the lock; FOREMAN_TEST_CONCURRENCY=N sets --test-concurrency (default
 // half the cores); FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) is the run cap of the lock holder;
 // FOREMAN_TEST_LOCK_DIR overrides the lock directory (default <agentDir>/pi-foreman/state, else the temp dir).
+// Run temp root: a run sweeps old `pf-*` leftovers (top level of the temp dir and ~/.cache/pi-foreman-tests, own files, older than a day), makes
+// <tmpdir>/pf-run-XXXXXX and points the command's TMPDIR/TMP/TEMP (POSIX; PI_FOREMAN_TEST_TMP and FOREMAN_TEST_TMP_ROOT everywhere) at it. The root is
+// removed on every exit (also stop, lock give-up and signals); entries a test left in it are named on stderr (a warning, not a failure). A run that finds
+// FOREMAN_TEST_TMP_ROOT set (nested) reuses that root and removes nothing. The lock and the run records never live in the root.
 // The command's env has the running-session variables of extensions/core-adapter/test/session-env.json removed (the lock reads its own env first).
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -27,6 +31,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutSessionEnv } from "./session_env.mjs";
+import { createRunRoot, leftovers, removeRunRoot, sweepBases, sweepStale } from "./test_tmp_root.mjs";
 
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
 // (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process, and the CJS preload
@@ -681,11 +686,29 @@ async function main(rawArgv, env = process.env) {
     } catch {}
   };
   writeRecord();
+  // The run root is made after the lock path above resolved against the real temp dir; only the child's env carries it.
+  let runRoot;
+  let runEnv = env;
+  if (!env.FOREMAN_TEST_TMP_ROOT) {
+    try {
+      sweepStale({ bases: sweepBases() });
+      const made = createRunRoot();
+      runRoot = made.root;
+      runEnv = { ...env, ...made.env };
+    } catch (e) {
+      process.stderr.write(`foreman_test_run: no run temp root (${e.message})\n`);
+    }
+  }
   process.on("exit", () => {
     for (const f of [recordFile, stopFile]) {
       try {
         fs.rmSync(f, { force: true });
       } catch {}
+    }
+    if (runRoot) {
+      const left = leftovers(runRoot);
+      if (left.length) process.stderr.write(`test-run: ${left.length} temp entries left by this run: ${left.slice(0, 5).join(", ")}\n`);
+      removeRunRoot(runRoot);
     }
   });
   const stopRequested = () => fs.existsSync(stopFile);
@@ -730,9 +753,9 @@ async function main(rawArgv, env = process.env) {
   for (const [s, h] of waitSignals) process.off(s, h);
   record.state = "running";
   writeRecord();
-  const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "pf-spawn-count-"));
+  const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(runRoot ?? os.tmpdir(), "pf-spawn-count-"));
   const code = await new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(env, countDir) : withoutSessionEnv(env), shell: false });
+    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
     const forward = (sig) => () => child.kill(sig);
     const handlers = ["SIGINT", "SIGTERM"].map((s) => [s, forward(s)]);
     for (const [s, h] of handlers) process.on(s, h);

@@ -2,16 +2,27 @@
 // Lexer; scripts/shell_facts.py was removed in R16). Named PASS cases are literal friction lines of R11/R12; the fail-closed cases refuse with the old reason.
 // R16 item 4a: ruling.ts keeps the plain literal-path deny on the TS lexer; the rows it no longer decides live in
 // test/retired/self-ruling-rows.json (fail-closed, computed, sed/awk/find/xargs and bound-variable rows).
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r13sr-")));
+  const root = fs.realpathSync.native(mk("pf-r13sr-"));
   const hand = path.join(root, ".workflow", "handoffs");
   const H = path.join(hand, "up");
   const S = path.join(root, "scratch");

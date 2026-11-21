@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,6 +11,17 @@ import type { PrContext, SourceCfg, SourceResult } from "../prsources.ts";
 import { addTracked, clearStoreCache, readStoreEntry, storeKey, trackedCommentsFile, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const FIX = path.join(PKG, "tests", "fixtures", "fake_pr_source.mjs");
@@ -21,7 +32,7 @@ const row = (repo: string, n: number, o: Row = {}): Row => ({ repo, number: n, s
 
 function setup(over: { sources?: Record<string, unknown>; mode?: string; tick?: number; deadlineMs?: number; batchAdvance?: number } = {}) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prsrc-"));
+  const agentDir = mk("pf-prsrc-");
   const rows = new Map<string, Row | "error">();
   const clock = { t: T0 };
   const ran: string[] = [];

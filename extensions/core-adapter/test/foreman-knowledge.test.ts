@@ -1,5 +1,5 @@
 // foreman knowledge: normalise, hash compare, discover, accept, nudge and one CLI spawn against local fixtures (no network).
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -8,9 +8,20 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyAccept, compareSource, discoverLinks, hashText, knowledgeNudge, normalise } from "../../../scripts/foreman_knowledge.mjs";
 import { withNudge } from "../knowledge.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "foreman_knowledge.mjs");
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pf-knowledge-"));
+const tmp = () => mk("pf-knowledge-");
 
 const PAGE = `<!DOCTYPE html><html><head><title>t</title><style>.a{color:red}</style><script>var x = "<p>noise</p>";</script></head>
 <body><header>Site header</header><nav><a href="/x">Menu</a></nav>

@@ -1,11 +1,22 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn, keychainService, projectClaudeRisks } from "../bridgeiso.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
 
-const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-iso-"));
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
+
+const tmp = (): string => mk("pf-iso-");
 
 test("auto follows the provider; booleans win", () => {
   assert.equal(isolationOn("auto", "claude-bridge"), true);

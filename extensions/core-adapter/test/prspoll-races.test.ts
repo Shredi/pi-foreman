@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,6 +9,17 @@ import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, trackedFile, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -18,7 +29,7 @@ const row = (repo: string, n: number, state: string): Record<string, unknown> =>
 /** A poll over one PR `acme/a#1` in state `state`; `during` runs inside the pr_batch call (the poll holds the state lock). */
 async function world(state: string, during: (agentDir: string) => Promise<void> | void = () => {}) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prspoll-races-"));
+  const agentDir = mk("pf-prspoll-races-");
   const clock = { t: T0 };
   await addTracked(agentDir, "acme/a", 1, () => T0 - 1000);
   const deps: PollDeps = {

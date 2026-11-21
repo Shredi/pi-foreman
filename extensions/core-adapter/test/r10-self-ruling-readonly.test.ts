@@ -8,16 +8,27 @@
 // L2 with a literal scratch path and the cp of plan.md into the handoff dir pass.
 // R16 item 4a: ruling.ts keeps only the plain literal-path deny and a flat ask trigger; the cd, variable, symlink, -t, alias-source,
 // interpreter and PowerShell rows live in test/retired/self-ruling-rows.json with their outcome now.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r10sr-")));
+  const root = fs.realpathSync.native(mk("pf-r10sr-"));
   const hand = path.join(root, ".workflow", "handoffs");
   const H = path.join(hand, "up");
   const S = path.join(root, "scratch");

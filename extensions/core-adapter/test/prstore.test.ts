@@ -1,10 +1,21 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addTracked, clearStoreCache, readStoreEntry, storeKey, trackedCommentsFile, trackedFile, trackedStateFile } from "../prstore.ts";
 import type { PrKey } from "../prhost.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+
+const made: string[] = [];
+after(() => {
+  for (const d of made) rmTestTmp(d);
+});
+const mk = (prefix: string): string => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(d);
+  return d;
+};
 
 const K: PrKey = { host: "github.com", repo: "Acme/App", n: 7 };
 const NOW = 10_000_000;
@@ -13,7 +24,7 @@ const snap = (o: Record<string, unknown> = {}) => ({ state: "open", mergeable: "
 
 function setup(entry: Record<string, unknown> | null, o: { trackedAt?: number; comments?: unknown; off?: boolean } = {}): string {
   clearStoreCache();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prstore-"));
+  const dir = mk("pf-prstore-");
   fs.mkdirSync(path.dirname(trackedStateFile(dir)), { recursive: true });
   const prs = entry ? { [storeKey("acme/app", 7)]: { repo: "acme/app", number: 7, at: NOW, ...entry } } : {};
   fs.writeFileSync(trackedStateFile(dir), JSON.stringify({ v: 1, trackedAt: o.trackedAt ?? NOW - 1000, ...(o.off ? { off: true } : {}), prs }));
@@ -45,7 +56,7 @@ test("readStoreEntry: down when the feed is off, the state file is missing, off,
   const dir = setup({ snap: snap(), okAt: NOW - 1000 });
   assert.equal(readStoreEntry(dir, K, NOW, false).kind, "down");
   clearStoreCache();
-  assert.equal(readStoreEntry(fs.mkdtempSync(path.join(os.tmpdir(), "pf-prstore-")), K, NOW, true).kind, "down");
+  assert.equal(readStoreEntry(mk("pf-prstore-"), K, NOW, true).kind, "down");
   assert.equal(readStoreEntry(setup({ snap: snap(), okAt: NOW - 1000 }, { trackedAt: NOW - 600_001 }), K, NOW, true).kind, "down");
   assert.equal(readStoreEntry(setup({ snap: snap(), okAt: NOW - 1000 }, { off: true }), K, NOW, true).kind, "down");
 });
@@ -96,10 +107,10 @@ test("readStoreEntry: an unparseable state file is down", () => {
 });
 
 test("addTracked: adds once, case-insensitive, and never overwrites an unparseable list", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prstore-"));
+  const dir = mk("pf-prstore-");
   assert.equal(await addTracked(dir, "Acme/App", 7, () => NOW), "added");
   assert.equal(await addTracked(dir, "acme/app", 7, () => NOW), "present");
-  const bad = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prstore-"));
+  const bad = mk("pf-prstore-");
   fs.mkdirSync(path.dirname(trackedFile(bad)), { recursive: true });
   fs.writeFileSync(trackedFile(bad), "garbage");
   assert.equal(await addTracked(bad, "acme/app", 7), "unavailable");

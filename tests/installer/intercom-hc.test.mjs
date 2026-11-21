@@ -16,8 +16,17 @@ const FOREMAN = "git:github.com/Shredi/pi-foreman";
 const EMPTY_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "pf-pi-ai-data-"));
 after(() => fs.rmSync(EMPTY_DATA, { recursive: true, force: true }));
 
+const BASES = [];
+after(() => {
+  for (const b of BASES) {
+    fs.rmSync(b, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    fs.rmSync(`${b}-calls.jsonl`, { force: true });
+  }
+});
+
 function fresh() {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-installer-hc-")));
+  BASES.push(base);
   const agentDir = path.join(base, "agent");
   const cwd = path.join(base, "project");
   fs.mkdirSync(agentDir);
