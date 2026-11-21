@@ -176,7 +176,29 @@ function locate(dir: string): RepoDirs | null {
   return r && path.resolve(r.top) === path.resolve(dir) ? r : null;
 }
 
+/** Why a picture is unreadable, tagged on the thrown error where it is known (git run, settings file) and read in `takeReadonlyState`. */
+const errCause = new WeakMap<object, string>();
+const tagCause = (e: unknown, cause: string): void => {
+  if (e && typeof e === "object" && !errCause.has(e)) errCause.set(e, cause);
+};
+/** A git run's failure as a cause: the exit code, a timeout or kill, else plain `git failed`. */
+function gitCause(e: unknown): string {
+  const x = (e ?? {}) as { code?: unknown; killed?: unknown; signal?: unknown };
+  if (typeof x.code === "number") return `git failed, exit ${x.code}`;
+  if (x.killed === true || x.code === "ETIMEDOUT" || typeof x.signal === "string") return "git failed, timeout";
+  return "git failed";
+}
+
 async function takeSettings(repo: RepoDirs, ctx: Ctx): Promise<Settings> {
+  try {
+    return await readSettings(repo, ctx);
+  } catch (e) {
+    tagCause(e, "settings file unreadable");
+    throw e;
+  }
+}
+
+async function readSettings(repo: RepoDirs, ctx: Ctx): Promise<Settings> {
   const files = new Map<string, Cfg>();
   const roots = [repo.top, repo.gitDir, repo.commonDir];
   const label = (p: string): string => {
@@ -437,16 +459,27 @@ function locateOrThrow(dir: string): RepoDirs {
  * The picture of the tree rooted at `root` (the gate's tree root). With `start` it is an end picture: the settings files are read first and, when they
  * differ from the start (settings, attributes, hooks, a moved git dir, in the tree or a submodule), no git runs. Any exception gives "unreadable".
  */
-export async function takeReadonlyState(root: string, home: string, git: GitRunner, start?: Picture, opts: { signal?: AbortSignal } = {}): Promise<Picture> {
+export async function takeReadonlyState(root: string, home: string, git: GitRunner, start?: Picture, opts: { signal?: AbortSignal; onCause?: (cause: string) => void } = {}): Promise<Picture> {
+  const tagged: GitRunner = async (cwd, args, sig) => {
+    try {
+      return await git(cwd, args, sig);
+    } catch (e) {
+      tagCause(e, gitCause(e));
+      throw e;
+    }
+  };
   try {
-    const ctx: Ctx = { home, git, signal: opts.signal ?? new AbortController().signal, budget: { paths: 0, bytes: 0, subs: 0 } };
+    const ctx: Ctx = { home, git: tagged, signal: opts.signal ?? new AbortController().signal, budget: { paths: 0, bytes: 0, subs: 0 } };
     if (start && start !== "unreadable") {
       const set = await takeSetTree(root, start, ctx);
       if (setTreeDiffers(start, set)) return gatedTree(start, set);
       return await takeTree(root, ctx, start, set);
     }
     return await takeTree(root, ctx);
-  } catch {
+  } catch (e) {
+    const sig = opts.signal;
+    const own = e && typeof e === "object" ? errCause.get(e) : undefined;
+    opts.onCause?.(sig?.aborted ? "aborted" : own ?? ((e as Error | null)?.message === "not a git tree" ? "not a git tree" : "read failed"));
     return "unreadable";
   }
 }
@@ -560,20 +593,35 @@ export function diffReadonlyState(a: Picture, b: Picture): string[] {
 
 // ------------------------------------------------------------------ sets, launches, run end
 
+/** Per picture map from `pictureSet`: why a root is unreadable (a root lost at the start has no entry). */
+const pictureCauses = new WeakMap<ReadonlyMap<string, Picture>, Map<string, string>>();
+
 /** Pictures of several roots in parallel under one deadline; at the deadline running git processes are killed and unfinished pictures are unreadable. */
 export async function pictureSet(roots: readonly string[], home: string, git: GitRunner, starts?: ReadonlyMap<string, Picture>, ms = PICTURE_DEADLINE_MS): Promise<Map<string, Picture>> {
   const ctl = new AbortController();
+  const causes = new Map<string, string>();
   let timer: NodeJS.Timeout | undefined;
+  let timedOut = false;
   const late = new Promise<"unreadable">((resolve) => {
     timer = setTimeout(() => {
+      timedOut = true;
       ctl.abort();
       resolve("unreadable");
     }, ms);
   });
   try {
     const skip = (r: string): boolean => !!starts && (starts.get(r) === undefined || starts.get(r) === "unreadable"); // the start is lost: the compare says so, no git runs for it
-    const got = await Promise.all(roots.map(async (r) => [r, skip(r) ? "unreadable" : await Promise.race([takeReadonlyState(r, home, git, starts?.get(r), { signal: ctl.signal }), late])] as [string, Picture]));
-    return new Map(got);
+    const got = await Promise.all(
+      roots.map(async (r) => {
+        if (skip(r)) return [r, "unreadable"] as [string, Picture];
+        const pic = await Promise.race([takeReadonlyState(r, home, git, starts?.get(r), { signal: ctl.signal, onCause: (c) => causes.set(r, c) }), late]);
+        if (pic === "unreadable") causes.set(r, timedOut ? "deadline" : causes.get(r) ?? "read failed");
+        return [r, pic] as [string, Picture];
+      }),
+    );
+    const map = new Map(got);
+    pictureCauses.set(map, causes);
+    return map;
   } finally {
     clearTimeout(timer);
   }
@@ -593,8 +641,10 @@ export interface RunCompare {
   outcome: CompareOutcome;
   /** `start unreadable` or `end unreadable` for a not-compared root. */
   reason?: string;
+  /** Why that picture is unreadable (`deadline`, `not a git tree`, `git failed, exit 128`, `aborted`, `settings file unreadable`); unset when not known. */
+  cause?: string;
   /** Per root, the change lines (a not-compared root carries its one line). */
-  perRoot: Array<{ root: string; lines: string[]; notCompared: boolean }>;
+  perRoot: Array<{ root: string; lines: string[]; notCompared: boolean; cause?: string }>;
 }
 
 /** The end pictures of a run's roots compared with its start entry (never throws). */
@@ -607,12 +657,14 @@ export async function compareRunEnd(start: Extract<StartEntry, { kind: "picture"
   }
   const perRoot = start.roots.map((root) => {
     const lines = diffReadonlyState(start.states.get(root) ?? "unreadable", end.get(root) ?? "unreadable");
-    return { root, lines, notCompared: lines.length === 1 && (lines[0] === START_UNREADABLE || lines[0] === END_UNREADABLE) };
+    const notCompared = lines.length === 1 && (lines[0] === START_UNREADABLE || lines[0] === END_UNREADABLE);
+    const cause = notCompared ? pictureCauses.get(lines[0] === START_UNREADABLE ? start.states : end)?.get(root) : undefined;
+    return { root, lines, notCompared, ...(cause ? { cause } : {}) };
   });
   const nc = perRoot.find((r) => r.notCompared);
   const changed = perRoot.filter((r) => !r.notCompared && r.lines.length > 0);
   const outcome: CompareOutcome = changed.some((r) => r.lines.includes(GATED_LINE)) ? "settings_changed" : changed.length ? "changed" : nc ? "not_compared" : "unchanged";
-  return { outcome, ...(nc ? { reason: nc.lines[0] === START_UNREADABLE ? "start unreadable" : "end unreadable" } : {}), perRoot };
+  return { outcome, ...(nc ? { reason: nc.lines[0] === START_UNREADABLE ? "start unreadable" : "end unreadable" } : {}), ...(nc?.cause ? { cause: nc.cause } : {}), perRoot };
 }
 
 const plain = (s: string): string => s.replace(/[\u0000-\u001f\u007f]/g, "?");
@@ -621,7 +673,7 @@ const plain = (s: string): string => s.replace(/[\u0000-\u001f\u007f]/g, "?");
 export function noticeText(role: string, runId: string, r: RunCompare): string {
   const parts = r.perRoot.filter((x) => x.lines.length > 0).map((x) => {
     const where = plain(x.root);
-    if (x.notCompared) return `${where} was not compared: ${x.lines[0].replace(/^not compared: /, "")}`;
+    if (x.notCompared) return `${where} was not compared: ${x.lines[0].replace(/^not compared: /, "")}${x.cause ? ` (${plain(x.cause)})` : ""}`;
     const lines = x.lines.slice(0, MAX_ITEMS).map((l) => plain(l).slice(0, 400));
     return `${where} differs from its state at launch: ${lines.join("; ")}${x.lines.length > MAX_ITEMS ? ` (+${x.lines.length - MAX_ITEMS} more)` : ""}`;
   });
