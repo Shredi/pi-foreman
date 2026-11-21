@@ -1,7 +1,7 @@
 // pi-foreman mod for herdr-app: an Agents view with the foreman rows built in under each agent that is a foreman session.
 // Reads `foreman radar --json` and, per agent terminal, `hc get <terminal> --json` (exec, argv only; the child records of
 // pi-subagents), joins on hcTerminal, never writes; `foreman prs poll` fetches.
-// The other execs are `foreman prs poll --json` per machine and the platform opener on a PR chip click, after the URL passed the https rule (model.js).
+// At start it runs `foreman pages ensure` once (the page server of docs/pages.md; the answer is ignored). The other execs are `foreman prs poll --json` per machine and the platform opener on a PR chip click, after the URL passed the https rule (model.js).
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
@@ -34,6 +34,7 @@ const T_PRS = 600000; // the cap of exec
 const T_HC_LOCAL = 10000;
 const T_HC_REMOTE = 15000;
 const T_ATTACH = 15000;
+const T_PAGES = 5000; // `foreman pages ensure` at start
 const T_OPEN = 10000;
 const T_RESTART = 120000; // a remote restart probes and starts on the other machine
 const SPINNER = "mods/workspace-chrome/spinner.svg";
@@ -163,7 +164,16 @@ export default class ForemanAgents extends View {
     this.hotCard = null; // id of the PR chip the pointer last rested on, cleared when that chip is no longer drawn: the only chip whose hover card is built
     this.poll(cx);
     this.pollPrs(cx, Date.now());
+    this.ensurePages(cx);
     cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); this.unpress(cx); this.tickClocks(cx); });
+  }
+
+  // `foreman pages ensure` once at mod start, so the page server runs when the plan panel links a page; the result is ignored.
+  ensurePages(cx) {
+    if (this.sample) return;
+    cx.spawn(async (cx) => {
+      try { await Promise.race([this.execT(radarBinary(this.foremanProp, null), ["pages", "ensure"], {}, T_PAGES), cx.sleep(WATCHDOG_MS)]); } catch { /* no server: file copies stay */ }
+    });
   }
 
   // A click gives feedback in the render it causes: the element lights up and shows "…" until PRESS_MS has passed.

@@ -117,6 +117,7 @@ import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
+import { pageServerDoctorLine } from "./pageserver.ts";
 import { addTracked, lastPollAgeMs, readStoreEntry, trackedHostOf, trackerDoctorLine } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
@@ -167,7 +168,8 @@ import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatch
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
 import { ownerFactsLines, ownerFormHints, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
-import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageLineServed, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { pageLinks } from "./pagelinks.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
 import { OpenPrsRefresher, ReloadingConfig, openPrsConfig, realGh } from "./openprs.ts";
@@ -6858,6 +6860,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
           const page = r.page ? ` It writes a page the owner opens in the browser: ${r.page}.` : " Its page could not be written.";
+          // the served URL goes to the owner's screen only, never into the tool result (the model sees no secret link)
+          if (r.page && ctx.hasUI) {
+            try {
+              const url = await pageLinks.url(r.page, "dir", s.config.config);
+              if (url) ctx.ui.notify(`Note page: ${url}`, "info");
+            } catch {
+              // no served link: the file path stays
+            }
+          }
           return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
@@ -7265,12 +7276,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "dialog", surface: "checkpoint" });
         try {
           const page = await planPageOutcome(planPage, undefined, showOffReason(!!s.live, s.id));
-          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${planPageLineOf(page)}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          // the served URL (UI lines only, never a tool result); null keeps today's file link
+          const url = "path" in page ? await pageLinks.url(page.path, "dir", s.config.config) : null;
+          ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${url ? planPageLineServed(page, url) : planPageLineOf(page)}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
           const spec: DialogSpec = {
             ask: `Approve the plan for ${plan.topic}?`,
             summary: "Builders start only after you approve. Read the plan page first.",
             facts: [["Plan", planSummary(plan.markdown, plan.rel, plan.hash).split("\n")[0].replace(/^Plan:\s*(?:Plan:\s*)?/i, "")], ["Version", hash8], ["Review", reviewFact]],
-            ...("path" in page ? { links: [{ label: "Plan page", path: page.path, text: "open the plan page", kind: "page" as const }], detail: ["The page is a path on this session's machine."] } : { detail: [`Plan page: not available (${page.reason})`] }),
+            ...("path" in page ? { links: [{ label: "Plan page", path: page.path, text: "open the plan page", kind: "page" as const, ...(url ? { url } : {}) }], detail: [url ? "The page is served by this machine's page server." : "The page is a path on this session's machine."] } : { detail: [`Plan page: not available (${page.reason})`] }),
             answers: "revise: you say what to change   reject: the work stops   approve: builders start",
           };
           answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, cleanDialogText(spec.ask), () => shapedSelect(ctx.ui, ctx.mode, spec, [...CHECKPOINT_CHOICES], { signal }), { tool: CHECKPOINT_TOOL, path: plan.path });
@@ -8036,6 +8049,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hosts = resolveGithubHosts(s.config.config);
       out.push(trackerDoctorLine(prFeedOn(s), "error" in hosts ? hosts.error : undefined, lastPollAgeMs(s.agentDir, Date.now())));
     }
+    if (!s.isChild) out.push(await pageServerDoctorLine(s.config.config, s.agentDir));
     // The cache lines judge the base model: while downshifted the live model is the idle rung, which the idle-rung line below covers.
     const dm = idleModel.baseRef(ctx.model);
     const dmModel = dm && ctx.model && dm.provider === ctx.model.provider && dm.id === ctx.model.id ? ctx.model : dm ? (ctx.modelRegistry.find(dm.provider, dm.id) as typeof ctx.model) : undefined;

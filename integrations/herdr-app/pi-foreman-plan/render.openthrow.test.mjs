@@ -6,6 +6,8 @@ register("../pi-foreman/stubs-hooks.mjs", import.meta.url);
 const stubs = await import("../pi-foreman/stubs.mjs");
 const { default: Mod } = await import("./main.js");
 const { world } = stubs;
+// the `<foreman> pages url <file>` call of the served-page path is not an opener call
+const execs = () => world.execCalls.filter((c) => !(c[1][0] === "pages" && c[1][1] === "url"));
 
 const entry = (id) => ({ id, kind: "plan", title: id, state: "shown", version: 1, at: "2026-11-06T10:00:00Z", file: `${id}.html` });
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
@@ -44,7 +46,7 @@ test("a page whose rewrite throws gives one notice, opens nothing and keeps its 
   assert.equal(world.notices.length, 1);
   assert.equal(world.notices[0].level, "error");
   assert.match(world.notices[0].body, /could not be prepared/);
-  assert.deepEqual(world.execCalls, []);
+  assert.deepEqual(execs(), []);
   assert.ok(dotted(m.render(cx), "page-plan"), "the dot stays");
 });
 
@@ -67,7 +69,7 @@ test("an emoji in a relative src is encoded and the page opens", async () => {
   const { m, cx } = await boot();
   byId(m.render(cx), "page-plan").props.on_click(null, cx); await settle();
   assert.equal(world.writes[0][1], '<img src="file:///s/fm/pages/shots/done%20%F0%9F%8E%89.png">');
-  assert.equal(world.execCalls.length, 1);
+  assert.equal(execs().length, 1);
 });
 
 test("a lone surrogate in a relative src does not throw", async () => {

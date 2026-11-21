@@ -18,6 +18,8 @@
 // page is written on each trigger call whether or not plan.json changed, on a checkpoint answer and a plan-review verdict, and again when its diagrams
 // are listed; a note page by every foreman_show; the result page from the child's result.md through the guarded reader. `pages/` is made one level at a
 // time and checked with realDir; a delete only ever names a file derived from a page id, inside that checked dir, after lstat.
+// The page files are also served over HTTP by the per-machine page server (pageserver.ts, docs/pages.md): the checkpoint, the show note line and the herdr plan mod
+// show served links, and the file links stay the fallback.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -47,7 +49,7 @@ export const NOTE_PREV = "note.prev.md";
 export const NOTE_JSON = "note.json";
 export const NOTE_TITLE_MAX = 120;
 export const NOTE_MAX_BYTES = 256 * 1024;
-const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+export const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const JSON_MAX_BYTES = 64 * 1024;
 const RETRY_MS = 50;
 /** `Plan from <label>: <path>` and the alias `foreman:plan <path>` (a child's plan notice). */
@@ -163,7 +165,12 @@ function cleanTitle(body: string, topic: string | null): string {
 /** The page title of a read plan: an HTML plan's own `<h1>` (else `<title>`), else the first heading of its markdown, else the plan topic, else its first line. */
 function titleOfCur(cur: Cur): string {
   const own = cur.kind === "html" ? (cur.title ?? "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 120) : "";
-  return own || cleanTitle(planBody(cur.kind === "html" ? Buffer.from(cur.markdown, "utf8") : cur.bytes).toString("utf8"), PLAN_NAME.exec(path.basename(cur.path))?.[1] ?? null);
+  return own || cleanTitle(planBody(cur.kind === "html" ? Buffer.from(cur.markdown, "utf8") : cur.bytes).toString("utf8"), PLAN_NAME.exec(path.basename(cur.path))?.[1] ?? handoffTopic(cur.path));
+}
+
+/** The topic of a child's `<handoff dir>/plan.md`: the label of the handoff folder name after its `<date>-<time>-` stamp, else null. */
+function handoffTopic(file: string): string | null {
+  return /^\d{8}-\d{6}-(.+)$/.exec(path.basename(path.dirname(file)))?.[1] ?? null;
 }
 
 /** A tracked plan as read now: the source bytes and their version hash, and for an HTML plan the generated markdown copy, title and rulings. */
@@ -276,6 +283,11 @@ export function showOffReason(hasLive: boolean, sessionId: string): string {
 /** The checkpoint dialog's plan page line: waits up to `waitMs` for the page write, then names the file URL or the real reason. No promise: `off` says why (default: the scratch dir is off). */
 export async function planPageLine(page: Promise<PageOutcome> | undefined, waitMs = 3000, off = "scratch dir off"): Promise<string> {
   return planPageLineOf(await planPageOutcome(page, waitMs, off));
+}
+
+/** The line of an outcome the page server serves at `url`: the link is the served URL, not a file path. */
+export function planPageLineServed(r: PageOutcome, url: string): string {
+  return "path" in r ? `Plan page: ${url} (served by this machine's page server)` : planPageLineOf(r);
 }
 
 /** The line of an outcome `planPageOutcome` returned. */

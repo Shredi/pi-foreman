@@ -140,6 +140,17 @@ export function fmtSince(ms) {
   return hit ? `${Math.floor(mins / hit[0])}${hit[1]}` : "<1m";
 }
 
+/** The foreman binary for a machine from the `foreman` prop: a string (local only) or an object keyed by machine name
+ *  (`local` for this computer). A missing entry is plain `foreman`. */
+export function radarBinary(prop, machine, fallback = "foreman") {
+  if (typeof prop === "string" && prop.trim() && !machine) return prop.trim();
+  if (isObj(prop)) {
+    const v = prop[machine || "local"];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return fallback;
+}
+
 // ---- end of the copies ----------------------------------------------------------------------------------------------
 
 // ---- the page index ------------------------------------------------------------------------------------------------
@@ -215,6 +226,18 @@ export function slotPath(appHome, n) {
   if (typeof appHome !== "string" || !appHome || !Number.isInteger(n) || n < 0 || n >= SLOTS) return null;
   const sep = appHome.includes("\\") && !appHome.includes("/") ? "\\" : "/";
   return [appHome.replace(/[\\/]+$/, ""), ...SLOT_DIR, `slot-${n}.html`].join(sep);
+}
+
+const SAFE_PAGE_URL = /^https?:\/\/[A-Za-z0-9[][A-Za-z0-9\-._~:/?#[\]@!$()*+,;=%]*$/;
+
+/** The platform opener for a served page URL (the answer of `foreman pages url`): http or https, nothing else. `openerArgv` stays https-only. */
+export function pageUrlArgv(platform, url) {
+  if (typeof url !== "string" || url.length > 2048 || !SAFE_PAGE_URL.test(url)) return null;
+  try { new URL(url); } catch { return null; }
+  if (platform === "darwin") return ["open", url];
+  if (platform === "linux") return ["xdg-open", url];
+  if (platform === "win32") return ["rundll32", "url.dll,FileProtocolHandler", url];
+  return null;
 }
 
 /** The platform opener for a page copy: argv `open` / `xdg-open` / `rundll32 url.dll,FileProtocolHandler`, no shell. Only the exact
