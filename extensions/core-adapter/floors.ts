@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import { MAX_DEPTH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
-import { readBaseline } from "./baseline.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
 import { nonPathArgs } from "./patternargs.ts";
 import { SSH_ARG } from "./protected.ts";
@@ -808,9 +807,9 @@ function scanHit(roots: string[], cwd: string, program: string, env: FloorEnv): 
   return judgeHit("fs-scan", `A whole-filesystem scan: the search root '${cutFragment(shown)}' is /, the home directory or a parent of the workspace (worktree ${ws}).`, `${program} ${shown}`);
 }
 
-// ------------------------------------------------------------------ built-in command deny (the baseline's bash.deny, round 2 step 2)
+// ------------------------------------------------------------------ built-in command deny (round 2 step 2)
 
-/** The baseline's `bash.deny` patterns, copied: the floor fails closed with these when config/permissions.baseline.json cannot be read (a test compares the two). */
+/** The built-in command patterns the floor matches (the credential reads; the privilege and download-shell entries are owned by other rules, below). */
 export const BUILTIN_DENY_INLINE: readonly string[] = [
   "sudo *", "doas *",
   "curl * | sh *", "curl * | bash *", "curl * | zsh *", "curl * | sudo *",
@@ -823,25 +822,14 @@ export const BUILTIN_DENY_INLINE: readonly string[] = [
 /** Patterns another rule owns: privilege escalation (floor-privilege), a download piped into a shell (floor-download-shell), `git credential fill` (the danger-git label the judge decides). */
 const DENY_OWNED_ELSEWHERE = (pat: string): boolean => /^(?:sudo|doas) /.test(pat) || pat.includes(" | ") || pat.startsWith("git credential fill");
 
-const denyCache = new Map<string, readonly string[]>();
-
-function builtinDenyPatterns(pkgRoot: string): readonly string[] {
-  let list = denyCache.get(pkgRoot);
-  if (!list) {
-    const file = readBaseline(pkgRoot)?.bash.deny ?? [];
-    list = (file.length ? file : BUILTIN_DENY_INLINE).filter((p) => !DENY_OWNED_ELSEWHERE(p));
-    denyCache.set(pkgRoot, list);
-  }
-  return list;
-}
+const BUILTIN_DENY_PATTERNS: readonly string[] = BUILTIN_DENY_INLINE.filter((p) => !DENY_OWNED_ELSEWHERE(p));
 
 const DEFAULT_PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** `floor-builtin-deny`: `text` (one segment, or one statement of the powershell tool) matches a `bash.deny` pattern of the baseline file. */
+/** `floor-builtin-deny`: `text` (one segment, or one statement of the powershell tool) matches a built-in command pattern. */
 function builtinDeny(text: string, env: FloorEnv, ps: boolean): FloorHit | null {
-  const root = env.pkgRoot ?? DEFAULT_PKG_ROOT;
   const home = env.home ?? "";
-  const pat = builtinDenyPatterns(root).find((p) => wildcardRegExp(p, { home, ignoreCase: ps, foldSeparators: false }).test(text.trim()));
+  const pat = BUILTIN_DENY_PATTERNS.find((p) => wildcardRegExp(p, { home, ignoreCase: ps, foldSeparators: false }).test(text.trim()));
   return pat === undefined ? null : hit("builtin-deny", `This command (matching '${pat}') reads or prints a credential. Use the tool's own configured login instead; ask the user when a token is needed.`, text);
 }
 

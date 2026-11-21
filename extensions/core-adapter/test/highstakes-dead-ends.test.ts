@@ -94,7 +94,7 @@ test("D39: a FAIL at X in A is cleared by a findings run that passes the fix Y i
   const { w, a } = await setup(t);
   w.state.answer = "allow once";
   commitIn(w.project, "src/a/x.ts");
-  await build(a, sized(["design"]));
+  await build(a, sized(["design"]), w.project);
   await hsRun(a, "FAIL");
   const b = worktree(w, "wtb");
   commitIn(b, "src/b/y.ts");
@@ -112,7 +112,7 @@ test("D39: a pass in B on a commit that does not build on the FAIL commit leaves
   w.state.answer = "allow once";
   const b = worktree(w, "sib");
   commitIn(w.project, "src/a/x.ts");
-  await build(a, sized(["design"]));
+  await build(a, sized(["design"]), w.project);
   await hsRun(a, "FAIL");
   commitIn(b, "src/b/y.ts");
   await build(a, {}, b);

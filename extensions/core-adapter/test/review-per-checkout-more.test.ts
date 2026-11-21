@@ -120,7 +120,7 @@ test("a session opened by another session (handoff and parent) keeps the gate pe
 
 test("reload: the per-checkout gates and marks come back; B's work after the reload stales B only", async (t) => {
   const { a, w, b } = await two(t);
-  await build(a);
+  await build(a, {}, w.project);
   await build(a, {}, b);
   await marks(w, 2);
   const g = lastEntry(w).gate as { reviewGates: Record<string, unknown> };

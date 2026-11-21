@@ -1,21 +1,14 @@
 #!/usr/bin/env python3
-"""Session friction metrics and permission-allow proposals (stdlib, 3.13+).
+"""Session friction metrics (stdlib, 3.13+).
 
     python scripts/foreman_retro.py [--session F] [--trace F ...] [--usage F] [--review-log F]
-                                    [--proposals-out F] [--min-reviews N] [--agent-dir D] [--json]
+                                    [--agent-dir D] [--json]
     python scripts/foreman_retro.py --selftest
     python scripts/foreman_retro.py models [--since 30d] [--source live|panel|bench] [--json] [--agent-dir D] [--cwd REPO]
 
 Every input is optional; a missing or unreadable file makes its section say "no data". Only counts,
 command families (first two words, three for sudo/ssh, digits -> N, hex -> HASH), tool names and
-guard names are printed: never prompts, command text, file bodies or tool output.
-
-Proposals look at the whole gate log (--review-log): a bash command family approved (by the user or the review
-model) at least --min-reviews times in at least two sessions and never denied becomes the candidate
-`"<family> *"`, unless the baseline or merged config deny/ask rules already match it, the family runs
-code (interpreters, wrappers, runners, git config/remote/submodule) or an argv word names a baseline
-write-protected path. The script
-writes a JSON file for the user to read; it never edits any config.
+guard names are printed: never prompts, command text, file bodies or tool output. It never edits any config.
 """
 from __future__ import annotations
 
@@ -33,36 +26,6 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import review_log_stats as rls  # noqa: E402
 import foreman_config as fc  # noqa: E402
-
-BASELINE_PATH = fc.ROOT / "config" / "permissions.baseline.json"
-
-
-def load_baseline():
-    return fc.read_json(BASELINE_PATH)
-
-
-def strings(value):
-    return [x for x in value if isinstance(x, str) and x] if isinstance(value, list) else []
-
-
-def bash_rules(baseline, perms):
-    """Ordered [(pattern, state)] for the bash surface (catch-all excluded)."""
-    perms = perms or {}
-    base = baseline.get("bash") or {}
-    out = [(p, "allow") for p in strings(base.get("allow"))]
-    out += [(p, "allow") for p in strings(perms.get("projectCommands"))]
-    out += [(p, "allow") for p in strings(perms.get("allow"))]
-    out += [(p, "ask") for p in strings(base.get("ask"))]
-    out += [(p, "ask") for p in strings(perms.get("ask"))]
-    out += [(p, "deny") for p in strings(base.get("deny"))]
-    out += [(p, "deny") for p in strings(perms.get("deny"))]
-    return out
-
-DEFAULT_MIN_REVIEWS = 5
-APPLY_HINT = (
-    "Review each pattern, then add the ones you want by hand under safety.permissions.bash.allow "
-    "in <agentDir>/foreman.json. Nothing was changed."
-)
 
 
 # ------------------------------------------------------------------ reading
@@ -157,132 +120,6 @@ def review_metrics(asks, sid):
             overridden += 1
     m["denials_overridden"] = overridden
     return m
-
-
-def load_deny_ask_rules(agent_dir):
-    """Baseline bash deny/ask patterns, plus the merged config's when it loads."""
-    rules = []
-    try:
-        base = load_baseline()
-        perms = {}
-        try:
-            res = fc.load_config(agent_dir)
-            perms = (res["config"].get("safety") or {}).get("permissions") or {}
-        except Exception:
-            perms = {}
-        rules = [p for p, s in bash_rules(base, perms) if s in ("deny", "ask")]
-    except Exception:
-        pass
-    return rules
-
-
-def wildcard_match(pattern, text):
-    """Permission wildcards: * any chars, ? one char, trailing ' *' also matches the bare command."""
-    def conv(pat):
-        return "".join(".*" if c == "*" else "." if c == "?" else re.escape(c) for c in pat)
-    rx = conv(pattern[:-2]) + "(?: .*)?" if pattern.endswith(" *") else conv(pattern)
-    return re.match("^(?:" + rx + ")$", text, re.S | re.I) is not None
-
-
-RUNS_CODE_HEADS = {"node", "deno", "bun", "ruby", "perl", "php", "bash", "sh", "zsh", "pwsh", "powershell", "cmd",
-                   "osascript", "eval", "exec", "xargs", "env", "sudo", "ssh", "npx",
-                   # wrappers that run their argument, and more interpreters (S9 re-review)
-                   "nohup", "nice", "time", "timeout", "command", "stdbuf", "busybox", "uvx", "bunx",
-                   "awk", "gawk", "mawk", "lua", "luajit", "rscript", "tclsh", "dash", "ksh", "fish", "csh", "tcsh",
-                   # S9 residual (re-review 2)
-                   "doas", "setsid", "watch", "parallel", "flock", "script", "strace", "ltrace", "chroot", "runuser",
-                   "su", "wsl"}
-RUNS_CODE_SUBS = {"npm": ("exec", "x"), "uv": ("run",), "pipx": ("run",), "poetry": ("run",), "pnpm": ("dlx", "exec"),
-                  "yarn": ("dlx", "exec"), "go": ("run",), "cargo": ("run",), "git": ("config", "remote", "submodule",
-                  # a family has two words: `git hook *` covers `hook run`, `git bisect *` covers `bisect run`,
-                  # `git rebase *` covers `--exec`; filter-branch runs its filters
-                  "hook", "bisect", "rebase", "filter-branch")}
-
-
-# A git global option as the second word: `git -C *` etc. would cover every git subcommand.
-GIT_GLOBAL_OPT = re.compile(r"^(?:-C|-c.*|-p|--paginate|--(?:git-dir|work-tree|exec-path|config-env|namespace)(?:=.*)?)$")
-
-
-def runs_code(family):
-    """True for a family whose command runs arbitrary code or rewrites config (never proposed, S9)."""
-    toks = family.split()
-    if not toks:
-        return False
-    head = re.sub(r"\.(exe|cmd|bat|com)$", "", re.split(r"[\\/]", toks[0])[-1].lower())
-    if "=" in head or head in RUNS_CODE_HEADS or re.match(r"^python[\d.]*$", head) or re.match(r"^py(thon)?w?$", head):
-        return True
-    rest = toks[1:]
-    if rest and (rest[0] in RUNS_CODE_SUBS.get(head, ()) or (head == "git" and GIT_GLOBAL_OPT.match(rest[0]))):
-        return True
-    return any(t in ("-exec", "-execdir", "-ok", "-okdir", "-delete") for t in rest)
-
-
-def load_protect_patterns(agent_dir):
-    """The baseline write-protection patterns (all lists), placeholders filled for matching argv words:
-    {cwd} -> any prefix, agent dir, its parent, package root, $XDG_CONFIG_HOME (dropped when unset), ~."""
-    try:
-        prot = load_baseline().get("protect") or {}
-    except Exception:
-        return []
-    ad = Path(agent_dir).expanduser().as_posix()
-    xdg = os.environ.get("XDG_CONFIG_HOME", "")
-    subs = {"{cwd}": "*", "{agentDirParent}": ad.rsplit("/", 1)[0] or "/", "{agentDir}": ad,
-            "{pkgRoot}": Path(fc.ROOT).as_posix(), "{xdgConfigHome}": Path(xdg).as_posix() if os.path.isabs(xdg) else None}
-    out = []
-    for key in ("deny", "ask", "childDeny", "removeAsk", "writeAsk"):
-        for pat in strings(prot.get(key)):
-            if any(val is None and ph in pat for ph, val in subs.items()):
-                continue
-            for ph, val in subs.items():
-                pat = pat.replace(ph, val or "")
-            out.append(norm_word(pat))
-    return out
-
-
-def norm_word(text):
-    """One form for a pattern and an argv word on every OS: `~` expanded, `/` separators, casefolded
-    (Windows expanduser yields backslashes, and Windows paths are case-insensitive)."""
-    text = os.path.expanduser(text) if text.startswith("~") else text
-    return text.replace("\\", "/").casefold()
-
-
-def touches_protected(family, patterns):
-    """True when an argv word of the family (after the command) names a protected path."""
-    for tok in family.split()[1:]:
-        t = norm_word(tok.strip("'\"")).rstrip("/")
-        if not t or t.startswith("-"):
-            continue
-        cands = [t] if t.startswith("/") or re.match(r"^[A-Za-z]:/", t) else [t, "/x/" + re.sub(r"^(\./)+", "", t)]
-        if any(wildcard_match(p, c) for p in patterns for c in cands):
-            return True
-    return False
-
-
-def propose(asks, min_reviews, rules, protect=()):
-    """Families approved >= min_reviews times in >= 2 sessions with no deny, minus rule-covered ones and
-    ones whose argv touches a write-protected path."""
-    fam = {}
-    for a in asks:
-        if not a["family"] or not a["outcome"]:
-            continue
-        f = fam.setdefault(a["family"], {"approvals": 0, "denies": 0, "sessions": set()})
-        if a["outcome"] == "approved":
-            f["approvals"] += 1
-            f["sessions"].add(ask_session(a) or "unknown")
-        else:
-            f["denies"] += 1
-    out = []
-    for name, f in sorted(fam.items()):
-        if f["denies"] or f["approvals"] < min_reviews or len(f["sessions"]) < 2:
-            continue
-        if name in ("(empty)",) or "N" in name.split() or "HASH" in name.split() or runs_code(name) or touches_protected(name, protect):
-            continue
-        if any(wildcard_match(r, name) or wildcard_match(r, name + " x") for r in rules):
-            continue
-        out.append({"pattern": name + " *", "approvals": f["approvals"], "sessions": len(f["sessions"]), "example_family": name})
-    out.sort(key=lambda p: (-p["approvals"], p["pattern"]))
-    return out
-
 
 # ------------------------------------------------------------------ trace, usage, session
 
@@ -831,7 +668,7 @@ def flagged_counts(trace):
     return out
 
 
-def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
+def build(session, trace, usage, review, agent_dir, rates=None):
     sid = session_id_of(session)
     ranks = config = None
     if trace is not None or usage is not None:
@@ -841,7 +678,6 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         except Exception:  # noqa: BLE001 - the share is optional
             ranks = None
     asks = collect_asks(review) if review is not None else None
-    rules = load_deny_ask_rules(agent_dir) if asks is not None else []
     return {
         "session": sid,
         "review": review_metrics(asks, sid) if asks is not None else None,
@@ -853,7 +689,6 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "sizing": sizing_metrics(trace),
         "session_tools": session_metrics(session) if session is not None else None,
         "flagged_asks": flagged_counts(trace),
-        "proposals": propose(asks, min_reviews, rules, load_protect_patterns(agent_dir)) if asks is not None else None,
     }
 
 
@@ -892,7 +727,7 @@ def pr_pack_line(rep):
     return "pr: %d calls (%s)" % (n, ", ".join("%s %d" % (o[3:] if o.startswith("pr_") else o, pack[o]) for o in ops))
 
 
-def render_text(rep, proposals_path=None):
+def render_text(rep):
     L = ["pi-foreman retro" + (" (session %s)" % rep["session"] if rep["session"] else "")]
     r = rep["review"]
     if r is None:
@@ -963,34 +798,10 @@ def render_text(rep, proposals_path=None):
     fl = rep.get("flagged_asks")
     if fl:
         L.append("Flagged asks: " + kv(fl))
-    p = rep["proposals"]
-    if p is None:
-        L.append("proposals: no data")
-    else:
-        L.append("proposals: %d candidate(s)%s" % (len(p), " -> " + str(proposals_path) if proposals_path else ""))
-        for c in p[:5]:
-            L.append("  %s (approvals=%d, sessions=%d)" % (c["pattern"], c["approvals"], c["sessions"]))
     return "\n".join(L[:30] + tool_usage_lines)
 
 
-def write_proposals(path, proposals, min_reviews, source):
-    doc = {"generated": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-           "source": source, "minReviews": min_reviews, "proposals": proposals, "apply_hint": APPLY_HINT}
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-
-
 def run(args):
-    min_reviews = args.min_reviews
-    if min_reviews is None:
-        min_reviews = DEFAULT_MIN_REVIEWS
-        try:
-            v = (fc.load_config(args.agent_dir)["config"].get("retro") or {}).get("proposalMinReviews")
-            if isinstance(v, int) and not isinstance(v, bool) and v > 0:
-                min_reviews = v
-        except Exception:
-            pass
     rates = None
     if args.rates:
         try:
@@ -999,18 +810,11 @@ def run(args):
         except (OSError, ValueError):
             pass
     trace, usage = read_traces(args.trace), read_jsonl(args.usage)
-    rep = build(read_jsonl(args.session), trace, usage, read_jsonl(args.review_log), min_reviews, args.agent_dir, rates)
-    note = None
-    if args.proposals_out and rep["proposals"] is not None:
-        try:
-            write_proposals(args.proposals_out, rep["proposals"], min_reviews, os.path.basename(args.review_log or ""))
-            note = args.proposals_out
-        except OSError as exc:
-            print("cannot write proposals: %s" % (exc.strerror or exc), file=sys.stderr)
+    rep = build(read_jsonl(args.session), trace, usage, read_jsonl(args.review_log), args.agent_dir, rates)
     if args.json:
         print(json.dumps(rep, indent=2, sort_keys=True))
     else:
-        print(render_text(rep, note))
+        print(render_text(rep))
     return 0
 
 
@@ -1031,8 +835,8 @@ def selftest():
             for r in lines:
                 fh.write(json.dumps(r) + "\n")
             fh.write('{"torn')
-        rep = build(None, None, None, read_jsonl(rl), 2, tmp)
-        ok = [p["pattern"] for p in rep["proposals"]] == ["git fetch *"]
+        rep = build(None, None, None, read_jsonl(rl), tmp)
+        ok = rep["review"]["human_approved"] == 5
         print("selftest: " + ("PASS" if ok else "FAIL"))
         return 0 if ok else 1
     finally:
@@ -1092,8 +896,6 @@ def main(argv=None):
     p.add_argument("--usage")
     p.add_argument("--review-log")
     p.add_argument("--rates", help="JSON file: {provider/model: {input, output, cacheRead, cacheWrite}} USD per million tokens")
-    p.add_argument("--proposals-out")
-    p.add_argument("--min-reviews", type=int)
     p.add_argument("--agent-dir")
     p.add_argument("--json", action="store_true")
     p.add_argument("--selftest", action="store_true")

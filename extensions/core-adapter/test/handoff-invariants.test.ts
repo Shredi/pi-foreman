@@ -7,7 +7,6 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { baseFloorEnv, gateDecide, gateEvaluate, type GateResult } from "../gate.ts";
 import { childHandoffWrite, pathDecide, type GateRoots } from "../pathrules.ts";
-import type { RuleSets } from "../rules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { posixOnly } from "./_platform.ts";
 

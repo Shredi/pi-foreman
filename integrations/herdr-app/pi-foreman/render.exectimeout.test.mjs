@@ -19,7 +19,7 @@ const boot = () => {
   return { m, ...r };
 };
 const reset = () => { world.execCalls = []; world.notices = []; world.execFn = undefined; world.agents = []; world.spaces = []; };
-const optionError = (_cmd, _args, opts) => { if (opts && "timeout" in opts) throw new Error("unknown option: timeout"); return { code: 1, stdout: "" }; };
+const optionError = (_cmd, _args, opts) => { if (opts && "timeout" in opts) throw new Error("unknown option: timeout"); return { code: 0, stdout: "" }; };
 const stopped = () => { throw new Error("foreman took longer than 600 s and was stopped"); };
 
 test("two copies made from one import share no state", async () => {

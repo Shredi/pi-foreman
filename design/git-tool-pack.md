@@ -114,7 +114,7 @@ export function registerGitPack(pi: Pick<ExtensionAPI, "registerTool">, deps: Gi
   | Child | true | No change. The role's allowlist decides, so a child never gains a tool its role lacks. |
 
   A child never writes `PACK_ENV`.
-- **`config/permissions.baseline.json`.** Add `"git_status"`, `"git_log"`, `"git_diff_stat"` and `"git_branch_state"` as `"allow"`, after `foreman_copy`. They are unconditional, since inactive tools are harmless. (The former `test_permissions_gen.py` assertion is gone with the permission package; the gate's own tests cover the allow.)
+- **Own-tool allow.** `"git_status"`, `"git_log"`, `"git_diff_stat"` and `"git_branch_state"` are allowed without a question (first as rows of `config/permissions.baseline.json`, now in `OWN_TOOLS` in `defaults.ts`; the file is gone). They are unconditional, since inactive tools are harmless.
 
 ## 4. Child inheritance
 

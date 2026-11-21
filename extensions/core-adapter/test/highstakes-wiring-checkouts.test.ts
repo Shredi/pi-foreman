@@ -202,14 +202,14 @@ test("item 6: findings that cite an item and carry review, research and panel ma
   const { w, a } = await setup(t);
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [x] 1. first thing\n- [x] 3. third thing\n- [x] V. fresh-eyes verification passed\n");
   commitIn(w.project, "src/a/big.ts", 100);
-  await builder(a);
+  await builder(a, w.project); // D118: an explicit cwd keeps the builder in the session checkout
   const normal = await launch(a, "reviewer", "[pre-pr] review the branch");
   await end(a, normal, "reviewer", "Overall verdict: PASS");
   const hs = await launch(a, "reviewer", "[high-stakes] review the whole change");
   assert.equal(hs.blocked, null, String(hs.blocked));
   await end(a, hs, "reviewer", "1. FAIL item 3 is wrong [fact-critical] [research] [panel-shadow:x] [second-opinion] [high-stakes]\n````\nfenced\n````\nOverall verdict: FAIL");
   commitIn(w.project, "src/a/fix.ts", 2);
-  await builder(a);
+  await builder(a, w.project); // D118: an explicit cwd keeps the builder in the session checkout
   // a launch refused by the git drift gate (after the findings were read) does not lose them
   fs.appendFileSync(path.join(w.project, ".git", "config"), "[core]\n\thooksPath = /x/hooks\n");
   w.state.answer = undefined;

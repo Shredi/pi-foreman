@@ -49,13 +49,6 @@ export const OWN_TOOLS: ReadonlySet<string> = new Set([
   "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable",
 ]);
 
-/** Every rule name this module can return (tests walk it). */
-export const DEFAULT_RULES = [
-  "default-own-tool", "default-assign", "default-read", "default-build-test", "default-write-in",
-  "default-git-read", "default-git-add", "default-git-commit", "default-git-fetch", "default-git-pull", "default-git-switch", "default-git-push", "default-git-branch-merged", "default-gh-read",
-  "default-role-launch",
-] as const;
-
 /**
  * Tools without a shell line: the own-tools enumeration. `fetch` has no default here (its built-in allow is `webReadAllow`). Undefined = no default.
  * r79 item 3: a role launch is a default only inside the owned roots; a `cwd` / `worktree` the roots do not cover (or any, when `roots` is not passed) is

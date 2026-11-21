@@ -61,8 +61,8 @@ def with_pr_pack(cfg, role, tools):
   - A role without bash gets nothing.
   - An overlay role with bash gets the read set.
 
-**`config/permissions.baseline.json`.**
-- Add `"pr_status"`, `"pr_checks"`, `"pr_comments"`, `"pr_watch"`, `"pr_unwatch"` and `"pr_follow"` as `"allow"`, after `git_branch_state`.
+**Own-tool allow** (first rows of `config/permissions.baseline.json`; the file is gone, the tools are in `OWN_TOOLS` in `defaults.ts`, except `pr_follow`, which the gate no longer allows by name).
+- `"pr_status"`, `"pr_checks"`, `"pr_comments"`, `"pr_watch"` and `"pr_unwatch"` are allowed without a question.
 - `pr_create` stays unlisted on purpose. Like bash `gh pr create`, it goes through the normal ask and auto-review.
 
 ## 2. Python host layer (L4–L7, L9–L12)
@@ -449,7 +449,7 @@ The full suites (L25) are: python, node, typecheck, installer, replay, and `fore
 
 | Worker | Files (exclusive) | Items |
 |---|---|---|
-| A (Python) | `config/foreman.schema.json`, `config/foreman.defaults.json`, `config/permissions.baseline.json`, `config/features.json`, `docs/features.md` (regenerated), `scripts/foreman_config.py`, `scripts/safe_ops.py`, `scripts/pr_ops.py` (new), `scripts/foreman_sync.py` (aliases only), `tests/fixtures/fake_pr_host.py`, `tests/fixtures/pr_host_shims.py`, `tests/test_safe_ops_pr.py`, `tests/test_config_layers.py`, `tests/test_foreman_config.py` | 1–7, 9–12 (Python side), 15, 21 (test mirror), 23 (features), 24 (Python), 27 |
+| A (Python) | `config/foreman.schema.json`, `config/foreman.defaults.json`, `config/features.json`, `docs/features.md` (regenerated), `scripts/foreman_config.py`, `scripts/safe_ops.py`, `scripts/pr_ops.py` (new), `scripts/foreman_sync.py` (aliases only), `tests/fixtures/fake_pr_host.py`, `tests/fixtures/pr_host_shims.py`, `tests/test_safe_ops_pr.py`, `tests/test_config_layers.py`, `tests/test_foreman_config.py` | 1–7, 9–12 (Python side), 15, 21 (test mirror), 23 (features), 24 (Python), 27 |
 | B (TypeScript) | everything under `extensions/core-adapter/` (`gitpack.ts`, `prwatch.ts` new, `safeops.ts`, `index.ts`, `reviews.ts`, `panel.ts`, `wait.ts`, `triage.ts`, `budget.ts`, `childreads.ts`, `supervisor.ts`, `permoverlay.ts`, `usage.ts`, `ledgercall.ts`, `research.ts`, `test/*.test.ts`) | 4 (doctor), 7–9, 13, 14, 16–19 (TS side), 21 (TAG, variants), 24 (TS), 28 |
 | C (docs/retro, after A and B are merged) | `scripts/foreman_retro.py`, `tests/test_foreman_retro.py`, `docs/tools.md`, `docs/overlays.md`, `docs/retro.md`, `docs/ladder.md`, `instructions/foreman.md`, `agents/builder.md`, `AGENTS.md`, `llms.txt`, `CHANGELOG.md`, `tests/replay/test_replay_pr_ops.py`, `tests/replay/fixtures/pr_ops.json`, `tests/replay/golden/pr_ops.json` | 19 (retro side), 20, 21 (lines), 22, 23 (index, changelog), 24 (retro, replay) |
 

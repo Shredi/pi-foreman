@@ -8,7 +8,7 @@ import { effectCtx } from "../effects.ts";
 import { acceptProtected, judgeProtected, matchProtected } from "../protected.ts";
 import type { ProtectedFacts, ProtectedMatch, ProtectedVerdict } from "../protected.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
-import type { RuleCall } from "../rules.ts";
+import type { RuleCall } from "../rulecall.ts";
 import { parseShell } from "../shellast.ts";
 
 const cwd = process.cwd();

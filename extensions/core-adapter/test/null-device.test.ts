@@ -5,7 +5,7 @@ import { writesOutside } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { redirectOk } from "../effects.ts";
 import { nullDevice } from "../pathnorm.ts";
-import { ruleCallOf } from "../rules.ts";
+import { ruleCallOf } from "../rulecall.ts";
 import { parseShell } from "../shellast.ts";
 import { splitChain } from "../shellchain.ts";
 

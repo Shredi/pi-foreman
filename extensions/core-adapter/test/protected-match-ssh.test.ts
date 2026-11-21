@@ -7,7 +7,7 @@ import { matchProtected } from "../protected.ts";
 import type { ProtectedMatch } from "../protected.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
 import { parseShell } from "../shellast.ts";
-import type { RuleCall } from "../rules.ts";
+import type { RuleCall } from "../rulecall.ts";
 
 const cwd = process.cwd();
 const home = path.join(cwd, "pf-prot-match-ssh", "home");

@@ -44,30 +44,29 @@ function render(doc, { agents = [] } = {}) {
   return m.render({});
 }
 
-// The chip of PR `n`: the HoverCard whose trigger draws "⎇ #n".
-const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => hasText(e, `⎇ #${n}`)));
-const checkOf = (chip) => walk(chip.props.trigger).find((e) => hasText(e, "✓"));
-const discOf = (chip) => walk(chip.props.trigger).find((e) => e.props.size === 6);
+// The chip of PR `n`: the HoverCard whose trigger draws "PR #n".
+const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => hasText(e, `PR #${n}`) || hasText(e, `#${n}`)));
+const badgeOf = (chip) => walk(chip.props.trigger).find((e) => e.props?.font_semibold && e.props.text_size === 10);
+const checkOf = (chip) => (hasText(badgeOf(chip), "✓ ") ? badgeOf(chip) : undefined);
 
-test("the Open PRs row: ready is a still green check mark, and no disc", () => {
+test("the Open PRs row: ready is a still green badge with a check mark", () => {
   const root = render({ roots: [], openPrs: OPEN });
   const ready = chipOf(root, 201);
   assert.ok(ready, "#201 is drawn");
   assert.equal(checkOf(ready).props.text_color, "#ansi2", "green");
   assert.equal(checkOf(ready).props.loop, undefined, "never pulses");
-  assert.equal(discOf(ready), undefined, "no disc");
-  assert.equal(checkOf(ready).props.size, 14, "the check fills the 14 px box");
+  assert.equal(checkOf(ready).props.bg, "#ansi22e", "the check sits in a tinted badge");
 });
 
-test("the Open PRs row: every other state keeps its disc and draws no check mark", () => {
+test("the Open PRs row: every other state keeps its badge colour and draws no check mark", () => {
   const root = render({ roots: [], openPrs: OPEN });
   const want = { 202: ["#ansi3", true], 203: ["#blocked", false], 204: ["#ansi3", false], 205: ["#ansi2", false], 206: ["#ansi2", false] };
   for (const [n, [colour, pulses]] of Object.entries(want)) {
     const chip = chipOf(root, n);
     assert.ok(chip, `#${n} is drawn`);
     assert.equal(checkOf(chip), undefined, `#${n}: no check mark`);
-    assert.equal(discOf(chip).props.bg, colour, `#${n} colour`);
-    assert.equal(discOf(chip).props.loop !== undefined, pulses, `#${n} pulses`);
+    assert.equal(badgeOf(chip).props.text_color, colour, `#${n} colour`);
+    assert.equal(badgeOf(chip).props.loop !== undefined, pulses, `#${n} pulses`);
   }
 });
 
@@ -76,7 +75,7 @@ test("only the running PR loops in the Open PRs row: the check mark never pulses
   assert.equal(walk(root).filter((e) => e.props?.loop !== undefined).length, 1);
 });
 
-test("a session's pill: a ready PR shows the check mark, a blocked one its amber disc", () => {
+test("a session's pill: a ready PR shows the check mark, a blocked one its amber badge", () => {
   const session = sess("s-a", "agent-a", {
     pid: 7, hcTerminal: "t5",
     dots: [
@@ -88,10 +87,9 @@ test("a session's pill: a ready PR shows the check mark, a blocked one its amber
   const ready = chipOf(root, 201);
   assert.ok(ready, "#201 is drawn in the session row");
   assert.equal(checkOf(ready).props.text_color, "#ansi2");
-  assert.equal(discOf(ready), undefined);
   const blocked = chipOf(root, 204);
   assert.ok(blocked, "#204 is drawn in the session row");
   assert.equal(checkOf(blocked), undefined);
-  assert.equal(discOf(blocked).props.bg, "#ansi3");
-  assert.equal(discOf(blocked).props.loop, undefined);
+  assert.equal(badgeOf(blocked).props.text_color, "#ansi3");
+  assert.equal(badgeOf(blocked).props.loop, undefined);
 });

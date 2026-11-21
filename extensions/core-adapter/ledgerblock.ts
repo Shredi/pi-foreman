@@ -45,7 +45,7 @@ export function criticBlock(questions: readonly string[]): string {
   return ["[pi-foreman critic] Answer each question once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`.", ...questions.map((q, i) => `Q${i + 1}. ${q.replace(/^\(\d+\)\s*/, "")}`), "[end of critic]", ""].join("\n");
 }
 
-const PROTECTED_PATHS = ["config/foreman.defaults.json", "config/permissions.baseline.json", "package.json"];
+const PROTECTED_PATHS = ["config/foreman.defaults.json", "package.json"];
 
 /**
  * The line every builder brief carries after the ledger block (R26 item 4, R46 item 6): protected (write-ask) files are staged and

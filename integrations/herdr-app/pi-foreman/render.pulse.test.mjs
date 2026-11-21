@@ -41,27 +41,27 @@ function render(doc = DOC) {
   return m.render({});
 }
 
-// The chip of PR `n`: the HoverCard whose trigger draws "⎇ #n".
-const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes(`⎇ #${n}`)));
-// The disc of a chip: the 6px element with the fill (its loop, when it pulses, is on the same element).
-const dotOf = (chip) => walk(chip.props.trigger).find((e) => e.props.size === 6);
+// The chip of PR `n`: the HoverCard whose trigger draws "PR #n".
+const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => ["PR #" + n, "#" + n].some((l) => (e.kids ?? []).includes(l))));
+// The badge of a chip: the number in the state colour (its loop, when it pulses, is on the same element).
+const dotOf = (chip) => walk(chip.props.trigger).find((e) => e.props?.font_semibold && e.props.text_size === 10);
 
 test("the pulse loops the disc in the PR's colour: draft running violet, running amber", () => {
   const root = render();
   const draft = dotOf(chipOf(root, 61));
   assert.deepEqual(draft.props.loop, ["opacity", { from: 0.35, to: 1, period: 1200 }]);
-  assert.equal(draft.props.bg, "#ansi5", "violet");
+  assert.equal(draft.props.text_color, "#ansi5", "violet");
   const running = dotOf(chipOf(root, 62));
   assert.ok(running.props.loop, "running pulses");
-  assert.equal(running.props.bg, "#ansi3", "amber");
+  assert.equal(running.props.text_color, "#ansi3", "amber");
 });
 
 test("a failed PR stays still and red; a ready PR gets a still green check mark", () => {
   const root = render();
   const dot = dotOf(chipOf(root, 63));
   assert.equal(dot.props.loop, undefined, "#63 does not pulse");
-  assert.equal(dot.props.bg, "#blocked", "#63 colour");
-  const check = walk(chipOf(root, 64).props.trigger).find((e) => (e.kids ?? []).includes("✓"));
+  assert.equal(dot.props.text_color, "#blocked", "#63 colour");
+  const check = walk(chipOf(root, 64).props.trigger).find((e) => (e.kids ?? []).includes("✓ "));
   assert.ok(check, "#64 draws the check mark");
   assert.equal(check.props.text_color, "#ansi2", "#64 colour");
   assert.equal(check.props.loop, undefined, "#64 does not pulse");

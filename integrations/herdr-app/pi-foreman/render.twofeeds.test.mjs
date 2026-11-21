@@ -49,7 +49,7 @@ const walk = (el, out = []) => {
 };
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard");
-const chip5 = (root) => cards(root).filter((c) => texts(c.props.trigger).includes("⎇ #5"));
+const chip5 = (root) => cards(root).filter((c) => texts(c.props.trigger).includes("PR #5"));
 const openPrRows = (root) => walk(root).filter((e) => /^op-/.test(String(e.props?.id ?? "")) && e.props.id !== "op-head");
 const ev = { bounds: { width: 40, height: 16 }, position: { x: 100, y: 200 }, local_position: { x: 5, y: 5 } };
 

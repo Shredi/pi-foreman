@@ -46,7 +46,7 @@ class TestSessionClose(ReplayCase):
         send = [{"tools": [{"name": "intercom", "arguments": {"action": "send", "to": CHILD, "message": "foreman:close .workflow/result-close.md"}}]}, {"text": "sent"}]
         script["foreman"]["p2"] = send
         script["foreman"]["p3"] = send
-        rig = self.rig("sessclose", script, config={"sync": {"runRetro": False}}, permissions="baseline", intercom=True)
+        rig = self.rig("sessclose", script, config={"sync": {"runRetro": False}}, intercom=True)
         handoff = rig.root / "handoff"
         handoff.mkdir()
         (handoff / "parent").write_text("someone-else\n", "utf-8")

@@ -28,7 +28,7 @@ class TestWakeDuringRun(ReplayCase):
             "s2": [{"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-second.md", "content": ledger}}]},
                    {"tools": [{"name": "foreman_wait", "arguments": {"action": "list"}}]},
                    {"text": "Woken."}, {"text": "Still open after the wake."}]}}
-        rig = self.rig(name, script, config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig(name, script, config={"wait": {"batchWindowSeconds": 0}})
         sec = rig.root / "sections.log"
         pi = rig.start(env={"FOREMAN_FAKE_SECTIONS": str(sec), "FOREMAN_FAKE_DELAY": delay})
         sid = pi.session_id()

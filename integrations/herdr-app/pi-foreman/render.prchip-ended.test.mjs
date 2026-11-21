@@ -21,7 +21,7 @@ const walk = (el, out = []) => {
   if (el.props?.trigger) walk(el.props.trigger, out);
   return out;
 };
-const chipOf = (out) => walk(out).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes("⎇ #7")));
+const chipOf = (out) => walk(out).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).some((k) => k === "PR #7" || k === "#7")));
 
 // A live top row (terminal t5) with one child of the given shape, as `foreman radar --json` would carry it.
 const mount = (kid, kidKids, feed) => {

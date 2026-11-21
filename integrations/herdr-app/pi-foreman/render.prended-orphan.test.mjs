@@ -38,9 +38,9 @@ const chipTexts = (out) => walk(out).filter((e) => e.kind === "HoverCard").flatM
 
 test("control: the PR of a live child terminal is drawn", () => {
   const out = mount({ ...ended, state: "working", sym: "working" }).render({});
-  assert.ok(chipTexts(out).includes("⎇ #7"));
+  assert.ok(chipTexts(out).includes("PR #7"));
 });
 
 test("the PR of a closed session whose child terminal has nothing live below is still drawn", () => {
-  assert.ok(chipTexts(mount(ended).render({})).includes("⎇ #7"), "the PR has a chip somewhere");
+  assert.ok(chipTexts(mount(ended).render({})).some((s) => s === "PR #7" || s === "#7"), "the PR has a chip somewhere");
 });

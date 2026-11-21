@@ -28,7 +28,7 @@ class TestWakeKeepsIntent(ReplayCase):
                    {"text": "Waiting."}],
             "k2": [{"text": "Woken, intent intact."}],
             "k3": [{"text": "Second done."}]}}
-        rig = self.rig("wakeintent", script, config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig("wakeintent", script, config={"wait": {"batchWindowSeconds": 0}})
         pi = rig.start()
         sid = pi.session_id()
         recs = list(pi.prompt(FIRST, timeout=60))

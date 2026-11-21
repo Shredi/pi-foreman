@@ -450,16 +450,16 @@ Lines of the older gate (`review`, `autoreview` usage role) stay readable. `shap
 
 ## Config keys
 
-The permission policy lives in `permissions.json`; these are the `foreman.json` keys around it. `permissions.profile`, `gate.readClear`, `gate.readonlyClear`, `gate.askTimeoutMs` and `gate.mode` have no effect; the schema keeps them so that old configs load.
+The permission policy lives in `permissions.json`; these are the `foreman.json` keys around it. `permissions.profile`, `gate.readClear`, `gate.readonlyClear`, `gate.askTimeoutMs`, `gate.mode` and `retro.proposalMinReviews` have no effect; the schema keeps them so that old configs load, the shipped defaults no longer set them, and `/foreman doctor` prints one INFO line for each a user or project config still sets.
 
 | Key | Meaning | Project layer |
 |---|---|---|
 | `permissions.profile` | removed: profiles are gone; the value is ignored | ignored with a notice |
 | `gate.reviewTimeoutMs` | judge call timeout (default 15000, minimum 100) | lower only |
-| `gate.askTimeoutMs` | no effect: a child waits for its parent's ruling without a time limit; kept so configs load | lower only |
+| `gate.askTimeoutMs` | no effect: a child waits for its parent's ruling without a time limit; kept so configs load | no effect |
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
-| `gate.readClear` | No effect: the read question was removed. The key is kept so existing configs load | `false` only |
-| `gate.readonlyClear` | No effect: the judge step it switched ([The role question](#the-role-question)) was removed. The key is kept so existing configs load | `false` only |
+| `gate.readClear` | No effect: the read question was removed. The key is kept so existing configs load | no effect |
+| `gate.readonlyClear` | No effect: the judge step it switched ([The role question](#the-role-question)) was removed. The key is kept so existing configs load | no effect |
 | `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes, except remote writes the harness itself sees, which always ask), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks); a protected entry's `check` can tighten it per entry | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
