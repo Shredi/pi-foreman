@@ -109,9 +109,9 @@ test("heavy with no builder and no change asks for none; a builder launched whil
   const left = await settle(a);
   assert.match(left, /a \[high-stakes\] review is due/);
   assert.equal((left.match(/a \[high-stakes\] review is due/g) ?? []).length, 1, "one reminder");
-  assert.match(left, /\/w1\b/);
-  assert.match(left, /\/w3\b/);
-  assert.doesNotMatch(left, /\/w2\b/);
+  assert.match(left, /[\\/]w1\b/);
+  assert.match(left, /[\\/]w3\b/);
+  assert.doesNotMatch(left, /[\\/]w2\b/);
   const again = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wts[1] });
   assert.match(again.blocked ?? "", /\[high_stakes_done\]/, "exactly one per checkout");
 });
