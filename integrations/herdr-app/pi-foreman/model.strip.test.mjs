@@ -146,3 +146,18 @@ test("parseRadarDoc keeps the strip of the local document and ignores a remote o
   assert.equal("strip" in parseRadarDoc(doc(undefined)), false);
   assert.equal("strip" in parseRadarDoc(doc("junk")), false);
 });
+
+test("stripRows: a long disk label is cut in the middle, a short one stays", () => {
+  const path = "/Users/x/Documents/git/repo";
+  const rows = stripRows({ ...full(), disks: [{ label: path, usedPct: 10, freeGB: 1, tone: "neutral" }, { label: "/", usedPct: 1, freeGB: 1, tone: "neutral" }], quotas: [] });
+  const label = rows.find((r) => r.id === "disk:0").segs[0].text.slice(0, -1);
+  assert.equal(label.length, 18);
+  assert.equal(label[0], "/");
+  assert.ok(label.endsWith("git/repo"));
+  assert.equal(label.split("…").length, 2);
+  const short = rows.find((r) => r.id === "disk:1").segs[0].text;
+  assert.equal(short, "/".padEnd(18) + " ");
+  const fits = stripRows({ ...full(), disks: [{ label: "/Volumes/data", usedPct: 1, freeGB: 1, tone: "neutral" }], quotas: [] });
+  assert.ok(fits.find((r) => r.id === "disk:0").segs[0].text.startsWith("/Volumes/data"));
+  assert.ok(!fits.find((r) => r.id === "disk:0").segs[0].text.includes("…"));
+});

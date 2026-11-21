@@ -338,7 +338,11 @@ export function resetText(resetsAt, now) {
 }
 
 const pctText = (v) => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
-const fixed = (s, w) => (s.length > w ? `${s.slice(0, w - 1)}…` : s.padEnd(w));
+const fixed = (s, w) => {
+  if (s.length <= w) return s.padEnd(w);
+  const tail = Math.floor((w - 1) / 2);
+  return `${s.slice(0, w - 1 - tail)}…${s.slice(s.length - tail)}`;
+};
 
 /** The dot of the load guard: amber at high, red at critical, else neutral; the reason words only when it is not ok. */
 function levelSegs(level) {
