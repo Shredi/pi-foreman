@@ -106,6 +106,7 @@ const POSITIVE: Record<string, Case[]> = {
   "danger-git-secret": [sh("git show HEAD:.env"), sh("git show HEAD:config/.env.production"), sh("git cat-file -p HEAD:config/.env.production"), sh("git show HEAD:~/.ssh/id_rsa")],
   // fires only with the gate's floor env (`DangerEnv.floor`), which this table's env lacks; its positives are in r2-secret-labels.test.ts
   "danger-harness-folder": [],
+  "danger-kill-pattern": [sh("pkill node"), sh("killall x"), sh("env pkill x"), sh("$V/bin/pkill x"), sh("f(){ pkill x; }; f"), sh("busybox killall x")],
   "danger-delete-unknown-target": [sh("ls | xargs rm -rf"), sh("find build -exec rm -rf {} +")],
 };
 
@@ -120,6 +121,7 @@ const NEGATIVE: Record<string, Case[]> = {
   "danger-process": [sh("chmod +x src/run.sh"), sh("defaults read com.x"), sh("reg query HKCU\\x"), sh("ps aux"), sh("sleep 1 && echo done"), sh("echo a && echo b"), sh("launchctl list"), { tool: "bg_run", line: "sleep 100 &", input: { command: "sleep 100 &" } }],
   "danger-inject": [sh("herdr pane read 1-2"), sh("herdr pane list"), sh("tmux list-panes"), sh("echo herdr pane send-text hi")],
   "danger-opaque": [sh("echo hi"), sh("ls src"), sh("cat a.txt | wc -l")],
+  "danger-kill-pattern": [sh("kill 123"), sh("kill $!"), sh("kill %1"), sh("taskkill /PID 1"), sh("pgrep node"), sh("echo pkill x")],
   "danger-delete-unknown-target": [sh("echo hi"), sh("find build -name x -exec grep y {} +")],
   "danger-inline-code": [sh("python script.py"), sh("node file.js"), sh("python3 -m pytest"), sh("bash -c 'ls'"), sh("echo hi")],
   "danger-remote": [sh("docker ps"), sh("kubectl get pods"), sh("scp a.txt host:/x"), sh("echo ssh host")],
