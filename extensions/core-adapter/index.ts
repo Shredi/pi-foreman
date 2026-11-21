@@ -461,6 +461,10 @@ interface Session {
   ceremonyRestored: boolean;
   /** Foreman only: the session folder made at the first builder launch from a primary checkout (D118), else null. */
   sessionFolder: SessionFolder | null;
+  /** Foreman only: a builder already ran in the session's own (primary) checkout, so no session folder is made later (persisted with the folder entry). */
+  primaryWork: boolean;
+  /** Foreman only: the launch line named why no session folder is made. */
+  primaryNoted: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -1148,6 +1152,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
       sessionFolder: null,
+      primaryWork: false,
+      primaryNoted: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1812,10 +1818,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** session_start: the session folder of the latest entry of the branch (a fork is another session and makes its own). */
   function restoreSessionFolder(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild || reason === "fork") return;
-    const entries = (ctx.sessionManager.getBranch?.() ?? []) as { type?: unknown; customType?: unknown; data?: { v?: unknown; path?: unknown; branch?: unknown } }[];
+    const entries = (ctx.sessionManager.getBranch?.() ?? []) as { type?: unknown; customType?: unknown; data?: { v?: unknown; path?: unknown; branch?: unknown; primary?: unknown } }[];
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i];
       if (!e || e.type !== "custom" || e.customType !== SESSION_FOLDER_ENTRY) continue;
+      if (e.data?.v === 1 && e.data.primary === true) s.primaryWork = true;
       if (e.data?.v === 1 && typeof e.data.path === "string" && typeof e.data.branch === "string") s.sessionFolder = { path: e.data.path, branch: e.data.branch };
       return;
     }
@@ -1827,11 +1834,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * "" when nothing changed, or a refusal.
    */
   async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string } | { refuse: string }> {
-    if (s.isChild || actionOf(input) !== null || (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy")) return { line: "" };
+    if (s.isChild || actionOf(input) !== null) return { line: "" };
     const isDir = (v: unknown): boolean => (typeof v === "string" && v !== "") || v === true;
-    const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree));
+    // `machine` (a remote launch) is an explicit choice too: a local path means nothing there
+    const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree) || isDir(x.machine));
     const bare = launchEntries(input).filter((e) => typeof e.agent === "string" && !explicit(e));
     if (bare.length === 0) return { line: "" };
+    if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") {
+      // a builder at trivial tier works in the session's own checkout: later tiers keep launching there (the work is not in a new folder)
+      if (!s.sessionFolder && !s.primaryWork && bare.some((e) => e.agent === "builder") && (await primaryCheckout(s.cwd))) {
+        s.primaryWork = true;
+        try {
+          pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
+        } catch {
+          // the session file is not writable now: the decision stays in memory
+        }
+      }
+      return { line: "" };
+    }
+    if (!s.sessionFolder && s.primaryWork) {
+      if (s.primaryNoted) return { line: "" };
+      s.primaryNoted = true;
+      return { line: "pi-foreman: no session folder was made: a builder already worked in this session's own checkout, so launches stay there." };
+    }
     if (!s.sessionFolder && !bare.some((e) => e.agent === "builder")) return { line: "" };
     if (!s.sessionFolder && !(await primaryCheckout(s.cwd))) return { line: "" };
     const r = await ensureSessionFolder({ cwd: s.cwd, sessionId: s.id, sessionName: pi.getSessionName?.(), worktreeDir: get(s.config.config, "close.worktreeDir"), branchPrefix: get(s.config.config, "sessions.worktree.branchPrefix"), recorded: s.sessionFolder });

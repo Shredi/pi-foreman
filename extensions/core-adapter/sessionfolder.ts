@@ -22,7 +22,7 @@ export interface SessionFolder {
 }
 
 export type FolderResult =
-  | { ok: true; folder: SessionFolder; base: string; created: boolean; dirty: boolean; staleNote?: string }
+  | { ok: true; folder: SessionFolder; base: string; created: boolean; dirty: boolean; ahead: number; staleNote?: string }
   | { ok: false; reason: string };
 
 interface Out {
@@ -99,8 +99,8 @@ export async function ensureSessionFolder(i: { cwd: string; sessionId: string; s
     if (top.code !== 0 || !top.out) return refuse(`the session folder cannot be made: ${i.cwd} is not in a git checkout.`);
     const main = mainCheckoutOf(top.out);
     if (!main) return refuse(`the session folder cannot be made: the main checkout of ${top.out} is not found.`);
+    if (i.recorded && fs.existsSync(path.join(i.recorded.path, ".git"))) return { ok: true, folder: i.recorded, base: "", created: false, dirty: false, ahead: 0 };
     const dirty = (await git(top.out, ["status", "--porcelain"])).out !== "";
-    if (i.recorded && fs.existsSync(path.join(i.recorded.path, ".git"))) return { ok: true, folder: i.recorded, base: "", created: false, dirty };
     const prefix = i.branchPrefix === undefined || i.branchPrefix === null ? DEFAULT_BRANCH_PREFIX : i.branchPrefix;
     if (typeof prefix !== "string" || !LABEL_RE.test(prefix)) return refuse("sessions.worktree.branchPrefix must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit.");
     const root = resolveWorktreeRoot(main, i.worktreeDir);
@@ -126,7 +126,10 @@ export async function ensureSessionFolder(i: { cwd: string; sessionId: string; s
     fs.mkdirSync(root.spelled, { recursive: true });
     const add = await git(main, ["worktree", "add", "--no-track", picked.path, "-b", picked.branch, base.base], FETCH_TIMEOUT_MS);
     if (add.code !== 0) return refuse(`git worktree add ${picked.path} failed (branch ${picked.branch}, base ${base.base}).`);
-    return { ok: true, folder: picked, base: base.base, created: true, dirty, ...(base.staleNote ? { staleNote: base.staleNote } : {}) };
+    // local commits of the primary checkout that the base (origin/<default>) lacks
+    const aheadOut = base.base === "HEAD" ? null : await git(main, ["rev-list", "--count", `${base.base}..HEAD`]);
+    const ahead = aheadOut && aheadOut.code === 0 ? Number(aheadOut.out) || 0 : 0;
+    return { ok: true, folder: picked, base: base.base, created: true, dirty, ahead, ...(base.staleNote ? { staleNote: base.staleNote } : {}) };
   } catch (err) {
     return refuse(`the session folder cannot be made: ${(err as Error).message}.`);
   }
@@ -137,5 +140,5 @@ export function folderLine(r: Extract<FolderResult, { ok: true }>): string {
   const head = r.created
     ? `pi-foreman: this session now has its own folder ${r.folder.path} (branch ${r.folder.branch}, from ${r.base}); launches without a cwd run there`
     : `pi-foreman: this launch runs in the session folder ${r.folder.path} (branch ${r.folder.branch})`;
-  return `${head}. Use it as the directory of your own git commands and pass it as cwd to pr_create (the PR tools are not redirected).${r.created && r.dirty ? " The primary checkout has uncommitted changes; they are not in the session folder." : ""}${r.staleNote ? ` Note: ${r.staleNote}.` : ""}`;
+  return `${head}. Use it as the directory of your own git commands and pass it as cwd to pr_create (the PR tools are not redirected).${r.created && r.dirty ? " The primary checkout has uncommitted changes; they are not in the session folder." : ""}${r.created && r.ahead > 0 ? ` The primary checkout has ${r.ahead} local commit${r.ahead === 1 ? "" : "s"} not on ${r.base}; ${r.ahead === 1 ? "it is" : "they are"} not in the session folder.` : ""}${r.staleNote ? ` Note: ${r.staleNote}.` : ""}`;
 }

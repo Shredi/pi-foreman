@@ -13,7 +13,7 @@ type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
 
 /** A standard-tier world over a real repo on `main`; `origin` (a bare repo) gets one commit more than the local `main`. */
-async function setup(t: Parameters<typeof world>[0], o: { origin?: "ahead" | "broken" | "none"; tier?: string; linked?: boolean } = {}) {
+async function setup(t: Parameters<typeof world>[0], o: { origin?: "ahead" | "broken" | "none"; tier?: string; linked?: boolean; child?: boolean; remote?: boolean } = {}) {
   const w = world(t, { ceremony: { default: o.tier ?? "standard" } });
   const root = path.join(w.project, "..");
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
@@ -199,4 +199,56 @@ test("D118: a launch with the folder as cwd is the owned-root default; another c
   const got = (await rules()).slice(before);
   assert.equal(got[0], "default-role-launch", "the folder is in the owned worktree root: no review, no ask");
   assert.notEqual(got[1], "default-role-launch", "a checkout outside the root is not a default allow");
+});
+
+test("D118: a child session is untouched", async (t) => {
+  const { w } = await setup(t);
+  process.env.PI_SUBAGENT_CHILD = "1"; // the world restores the environment at the end
+  const a = await w.adapter("startup");
+  const r = await builder(a);
+  assert.equal(r.input.cwd, undefined);
+  assert.equal(worktrees(w.project).length, 1);
+});
+
+test("D118: a remote launch (machine) is an explicit choice: no folder is made or injected, also as the first launch", async (t) => {
+  const { w, a } = await setup(t);
+  const r = await builder(a, { machine: "box1" });
+  assert.equal(r.input.cwd, undefined);
+  assert.equal(worktrees(w.project).length, 1);
+  const mixed = await launch(a, { tasks: [{ agent: "builder", task: "x", machine: "box1" }, { agent: "builder", task: "y" }] });
+  const tasks = mixed.input.tasks as { cwd?: string }[];
+  assert.equal(tasks[0].cwd, undefined, "the remote entry gets no local path");
+  assert.ok(typeof tasks[1].cwd === "string" && fs.existsSync(path.join(tasks[1].cwd, ".git")), "the local entry gets the folder");
+});
+
+test("D118: a builder that ran in the primary checkout at trivial keeps later launches there after an escalation; the line says why once, also after a reload", async (t) => {
+  const { w, a } = await setup(t, { tier: "trivial" });
+  const first = await builder(a);
+  assert.equal(first.input.cwd, undefined);
+  fs.writeFileSync(path.join(w.project, "work.txt"), "work\n");
+  git(w.project, "add", "work.txt");
+  git(w.project, "commit", "-q", "-m", "trivial work");
+  await a.command("ceremony", "standard");
+  const next = await builder(a);
+  assert.equal(next.blocked, null, String(next.blocked));
+  assert.equal(next.input.cwd, undefined, "no folder is injected");
+  assert.equal(worktrees(w.project).length, 1);
+  assert.match(next.note, /no session folder was made: a builder already worked in this session's own checkout/);
+  const again = await builder(a);
+  assert.doesNotMatch(again.note, /no session folder was made/);
+  await a.down();
+  const b = await w.adapter("resume");
+  const after = await launch(b, { agent: "builder", task: "more" });
+  assert.equal(after.input.cwd, undefined, "the decision survives a reload");
+  assert.equal(worktrees(w.project).length, 1);
+});
+
+test("D118: local commits of the primary checkout that origin/main lacks are named in the launch line", async (t) => {
+  const { w, a } = await setup(t, { origin: "ahead" });
+  fs.writeFileSync(path.join(w.project, "local.txt"), "local\n");
+  git(w.project, "add", "local.txt");
+  git(w.project, "commit", "-q", "-m", "local");
+  const r = await builder(a);
+  assert.equal(r.blocked, null, String(r.blocked));
+  assert.match(r.note, /primary checkout has 1 local commit not on origin\/main; it is not in the session folder/);
 });
