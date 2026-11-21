@@ -213,6 +213,11 @@ export function writeFactsFile(cwd: string, facts: readonly DiffFact[]): string 
     const dir = path.join(cwd, ".workflow", "facts");
     const file = path.join(dir, `facts-${crypto.createHash("sha256").update(text).digest("hex").slice(0, 12)}.md`);
     fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.writeFileSync(path.join(dir, ".gitignore"), "*\n", { flag: "wx" }); // a repository that does not ignore `.workflow/` never commits the list
+    } catch {
+      // already there
+    }
     fs.writeFileSync(file, text);
     const old = fs
       .readdirSync(dir)

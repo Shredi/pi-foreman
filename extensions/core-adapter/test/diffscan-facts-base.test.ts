@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { factsBlock, ReviewFacts, writeFactsFile } from "../diffscan.ts";
+import { diffWithFacts, factsBlock, ReviewFacts, writeFactsFile } from "../diffscan.ts";
 import { reviewBaseOf } from "../highstakes.ts";
 
 const mk = (n: number) => Array.from({ length: n }, (_, i) => ({ kind: "skip" as const, text: `skip marker added in f${i}_test.go: t.Skip()` }));
@@ -41,7 +41,7 @@ test("writing a facts file prunes older ones to the newest 20", () => {
       fs.utimesSync(f, 1000 + i, 1000 + i);
     }
     const file = writeFactsFile(dir, mk(30));
-    const left = fs.readdirSync(fd);
+    const left = fs.readdirSync(fd).filter((n) => n !== ".gitignore");
     assert.equal(left.length, 20);
     assert.ok(left.includes(path.basename(file as string)));
     assert.ok(!left.includes("facts-old00.md") && left.includes("facts-old24.md"));
@@ -129,6 +129,39 @@ test("normal in-round case: the recorded base stays (also with no resolvable bas
     track(dir);
     commit(dir, "x2.go", "package x2\n");
     assert.equal(await rf.baseFor(dir), rec); // recorded is main's tip = the merge-base
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("normal in-round case: a base recorded after a branch commit stays, not the merge-base; its files are not in the facts", async () => {
+  const dir = repo();
+  try {
+    g(dir, "checkout", "-q", "-b", "x");
+    track(dir); // origin/main stays at a
+    const a = g(dir, "rev-parse", "main");
+    const h1 = commit(dir, "h1_test.go", "package x\nfunc T(t *testing.T) { t.Skip() }\n");
+    const rf = new ReviewFacts();
+    rf.mergeBase = (d) => reviewBaseOf(d, { baseBranch: null });
+    await rf.noteBuilders({ agent: "builder" }, dir); // recorded: h1
+    commit(dir, "h2_test.go", "package x\nfunc U(t *testing.T) { t.Skip() }\n");
+    assert.equal(g(dir, "merge-base", "HEAD", "origin/main"), a);
+    const base = await rf.baseFor(dir);
+    assert.equal(base, h1);
+    const r = await diffWithFacts(dir, base);
+    assert.ok(r.facts.some((f) => f.text.includes("h2_test.go")));
+    assert.ok(!r.facts.some((f) => f.text.includes("h1_test.go")));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("facts file in a repo without a .workflow ignore: git status shows nothing under .workflow/facts", () => {
+  const dir = repo();
+  try {
+    const file = writeFactsFile(dir, mk(25));
+    assert.ok(file && fs.existsSync(file));
+    assert.equal(g(dir, "status", "--porcelain", "--untracked-files=all"), "");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
