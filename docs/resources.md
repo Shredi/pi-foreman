@@ -17,6 +17,8 @@ A sampler in the foreman session measures the host every `resources.sampleSecond
 | `resources.minFreeDiskGB` | 5 | Free disk (GB) of the workspace below which pressure is `high`. |
 | `resources.sampleSeconds` | 30 | Sampling interval, integer of at least 5. User or overlay config only. |
 
+The status strip of the herdr-app Agents view shows the same host numbers (CPU, memory, disks, this level); see [herdr](herdr.md#status-strip).
+
 The project layer can only tighten: it may lower `maxLoadPerCore` and raise `minFreeMemMB` and `minFreeDiskGB`; it cannot set `sampleSeconds`.
 
 ## Levels

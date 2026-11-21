@@ -80,6 +80,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [pr-sources](#pr-sources) | tools |  | opt-in | Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only. | `{"tools": {"prSources": {"ci": {"command": "ci-status --repo {repo} --pr {number} --sha {head}"}}}}` | [tools](tools.md#sources) |
 | [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
+| [sidebar-strip](#sidebar-strip) | ui |  | on | Shows CPU, memory, the load guard's level, disk free space and usage rows (the Claude week and 5-hour windows from reply headers, plus rows from usage scripts you configure) in a strip at the top of the herdr-app Agents view; the numbers come from the computer Pi runs on and the whole block is read from user or overlay config only. | on by default | [herdr](herdr.md#status-strip) |
 | [children-may-push](#children-may-push) | safety |  | on | The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs. | on by default | [safety](safety.md#what-the-gate-floors-cover) |
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | safety | toggle, relaxes safety | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
@@ -597,6 +598,25 @@ Switch: `sidebar.statusCommand` is non-empty.
 | `sidebar.statusCommand` | unset | not in project/session (the sidebar status command runs a program: user or overlay config only) |
 | `sidebar.statusSeconds` | `60` | not in project/session (the sidebar status interval comes from the user or overlay config) |
 
+### sidebar-strip
+
+**Status strip.** Shows CPU, memory, the load guard's level, disk free space and usage rows (the Claude week and 5-hour windows from reply headers, plus rows from usage scripts you configure) in a strip at the top of the herdr-app Agents view; the numbers come from the computer Pi runs on and the whole block is read from user or overlay config only.
+
+| Key | Default | Layer |
+|---|---|---|
+| `sidebar.strip.enabled` | `true` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.cpu` | `true` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.memory` | `true` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.level` | `true` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.disks` | `null` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.sampleSeconds` | `10` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.sparkline` | `12` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.quotas.claude` | `true` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.quotas.sources.<x>.command` | unset | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.quotas.sources.<x>.seconds` | unset | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.quotas.hide` | `[]` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+| `sidebar.strip.quotas.order` | `[]` | not in project/session (the status strip (its usage sources run programs) comes from the user or overlay config) |
+
 ### children-may-push
 
 **Children may push.** The setting has no effect: a builder from a single launch pushes its own branch like the main session, every other child never pushes, and no child opens or merges PRs.
@@ -1043,6 +1063,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `skills.visible` | it hides every other skill: user or overlay config only |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
+| `sidebar.strip` | the status strip (its usage sources run programs) comes from the user or overlay config |
 | `radar.openPrs` | the open PRs source (a GitHub search through gh) comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |
 | `retro.proposalMinReviews` | the proposal threshold comes from the user or overlay config |

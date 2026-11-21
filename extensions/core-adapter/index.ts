@@ -124,6 +124,7 @@ import { PrHost, branchOf, isTrackedKey, resolveGithubHosts } from "./prhost.ts"
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
 import { ExtStatus } from "./extstatus.ts";
+import { ClaudeUsageHook, StripSampler } from "./strip.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
@@ -590,6 +591,7 @@ interface Session {
   show: Show | null;
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
   pressureSampler: PressureSampler | null;
+  stripSampler: StripSampler | null;
   pressureQ: { gen: number; entries: unknown[]; started: boolean } | null;
   /** Foreman only: the owner declined or dismissed a pressure override; cleared by the next owner prompt (input source interactive or rpc). */
   overrideDeclined: boolean;
@@ -1244,6 +1246,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       show: null,
       openPrs: null,
       pressureSampler: null,
+      stripSampler: null,
       pressureQ: null,
       overrideDeclined: false,
       overridden: new Map(),
@@ -2331,6 +2334,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       });
       s.pressureSampler.start();
     }
+    // Status strip (strip.ts): the foreman session measures CPU, memory and disks for `foreman radar --json`; a child never does.
+    if (!s.isChild && !s.stripSampler) {
+      s.stripSampler = new StripSampler({
+        agentDir: s.agentDir,
+        diskPath: () => s.cwd,
+        workspace: () => workspaceOf(s.cwd).root,
+        cwd: () => s.cwd,
+        sessionId: () => s.id,
+        config: () => s.config.config,
+        env: process.env,
+        platform,
+        trace: (r) => s.trace?.emit(r),
+      });
+      s.stripSampler.start();
+    }
   });
   // After core-adapter's own session_start handler: Pi runs handlers in registration order, so the allowed set is known when Pi's MCP extension loads its config.
   mcpChild?.install();
@@ -2467,12 +2485,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.live?.stop();
     s.openPrs?.stop();
     await s.pressureSampler?.stop();
+    await s.stripSampler?.stop();
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
     pythonCache.drop(s.id);
     sessions.delete(s.id);
   });
 
+  // Claude usage windows for the status strip: headers in, one small file out; no message, no prompt text (strip.ts).
+  const claudeUsage = new ClaudeUsageHook();
+  pi.on("after_provider_response", (event, ctx) => {
+    const ps = sessionFor(ctx);
+    if (ps) claudeUsage.record(ps.agentDir, ps.config.config, event.headers);
+  });
   // An expired claude-bridge login: one notice per process, from the response status (never message text).
   let bridgeAuthShown = false;
   pi.on("after_provider_response", (event, ctx) => {
