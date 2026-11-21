@@ -74,3 +74,14 @@ test("a new submodule config with only clone keys is grouped; a removed one keep
   const lines = diffGitSnapshots(before, takeGitSnapshot(dir, HOME));
   assert.deepEqual(lines, ["git:modules/m0/config: removed", "submodule configs: 1 changed (m5)"]);
 });
+
+test("a new hook named config inside a submodule git dir keeps its own line", (t) => {
+  const { dir } = repoWithModules(t, 1);
+  const before = takeGitSnapshot(dir, HOME);
+  const hook = path.join(dir, ".git", "modules", "m0", "hooks", "config");
+  fs.mkdirSync(path.dirname(hook), { recursive: true });
+  fs.writeFileSync(hook, "#!/bin/sh\necho hi\n");
+  const lines = diffGitSnapshots(before, takeGitSnapshot(dir, HOME));
+  assert.ok(lines.length >= 1 && lines.every((l) => !l.startsWith("submodule configs")), JSON.stringify(lines));
+  assert.ok(lines.some((l) => l.includes("git:modules/m0/hooks/config")), JSON.stringify(lines));
+});

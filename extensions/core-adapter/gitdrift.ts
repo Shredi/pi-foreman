@@ -477,7 +477,7 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
     if (a && b && a.hash === b.hash) continue;
     const kind = !a ? "new" : !b ? "removed" : "changed";
     let state: string;
-    const mod = MODULE_CONFIG.exec(lbl);
+    const mod = b && b.keys !== null ? MODULE_CONFIG.exec(lbl) : null; // only a parsed config, not a hook that happens to be named config
     if (mod && kind === "new" && [...(b!.keys?.keys() ?? [])].every((k) => QUIET_MODULE_KEYS.test(k) || (BRANCH_TRACKING.test(k) && routineTracking(k, b!, b!)))) {
       quietModules.push(mod[1]);
       continue;

@@ -614,7 +614,7 @@ export async function pictureSet(roots: readonly string[], home: string, git: Gi
     const got = await Promise.all(
       roots.map(async (r) => {
         if (skip(r)) return [r, "unreadable"] as [string, Picture];
-        const pic = await Promise.race([takeReadonlyState(r, home, git, starts?.get(r), { signal: ctl.signal, onCause: (c) => causes.set(r, c) }), late]);
+        const pic = await Promise.race([takeReadonlyState(r, home, git, starts?.get(r), { signal: ctl.signal, onCause: (c) => { if (!timedOut) causes.set(r, c); } }), late]);
         if (pic === "unreadable") causes.set(r, timedOut ? "deadline" : causes.get(r) ?? "read failed");
         return [r, pic] as [string, Picture];
       }),
