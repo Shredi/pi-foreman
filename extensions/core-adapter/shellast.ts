@@ -44,6 +44,8 @@ export interface ShellRedirect {
   op: ">" | ">>" | "&>" | "&>>" | "<" | "<>" | ">|" | "dup";
   fd: string | null;
   target: string;
+  /** Set on a `dup` written `<&` (an input dup: it replaces the fd's input). */
+  input?: true;
 }
 
 export interface ShellSegment {
@@ -359,7 +361,7 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
     if (r.operator === ">&" || r.operator === "<&") op = /^(\d+|-)$/.test(target) ? "dup" : r.operator === ">&" ? "&>" : "<";
     else op = r.operator as ShellRedirect["op"];
     if ((op === "<" || op === "<>") && stdin) c.feeds = true;
-    c.redirs.push({ op, fd, target });
+    c.redirs.push(op === "dup" && r.operator === "<&" ? { op, fd, target, input: true } : { op, fd, target });
   }
 }
 

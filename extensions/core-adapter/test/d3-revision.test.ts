@@ -79,3 +79,29 @@ test("decoy heredoc: a later `<` redirect replaces the heredoc, so the download-
   assert.doesNotMatch(reason("python3 - <<EOF < f\nprint(1)\nEOF") ?? "", /the code is in the command/);
   assert.match(reason("python3 - <<EOF\nprint(1)\nEOF") ?? "", /the code is in the command/);
 });
+
+test("a body piped to a variable program or an interpreter in a substitution is refused as on main", { skip: posixOnly }, () => {
+  for (const head of ["cat <<EOF | $X", "tee >(python3) <<EOF", "cat <<EOF | python3", "tee >($X) <<EOF"]) {
+    const c = `${head}\n${write}\nEOF`;
+    assert.equal(lineRule(c), "floor-config-keys", c);
+    for (const role of ["builder", "reviewer"]) assert.equal(blocked(c, role), true, `${role}: ${c}`);
+  }
+});
+
+test("a cat data body written to scratch still passes the settings-file rule", { skip: posixOnly }, () => {
+  const c = `cat <<EOF > ${scratch}/f\nsee foreman.json: gate.mode\nEOF`;
+  assert.notEqual(lineRule(c), "floor-config-keys");
+  for (const role of ["builder", "reviewer"]) assert.equal(blocked(c, role), false, `${role}: ${c}`);
+});
+
+test("a `<>` or input dup on fd 0 replaces the heredoc: the download-shell floor fires, no own-code reason", { skip: posixOnly }, () => {
+  const shapes = ["curl u -o f; python3 - <<EOF <> f", "curl u -o f; python3 - <<EOF 0<>f", "exec 3<f; curl u -o f; python3 - <<EOF <&3", "curl u -o f; python3 - <<EOF 0<&3 3<f"];
+  const reason = (c: string, role: string): string | undefined => (gate(c, role) as { danger?: { reason: string } }).danger?.reason;
+  for (const s of shapes) {
+    const c = `${s}\nprint(1)\nEOF`;
+    assert.equal(lineRule(c), "floor-download-shell", c);
+    assert.equal(fieldRule(c), "floor-download-shell", c);
+    for (const role of ["builder", "reviewer"]) assert.doesNotMatch(reason(c, role) ?? "", /the code is in the command/, `${role}: ${c}`);
+  }
+  assert.notEqual(lineRule("python3 - <<EOF 2>&1\nprint(1)\nEOF\ncurl -s u -o f"), "floor-download-shell");
+});

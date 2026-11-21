@@ -447,8 +447,9 @@ const DOWNLOAD = new Set(["curl", "wget", "fetch", "iwr", "irm", "invoke-webrequ
 const SHELL_LIKE = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "pwsh", "powershell", "iex", "invoke-expression"]);
 const DOWNLOAD_SHELL_REASON = "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.";
 
-/** The segment's stdin is its own here-document or here-string: a `<` redirect of the same command may replace it (`python3 - <<E < f`), so then it is no own text. */
-export const ownStdinText = (s: ShellSegment): boolean => !!s.heredoc && !s.redirects.some((r) => r.op === "<" && (r.fd === null || r.fd === "0"));
+/** The segment's stdin is its own here-document or here-string: a `<`, `<>` or input dup (`<&3`) of the same command on fd 0 may replace it (`python3 - <<E < f`), so then it is no own text. */
+export const ownStdinText = (s: ShellSegment): boolean =>
+  !!s.heredoc && !s.redirects.some((r) => (r.op === "<" || r.op === "<>" || (r.op === "dup" && r.input === true)) && (r.fd === null || r.fd === "0"));
 
 /**
  * `seg` is a shell or interpreter that reads its program from stdin and the line has a download that may feed it: the download pipes into it (at any earlier stage of its
@@ -1802,6 +1803,16 @@ export function dataBodies(segments: ShellSegment[]): boolean {
 }
 
 /**
+ * A heredoc body is data for the settings-file rule only when every segment that reads it through a pipe is `cat` or `tee`, no interpreter or variable program sits inside a
+ * substitution (`tee >(python3) <<E`: the walker labels a process substitution like `$(`), and no heredoc command is an interpreter or a variable program.
+ */
+function bodiesOnlyCatTee(segments: ShellSegment[]): boolean {
+  const plain = (s: ShellSegment): boolean => ["cat", "tee"].includes(base(s.program));
+  const code = (s: ShellSegment): boolean => SHELL_LIKE.has(base(s.program)) || (s.opaque !== null && s.opaque !== "writing_wrapper");
+  return segments.every((s) => (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
+}
+
+/**
  * The text the raw and opaque-text floors scan (A1): quoted strings and the bodies of `cat`/`tee`/redirect-only heredocs are blanked.
  * A `cat`/`tee` data heredoc body is masked even when a later segment runs the written file (that segment is judged by the runner rules);
  * a body fed to a shell or interpreter stays visible. Quoted strings stay visible when a segment runs text.
@@ -2296,7 +2307,7 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
     const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
     // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
     // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
-    const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s));
+    const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line);
     const outside = new Set(wordsOf(data ? blankHeredocBodies(text) : text));
     const c = words.find((x) => outside.has(x) && CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
