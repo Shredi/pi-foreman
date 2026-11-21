@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, nestedSegments, remoteCommand, secretPath, unknownTargetDelete } from "./floors.ts";
+import { BRACE_LIMIT, READ_PROGS, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, nestedSegments, remoteCommand, secretPath, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
@@ -1269,7 +1269,7 @@ const inlineCodeHits = (c: DangerCall, e: DangerEnv): ShellSegment[] =>
   nestedSegments(c.segments ?? [], e).filter((s) => s.program !== "" && (inlineCode(s) || s.opaque === "nonliteral_script" || s.opaque === "stdin_fed" || (s.opaque === "writing_wrapper" && progOf(s) === "script") || (s.opaque === "foreign_shell" && c.tool !== "powershell")));
 
 /** A hit whose code text is in the command itself: `-c`/`-e` text, or a heredoc or here-string body fed to the interpreter. */
-const codeInCommand = (s: ShellSegment): boolean => inlineCode(s) || (s.opaque === "stdin_fed" && (s.heredocs?.length ?? 0) > 0);
+const codeInCommand = (s: ShellSegment): boolean => inlineCode(s) || (s.opaque === "stdin_fed" && (s.heredocs?.length ?? 0) > 0 && ownStdinText(s));
 
 export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },

@@ -447,6 +447,9 @@ const DOWNLOAD = new Set(["curl", "wget", "fetch", "iwr", "irm", "invoke-webrequ
 const SHELL_LIKE = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "pwsh", "powershell", "iex", "invoke-expression"]);
 const DOWNLOAD_SHELL_REASON = "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.";
 
+/** The segment's stdin is its own here-document or here-string: a `<` redirect of the same command may replace it (`python3 - <<E < f`), so then it is no own text. */
+export const ownStdinText = (s: ShellSegment): boolean => !!s.heredoc && !s.redirects.some((r) => r.op === "<" && (r.fd === null || r.fd === "0"));
+
 /**
  * `seg` is a shell or interpreter that reads its program from stdin and the line has a download that may feed it: the download pipes into it (at any earlier stage of its
  * pipeline, so `curl u | cat | python3 - <<E` counts: zsh MULTIOS hands both the pipe and the heredoc to stdin), or the interpreter has no heredoc or here-string of its own, or the
@@ -458,7 +461,7 @@ function downloadFeedsShell(seg: ShellSegment, line: readonly ShellSegment[]): b
   if (!SHELL_LIKE.has(base(seg.program)) || seg.opaque !== "stdin_fed") return false;
   return line.some((d) => {
     if (d === seg || !DOWNLOAD.has(base(d.program))) return false;
-    if (!seg.heredoc) return true;
+    if (!ownStdinText(seg)) return true;
     const piped = !!d.pipeline && !!seg.pipeline && d.pipeline.id === seg.pipeline.id && d.pipeline.stage < seg.pipeline.stage;
     return piped || d.wrappers.some((w) => w === "$(" || w === "`");
   });
@@ -2291,8 +2294,10 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   if (UNREAD_KEYS.test(text)) {
     const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
     const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
-    // a settings-file name that only a here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts)
-    const outside = new Set(wordsOf(blankHeredocBodies(text)));
+    // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
+    // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
+    const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s));
+    const outside = new Set(wordsOf(data ? blankHeredocBodies(text) : text));
     const c = words.find((x) => outside.has(x) && CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
   }
