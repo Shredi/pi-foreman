@@ -51,9 +51,16 @@ beforeEach(async () => {
   closers = [];
   seen = [];
 });
-afterEach(async () => {
+// idempotent: t.skip() inside a test body skips afterEach on Node 22, so a test that skips after start() calls it itself first
+const teardown = async (): Promise<void> => {
   server?.shutdown(0, "end");
-  for (const c of closers) await c();
+  server = null;
+  const cs = closers;
+  closers = [];
+  for (const c of cs) await c();
+};
+afterEach(async () => {
+  await teardown();
   rmTestTmp(tmp);
 });
 
@@ -73,6 +80,7 @@ test("bind ::1 gives an http://[::1]:P link, and a listener on 127.0.0.1:P recei
   try {
     await impostor(port);
   } catch (e) {
+    await teardown();
     return t.skip(`cannot listen on 127.0.0.1:${port} (${(e as Error).message})`);
   }
   const url = await link(brief());
@@ -92,6 +100,7 @@ test("bind localhost links the address the check verified, never 127.0.0.1 when 
     try {
       await impostor(port);
     } catch (e) {
+      await teardown();
       return t.skip(`cannot listen on 127.0.0.1:${port} (${(e as Error).message})`);
     }
   }

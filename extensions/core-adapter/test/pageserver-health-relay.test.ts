@@ -97,9 +97,16 @@ beforeEach(async () => {
   closers = [];
   relayed = 0;
 });
-afterEach(async () => {
+// idempotent: t.skip() inside a test body skips afterEach on Node 22, so a skipping test calls it itself before it returns
+const teardown = async (): Promise<void> => {
   server?.shutdown(0, "end");
-  for (const c of closers) await c();
+  server = null;
+  const cs = closers;
+  closers = [];
+  for (const c of cs) await c();
+};
+afterEach(async () => {
+  await teardown();
   rmTestTmp(tmp);
 });
 
@@ -110,11 +117,15 @@ test("a relay on 127.0.0.1:<P> in front of a server bound to 0.0.0.0:<P> is unhe
   try {
     await tcpRelay("127.0.0.1", port, lan, port);
   } catch (e) {
+    await teardown();
     return t.skip(`the OS refuses a 127.0.0.1 bind next to the 0.0.0.0 bind on the same port (${(e as Error).message})`);
   }
   // when the OS routes the loopback connect to the wildcard server, the relay sees no connection
   const h = await httpHealth(rec);
-  if (relayed === 0) return t.skip("the OS routes 127.0.0.1:<P> to the wildcard listener, so no relay stands in between");
+  if (relayed === 0) {
+    await teardown();
+    return t.skip("the OS routes 127.0.0.1:<P> to the wildcard listener, so no relay stands in between");
+  }
   assert.equal(h, null);
   await noLinkNoKill(rec);
 });
