@@ -8,7 +8,7 @@ One small background server per machine serves the pages the harness writes, so 
 
 ## What is served
 
-- **Page folders.** A session's show `pages/` folder (`<scratch dir>/show/<session id>/pages/`: `plan.html`, `note-<n>.html`, `result.html`, `pages.json`) and the files it links to by relative path.
+- **Page folders.** A session's show `pages/` folder (`<scratch dir>/show/<session id>/pages/`: `plan.html`, `note-<n>.html`, `result.html`) and the files it links to by relative path.
 - **Briefs.** The brief file of a session-open dialog, only when its real path ends in `.md` or `.txt`. A markdown brief comes back as an HTML page rendered by the same renderer as the plan page; a `.txt` brief is served as text.
 - **Nothing else.** The server lists no folder, writes nothing and serves only what a session registered. Allowed file types: `.html`, `.md` (rendered), `.svg`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.css`, `.txt`, up to 8 MiB; anything else is "not found". A file must be a regular file with one hard link, opened without following a symlink, and its real path must stay inside its registered folder.
 
@@ -42,7 +42,11 @@ Under a clickable link the dialog's dim line still shows the file link. An agent
 
 The server reads only the defaults, overlay and user layers (one server per machine, no project layer), at start and again every 60 seconds. It exits when `enabled` is false or when `port` or `bind` differ from the values it started with; the next link starts a new one. A changed `baseUrl` applies without a restart. Without Python, with a `defaults`-only result or with any config error (for example an unreadable user `foreman.json`) the server does not start, so a user's `enabled: false` is never ignored.
 
-If another program holds the port, the server takes a free port (the port of its last run when that is free, so links survive a restart) and links use it. When `baseUrl` is set and the server had to take another port, no served links are made until the port is free: the links stay file links, and `foreman pages status` and `/foreman doctor` say why. A `baseUrl` with a loopback bind is allowed, for a proxy or VPN forwarder in front.
+If another program holds the port, the server takes a free port (the port of its last run when that is free, so links survive a restart) and links use it. When `baseUrl` is set and the server had to take another port, no served links are made until the port is free: the links stay file links, and `foreman pages status` and `/foreman doctor` say why. A non-loopback `bind` with an empty `baseUrl` gives file links too (the loopback address would not reach the server), and `/foreman doctor` says so. A `baseUrl` with a loopback bind is allowed, for a proxy or VPN forwarder in front.
+
+## Restarts after an update
+
+The server records a `build` in its state file and health answer: a short sha256 over the bytes of its own source files (the page server, the `foreman pages` command and every local module they import). A session that finds a healthy server of another build replaces it only when its own files are newer than that server's start, so an updated install replaces an old server and an older install never displaces a newer one. The server of another build is ended only by the pid its health answer gives; a record that does not answer is never killed.
 
 ## Network address for a phone
 
@@ -80,7 +84,7 @@ When the server is off (`enabled: false`), cannot start, the config call fails, 
 
 | Command | What it does |
 |---|---|
-| `foreman pages ensure` | starts the server when it is not running (reuses a running one of the same or a newer version; restarts an older one); prints the port, exits 1 when the server is off or did not start |
+| `foreman pages ensure` | starts the server when it is not running (reuses a running server; restarts it only when its build differs from this install and this install's files are newer than the server's start); prints the port, exits 1 when the server is off or did not start |
 | `foreman pages url <path>` | prints the served URL of a page file; only a page file of a show `pages/` folder (`.../show/<session id>/pages/<plan\|result\|note-N>.html`, a regular file, no symlink); anything else prints nothing and exits 1 |
 | `foreman pages status` | the server's pid, port, bind, version and roots, and why links are file links when they are |
 | `foreman pages stop` | asks the server to exit |

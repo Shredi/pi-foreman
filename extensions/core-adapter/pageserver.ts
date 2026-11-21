@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json } from "./config.ts";
 import { piAgentDir } from "./env.ts";
@@ -46,6 +46,8 @@ export interface ServerRecord {
   configPort: number;
   bind: string;
   version: string;
+  /** Build identity of the server's source files (`buildIdentity`); absent in a record of an older install. */
+  build?: string;
   startedAt: number;
   healthKey: string;
 }
@@ -53,6 +55,7 @@ export interface ServerRecord {
 export interface Health {
   pid: number;
   version: string;
+  build?: string;
   port: number;
   bind: string;
 }
@@ -103,10 +106,10 @@ function readJson(file: string): unknown {
 export function readServer(stateDir: string): ServerRecord | null {
   const j = readJson(serverFile(stateDir));
   if (!isObj(j)) return null;
-  const { pid, port, configPort, bind, version, startedAt, healthKey } = j;
+  const { pid, port, configPort, bind, version, build, startedAt, healthKey } = j;
   if (!Number.isInteger(pid) || (pid as number) <= 0 || !Number.isInteger(port) || (port as number) < 0 || (port as number) > 65535) return null;
   if (typeof bind !== "string" || typeof version !== "string" || typeof healthKey !== "string" || !healthKey || typeof startedAt !== "number") return null;
-  return { pid: pid as number, port: port as number, configPort: Number.isInteger(configPort) ? (configPort as number) : (port as number), bind, version, startedAt, healthKey };
+  return { pid: pid as number, port: port as number, configPort: Number.isInteger(configPort) ? (configPort as number) : (port as number), bind, version, ...(typeof build === "string" ? { build } : {}), startedAt, healthKey };
 }
 
 // ---------------------------------------------------------------- roots
@@ -214,8 +217,11 @@ function lastRootTouch(stateDir: string): number {
 
 // ---------------------------------------------------------------- URLs
 
-/** `<base>/<id>/<relpath>`; null when `baseUrl` is set and the server listens on another port than configured (links use the base as written). */
+export const isLoopbackBind = (bind: string): boolean => ["127.0.0.1", "::1", "localhost"].includes(bind);
+
+/** `<base>/<id>/<relpath>`; null when `baseUrl` is set and the server listens on another port than configured (links use the base as written), or when the bind is not loopback and `baseUrl` is empty (127.0.0.1 would not reach the server). */
 export function servedUrl(rec: ServerRecord, cfg: { baseUrl: string }, id: string, relpath: string): string | null {
+  if (!cfg.baseUrl && !isLoopbackBind(rec.bind)) return null;
   const base = cfg.baseUrl ? cfg.baseUrl.replace(/\/+$/, "") : `http://127.0.0.1:${rec.port}`;
   if (cfg.baseUrl && rec.port !== rec.configPort) return null;
   return `${base}/${id}/${relpath.split("/").map(encodeURIComponent).join("/")}`;
@@ -320,7 +326,12 @@ const bracket = (h: string): string => (h.includes(":") && !h.startsWith("[") ? 
 export function hostAllowed(header: string | undefined, rules: HostRules): boolean {
   if (!header) return false;
   const h = header.trim().toLowerCase();
-  const name = h.startsWith("[") ? h.slice(0, h.indexOf("]") + 1) : h.replace(/:\d*$/, "");
+  let name: string;
+  if (h.startsWith("[")) {
+    const m = /^(\[[0-9a-f:.]+\])(?::\d+)?$/.exec(h);
+    if (!m) return false;
+    name = m[1];
+  } else name = h.replace(/:\d*$/, "");
   if (!name) return false;
   return name === "127.0.0.1" || name === "localhost" || name === "[::1]" || name === bracket(rules.bind) || (rules.baseHost !== null && name === bracket(rules.baseHost));
 }
@@ -463,7 +474,7 @@ export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Pr
         res.on("end", () => {
           try {
             const j = JSON.parse(text) as Record<string, unknown>;
-            finish(Number.isInteger(j.pid) && (j.pid as number) > 0 && typeof j.version === "string" && j.port === rec.port && typeof j.bind === "string" ? { pid: j.pid as number, version: j.version, port: rec.port, bind: j.bind } : null);
+            finish(Number.isInteger(j.pid) && (j.pid as number) > 0 && typeof j.version === "string" && j.port === rec.port && typeof j.bind === "string" ? { pid: j.pid as number, version: j.version, ...(typeof j.build === "string" ? { build: j.build } : {}), port: rec.port, bind: j.bind } : null);
           } catch {
             finish(null);
           }
@@ -486,6 +497,8 @@ export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Pr
 export interface ServeDeps {
   agentDir: string;
   version: string;
+  /** Build identity recorded in server.json and the health answer; omitted by tests that do not model it. */
+  build?: string;
   now(): number;
   loadConfig(): Promise<CfgResult>;
   log(line: string): void;
@@ -543,7 +556,7 @@ export async function startPageServer(deps: ServeDeps): Promise<PageServer | nul
   let ended = false;
   let record: ServerRecord;
   const hosts = (): HostRules => ({ bind: start.bind, baseHost });
-  const info = (): Health => ({ pid, version: deps.version, port: record.port, bind: start.bind });
+  const info = (): Health => ({ pid, version: deps.version, ...(deps.build !== undefined ? { build: deps.build } : {}), port: record.port, bind: start.bind });
   const make = (): http.Server =>
     http.createServer((req, res) => {
       let r: Reply;
@@ -578,7 +591,7 @@ export async function startPageServer(deps: ServeDeps): Promise<PageServer | nul
   }
   const addr = server.address();
   const port = addr && typeof addr === "object" ? addr.port : start.port;
-  record = { pid, port, configPort: start.port, bind: start.bind, version: deps.version, startedAt: deps.now(), healthKey };
+  record = { pid, port, configPort: start.port, bind: start.bind, version: deps.version, ...(deps.build !== undefined ? { build: deps.build } : {}), startedAt: deps.now(), healthKey };
   try {
     writeAtomic(serverFile(stateDir), record);
   } catch (e) {
@@ -587,7 +600,7 @@ export async function startPageServer(deps: ServeDeps): Promise<PageServer | nul
     deps.exit(1);
     return null;
   }
-  const loopback = ["127.0.0.1", "::1", "localhost"].includes(start.bind);
+  const loopback = isLoopbackBind(start.bind);
   deps.log(`start pid ${pid} version ${deps.version} port ${port} bind ${start.bind}${port !== start.port ? ` (configured port ${start.port} was taken)` : ""}`);
   if (!loopback) deps.log(`bind ${start.bind} is not loopback: pages are reachable from the network behind their secrets`);
 
@@ -645,6 +658,10 @@ export function compareVersions(a: string, b: string): number {
 export interface EnsureDeps {
   agentDir: string;
   version: string;
+  /** Build identity of this install's server files. Set: the build rule below decides a restart; unset (tests): the older `version` rule. */
+  build?: string;
+  /** Newest mtime (ms) of this install's identity files. */
+  identityMtime?(): number;
   now(): number;
   health(rec: ServerRecord): Promise<Health | null>;
   /** Starts a detached server process. */
@@ -676,9 +693,11 @@ async function doEnsure(deps: EnsureDeps): Promise<ServerRecord | null> {
   const old = readServer(stateDir);
   if (old) {
     const h = await deps.health(old);
-    if (h && compareVersions(h.version, deps.version) >= 0) return old;
+    // Build rule: replace a healthy server only when its build differs and this install's files are newer than the server's start, so an older install never displaces a newer server.
+    const replace = h && (deps.build !== undefined ? h.build !== deps.build && (deps.identityMtime?.() ?? 0) > old.startedAt : compareVersions(h.version, deps.version) < 0);
+    if (h && !replace) return old;
     if (h && h.pid !== process.pid) {
-      // a healthy older server: its health answer proves the pid; end it, wait until it stops answering
+      // a healthy server of another, older build: its health answer proves the pid; end it, wait until it stops answering
       deps.kill(h.pid);
       for (let i = 0; i < 20 && (await deps.health(old)); i++) await wait(50);
     }
@@ -720,6 +739,61 @@ async function doEnsure(deps: EnsureDeps): Promise<ServerRecord | null> {
 
 export const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/** The local `./x.ts` imports of a source text. */
+const localImports = (src: string): string[] => [...src.matchAll(/(?:from|import)\s*\(?\s*["']\.\/([\w.-]+\.(?:ts|mjs))["']/g)].map((m) => m[1]);
+
+/** The server's own source files: pageserver.ts, pages-cli.ts and every local module they import, transitively (absolute paths, sorted). */
+export function identityFiles(dir: string = path.dirname(fileURLToPath(import.meta.url))): string[] {
+  const seen = new Set<string>();
+  const todo = ["pageserver.ts", "pages-cli.ts"];
+  while (todo.length > 0) {
+    const n = todo.pop() as string;
+    if (seen.has(n)) continue;
+    let src: string;
+    try {
+      src = fs.readFileSync(path.join(dir, n), "utf8");
+    } catch {
+      continue;
+    }
+    seen.add(n);
+    todo.push(...localImports(src));
+  }
+  return [...seen].sort().map((n) => path.join(dir, n));
+}
+
+/** A short sha256 over the bytes of the identity files (names included). */
+export function buildIdentity(dir?: string): string {
+  const h = createHash("sha256");
+  for (const f of identityFiles(dir)) {
+    h.update(path.basename(f));
+    h.update("\0");
+    try {
+      h.update(fs.readFileSync(f));
+    } catch {
+      // vanished mid-read
+    }
+    h.update("\0");
+  }
+  return h.digest("hex").slice(0, 16);
+}
+
+/** Newest mtime (ms) of the identity files. */
+export function identityMtime(dir?: string): number {
+  let max = 0;
+  for (const f of identityFiles(dir)) {
+    try {
+      max = Math.max(max, fs.statSync(f).mtimeMs);
+    } catch {
+      // vanished
+    }
+  }
+  return max;
+}
+
+let buildOnce: string | undefined;
+/** `buildIdentity` of this install, computed once per process. */
+export const ownBuild = (): string => (buildOnce ??= buildIdentity());
+
 export function pkgVersion(pkgRoot: string): string {
   const j = readJson(path.join(pkgRoot, "package.json"));
   return isObj(j) && typeof j.version === "string" ? j.version : "0.0.0";
@@ -742,6 +816,8 @@ export function realEnsureDeps(agentDir: string, pkgRoot: string = PKG_ROOT, env
   return {
     agentDir,
     version: pkgVersion(pkgRoot),
+    build: ownBuild(),
+    identityMtime: () => identityMtime(),
     now: Date.now,
     health: httpHealth,
     spawnServer: () => spawnServeProcess(pkgRoot, agentDir, env),
@@ -798,6 +874,7 @@ export function realServeDeps(env: NodeJS.ProcessEnv = process.env, pkgRoot: str
   return {
     agentDir,
     version: pkgVersion(pkgRoot),
+    build: ownBuild(),
     now: Date.now,
     loadConfig: () => loadPagesConfig({ agentDir, pkgRoot, env }),
     log: (line) => {
@@ -819,4 +896,17 @@ export function realServeDeps(env: NodeJS.ProcessEnv = process.env, pkgRoot: str
       setTimeout(() => process.exit(code), 50).unref();
     },
   };
+}
+
+// ---------------------------------------------------------------- doctor
+
+/** The `/foreman doctor` line for the page server. `config` is the session's effective config. Never names a root id or the health key. */
+export async function pageServerDoctorLine(config: Json | undefined, agentDir: string, health: (rec: ServerRecord) => Promise<Health | null> = httpHealth): Promise<string> {
+  const cfg = clientCfg(config);
+  if (!cfg.enabled) return "INFO page server is off (pages.server.enabled)";
+  const rec = readServer(pagesStateDir(agentDir));
+  if (!rec || !(await health(rec))) return "INFO page server not running (starts on first link)";
+  if (cfg.baseUrl && rec.port !== rec.configPort) return `WARN page server: baseUrl set but the server listens on port ${rec.port}, not ${rec.configPort}; links fall back to files — fix: free port ${rec.configPort} or change pages.server.port`;
+  if (!cfg.baseUrl && !isLoopbackBind(rec.bind)) return `WARN page server: bind ${rec.bind} is not loopback and baseUrl is empty; links fall back to files`;
+  return `OK   page server: running on ${rec.bind}:${rec.port}`;
 }

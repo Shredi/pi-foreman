@@ -115,6 +115,7 @@ import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
+import { pageServerDoctorLine } from "./pageserver.ts";
 import { addTracked, lastPollAgeMs, readStoreEntry, trackedHostOf, trackerDoctorLine } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
@@ -7516,6 +7517,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hosts = resolveGithubHosts(s.config.config);
       out.push(trackerDoctorLine(prFeedOn(s), "error" in hosts ? hosts.error : undefined, lastPollAgeMs(s.agentDir, Date.now())));
     }
+    if (!s.isChild) out.push(await pageServerDoctorLine(s.config.config, s.agentDir));
     // The cache lines judge the base model: while downshifted the live model is the idle rung, which the idle-rung line below covers.
     const dm = idleModel.baseRef(ctx.model);
     const dmModel = dm && ctx.model && dm.provider === ctx.model.provider && dm.id === ctx.model.id ? ctx.model : dm ? (ctx.modelRegistry.find(dm.provider, dm.id) as typeof ctx.model) : undefined;
