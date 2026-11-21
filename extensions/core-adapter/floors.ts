@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, beforeParseError, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, beforeParseError, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
@@ -42,6 +42,8 @@ export interface FloorEnv {
   writeRoots?: string[];
   /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: none (the process environment is never read for it). */
   scratch?: string[];
+  /** A child's `$FOREMAN_OUT` (its kept output dir; also one of `scratch`): the parser reads the variable as that constant, like `$FOREMAN_SCRATCH`. */
+  out?: string;
   /** The session's worktree-side scratch base (`<root>/.foreman/scratch`); counted as own temp like the temp base. */
   scratchBase?: string;
   /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
@@ -443,6 +445,29 @@ const REMOVERS = new Set(["rm", "rmdir", "unlink", "shred", "srm", "trash", "tra
 const OWNERS = new Set(["chmod", "chown", "chgrp"]);
 const DOWNLOAD = new Set(["curl", "wget", "fetch", "iwr", "irm", "invoke-webrequest", "invoke-restmethod", "http", "https", "xh", "aria2c"]);
 const SHELL_LIKE = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "pwsh", "powershell", "iex", "invoke-expression"]);
+const DOWNLOAD_SHELL_REASON = "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.";
+
+/** The segment's stdin is its own here-document or here-string: a `<`, `<>` or input dup (`<&3`) of the same command on fd 0 may replace it (`python3 - <<E < f`), so then it is no own text. */
+export const ownStdinText = (s: ShellSegment): boolean =>
+  !!s.heredoc && !s.redirects.some((r) => (r.op === "<" || r.op === "<>" || (r.op === "dup" && r.input === true)) && (r.fd === null || r.fd === "0"));
+
+/**
+ * `seg` is a shell or interpreter that reads its program from stdin and the line has a download that may feed it: the download pipes into it (at any earlier stage of its
+ * pipeline, so `curl u | cat | python3 - <<E` counts: zsh MULTIOS hands both the pipe and the heredoc to stdin), or the interpreter has no heredoc or here-string of its own, or the
+ * download sits inside a substitution (`$(...)`, backticks, process substitution; the text of a here-string or heredoc body included). Only a plain top-level download beside an
+ * interpreter fed by its own heredoc or here-string is left out: its stdin is that text, not the download (`python3 - <<EOF ... EOF` and a later `curl -s u -o f`). One check for
+ * the shell line (segmentFloors) and for tool-call field text (fieldLineFloors).
+ */
+function downloadFeedsShell(seg: ShellSegment, line: readonly ShellSegment[]): boolean {
+  if (!SHELL_LIKE.has(base(seg.program)) || seg.opaque !== "stdin_fed") return false;
+  return line.some((d) => {
+    if (d === seg || !DOWNLOAD.has(base(d.program))) return false;
+    if (!ownStdinText(seg)) return true;
+    const piped = !!d.pipeline && !!seg.pipeline && d.pipeline.id === seg.pipeline.id && d.pipeline.stage < seg.pipeline.stage;
+    return piped || d.wrappers.some((w) => w === "$(" || w === "`");
+  });
+}
+
 const SYSTEM_DIRS = ["bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "opt", "proc", "root", "sbin", "srv", "sys", "usr", "var", "system", "library", "applications", "users", "home", "volumes", "private"];
 
 const slash = (p: string): string => p.replace(/\\/g, "/").replace(/\/+/g, "/");
@@ -649,7 +674,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   soft.hit ??= fsScanFloor(seg, env);
   const pub = publishFloor(prog, seg.argv);
   if (pub) return hit("publish", `${pub} publishes a package or image. Ask the user to publish; build and test locally instead.`);
-  if (SHELL_LIKE.has(prog) && seg.opaque === "stdin_fed" && line.some((s) => s !== seg && DOWNLOAD.has(base(s.program)))) return hit("download-shell", "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.");
+  if (downloadFeedsShell(seg, line)) return hit("download-shell", DOWNLOAD_SHELL_REASON);
   // quoted text and regexes are data (r79 item 4); a terminal payload is typed text, judged by the inject floor above
   const payload = injection(seg, prog)?.words ?? [];
   const patterns = searchPatterns(seg, prog);
@@ -1561,7 +1586,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0], ...(env.out ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
@@ -1619,15 +1644,18 @@ const RAW: { name: string; re: RegExp; reason: string; cmd?: true }[] = [
 
 /** Floors that need the raw text only: specific enough to apply to every shell line (a download piped into a shell, privilege, power, disk, injected git config). */
 export function rawFloors(text: string): FloorHit | null {
-  return rawScan(text, false);
+  return rawScan(text, false, blankComments(text));
 }
 
-/** The raw scan; `skipCmd` leaves out the command-position entries of programs the segment checks judge (a clean line). */
-function rawScan(text: string, skipCmd: boolean): FloorHit | null {
+/**
+ * The raw scan; `skipCmd` leaves out the command-position entries of programs the segment checks judge (a clean line). `download` is the text the download-shell entries read:
+ * the same text with its comments blanked (`downloadText`); every other entry reads `text`, comments included.
+ */
+function rawScan(text: string, skipCmd: boolean, download: string = text): FloorHit | null {
   let soft: FloorHit | null = null;
   for (const r of RAW) {
     if (skipCmd && r.cmd) continue;
-    const m = r.re.exec(text);
+    const m = r.re.exec(r.name === "download-shell" ? download : text);
     if (!m) continue;
     const fragment = m[0].replace(/^[\s;&|(`$]+/, "").trim();
     // injected git config is judge-first and waits behind every other raw floor
@@ -1636,6 +1664,9 @@ function rawScan(text: string, skipCmd: boolean): FloorHit | null {
   }
   return soft;
 }
+
+/** `scan` (the masked line) for the download-shell entries: built from `text` with its comments blanked first (the parser's node positions index the unmasked text). */
+const downloadText = (text: string, segments: ShellSegment[]): string => maskLine(blankComments(text), segments);
 
 /** The raw words of a line, split on whitespace, quotes and `=`, lower-cased (for the opaque-line key scan). */
 const rawWords = (text: string): string[] => text.toLowerCase().split(/[\s'"`=;&|()<>]+/).filter(Boolean);
@@ -1772,6 +1803,16 @@ export function dataBodies(segments: ShellSegment[]): boolean {
 }
 
 /**
+ * A heredoc body is data for the settings-file rule only when every segment that reads it through a pipe is `cat` or `tee`, no interpreter or variable program sits inside a
+ * substitution (`tee >(python3) <<E`: the walker labels a process substitution like `$(`), and no heredoc command is an interpreter or a variable program.
+ */
+function bodiesOnlyCatTee(segments: ShellSegment[]): boolean {
+  const plain = (s: ShellSegment): boolean => ["cat", "tee"].includes(base(s.program));
+  const code = (s: ShellSegment): boolean => SHELL_LIKE.has(base(s.program)) || (s.opaque !== null && s.opaque !== "writing_wrapper");
+  return segments.every((s) => (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
+}
+
+/**
  * The text the raw and opaque-text floors scan (A1): quoted strings and the bodies of `cat`/`tee`/redirect-only heredocs are blanked.
  * A `cat`/`tee` data heredoc body is masked even when a later segment runs the written file (that segment is judged by the runner rules);
  * a body fed to a shell or interpreter stays visible. Quoted strings stay visible when a segment runs text.
@@ -1831,7 +1872,7 @@ function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): F
  */
 export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
   const scan = maskLine(text, segments);
-  const raw = rawScan(scan, cleanLine(segments));
+  const raw = rawScan(scan, cleanLine(segments), downloadText(text, segments));
   if (raw?.kind === "deny") return raw;
   // an ask or a judge-first hit waits behind every deny of the line; `$( )` nested past the walker's depth cap was never read, so the line goes to the judge
   let pending: FloorHit | null = segments.some((s) => s.tooDeep) ? strongerHit(raw, tooDeepHit(text)) : raw;
@@ -1879,7 +1920,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
  */
 export function fieldLineFloors(line: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
   const scan = maskLine(line, segments);
-  const whole = rawScan(scan, cleanLine(segments));
+  const whole = rawScan(scan, cleanLine(segments), downloadText(line, segments));
   if (whole?.kind === "deny") return whole;
   // a field line is read as a shell line is: the PowerShell units of a `pwsh` or `cmd` segment (O4)
   const ps = foreignSegments(segments) ? psUnitFloors(line, env) : null;
@@ -1900,7 +1941,7 @@ export function fieldLineFloors(line: string, segments: ShellSegment[], env: Flo
   }
   for (const s of segments) {
     // a download piped into a shell or interpreter, read from the segments (the program of the download may be a quoted word)
-    if (SHELL_LIKE.has(base(s.program)) && s.opaque === "stdin_fed" && segments.some((o) => o !== s && DOWNLOAD.has(base(o.program)))) {
+    if (downloadFeedsShell(s, segments)) {
       const dl = RAW.find((r) => r.name === "download-shell");
       if (dl) return hit(dl.name, dl.reason);
     }
@@ -2252,8 +2293,11 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   const flag = deny ? opaqueDeny : askHit;
   const entries = protectedEntries(env);
   // both spellings: split on braces and commas (the pieces of a brace group) and whole (a brace group inside one word is expanded by protectedWord)
-  const flat = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
-  const words = [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
+  const wordsOf = (t: string): string[] => {
+    const flat = t.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
+    return [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
+  };
+  const words = wordsOf(text);
   // a Pi session file (`*.jsonl`) is no hit here: a line that only reads one (a transcript read through a path variable) is not refused; parsed write targets and path fields keep the entry
   const unread = entries.filter((e) => e.ext === undefined);
   const w = words.find((x) => protectedWord(x, env.cwd, env, unread));
@@ -2261,7 +2305,11 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   if (UNREAD_KEYS.test(text)) {
     const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
     const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
-    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
+    // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
+    // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
+    const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line);
+    const outside = new Set(wordsOf(data ? blankHeredocBodies(text) : text));
+    const c = words.find((x) => outside.has(x) && CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
   }
   return null;
