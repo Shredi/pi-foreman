@@ -82,7 +82,7 @@ test("a form fault and jargon give both lines, form first; a clean plan gets nei
   assert.match(r.note, ADVICE);
   assert.doesNotMatch(r.note.split("\n")[1], /advice/);
   fs.writeFileSync(w.planFile, "# W\n\n## Summary\n\n**Goal:** ship the widget.\n\n1. Ship it.\n\n" + REST);
-  assert.equal((await a.call("write", { path: w.planFile, content: "x" })).note, `ok\n${claimsHintLine(w.planFile)}`, "no plan-form advice, the claims hint only");
+  assert.equal((await a.call("write", { path: w.planFile, content: "x" })).note, `ok\n${claimsHintLine(fs.realpathSync.native(w.planFile))}`, "no plan-form advice, the claims hint only");
 });
 
 // The dialog drops a marker line exactly when the page renders a callout.

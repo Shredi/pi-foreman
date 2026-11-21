@@ -121,7 +121,7 @@ test("the write result of a plan carries the form faults; a clean plan adds noth
   assert.match(bad.note, /plan form is wrong/);
   fs.writeFileSync(w.planFile, clean);
   const ok = await a.call("write", { path: w.planFile, content: "x" });
-  assert.equal(ok.note, `ok\n${claimsHintLine(w.planFile)}`, "no plan-form advice, the claims hint only");
+  assert.equal(ok.note, `ok\n${claimsHintLine(fs.realpathSync.native(w.planFile))}`, "no plan-form advice, the claims hint only");
 });
 
 test("a [plan-review] launch naming the faulty plan by an @-prefixed path is refused", async (t) => {

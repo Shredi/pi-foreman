@@ -52,7 +52,7 @@ test("html plan: the form check of a launch runs on the copy; a write of the pag
   assert.match(r.blocked ?? "", /plan-widget\.html/);
   assert.match((await a.call("write", { path: pagePath, content: "x" })).note, /plan form is wrong/);
   fs.writeFileSync(pagePath, PAGE);
-  assert.equal((await a.call("write", { path: pagePath, content: "x" })).note, `ok\n${claimsHintLine(pagePath)}`, "no plan-form advice, the claims hint only");
+  assert.equal((await a.call("write", { path: pagePath, content: "x" })).note, `ok\n${claimsHintLine(fs.realpathSync.native(pagePath))}`, "no plan-form advice, the claims hint only");
 });
 
 test("a task naming plan-widget.html and plan-widget.md: one form check; then one facts line, one verdict, no review_loop after a first FAIL", async () => {

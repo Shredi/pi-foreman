@@ -26,8 +26,8 @@ test("the first valid write of a plan carries the line with the path and a ready
   const { w, write } = await rig(t);
   const note = await write(GOOD);
   assert.match(note, HINT);
-  assert.ok(note.includes(w.planFile), "names the plan path");
-  assert.ok(note.includes(claimsHintLine(w.planFile)));
+  assert.ok(note.includes(fs.realpathSync.native(w.planFile)), "names the plan path");
+  assert.ok(note.includes(claimsHintLine(fs.realpathSync.native(w.planFile))));
   assert.match(note, /Explorer task: "Read .*plan-widget\.md\. List every claim it makes about code .*Report claims that are wrong, unverifiable or unread\."/);
   assert.match(note, /never blocks a review/);
 });
