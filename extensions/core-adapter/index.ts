@@ -88,7 +88,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, hsResumeRefusal, incompleteBlock, outputPathOf, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { descendsFrom, routeFail, type HsRun, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, hsResumeRefusal, incompleteBlock, outputPathOf, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { recordNodePath } from "./nodepath.ts";
@@ -1447,7 +1447,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(s.hold ? { hold: s.hold } : {}),
       hsReminded: s.hsReminded,
       baseline: s.baseline,
-      lastFailFindings: s.mem.findings(s.hsOwn ?? s.cwd),
+      lastFailFindings: s.mem.findings(ownKeyOf(s)),
       reviewMemory: s.mem.snapshot(),
       ledgerRev: s.ledgerRev,
     });
@@ -1467,9 +1467,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const hsModel = (s: Session): string | null => (s.isChild ? null : highStakesConfig(s.config.config).model);
 
   async function hsOwnRoot(s: Session): Promise<string> {
-    if (!s.hsOwn) s.hsOwn = (await toplevelOf(s.cwd)) ?? s.cwd;
+    if (!s.hsOwn) s.hsOwn = (await toplevelOf(s.cwd)) ?? realDir(s.cwd);
     return s.hsOwn;
   }
+
+  /** The key of the session's own checkout before it is resolved (`hsOwnRoot`, resolved at the session start): the realpath of the cwd, as a checkout outside git keys. */
+  const ownKeyOf = (s: Session): string => s.hsOwn ?? realDir(s.cwd);
 
   // ------------------------------------------------------------------ review gates per checkout (reviewgates.ts)
 
@@ -1494,7 +1497,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hit = cwd ? roots.find((r) => cwd === r || cwd.startsWith(r.endsWith(path.sep) ? r : r + path.sep)) : undefined;
       return hit ?? roots[0];
     }
-    return s.hsOwn ?? s.cwd;
+    return ownKeyOf(s);
   }
 
   /** The directory of each reviewer entry of a fresh launch (not `launchCwds`, which always adds the session cwd). */
@@ -1554,11 +1557,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (hsHeavyOn(s)) hsFire(s, ["heavy"]);
   }
 
-  /** Whether a high-stakes review is required now, computed as the PR gate does (feature on, heavy reason refreshed). */
-  const hsRequired = (s: Session): boolean => {
+  /** Whether a high-stakes review is required now, computed as the PR gate does (feature on, heavy reason refreshed): in the checkout of `dir` (the session's own without one). */
+  const hsRequired = async (s: Session, dir?: string): Promise<boolean> => {
     if (!hsModel(s)) return false;
     hsRefresh(s);
-    return hsRequiredOf(s.hs.state(), hsDue(s));
+    const root = (await rootOf(dir ?? s.cwd)) ?? (dir ? realDir(dir) : await hsOwnRoot(s));
+    return hsRequiredOf(s.hs.state(), hsDue(s), root);
   };
 
   /** The high-stakes test of the PR gate (reviews.ts prGateRefusal): a FAIL holds the PR's own checkout (`scope`, null: the session's) and the checkouts its heads were reviewed in. */
@@ -1593,13 +1597,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   async function hsNormalPass(s: Session, cwd: string, runId: string, head: string | null): Promise<void> {
     if (!hsModel(s)) return;
-    const fail = s.hs.openFail();
-    if (!fail) return;
     const root = (await rootOf(cwd)) ?? realDir(cwd);
-    const descends = root !== fail.cwd && (await descendsFrom(fail, root, head));
-    if (!s.hs.clearBy(root, { runId, head, descends })) return;
-    s.reviewGates = gatesClearFail(s.reviewGates, fail.gateKey === undefined ? SESSION_WIDE : fail.gateKey, fail.failAt, Date.now(), runId); // an old run without gateKey: the session-wide entry
-    persistCeremonyState(s);
+    let cleared = false;
+    for (const fail of s.hs.handedFailsOf(runId)) {
+      // each FAIL the run got is judged on its own head and checkout: one FAIL's descent never clears another
+      const descends = root !== fail.cwd && (await descendsFrom(fail, root, head));
+      if (!s.hs.clearBy(root, { runId, head, descends, fail })) continue;
+      s.reviewGates = gatesClearFail(s.reviewGates, fail.gateKey === undefined ? SESSION_WIDE : fail.gateKey, fail.failAt, Date.now(), runId); // an old run without gateKey: the session-wide entry
+      cleared = true;
+    }
+    if (cleared) persistCeremonyState(s);
+  }
+
+  /**
+   * The uncleared high-stakes FAIL whose findings a fresh normal review in `checkout` at `head` gets (highstakes.ts routeFail): the FAIL of that checkout, else the newest FAIL of another
+   * checkout the review's head builds on, else the newest FAIL whose checkout is gone. A sibling checkout that builds on none of them gets none.
+   */
+  async function hsFindingsRoute(s: Session, checkout: string, head: string | null): Promise<HsRun | undefined> {
+    const fails = s.hs.openFails();
+    if (fails.length === 0) return undefined;
+    return routeFail(fails, checkout, (run) => descendsFrom(run, checkout, head));
   }
 
   /** The directory a launch entry runs in. */
@@ -1634,7 +1651,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const head = here ? await headOf(here.cwd) : null;
         const tree = here ? await launchSnapshot(here.cwd, true).catch(() => null) : null; // the snapshot the launch took (a test rig injects its own)
         const launch = launchOfRun(s, target);
-        const refusal = hsResumeRefusal({ target, state: s.hs.state(), running: s.hs.isRunning(), head, tree, usage: launch ? readContextUse(recordDir(s.agentDir, s.id, launch)) : null });
+        const refusal = hsResumeRefusal({ target, state: s.hs.state(), running: s.hs.isRunning(here?.cwd), head, tree, usage: launch ? readContextUse(recordDir(s.agentDir, s.id, launch)) : null });
         if (refusal) {
           if (here && (head !== here.head || tree !== here.tree) && s.hs.clearIncomplete()) persistCeremonyState(s); // changed: the run can no longer be resumed
           return refused(refusal);
@@ -1660,7 +1677,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const dir = hsDirOf(ctx, input, marked[0]);
     const top = await rootOf(dir);
     const root = top ?? realDir(dir);
-    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top), root });
+    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(root), gate: gateOf(s.reviewGates, top), root });
     if (r) return refused(r);
     // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
     const key = await repoKeyOf(root);
@@ -1763,7 +1780,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       done = true;
     }
-    return finishNeeds(s.hs.state(), { due: hsDue(s), ledgerDone: done, own: await hsOwnRoot(s) });
+    const own = await hsOwnRoot(s);
+    // the checkouts a pass may be due in: those with a review record in this session, else the session's own
+    const recorded = [...new Set(gateReviews(s).map((r) => r.cwd).filter((c): c is string => typeof c === "string" && c !== ""))];
+    const dirs = recorded.filter((c) => fs.existsSync(c)); // a removed checkout cannot be reviewed
+    // a review recorded in the session's own checkout while the session has a folder was a bare launch: those run in the folder (sessionFolderFor), which is where a pass is keyed
+    const folder = s.sessionFolder ? ((await rootOf(s.sessionFolder.path)) ?? realDir(s.sessionFolder.path)) : null;
+    const roots = [...new Set(await Promise.all(dirs.map(async (d) => { const k = (await rootOf(d)) ?? realDir(d); return folder && k === own ? folder : k; })))]; // keyed as a high-stakes run is
+    // every checkout of the records is gone (merged and removed): the pass counts session-wide, as before
+    return finishNeeds(s.hs.state(), { due: hsDue(s), ledgerDone: done, own, ...(roots.length > 0 ? { roots } : recorded.length > 0 ? {} : { roots: [own] }) });
   }
 
   /** The tree of `head` in `checkout` (`.workflow/` left out), kept only when it resolved (a commit that is not there yet can still match after a fetch). */
@@ -2337,6 +2362,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
     closingSessions.delete(s.id);
+    if (!s.isChild) await hsOwnRoot(s); // the own checkout's key, so no review fact is filed under a raw cwd
     if (!s.isChild) {
       try {
         sweepKept(s.agentDir);
@@ -4286,7 +4312,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const resolveCheckouts = async (): Promise<void> => {
         for (const e of launchEntries(input)) if (typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && !entryCheckout.has(e)) entryCheckout.set(e, (await rootOf(hsDirOf(ctx, input, e))) ?? (await hsOwnRoot(s)));
       };
-      const checkoutOfEntry = (e: Record<string, unknown>): string => entryCheckout.get(e) ?? s.hsOwn ?? s.cwd;
+      const checkoutOfEntry = (e: Record<string, unknown>): string => entryCheckout.get(e) ?? ownKeyOf(s);
       const launchItemsFor = (e: Record<string, unknown>): { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null } => {
         const known = launchItemsCache.get(e);
         if (known) return known;
@@ -4564,7 +4590,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
         // the FAIL's record lands in reviewSync (hsRunEnd): a slow host (Windows git) must not read the state before it
         if (dupOn && actionOf(input) === null && hsModel(s) !== null) await s.reviewSync;
-        const gotFindings = actionOf(input) === null && hsModel(s) !== null && s.hs.findingsFor() !== null;
+        let gotFindings = false;
+        if (actionOf(input) === null && hsModel(s) !== null && s.hs.openFails().length > 0) {
+          for (const d of reviewDirs(ctx, input)) {
+            const root = (await rootOf(d)) ?? realDir(d);
+            const fail = await hsFindingsRoute(s, root, await headOf(root));
+            if (fail && s.hs.findingsFor(fail) !== null) {
+              gotFindings = true;
+              break;
+            }
+          }
+        }
         // the checkouts the reviewers run in (a resumed one: those of its target run; none recorded or one unresolved: null, which reads every entry)
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
@@ -5123,11 +5159,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (actionOf(input) === null) for (const [e, o] of occasions) {
           if ((o !== "item" && o !== "pre-pr") || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent) || typeof e.task !== "string") continue;
-          const found = s.hs.findingsFor();
-          if (!found) continue;
+          const dir = hsDirOf(ctx, input, e);
+          const root = (await rootOf(dir)) ?? realDir(dir); // the key a high-stakes run's checkout has (a directory outside git keys as itself)
+          const fail = await hsFindingsRoute(s, root, await headOf(root)); // this entry's checkout decides which FAIL's findings it gets
+          const found = fail ? s.hs.findingsFor(fail) : null;
+          if (!fail || !found) continue;
           if (!hsCited.has(event.toolCallId)) capSet(hsCited, event.toolCallId, citedItems(subagentTaskText(input)));
           e.task = findingsBlock(found) + e.task;
-          s.hs.markHanded(event.toolCallId);
+          s.hs.markHanded(event.toolCallId, fail);
           persistCeremonyState(s);
         }
       }
@@ -6088,7 +6127,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (to) onSendDelivered(owner, to);
     }
     // A PR tool the review gate covers: while a high-stakes review is due, its answer carries the same reminder as the receipts (never a refusal).
-    const prNote = owner && !owner.isChild && !event.isError && isPrToolName(event.toolName) && get(owner.config.config, "ceremony.reviewBeforePr") !== false && hsRequired(owner) ? `pi-foreman: ${dueReminder(hsDue(owner))}.` : "";
+    const prNote = owner && !owner.isChild && !event.isError && isPrToolName(event.toolName) && get(owner.config.config, "ceremony.reviewBeforePr") !== false && (await hsRequired(owner, typeof (event.input as Record<string, unknown>).cwd === "string" ? ((event.input as Record<string, unknown>).cwd as string) : ctx.cwd)) ? `pi-foreman: ${dueReminder(hsDue(owner))}.` : "";
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
     const qHint = questionHints.get(event.toolCallId);
@@ -6266,7 +6305,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
       launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, (recordedOccasions.includes("pre-pr") || recordedOccasions.includes("item")) && hsRequired(s), dueReminder(hsDue(s))) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, (recordedOccasions.includes("pre-pr") || recordedOccasions.includes("item")) && (await hsRequired(s, reviewDirs(ctx, event.input as Record<string, unknown>)[0])), dueReminder(hsDue(s))) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;

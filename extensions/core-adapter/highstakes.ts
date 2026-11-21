@@ -4,8 +4,9 @@
 //   occasion   `[high-stakes]` (occasion.ts, not config-facing): the launch runs on the configured model as set, reviews the whole change
 //              against the merge-base of the checkout (else the first HEAD the session saw in the repository), marks no ledger item and writes no normal review record.
 //   trigger    a builder launch with a risk tag of HS_RISKS, a heavy task that built something, or the foreman's own `[high-stakes]` launch. Sticky, no size is measured.
-//   state      one per session: the fired reasons, the run ids, up to two runs (verdict, head, checkout, revised, handed, cleared, findings) and the first HEAD per repository.
-//   rules      a pass is due while a counting reason stands and no run ran, or the one FAIL was cleared; at most two runs per session; any PASS opens every PR.
+//   state      one per session: the fired reasons, the run ids, up to two runs per checkout (verdict, head, checkout, revised, handed, cleared, findings; sixteen in all) and the first HEAD per repository.
+//   rules      a pass is due in a checkout while a counting reason stands and no run ran there, or the one FAIL was cleared; at most two runs per checkout; a FAIL's findings go to a review of its checkout
+//              (else one that builds on it, else any once the checkout is gone); any PASS opens every PR.
 //   incomplete a run that ended without a verdict is kept (`HsIncomplete`): it may be resumed while the head and tree of its checkout are unchanged and its context is not nearly full
 //              (`resumeRefusal`); else a fresh run gets its report as a handoff (`incompleteBlock`). Both count as one review: only verdicts count (`runs`).
 //
@@ -95,8 +96,10 @@ export interface HsState {
   legacy?: { cwd: string; seenHead: string }[];
 }
 
+/** Runs kept per checkout, and the most the state keeps in all (the oldest go first). */
 const MAX_RUNS = 2;
-const MAX_RUN_IDS = 8;
+const MAX_RUNS_TOTAL = 16;
+const MAX_RUN_IDS = 16;
 export const MAX_FINDINGS = 6000;
 const SHA = /^[0-9a-f]{40,64}$/;
 
@@ -104,19 +107,27 @@ export const emptyState = (): HsState => ({ fired: null, runIds: [], runs: [], b
 /** Nothing fired, ran or was seen (a legacy sighting still counts as content). */
 export const hsEmpty = (s: HsState): boolean => s.fired === null && s.runs.length === 0 && s.runIds.length === 0 && !s.incomplete && Object.keys(s.bases).length === 0 && !(s.legacy && s.legacy.length > 0);
 
-const lastRun = (s: HsState): HsRun | undefined => s.runs[s.runs.length - 1];
-/** The last run is a FAIL no normal PASS has cleared yet. */
-export const uncleared = (s: HsState): boolean => lastRun(s)?.verdict === "fail" && lastRun(s)?.cleared !== true;
-/** The passes of the session are used up: two ran, or the last one passed. */
-export const used = (s: HsState): boolean => s.runs.length >= MAX_RUNS || lastRun(s)?.verdict === "pass";
+/** The runs of checkout `root`; every run of the session without one. */
+const runsIn = (s: HsState, root?: string): HsRun[] => (root === undefined ? s.runs : s.runs.filter((r) => r.cwd === root));
+/** The last run of checkout `root`; the last of the session without one. */
+const lastRun = (s: HsState, root?: string): HsRun | undefined => runsIn(s, root).at(-1);
+/** The last run (of checkout `root`, else of the session) is a FAIL no normal PASS has cleared yet. */
+export const uncleared = (s: HsState, root?: string): boolean => lastRun(s, root)?.verdict === "fail" && lastRun(s, root)?.cleared !== true;
+/** The uncleared FAIL of every checkout (its last run), in run order. */
+export const openFails = (s: HsState): HsRun[] => s.runs.filter((r) => r.verdict === "fail" && !r.cleared && lastRun(s, r.cwd) === r);
+/** The passes of the checkout `root` (else of the session) are used up: two ran, or the last one passed. */
+export const used = (s: HsState, root?: string): boolean => runsIn(s, root).length >= MAX_RUNS || lastRun(s, root)?.verdict === "pass";
 
 /** The reasons that count now: tags and `foreman` always, `heavy` only while the task is heavy (`heavyOn`). Empty = nothing is due. */
 export function dueReasons(s: HsState, heavyOn: boolean): string[] {
   return (s.fired?.reasons ?? []).filter((r) => r !== "heavy" || heavyOn);
 }
 
-/** A pass is required: a reason counts (`due`), and none ran or the first FAIL was cleared. */
-export const required = (s: HsState, due: readonly string[]): boolean => due.length > 0 && (s.runs.length === 0 || (s.runs.length === 1 && s.runs[0].verdict === "fail" && s.runs[0].cleared));
+/** A pass is required: a reason counts (`due`), and none ran or the first FAIL was cleared (in checkout `root`, else in the session). */
+export const required = (s: HsState, due: readonly string[], root?: string): boolean => {
+  const runs = runsIn(s, root);
+  return due.length > 0 && (runs.length === 0 || (runs.length === 1 && runs[0].verdict === "fail" && runs[0].cleared));
+};
 
 const sha = (x: unknown): x is string => typeof x === "string" && SHA.test(x);
 const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((r): r is string => typeof r === "string" && r !== "") : []);
@@ -141,7 +152,18 @@ function runsOf(list: unknown, cwdOf: (r: Json) => string | null): HsRun[] {
     if (!cwd) continue;
     runs.push({ verdict: r.verdict, head: r.head as string | null, cwd, revised: r.revised === true, handed: r.handed === true, cleared: r.cleared === true, ...(r.clearedAt === null || sha(r.clearedAt) ? { clearedAt: r.clearedAt as string | null } : {}), ...(r.repoKey === null || (typeof r.repoKey === "string" && r.repoKey) ? { repoKey: r.repoKey as string | null } : {}), ...(r.gateKey === null || typeof r.gateKey === "string" ? { gateKey: r.gateKey as string | null } : {}), ...(typeof r.failAt === "number" ? { failAt: r.failAt } : {}), ...(typeof r.findings === "string" && r.findings ? { findings: r.findings.slice(0, MAX_FINDINGS) } : {}) });
   }
-  return runs.slice(0, MAX_RUNS);
+  return capRuns(runs, false);
+}
+
+/** At most `MAX_RUNS` per checkout (the first ones of `list`, or the newest when `newest`) and `MAX_RUNS_TOTAL` in all (the oldest go first). */
+function capRuns(runs: HsRun[], newest: boolean): HsRun[] {
+  const per = new Map<string, number>();
+  const kept = (newest ? [...runs].reverse() : runs).filter((r) => {
+    const n = (per.get(r.cwd) ?? 0) + 1;
+    per.set(r.cwd, n);
+    return n <= MAX_RUNS;
+  });
+  return (newest ? kept.reverse() : kept).slice(-MAX_RUNS_TOTAL);
 }
 
 /** The session-wide state of an old entry: an array of per-checkout records (see `hsStateOfEntry`). */
@@ -184,10 +206,10 @@ export class HighStakes {
   private readonly gateKeys = new Map<string, string>();
   /** callId -> the incomplete run an accepted launch continues (a resume, or a fresh run that got its report), until its result. */
   private readonly pendingFrom = new Map<string, string>();
-  /** callId of a launch that carried the findings, until its result. */
-  private readonly handedCalls = new Set<string>();
-  /** The run ids of the normal runs that got the findings of the open FAIL (memory only, reset by a new FAIL; at most MAX_RUN_IDS). */
-  private handedRuns: string[] = [];
+  /** callId of a launch that carried findings -> the FAIL runs whose findings it carried, until its result. */
+  private readonly handedCalls = new Map<string, HsRun[]>();
+  /** runId of a normal run that got findings -> the FAIL runs whose findings it got (memory only; a new FAIL of a checkout drops its replaced FAIL's entries; at most MAX_RUN_IDS runs). */
+  private handedRuns = new Map<string, HsRun[]>();
 
   /** Replace the state with a persisted one (a reload or resume); nothing counts as running after it. */
   load(state: HsState): void {
@@ -197,7 +219,7 @@ export class HighStakes {
     this.pendingFrom.clear();
     this.gateKeys.clear();
     this.handedCalls.clear();
-    this.handedRuns = [];
+    this.handedRuns.clear();
     this.st = hsStateOfEntry(JSON.parse(JSON.stringify(state))) ?? emptyState();
     const legacy = (state.legacy ?? []).filter((l) => l.cwd && sha(l.seenHead));
     if (legacy.length > 0) this.st.legacy = legacy.map((l) => ({ ...l }));
@@ -300,9 +322,10 @@ export class HighStakes {
     return cwd;
   }
 
-  /** A high-stakes launch is accepted or running in this process. */
-  isRunning(): boolean {
-    return this.pending.size > 0 || this.running.size > 0;
+  /** A high-stakes launch is accepted or running in this process (in checkout `root`, else anywhere). */
+  isRunning(root?: string): boolean {
+    if (root === undefined) return this.pending.size > 0 || this.running.size > 0;
+    return [...this.pending.values(), ...this.running.values()].includes(root);
   }
 
   /** The checkout a run id belongs to (a high-stakes run, whatever the model now says; persisted, so a reload keeps it); null when it is no high-stakes run. */
@@ -318,23 +341,31 @@ export class HighStakes {
   /** A verdict of a high-stakes run in `cwd`: appended as the next pass (at most two); returns its number, or 0 when nothing was recorded. */
   record(cwd: string, verdict: Verdict, head: string | null, findings: string): number {
     this.clearIncomplete(); // a verdict ends the incomplete run's story, whether or not it is counted
-    if (this.st.runs.length >= MAX_RUNS) return 0;
+    if (runsIn(this.st, cwd).length >= MAX_RUNS) return 0;
     this.st.runs.push({ verdict, head, cwd, revised: false, handed: false, cleared: verdict === "pass", ...(verdict === "fail" && findings.trim() ? { findings: findings.trim().slice(0, MAX_FINDINGS) } : {}) });
-    return this.st.runs.length;
+    const run = this.st.runs.at(-1)!;
+    this.st.runs = capRuns(this.st.runs, true);
+    return runsIn(this.st, cwd).indexOf(run) + 1;
   }
 
   /** A FAIL of a high-stakes run in `cwd` like `record`, with the clear keys: the repository, the review gate entry it set (null: every entry) and when (ms). */
   recordFail(cwd: string, head: string | null, findings: string, at: { repoKey: string | null; gateKey: string | null; failAt: number }): number {
     const n = this.record(cwd, "fail", head, findings);
     if (n === 0) return 0;
-    Object.assign(this.st.runs[n - 1]!, at);
-    this.handedRuns = [];
+    Object.assign(this.st.runs.at(-1)!, at);
+    // the FAIL this one replaces in the checkout: its hand-overs are void
+    const older = runsIn(this.st, cwd).slice(0, -1);
+    for (const [id, fails] of this.handedRuns) {
+      const left = fails.filter((f) => !older.includes(f));
+      if (left.length === 0) this.handedRuns.delete(id);
+      else this.handedRuns.set(id, left);
+    }
     return n;
   }
 
   private failIn(cwd: string): HsRun | undefined {
-    const r = lastRun(this.st);
-    return r && r.verdict === "fail" && !r.cleared && r.cwd === cwd ? r : undefined;
+    const r = lastRun(this.st, cwd);
+    return r && r.verdict === "fail" && !r.cleared ? r : undefined;
   }
 
   /** A revision happened in `cwd` (a builder run, a project edit, a send-back): an uncleared FAIL that ran there is revised. True when it changed. */
@@ -355,11 +386,13 @@ export class HighStakes {
 
   /**
    * A normal PASS of run `o.runId` in `cwd` at `o.head` clears the uncleared FAIL when that run got the findings and it ran in the FAIL's checkout, at any head, or `o.descends`
-   * (its head is the FAIL's head or a descendant). True when it changed.
+   * (its head is the FAIL's head or a descendant). `o.fail` is the FAIL run this call judges (`descends` is about its head): it clears only when it is still its checkout's
+   * uncleared FAIL; without it the session's last uncleared FAIL is judged. A gone checkout is no reason to clear. True when it changed.
    */
-  clearBy(cwd: string, o: { runId: string; head: string | null; descends: boolean }): boolean {
-    const r = this.openFail();
-    if (!r || !this.handedRuns.includes(o.runId) || !(r.cwd === cwd || o.descends)) return false;
+  clearBy(cwd: string, o: { runId: string; head: string | null; descends: boolean; fail?: HsRun }): boolean {
+    const r = o.fail ?? this.openFail();
+    if (!r || r.verdict !== "fail" || r.cleared || (o.fail && this.failIn(r.cwd) !== r)) return false;
+    if (!this.handedFailsOf(o.runId).includes(r) || !(r.cwd === cwd || o.descends)) return false;
     r.cleared = true;
     r.clearedAt = o.head;
     return true;
@@ -371,22 +404,44 @@ export class HighStakes {
     return r && r.verdict === "fail" && !r.cleared ? r : undefined;
   }
 
-  /** The findings block text while a FAIL is uncleared, for every fresh normal review launch in any checkout; null otherwise. */
-  findingsFor(): string | null {
-    return this.openFail()?.findings ?? null;
+  /** The uncleared FAIL of every checkout. */
+  openFails(): HsRun[] {
+    return openFails(this.st);
   }
 
-  /** The findings went into the launch of tool call `callId`; kept until its result names the run id (`settleHanded`). */
-  markHanded(callId: string): void {
-    this.handedCalls.add(callId);
-    const r = this.openFail();
+  /** The uncleared FAIL of checkout `cwd`, if any. */
+  openFailOf(cwd: string): HsRun | undefined {
+    return this.failIn(cwd);
+  }
+
+  /** The findings block text of `fail` (the FAIL the adapter routed to the launch; it must still be uncleared); without it of the session's last uncleared FAIL; null otherwise. */
+  findingsFor(fail?: HsRun): string | null {
+    const r = fail ? (this.failIn(fail.cwd) === fail ? fail : undefined) : this.openFail();
+    return r?.findings ?? null;
+  }
+
+  /** The findings of `fail` (else the session's open FAIL) went into the launch of tool call `callId`; kept until its result names the run id (`settleHanded`). */
+  markHanded(callId: string, fail?: HsRun): void {
+    const r = fail ?? this.openFail();
+    this.handedCalls.set(callId, [...(this.handedCalls.get(callId) ?? []), ...(r ? [r] : [])]);
     if (r) r.handed = true;
   }
 
-  /** The launch's tool result: the run id of a launch that carried the findings is kept (a failed launch or none: dropped). */
+  /** The launch's tool result: the run id of a launch that carried findings is kept with the FAILs it got (a failed launch or none: dropped). */
   settleHanded(callId: string, runId: string | null, failed: boolean): void {
-    if (!this.handedCalls.delete(callId) || failed || !runId) return;
-    if (this.openFail()) this.handedRuns = [...this.handedRuns, runId].slice(-MAX_RUN_IDS);
+    const fails = this.handedCalls.get(callId);
+    this.handedCalls.delete(callId);
+    if (!fails || failed || !runId) return;
+    const live = fails.filter((f) => this.failIn(f.cwd) === f);
+    if (live.length === 0) return;
+    this.handedRuns.delete(runId);
+    this.handedRuns.set(runId, live);
+    for (const k of [...this.handedRuns.keys()].slice(0, Math.max(0, this.handedRuns.size - MAX_RUN_IDS))) this.handedRuns.delete(k);
+  }
+
+  /** The FAIL runs whose findings run `runId` got. */
+  handedFailsOf(runId: string): HsRun[] {
+    return [...(this.handedRuns.get(runId) ?? [])];
   }
 
   /** The findings of the uncleared FAIL of `cwd` not yet handed to a normal review; null otherwise. */
@@ -470,6 +525,19 @@ export async function reviewBaseOf(cwd: string, o: { baseBranch: string | null; 
   return null;
 }
 
+/**
+ * The uncleared high-stakes FAIL whose findings a fresh normal review in `checkout` at `head` gets, among `fails` (the uncleared FAIL of each checkout, oldest first): the FAIL that ran
+ * in `checkout`; else the newest FAIL of another checkout whose head the review's head builds on (`descends`; a FAIL without a recorded head is not routed this way); else the newest
+ * FAIL whose checkout is gone (`gone`). A review of a sibling checkout that builds on none of them gets nothing.
+ */
+export async function routeFail(fails: readonly HsRun[], checkout: string, descends: (run: HsRun) => Promise<boolean>, gone: (run: HsRun) => boolean = (r) => !fs.existsSync(r.cwd)): Promise<HsRun | undefined> {
+  const own = fails.find((f) => f.cwd === checkout);
+  if (own) return own;
+  const others = [...fails].reverse();
+  for (const f of others) if (f.head !== null && (await descends(f))) return f;
+  return others.find((f) => gone(f));
+}
+
 // ------------------------------------------------------------------ texts
 
 const whereOf = (cwd: string, own: string): string => (cwd === own ? "" : ` in the checkout ${cwd}`);
@@ -503,7 +571,7 @@ export interface HsLaunchInput {
   running: boolean;
   /** The session's review gate. */
   gate: { last: Verdict | "none" | null; revised: boolean };
-  /** The launch's checkout (a non-git directory keys as itself): only a FAIL that ran there holds the launch; absent: any uncleared FAIL does. */
+  /** The launch's checkout (a non-git directory keys as itself): only the runs and the FAIL that ran there count (the budget, the hold); absent: those of the whole session. */
   root?: string;
 }
 
@@ -562,16 +630,16 @@ export function launchRefusal(i: HsLaunchInput): { reason: HsLaunchReason; text:
   if (!i.model) return refuse("high_stakes_unset", "no high-stakes model is set (ceremony.highStakes.model); the owner sets it, launch the normal reviewer instead.");
   if (!i.single) return refuse("high_stakes_single", `a high-stakes review is launched alone: one reviewer, no tasks or chain.`);
   if (i.resume) return resumeRefusal();
-  if (i.running || used(i.state)) return refuse("high_stakes_done", "the high-stakes passes of this session are used up (one ran and passed, two ran, or one is still running).");
+  if (i.running || used(i.state, i.root)) return refuse("high_stakes_done", "the high-stakes passes of this checkout are used up (one ran and passed, two ran, or one is still running).");
   if (!(i.gate.last === "pass" && !i.gate.revised)) return refuse("high_stakes_early", "no normal reviewer PASS stands (none yet, or work was revised after it); pass the normal reviewer first, then launch it.");
-  if (uncleared(i.state) && (i.root === undefined || lastRun(i.state)?.cwd === i.root)) return refuse("high_stakes_early", "the last high-stakes review of this session FAILED and no normal reviewer PASS that got its findings cleared it; revise or answer the findings, pass the normal reviewer, then launch it.");
+  if (uncleared(i.state, i.root)) return refuse("high_stakes_early", "the last high-stakes review of this session FAILED and no normal reviewer PASS that got its findings cleared it; revise or answer the findings, pass the normal reviewer, then launch it.");
   return null;
 }
 
 /** A reviewer resume in `cwd` while a high-stakes FAIL that ran there stands: it would not see the findings. A fresh normal reviewer is never refused (it gets them; `builder` is unused). */
 export function unrevisedRefusal(s: HsState, o: { resume: boolean; builder: boolean; cwd: string }): { reason: HsLaunchReason; text: string } | null {
-  const r = lastRun(s);
-  if (!r || !uncleared(s) || r.cwd !== o.cwd || !o.resume) return null;
+  const r = lastRun(s, o.cwd);
+  if (!r || !uncleared(s, o.cwd) || !o.resume) return null;
   return { reason: "high_stakes_unrevised", text: `pi-foreman: launch refused [high_stakes_unrevised]: the last high-stakes review FAILED and no normal PASS has cleared it; a resumed reviewer would not see its findings. Launch a fresh reviewer; it gets the findings.` };
 }
 
@@ -580,12 +648,12 @@ export type HsPrReason = "high_stakes_required" | "high_stakes_failed";
 /**
  * The PR gate: `high_stakes_failed` while a FAIL stands uncleared or a head is the head of a high-stakes FAIL. A due pass (`due`: the
  * counting reasons) is no refusal: it only reminds (`dueReminder`). Null when the PR may open. `scopes` (the PR's checkout and the checkouts of its head)
- * narrow the uncleared FAIL to the PR's own checkouts: a FAIL that ran elsewhere does not hold this PR; absent: the FAIL holds every PR of the session.
+ * narrow the uncleared FAIL to the PR's own checkouts: the uncleared FAIL of one of them holds this PR, a FAIL that ran elsewhere does not; absent: the session's last FAIL holds every PR.
  */
 export function prRefusal(s: HsState, due: readonly string[], heads: readonly string[], own: string, scopes?: readonly string[]): { reason: HsPrReason; message: string } | null {
   const refuse = (reason: HsPrReason, why: string): { reason: HsPrReason; message: string } => ({ reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}` });
-  const r = lastRun(s);
-  if (r && uncleared(s) && (scopes === undefined || scopes.includes(r.cwd))) return refuse("high_stakes_failed", `the high-stakes review${whereOf(r.cwd, own)} FAILED and no normal reviewer PASS that got its findings has cleared it${goneNote(r)}. Revise or answer the findings, pass the normal reviewer (it gets them), then retry.`);
+  const r = scopes === undefined ? (uncleared(s) ? lastRun(s) : undefined) : openFails(s).findLast((f) => scopes.includes(f.cwd));
+  if (r) return refuse("high_stakes_failed", `the high-stakes review${whereOf(r.cwd, own)} FAILED and no normal reviewer PASS that got its findings has cleared it${goneNote(r)}. Revise or answer the findings, pass the normal reviewer (it gets them), then retry.`);
   const bad = s.runs.find((x) => x.verdict === "fail" && x.head !== null && heads.includes(x.head) && !(x.cleared && x.clearedAt === x.head));
   if (bad) return refuse("high_stakes_failed", `the head ${bad.head!.slice(0, 12)} is the head of a high-stakes FAIL${whereOf(bad.cwd, own)}; it never opens the gate. Revise, pass the normal reviewer on the new head, then retry.`);
   return null; // a due review only reminds (dueReminder), it never refuses
@@ -598,11 +666,15 @@ export const dueReminder = (due: readonly string[]): string => `a ${HS_TAG} revi
  * The finish-gate entries: the FAIL not yet cleared. A due pass (only once every ledger item but V is marked) is no entry: `remind` carries its reminder, `reasons`
  * the sorted reason set it is for (the finish holds once per set).
  */
-export function finishNeeds(s: HsState, o: { due: readonly string[]; ledgerDone: boolean; own: string }): { missing: string[]; hint: string; remind?: string; reasons?: string[] } {
-  const r = lastRun(s);
-  if (r && uncleared(s)) return { missing: [FAIL_ENTRY], hint: `(the high-stakes review${whereOf(r.cwd, o.own)} FAILED${goneNote(r)}: revise or answer the findings, then pass the normal reviewer; it gets them)` };
-  if (required(s, o.due) && o.ledgerDone) return { missing: [], hint: "", remind: dueReminder(o.due), reasons: [...o.due].sort() };
-  return { missing: [], hint: "" };
+export function finishNeeds(s: HsState, o: { due: readonly string[]; ledgerDone: boolean; own: string; roots?: readonly string[] }): { missing: string[]; hint: string; remind?: string; reasons?: string[] } {
+  const r = openFails(s).at(-1);
+  if (r) return { missing: [FAIL_ENTRY], hint: `(the high-stakes review${whereOf(r.cwd, o.own)} FAILED${goneNote(r)}: revise or answer the findings, then pass the normal reviewer; it gets them)` };
+  if (!o.ledgerDone) return { missing: [], hint: "" };
+  if (o.roots === undefined) return required(s, o.due) ? { missing: [], hint: "", remind: dueReminder(o.due), reasons: [...o.due].sort() } : { missing: [], hint: "" };
+  const dueRoots = [...new Set(o.roots)].filter((root) => required(s, o.due, root)).sort();
+  if (dueRoots.length === 0) return { missing: [], hint: "" };
+  const where = o.roots.length > 1 ? ` (${dueRoots.length === 1 ? "checkout" : "checkouts"} ${dueRoots.join(", ")})` : "";
+  return { missing: [], hint: "", remind: dueReminder(o.due) + where, reasons: [...[...o.due].sort(), ...(o.roots.length > 1 ? dueRoots : [])] };
 }
 
 export const RUN_ENTRY = "a high-stakes review must run";
@@ -613,8 +685,7 @@ export const FAIL_ENTRY = "revise or answer the high-stakes findings, then pass 
  * `headCheckouts`: the checkouts the session's review records name for the head; none (or absent): the checkout is unknown and any uncleared FAIL holds it.
  */
 export function readyOverride(s: HsState, _due: readonly string[], head: string, headCheckouts?: readonly string[]): "wip" | "unreviewed" | null {
-  const r = lastRun(s);
-  if ((r && uncleared(s) && (!headCheckouts || headCheckouts.length === 0 || headCheckouts.includes(r.cwd))) || s.runs.some((r) => r.verdict === "fail" && r.head !== null && r.head === head && !(r.cleared && r.clearedAt === r.head))) return "wip";
+  if (openFails(s).some((r) => !headCheckouts || headCheckouts.length === 0 || headCheckouts.includes(r.cwd)) || s.runs.some((r) => r.verdict === "fail" && r.head !== null && r.head === head && !(r.cleared && r.clearedAt === r.head))) return "wip";
   return null;
 }
 

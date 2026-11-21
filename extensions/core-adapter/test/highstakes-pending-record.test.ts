@@ -33,20 +33,22 @@ async function pendingFail(t: Parameters<typeof setup>[0]) {
   await build(a, sized(["design"]), wt);
   const endHs = await startHs(a, w, wt);
   endHs(FAIL);
-  return { a };
+  return { a, wt };
 }
 
-test("a fresh untagged reviewer launched while a high-stakes FAIL of another checkout is still being recorded is not refused as a repeat and gets the findings", async (t) => {
-  const { a } = await pendingFail(t);
-  const r = await launch(a, "reviewer", "review the change");
+test("a fresh untagged reviewer launched while a high-stakes FAIL of its checkout is still being recorded is not refused as a repeat and gets the findings", async (t) => {
+  const { a, wt } = await pendingFail(t);
+  // review-routing item 2: the findings go to a review of the FAIL's own checkout (main is not a checkout that builds on the FAIL commit)
+  const r = await launch(a, "reviewer", "review the change", { cwd: wt });
   assert.equal(r.blocked, null, String(r.blocked));
   assert.ok(String(r.input.task).startsWith(FINDINGS), "it gets the findings");
 });
 
 // The launch hook's loop-guard wait and its own git reads also let the record land first, so this case is an outcome guard: the findings-prepend read is ordered by the loop-guard await, not by a wait of its own.
 test("a [pre-pr] reviewer launched while a high-stakes FAIL is still being recorded gets the findings", async (t) => {
-  const { a } = await pendingFail(t);
-  const r = await launch(a, "reviewer", "[pre-pr] review the branch");
+  const { a, wt } = await pendingFail(t);
+  // review-routing item 2: the findings go to a review of the FAIL's own checkout (main is not a checkout that builds on the FAIL commit)
+  const r = await launch(a, "reviewer", "[pre-pr] review the branch", { cwd: wt });
   assert.equal(r.blocked, null, String(r.blocked));
   assert.ok(String(r.input.task).startsWith(FINDINGS), "it gets the findings");
 });
