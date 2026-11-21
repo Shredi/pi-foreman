@@ -42,6 +42,8 @@ export interface FloorEnv {
   writeRoots?: string[];
   /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: none (the process environment is never read for it). */
   scratch?: string[];
+  /** A child's `$FOREMAN_OUT` (its kept output dir; also one of `scratch`): the parser reads the variable as that constant, like `$FOREMAN_SCRATCH`. */
+  out?: string;
   /** The session's worktree-side scratch base (`<root>/.foreman/scratch`); counted as own temp like the temp base. */
   scratchBase?: string;
   /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
@@ -1561,7 +1563,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0] } } : {}) });
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0], ...(env.out ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;

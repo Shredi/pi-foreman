@@ -72,7 +72,7 @@ export interface ShellSegment {
 export interface ShellParseOptions {
   /** The directory the line starts in (`$PWD` for the variable grammar). */
   cwd?: string | null;
-  /** The harness env the variable grammar reads (`FOREMAN_SCRATCH`). */
+  /** The harness env the variable grammar reads (`FOREMAN_SCRATCH`, `FOREMAN_OUT`). */
   env?: Record<string, string>;
   /** Defaults to process.platform; "win32" switches on the drive-path forms of shellvars.ts. */
   platform?: string;
@@ -130,7 +130,9 @@ interface Run {
   platform: string;
   /** The text of every string the parser ran as a script (`-c`, `eval` ...) behind whatever wrappers and path stood before the shell. */
   strings: string[];
-  /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` is not resolved as a constant and no trial of its own starts. */
+  /** The whole line being parsed (a nested string is walked with its own `src`). */
+  root?: string;
+  /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` are not resolved as constants and no trial of its own starts. */
   trial?: boolean;
 }
 
@@ -779,7 +781,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
 /** A pass-through wrapper whose words name a runner (`env sh`, `nohup bash`): the wrapped command runs text. */
 const wrapsRunner = (x: any): boolean => (x.suffix ?? []).some((w: any) => typeof (w.value ?? w.text) === "string" && (RUNNERS.has(baseName(w.value ?? w.text)) || /[$`]/.test(w.text ?? "")));
 
-/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `passing`: wrappers the walker unwrapped as pass-through (see `passNames`) do not count unless they wrap a runner (the constant `$FOREMAN_SCRATCH` only). */
+/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `passing`: wrappers the walker unwrapped as pass-through (see `passNames`) do not count unless they wrap a runner (the constants `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` only). */
 function runsCode(node: SyntaxNode, passing: ReadonlySet<string> = new Set()): boolean {
   let found = false;
   const visit = (n: SyntaxNode): void => {
@@ -888,12 +890,18 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const res = resolveVars(pipes, [], env, () => false, src, rn.platform);
   const child = childAssigns(script, src, rn);
   for (const [, , cmd] of child.values()) rn.assignOk.add(cmd);
-  // the harness constant `$FOREMAN_SCRATCH` of a child resolves on any line that never rebinds it (a heredoc or pipe leaves the closed grammar)
-  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !rn.trial && !runsCode(script, passNames(script, src, sc)) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
+  // the harness constants `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` of a child resolve on any line that never rebinds them (a heredoc or pipe leaves the closed grammar)
+  const runs = rn.trial || !(rn.env.FOREMAN_SCRATCH || rn.env.FOREMAN_OUT) ? true : runsCode(script, passNames(script, src, sc));
+  // the mention rule reads the whole line, not the nested string being walked: `env FOREMAN_OUT=/x sh -c 'echo > $FOREMAN_OUT/f'` rebinds it
+  const whole = rn.root ?? src;
+  const harnessConst = (name: string): boolean => !!rn.env[name] && !runs && [...whole.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g"))].every((m) => (whole[m.index! - 1] === "$" || (whole.slice(m.index! - 2, m.index!) === "${" && whole[m.index! + name.length] === "}")));
+  const scratchConst = harnessConst("FOREMAN_SCRATCH");
+  const outConst = harnessConst("FOREMAN_OUT");
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {
       if (n === "FOREMAN_SCRATCH" && scratchConst) return rn.env.FOREMAN_SCRATCH;
+      if (n === "FOREMAN_OUT" && outConst) return rn.env.FOREMAN_OUT;
       const c = child.get(n);
       return c && c[1] <= pr.cmd.pos ? c[0] : undefined;
     };
@@ -947,7 +955,7 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [] };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   const unreadable = (): ShellSegment[] => {

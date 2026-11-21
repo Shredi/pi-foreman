@@ -19,8 +19,8 @@ import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, r
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
-import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
-import { noClassifierModelText } from "./reviewwarn.ts";
+import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel } from "./classifier.ts";
+import { autoClassifierModelText, classifierModelLine, noClassifierModelText } from "./reviewwarn.ts";
 import { effectiveCheckMode } from "./protected.ts";
 import { PermStore, PROTECTED_CHECK_MODES, cleanProtected, protectedBlock, workFoldersBlock } from "./permconfig.ts";
 import { mergedFactKey, withMergedFacts } from "./defaults.ts";
@@ -2218,7 +2218,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string, readOnlyChild = false): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.scratch && launchBinding.out ? { out: launchBinding.out } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -3832,7 +3832,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
       // the judge reads the call first: a clear runs it; unsure, an invalid answer or a failure asks the owner (a child asks its parent)
       const judged = await rt.classifier.judge(
-        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}) },
+        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}) },
         {
           registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
           recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
@@ -7668,7 +7668,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
         const r = await spawner(inv.command, inv.args, { timeoutMs: 300_000, cwd: s.cwd, env: inv.env });
         const ok = !r.error && !r.timedOut && r.code === 0;
-        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...(classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never) ? [] : [`WARN ${noClassifierModelText(ctx.model?.provider)}`])].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
+        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...((): string[] => {
+          const ct = classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
+          return !ct ? [`WARN ${noClassifierModelText(ctx.model?.provider)}`] : ct.auto ? [`WARN ${autoClassifierModelText(ctx.model?.provider, `${ct.provider}/${ct.modelId}`)}`] : [];
+        })()].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
       if (sub === "config") {
@@ -7864,7 +7867,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ct = classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
     if (!ct) out.push(`WARN ${noClassifierModelText(ctx.model?.provider)}`);
     else if (!ctx.modelRegistry.find(ct.provider, ct.modelId)) fail(`classifier model ${ct.provider}/${ct.modelId} not in the model registry; dangerous-class calls ask you`, "correct providers.<p>.roles.review.model.");
-    else ok(`classifier model: ${ct.provider}/${ct.modelId} (timeout ${ct.timeoutMs} ms)`);
+    else if (ct.auto) out.push(`WARN ${autoClassifierModelText(ctx.model?.provider, `${ct.provider}/${ct.modelId}`)} (thinking ${judgeLevel(s.config.config, ct)}, timeout ${ct.timeoutMs} ms)`);
+    else ok(classifierModelLine(ct, judgeLevel(s.config.config, ct)));
     const gp = gateRuntimeOf(s);
     const pr = gp.store.resolve();
     out.push(`INFO permissions: ${pr.protected.length} protected targets, ${pr.prose.deny.length} deny sentences; decision log ${gateLogFile(s.agentDir)}`);

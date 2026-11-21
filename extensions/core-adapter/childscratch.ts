@@ -380,7 +380,8 @@ export function expandScratchVar(command: string, dir0: string, platform: string
 }
 
 /**
- * `command` with `$FOREMAN_OUT` / `${FOREMAN_OUT}` read as the child's kept output dir `dir`, for the guards only (the shell sees the variable).
+ * `command` with `$FOREMAN_OUT` / `${FOREMAN_OUT}` read as the child's kept output dir `dir`, for the raw-text guards only (the shell sees the variable). The parser reads the
+ * variable itself as a harness constant (shellast.ts, like `$FOREMAN_SCRATCH`); this text pass keeps the raw scans and the text-based guards seeing the path.
  * Unchanged when the line holds an apostrophe, or when any mention of the name is not a plain reference (an assignment, `export`, `env FOREMAN_OUT=`,
  * `${FOREMAN_OUT:-x}`, `\$FOREMAN_OUT`): the variable may then not hold `dir`, and the call stays unresolved as before.
  * Without an apostrophe the quote tracker and bash agree on every executed `$FOREMAN_OUT`.

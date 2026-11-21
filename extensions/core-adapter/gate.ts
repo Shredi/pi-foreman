@@ -451,12 +451,13 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       return rule !== null ? { allow: true, rule, layer: "default" } : undefined;
     };
 
-    // a child's `$FOREMAN_OUT` is its kept output dir (set in its process env): the guards read the line with the path in it (childscratch.ts expandOutVar)
+    // a child's `$FOREMAN_OUT` is its kept output dir (set in its process env): the raw-text guards read the line with the path in it (childscratch.ts expandOutVar,
+    // which bails on an apostrophe); the parser also gets it as a harness constant below, like `$FOREMAN_SCRATCH`
     const cmd0 = commandOf(toolName, inp);
     const cmd = cmd0 !== null && roots?.child && roots.out ? expandOutVar(cmd0, roots.out, env.platform) : cmd0;
     if (cmd !== null) {
-      // a child's $FOREMAN_SCRATCH is its own scratch dir (set in its process env); without the binding the variable would make every scratch write opaque
-      const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0] } } : {};
+      // a child's $FOREMAN_SCRATCH and $FOREMAN_OUT are its own dirs (set in its process env); without the binding the variables would make every write there opaque
+      const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0], ...(roots.out ? { FOREMAN_OUT: roots.out } : {}) } } : {};
       const parsed = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar });
       // a powershell line: its words go to the write-target checks below, the secret-path and policy-file floors first (a floor deny of the line itself wins)
       const psSeg = toolName === "powershell" ? powershellWordSegment(psWords(cmd, cwd, home, platform), cwd) : null;
@@ -483,7 +484,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
         const ask = installRootWrite(toolName, inp, [psSeg], cmd, dctx);
         installAsk = ask && "ask" in ask && roots.child ? { block: true, rule: ask.rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${ask.rule}): ${ask.reason}. Report what you need to the foreman and continue with what you can.` } : ask;
       } else installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
-      const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
+      const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, ...(roots.child && roots.out ? { out: roots.out } : {}), platform });
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
         if (!s || toolName === "powershell") return null;
@@ -502,7 +503,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       if (result) return { result, danger: null, segments: segs };
       const hits = JUDGE_FIRST.filter((r) => r.test(dcall, denv));
       const floorDanger = dangerOfFloor(h);
-      const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reason } : null);
+      const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reasonOf?.(dcall, denv) ?? hits[0].reason } : null);
       const labels = [...new Set([...(floorDanger ? [floorDanger.name] : []), ...hits.map((r) => r.name)])];
       return { result: undefined, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
     }
