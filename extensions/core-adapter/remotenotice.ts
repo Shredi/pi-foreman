@@ -1,7 +1,7 @@
 // A notice from a remote child that no armed `foreman_wait kind child` took reaches the parent as ONE custom message of its own type
 // (remotewatch.ts `wake` + `flush`), so a report starts a turn like a report of a local child. The wording is a const table by kind: the
 // local wording (`Plan from`, `Result from`, `Update from`) so the foreman rules apply; a remote ask is answered by a brief, never by
-// `Question from`. The path and the attach/close line come from the watcher; nothing the child wrote enters a line except the registry label.
+// `Question from`. The path and the attach/close line come from the watcher; of what the child wrote only the registry label and, for `refused`, the reason slug ([a-z0-9-]{1,40}) enter a line.
 export const REMOTE_NOTICE_TYPE = "pi-foreman-remote-notice";
 
 const KIND_LINE: Record<string, (who: string, text: string, label: string) => string> = {
