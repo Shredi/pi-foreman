@@ -592,6 +592,13 @@ export class CloseFlow {
           this.d.notify(`pi-foreman: could not keep a copy of the result file ${req.file} outside the worktree: ${(err as Error).message}`, "warning");
         }
       }
+      if (shown !== req.file) {
+        try {
+          this.d.markClosed?.(shown); // the worktree cleanup deletes req.file: the registry entry names the kept copy
+        } catch {
+          // the entry keeps the first path
+        }
+      }
       const tail = spawn || fin.lines.length === 0 ? "" : ` (${fin.lines.join("; ")})`; // a refusal goes to the parent too
       if (req.replyTo && tail) {
         // a close from the parent after the merge: the reason is its own reply, before the `foreman:closed` line (that line is parsed)

@@ -303,12 +303,19 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
   const reg = readRegistry(agentDir);
   let changed = false;
   for (const s of reg.sessions) {
-    if (s.handoff && path.basename(s.handoff) === path.basename(handoff) && s.status !== "closed") {
-      s.status = "closed";
-      if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
-      s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
-      changed = true;
+    if (!s.handoff || path.basename(s.handoff) !== path.basename(handoff)) continue;
+    if (s.status === "closed") {
+      // already closed: only a different result path (the kept copy after a merge cleanup) is written
+      if (resultPath && s.result !== resultPath) {
+        s.result = resultPath;
+        changed = true;
+      }
+      continue;
     }
+    s.status = "closed";
+    if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
+    s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
+    changed = true;
   }
   if (changed) writeRegistry(agentDir, reg);
   return changed;

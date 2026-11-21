@@ -26,10 +26,13 @@ function execInherited(cmd, args) {
   return { ok: r.status === 0, status: r.status, out: "" };
 }
 
+/** Runs a step's command with the output mode its `inherited` field in STEPS names. */
+const runCmd = (inherit, cmd, args) => (inherit ? execInherited(cmd, args) : exec(cmd, args));
+
 const tail = (out) => out.trimEnd().split("\n").slice(-60).join("\n");
 
-function unit() {
-  const r = execInherited(npm, ["test"]);
+function unit(inherit) {
+  const r = runCmd(inherit, npm, ["test"]);
   return { status: r.ok ? "pass" : "fail", line: r.ok ? "npm test" : `npm test exit ${r.status}` };
 }
 
@@ -44,8 +47,8 @@ function ruff() {
   return { status: r.ok ? "pass" : "fail", line: r.ok ? "ruff check ." : `exit ${r.status}`, out: r.out };
 }
 
-function nodeTests() {
-  const r = execInherited(npm, ["run", "test:node"]);
+function nodeTests(inherit) {
+  const r = runCmd(inherit, npm, ["run", "test:node"]);
   return { status: r.ok ? "pass" : "fail", line: r.ok ? "npm run test:node" : `npm run test:node exit ${r.status}` };
 }
 
@@ -72,9 +75,9 @@ function conformance() {
 function installer() {
   const files = fs.readdirSync(path.join(root, "tests", "installer")).filter((f) => f.endsWith(".test.mjs")).map((f) => `tests/installer/${f}`);
   const r = exec(process.execPath, ["--import", "./tests/installer/_hermetic-env.mjs", "--test", ...files]);
-  const pass = /# pass (\d+)/.exec(r.out);
-  const fail = /# fail (\d+)/.exec(r.out);
-  return { status: r.ok ? "pass" : "fail", line: `${pass ? pass[1] : "?"} passed, ${fail ? fail[1] : "?"} failed`, out: r.out };
+  const pass = /^(?:# |ℹ )pass (\d+)/m.exec(r.out); // TAP prints `# pass N`, the spec reporter `ℹ pass N`
+  const fail = /^(?:# |ℹ )fail (\d+)/m.exec(r.out);
+  return { status: r.ok ? "pass" : "fail", line: pass && fail ? `${pass[1]} passed, ${fail[1]} failed` : r.ok ? "node --test" : `exit ${r.status}`, out: r.out };
 }
 
 function bench() {
@@ -118,7 +121,7 @@ function main() {
   for (const step of STEPS) {
     if (only !== null && only !== step.name) continue;
     const started = Date.now();
-    const r = step.run();
+    const r = step.run(step.inherited);
     const secs = ((Date.now() - started) / 1000).toFixed(1);
     console.log(`${r.status.toUpperCase().padEnd(4)} ${step.name}: ${r.line} (${secs}s)`);
     if (r.status === "fail") {
