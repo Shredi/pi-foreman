@@ -464,6 +464,7 @@ test("--develop writes <checkout>/.pi/settings.json (override of the installed p
   fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(checkout, "extensions", "core-adapter", "profiles.mjs"));
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(checkout, "extensions", "core-adapter", "bridgelogin.mjs"));
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "harnessid.mjs"), path.join(checkout, "extensions", "core-adapter", "harnessid.mjs"));
   const file = path.join(checkout, ".pi", "settings.json");
   fs.mkdirSync(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify({ theme: "light", packages: [FOREMAN, "npm:keep-me@1.0.0"] }));
@@ -1162,6 +1163,7 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   fs.mkdirSync(path.join(root, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(root, "extensions", "core-adapter", "profiles.mjs"));
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(root, "extensions", "core-adapter", "bridgelogin.mjs"));
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "harnessid.mjs"), path.join(root, "extensions", "core-adapter", "harnessid.mjs"));
   seed(env, { packages: ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN] });
   const r = spawnSync(process.execPath, [path.join(root, "setup.mjs"), "--no-addons", "--agent-dir", env.agentDir], {
     cwd: env.cwd,

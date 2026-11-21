@@ -19,7 +19,7 @@ import { isolationDir, loginSigns } from "./extensions/core-adapter/bridgelogin.
 import { migrateGateConfig } from "./scripts/foreman_migrate_gate.mjs";
 import { harnessId, olderSessions, olderSessionsLines } from "./extensions/core-adapter/harnessid.mjs";
 
-// The script needs `config/` and `extensions/core-adapter/profiles.mjs` and `bridgelogin.mjs` beside it (imported statically above); `@inquirer/prompts` is loaded only when the picker opens.
+// The script needs `config/` and `extensions/core-adapter/profiles.mjs`, `bridgelogin.mjs` and `harnessid.mjs` beside it (imported statically above); `@inquirer/prompts` is loaded only when the picker opens.
 // The shared point rule and model data are loaded softly: without them the install still runs, minus the compaction step.
 const pointModule = await import("./extensions/core-adapter/compaction-point.mjs").catch(() => null);
 const dataModule = await import("./extensions/core-adapter/pi-model-data.mjs").catch(() => null);
