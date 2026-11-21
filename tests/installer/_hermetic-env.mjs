@@ -15,3 +15,40 @@ scrubSessionEnv(process.env);
 const appHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-app-home-")));
 process.env.HERDR_APP_HOME = appHome;
 process.on("exit", () => fs.rmSync(appHome, { recursive: true, force: true }));
+
+// An `npm` shim first on PATH: the real setup.mjs runs `npm ci` in the real checkout when node_modules is older than the lock, so the shim refuses installs and forwards every
+// other subcommand to the real npm (found on the original PATH; an inherited FOREMAN_TEST_REAL_NPM wins, so a nested preload never points at an outer shim).
+const WIN = process.platform === "win32";
+function findNpm() {
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    const file = path.join(dir, WIN ? "npm.cmd" : "npm");
+    try {
+      if (fs.statSync(file).isFile()) return file;
+    } catch {}
+  }
+  return "";
+}
+const SHIM_SCRIPT = `const { spawnSync } = require("node:child_process");
+const [sub, ...rest] = process.argv.slice(2);
+if (["ci", "install", "i", "add"].includes(sub)) {
+  console.error(\`npm \${sub} refused under the installer tests\`);
+  process.exit(1);
+}
+const real = process.env.FOREMAN_TEST_REAL_NPM;
+if (!real) {
+  console.error("npm shim: no real npm found");
+  process.exit(127);
+}
+const args = sub === undefined ? [] : [sub, ...rest];
+const r = process.platform === "win32"
+  ? spawnSync([real, ...args].map((a) => '"' + a.replace(/"/g, '\\\\"') + '"').join(" "), { stdio: "inherit", shell: true, windowsHide: true })
+  : spawnSync(real, args, { stdio: "inherit" });
+process.exit(r.status ?? 1);
+`;
+process.env.FOREMAN_TEST_REAL_NPM ||= findNpm();
+const shimDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-npm-shim-")));
+fs.writeFileSync(path.join(shimDir, "npm-shim.cjs"), SHIM_SCRIPT);
+fs.writeFileSync(path.join(shimDir, "npm"), `#!/bin/sh\nexec "${process.execPath}" "${path.join(shimDir, "npm-shim.cjs")}" "$@"\n`, { mode: 0o755 });
+fs.writeFileSync(path.join(shimDir, "npm.cmd"), `@"${process.execPath}" "${path.join(shimDir, "npm-shim.cjs")}" %*\r\n`);
+process.env.PATH = `${shimDir}${path.delimiter}${process.env.PATH ?? ""}`;
+process.on("exit", () => fs.rmSync(shimDir, { recursive: true, force: true }));

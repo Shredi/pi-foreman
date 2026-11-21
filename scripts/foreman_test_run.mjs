@@ -2,6 +2,8 @@
 // Usage: node scripts/foreman_test_run.mjs [--timeout <s>] <node args and globs...>      -> node <leading options> --test --test-concurrency=N <globs>
 //        node scripts/foreman_test_run.mjs [--timeout <s>] --targeted <node args and globs/files...>  -> the same behind a shared slot
 //        node scripts/foreman_test_run.mjs [--timeout <s>] --exec -- <command> [args...]  -> the command, lock only (no concurrency flag)
+//        FOREMAN_TEST_DETACH=1 <any form above> (or a leading --detach)  -> background run, returns the run id; node scripts/foreman_test_run.mjs --wait <id> [--max <s>] collects it
+//        node scripts/foreman_test_run.mjs --history [--days N]  -> wait and run figures of the last N days
 // Time limit: a leading `--timeout <s>` or env FOREMAN_TEST_TIMEOUT=<s> (flag wins; positive number, fractions allowed) is one deadline
 // for the lock wait plus the run, also with the lock off. When it passes, the run and its descendants are stopped (SIGTERM, after 5 s
 // SIGKILL; Windows taskkill /T /F), the lock is released, one stderr line names limit, elapsed time and the holder waited on; exit 124.
@@ -24,8 +26,23 @@
 // <tmpdir>/pf-run-XXXXXX and points the command's TMPDIR/TMP/TEMP (POSIX; PI_FOREMAN_TEST_TMP and FOREMAN_TEST_TMP_ROOT everywhere) at it. The root is
 // removed on every exit (also stop, lock give-up and signals); entries a test left in it are named on stderr (a warning, not a failure). A run that finds
 // FOREMAN_TEST_TMP_ROOT set (nested) reuses that root and removes nothing. The lock and the run records never live in the root.
+// History: every wrapped run appends one JSON line {id, mode, kind (exec|node), detached, command, cwd, tree, enqueued, acquired (null when the lock
+// was never taken), ended, exit} to <lockdir>/test-history/history.jsonl (over 2 MB it is renamed to a unique history-<time>-<pid>.jsonl, the newest two
+// archives are kept; history errors never change the exit code). `tree` is a sha1 of HEAD, the diff against HEAD and the untracked files (size, mtime),
+// "" outside a git checkout; it lets a later round count repeated runs of one tree (no result reuse is built). `--history [--days N]` (default 7)
+// prints per mode and kind: runs, waited runs (acquired - enqueued > 5 s) with wait median/p90/max, exit 75, exit 124 while queued and while running,
+// exit 130, run duration median/p90.
+// Detach: env FOREMAN_TEST_DETACH=1 or a leading `--detach` starts the run in the background (stdout and stderr to <lockdir>/test-history/<id>.log) and
+// returns at once with the run id, the log path and the --wait command; a detached run ignores FOREMAN_TEST_TIMEOUT and --timeout (lock rules, FIFO,
+// give-up and the run cap stay). Each detach start removes done files and logs older than 7 days. Every run writes <lockdir>/test-history/<id>.done.json {exit, ended,
+// waitedMs, ranMs} on exit, before it removes its record.
+// `--wait <id> [--max <s>]` (default 240, at most 540) polls and ends with one state line `foreman_test_run: run <id> <state>`: done (exit = the run's exit,
+// last 40 log lines before the line), queued with position and holder or running (exit 3, the run goes on), starting (log younger than 30 s, no record
+// yet; exit 3), died (no done file and the record gone or its pid dead; exit 1), unknown run (exit 2). The run's own exit can equal 1, 2 or 3: the state
+// line decides.
 // The command's env has the running-session variables of extensions/core-adapter/test/session-env.json removed (the lock reads its own env first).
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -47,6 +64,16 @@ const HEARTBEAT_MS = 5000;
 const HEARTBEAT_STALE_MS = 60_000;
 const STOP_WAIT_MS = 15_000;
 const STOP_POLL_MS = 200;
+const WAIT_POLL_MS = 500;
+const WAIT_DEFAULT_S = 240;
+const WAIT_CAP_S = 540;
+const LOG_TAIL_LINES = 40;
+const LOG_FRESH_MS = 30_000;
+const SWEEP_MS = 7 * 24 * 3600_000;
+const HISTORY_MAX_BYTES = 2 * 1024 * 1024;
+const HISTORY_ARCHIVES = 2;
+const WAITED_MS = 5000;
+const TREE_CAP_MS = 10_000;
 
 /** `--test-concurrency` value: FOREMAN_TEST_CONCURRENCY when a positive integer, else half the cores (at least 1). */
 export function testConcurrency({ env = process.env, cores = os.availableParallelism() } = {}) {
@@ -524,6 +551,8 @@ export async function killTree(pid, { platform = process.platform, spawnSync: ru
 }
 
 const runsDirOf = (env) => path.join(path.dirname(lockPath(env)), "test-runs");
+/** History, archives, done files and detached-run logs: next to test-runs, which keeps only live records and stop files. */
+const historyDirOf = (env) => path.join(path.dirname(lockPath(env)), "test-history");
 const RUN_ID = /^[a-z0-9-]+$/;
 const trunc = (t, n = 120) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 
@@ -532,7 +561,7 @@ function liveRuns(dir) {
   const out = [];
   let names = [];
   try {
-    names = fs.readdirSync(dir).filter((n) => n.endsWith(".json"));
+    names = fs.readdirSync(dir).filter((n) => n.endsWith(".json") && !n.endsWith(".done.json"));
   } catch {}
   for (const n of names) {
     let rec;
@@ -550,6 +579,254 @@ function liveRuns(dir) {
     out.push(rec);
   }
   return out.sort((a, b) => (a.started < b.started ? -1 : a.started > b.started ? 1 : 0));
+}
+
+/** sha1 over HEAD, the diff against HEAD and the untracked files with size and mtime (approximate: an edit within one mtime tick keeps the key); "" outside a git checkout, on any git failure or after TREE_CAP_MS. */
+export function treeKey(cwd, capMs = TREE_CAP_MS) {
+  try {
+    const end = Date.now() + capMs;
+    const git = (args) => {
+      const left = end - Date.now();
+      if (left <= 0) throw new Error("tree key timed out");
+      const r = spawnSync("git", ["--no-optional-locks", ...args], { cwd, timeout: left, maxBuffer: 64 * 1024 * 1024, windowsHide: true, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" } });
+      if (r.error || r.status !== 0) throw new Error("git failed");
+      return r.stdout;
+    };
+    const hash = createHash("sha1");
+    hash.update(git(["rev-parse", "HEAD"]));
+    hash.update("\0");
+    hash.update(git(["diff", "HEAD", "--binary"]));
+    hash.update("\0");
+    const untracked = git(["ls-files", "--others", "--exclude-standard", "-z"]).toString("utf8").split("\0").filter(Boolean);
+    for (const f of untracked) {
+      let st;
+      try {
+        st = fs.statSync(path.join(cwd, f));
+      } catch {
+        continue;
+      }
+      hash.update(`${f}\0${st.size}\0${Math.floor(st.mtimeMs)}\0`);
+    }
+    return hash.digest("hex");
+  } catch {
+    return "";
+  }
+}
+
+const HISTORY_FILE = "history.jsonl";
+const ARCHIVE_NAME = /^history-[a-z0-9]+-\d+(-\d+)?\.jsonl$/;
+
+/** Appends one JSON line to <dir>/history.jsonl; over `maxBytes` the file is first renamed to a unique archive name and archives beyond the newest `keep` are deleted. Never throws. */
+export function appendHistory(dir, entry, { maxBytes = HISTORY_MAX_BYTES, keep = HISTORY_ARCHIVES } = {}) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, HISTORY_FILE);
+    let size = 0;
+    try {
+      size = fs.statSync(file).size;
+    } catch {}
+    if (size > maxBytes) {
+      const base = `history-${Date.now().toString(36)}-${process.pid}`;
+      let target = path.join(dir, `${base}.jsonl`);
+      for (let n = 1; fs.existsSync(target); n++) target = path.join(dir, `${base}-${n}.jsonl`);
+      try {
+        fs.renameSync(file, target);
+      } catch {}
+      const archives = fs
+        .readdirSync(dir)
+        .filter((n) => ARCHIVE_NAME.test(n))
+        .map((n) => ({ n, t: fs.statSync(path.join(dir, n)).mtimeMs }))
+        .sort((a, b) => b.t - a.t || (a.n < b.n ? 1 : -1));
+      for (const a of archives.slice(keep)) fs.rmSync(path.join(dir, a.n), { force: true });
+    }
+    fs.appendFileSync(file, `${JSON.stringify(entry)}\n`);
+  } catch {}
+}
+
+/** The history entries of the last `days` days (by `ended`) from history.jsonl and the archives in `dir`; unreadable files and lines are skipped. */
+export function readHistory(dir, days, now = Date.now()) {
+  const out = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => n === HISTORY_FILE || ARCHIVE_NAME.test(n));
+  } catch {}
+  for (const n of names) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(dir, n), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      try {
+        const e = JSON.parse(line);
+        if (e && Date.parse(e.ended) >= now - days * 86_400_000) out.push(e);
+      } catch {}
+    }
+  }
+  return out;
+}
+
+const percentile = (sorted, p) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)] : undefined);
+const secs = (ms) => (ms === undefined ? "-" : `${(ms / 1000).toFixed(1)} s`);
+
+/** The `--history` lines for `entries`, one per mode and kind. */
+export function historyLines(entries) {
+  const groups = new Map();
+  for (const e of entries) {
+    const key = `${e.mode} ${e.kind}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  }
+  const lines = [];
+  for (const [key, es] of [...groups].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const waits = [];
+    const runs = [];
+    let queued124 = 0;
+    for (const e of es) {
+      const enq = Date.parse(e.enqueued);
+      const acq = e.acquired ? Date.parse(e.acquired) : undefined;
+      const end = Date.parse(e.ended);
+      const wait = (acq ?? end) - enq;
+      if (wait > WAITED_MS) waits.push(wait);
+      if (acq !== undefined) runs.push(end - acq);
+      if (e.exit === 124 && acq === undefined) queued124++;
+    }
+    waits.sort((a, b) => a - b);
+    runs.sort((a, b) => a - b);
+    const n = (code) => es.filter((e) => e.exit === code).length;
+    const running124 = n(124) - queued124;
+    lines.push(
+      `${key}: runs ${es.length}; waited ${waits.length} (wait median ${secs(percentile(waits, 50))}, p90 ${secs(percentile(waits, 90))}, max ${secs(waits[waits.length - 1])}); exit 75 ${n(75)}; exit 124 queued ${queued124}, running ${running124}; exit 130 ${n(130)}; run median ${secs(percentile(runs, 50))}, p90 ${secs(percentile(runs, 90))}`,
+    );
+  }
+  return lines;
+}
+
+/** Removes done files and logs older than SWEEP_MS from the history dir `dir`. */
+function sweepRunsDir(dir, now = Date.now()) {
+  try {
+    for (const n of fs.readdirSync(dir)) {
+      if (!n.endsWith(".done.json") && !n.endsWith(".log")) continue;
+      try {
+        if (now - fs.statSync(path.join(dir, n)).mtimeMs > SWEEP_MS) fs.rmSync(path.join(dir, n), { force: true });
+      } catch {}
+    }
+  } catch {}
+}
+
+const tailLines = (file, n = LOG_TAIL_LINES) => {
+  try {
+    const lines = fs.readFileSync(file, "utf8").split("\n");
+    if (lines[lines.length - 1] === "") lines.pop();
+    return lines.slice(-n);
+  } catch {
+    return [];
+  }
+};
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The queue place and lock holder of a waiting run's record: "position X of Y, lock held by <holder>" (pieces missing when unknown). */
+function queueText(env, rec) {
+  const lock = lockPath(env);
+  const dirs = rec.mode === "targeted" ? [path.join(path.dirname(lock), "test-slots.queue")] : [`${lock}.queue`];
+  const parts = [];
+  try {
+    const names = fs.readdirSync(dirs[0]).filter((n) => TICKET_NAME.test(n)).sort();
+    const mine = names.findIndex((n) => Number(TICKET_NAME.exec(n)[3]) === rec.pid);
+    if (mine >= 0) parts.push(`position ${mine + 1} of ${names.length}`);
+  } catch {}
+  const holders = (rec.mode === "targeted" ? slotPaths(env) : [lock]).map((f) => readLock(f)).filter(Boolean);
+  if (holders.length) parts.push(`${rec.mode === "targeted" ? "slots" : "lock"} held by ${holders.map(holderText).join("; ")}`);
+  return parts.length ? `, ${parts.join(", ")}` : "";
+}
+
+/** `--wait <id> [--max <s>]`: polls the run and prints its state line; returns the exit code (the run's exit when done, else 3 pending, 1 died, 2 unknown or bad arguments). */
+async function waitRun(argv, env) {
+  const id = argv[1];
+  const usage = "usage: foreman_test_run.mjs --wait <id> [--max <s>]\n";
+  if (!id || !RUN_ID.test(id)) {
+    process.stderr.write(usage);
+    return 2;
+  }
+  let maxS = WAIT_DEFAULT_S;
+  if (argv.length > 2) {
+    const m = argv[2] === "--max" && argv.length === 4 ? positiveNumber(argv[3]) : undefined;
+    if (m === undefined) {
+      process.stderr.write(usage);
+      return 2;
+    }
+    maxS = Math.min(m, WAIT_CAP_S);
+  }
+  const hdir = historyDirOf(env);
+  const doneFile = path.join(hdir, `${id}.done.json`);
+  const recFile = path.join(runsDirOf(env), `${id}.json`);
+  const logFile = path.join(hdir, `${id}.log`);
+  const say = (state) => process.stdout.write(`foreman_test_run: run ${id} ${state}\n`);
+  const end = Date.now() + maxS * 1000;
+  for (;;) {
+    const done = readJson(doneFile);
+    if (done && Number.isInteger(done.exit)) {
+      for (const l of tailLines(logFile)) process.stdout.write(`${l}\n`);
+      say(`done, exit ${done.exit}, waited ${minutes(done.waitedMs ?? 0)} min, ran ${Math.round((done.ranMs ?? 0) / 1000)} s`);
+      return done.exit;
+    }
+    const rec = readJson(recFile);
+    let state;
+    let died = false;
+    if (rec && Number.isInteger(rec.pid)) {
+      if (pidAlive(rec.pid)) {
+        state =
+          rec.state === "waiting"
+            ? `queued${queueText(env, rec)}`
+            : `running for ${minutes(Date.now() - Date.parse(rec.started))} min`;
+      } else died = !fs.existsSync(doneFile);
+    } else if (!fs.existsSync(doneFile)) {
+      let logAge;
+      try {
+        logAge = Date.now() - fs.statSync(logFile).mtimeMs;
+      } catch {}
+      if (logAge === undefined) {
+        say("unknown run");
+        return 2;
+      }
+      if (logAge < LOG_FRESH_MS) state = "starting";
+      else died = true;
+    }
+    if (died && !fs.existsSync(doneFile)) {
+      for (const l of tailLines(logFile)) process.stdout.write(`${l}\n`);
+      say("died: no done file and the run is gone; see the log above");
+      return 1;
+    }
+    if (state && Date.now() >= end) {
+      say(state);
+      return 3;
+    }
+    await sleep(Math.min(WAIT_POLL_MS, Math.max(0, end - Date.now())) || WAIT_POLL_MS);
+  }
+}
+
+/** `--history [--days N]`: prints the figures of the last N days (default 7). */
+function historyCommand(argv, env) {
+  let days = 7;
+  if (argv.length > 1) {
+    const d = argv[1] === "--days" && argv.length === 3 ? positiveNumber(argv[2]) : undefined;
+    if (d === undefined) {
+      process.stderr.write("usage: foreman_test_run.mjs --history [--days N]\n");
+      return 2;
+    }
+    days = d;
+  }
+  const lines = historyLines(readHistory(historyDirOf(env), days));
+  process.stdout.write(lines.length ? `${lines.join("\n")}\n` : `no runs in the last ${days} days\n`);
+  return 0;
 }
 
 const runLine = (r) => `run ${r.id} (pid ${r.pid}, cwd ${r.cwd}), ${r.state}, since ${hhmm(Date.parse(r.started))}: ${r.command}`;
@@ -571,7 +848,7 @@ async function stopRuns(dir, recs) {
   return left.length ? 1 : 0;
 }
 
-/** `--stop <id>`, `--stop-cwd` and `--list`; undefined when argv[0] is none of them. */
+/** `--stop <id>`, `--stop-cwd`, `--list`, `--history` and `--wait`; undefined when argv[0] is none of them. */
 async function control(argv, env) {
   const dir = runsDirOf(env);
   if (argv[0] === "--list") {
@@ -584,6 +861,8 @@ async function control(argv, env) {
     for (const r of liveRuns(dir)) process.stdout.write(`${runLine(r)}\n`);
     return 0;
   }
+  if (argv[0] === "--history") return historyCommand(argv, env);
+  if (argv[0] === "--wait") return waitRun(argv, env);
   if (argv[0] === "--stop") {
     const id = argv[1];
     if (!id || !RUN_ID.test(id)) {
@@ -609,20 +888,47 @@ async function control(argv, env) {
   return undefined;
 }
 
+/** Starts this script again in the background with the same arguments (argv without the detach flag); prints the run id, the log path and the --wait command. */
+function detachRun(argv, env, started) {
+  const id = `${started.toString(36)}-${process.pid}`;
+  const dir = historyDirOf(env);
+  const logFile = path.join(dir, `${id}.log`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    sweepRunsDir(dir);
+    const fd = fs.openSync(logFile, "a");
+    const childEnv = { ...env, FOREMAN_TEST_RUN_ID: id, FOREMAN_TEST_DETACHED: "1" };
+    delete childEnv.FOREMAN_TEST_DETACH;
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...argv], { detached: true, stdio: ["ignore", fd, fd], windowsHide: true, env: childEnv, cwd: process.cwd() });
+    child.unref();
+    fs.closeSync(fd);
+  } catch (e) {
+    process.stderr.write(`foreman_test_run: could not start the detached run: ${e.message}\n`);
+    return 1;
+  }
+  process.stdout.write(`foreman_test_run: run ${id} detached; log ${logFile}; collect with: node scripts/foreman_test_run.mjs --wait ${id}\n`);
+  return 0;
+}
+
 async function main(rawArgv, env = process.env) {
   const started = Date.now();
   let argv = rawArgv;
   const controlled = await control(argv, env);
   if (controlled !== undefined) return controlled;
+  const detach = argv[0] === "--detach" || env.FOREMAN_TEST_DETACH === "1";
+  if (argv[0] === "--detach") argv = argv.slice(1);
+  if (detach) return detachRun(argv, env, started);
+  // a detached child ignores the time limit (FOREMAN_TEST_TIMEOUT and --timeout); its caller returned long ago
+  const detachedRun = env.FOREMAN_TEST_DETACHED === "1";
   let limitS;
   if (argv[0] === "--timeout") {
-    limitS = positiveNumber(argv[1]);
-    if (limitS === undefined) {
+    limitS = detachedRun ? undefined : positiveNumber(argv[1]);
+    if (limitS === undefined && !detachedRun) {
       process.stderr.write("foreman_test_run: --timeout needs a positive number of seconds\n");
       return 2;
     }
     argv = argv.slice(2);
-  } else if (env.FOREMAN_TEST_TIMEOUT !== undefined && env.FOREMAN_TEST_TIMEOUT.trim() !== "") {
+  } else if (!detachedRun && env.FOREMAN_TEST_TIMEOUT !== undefined && env.FOREMAN_TEST_TIMEOUT.trim() !== "") {
     limitS = positiveNumber(env.FOREMAN_TEST_TIMEOUT);
     if (limitS === undefined) {
       process.stderr.write("foreman_test_run: FOREMAN_TEST_TIMEOUT needs a positive number of seconds\n");
@@ -651,8 +957,12 @@ async function main(rawArgv, env = process.env) {
     cmd = process.execPath;
     args = nodeTestArgs(argv, targeted ? targetedCfg.concurrency : testConcurrency({ env }));
   }
-  const id = `${started.toString(36)}-${process.pid}`;
+  const id = detachedRun && RUN_ID.test(env.FOREMAN_TEST_RUN_ID ?? "") ? env.FOREMAN_TEST_RUN_ID : `${started.toString(36)}-${process.pid}`;
+  // the started command must not see this run's detach settings (a nested wrapper run gets its own id)
+  let runEnv = { ...env };
+  for (const k of ["FOREMAN_TEST_RUN_ID", "FOREMAN_TEST_DETACHED", "FOREMAN_TEST_DETACH"]) delete runEnv[k];
   const runsDir = runsDirOf(env);
+  const historyDir = historyDirOf(env);
   const record = {
     id,
     pid: process.pid,
@@ -688,18 +998,26 @@ async function main(rawArgv, env = process.env) {
   writeRecord();
   // The run root is made after the lock path above resolved against the real temp dir; only the child's env carries it.
   let runRoot;
-  let runEnv = env;
   if (!env.FOREMAN_TEST_TMP_ROOT) {
     try {
       sweepStale({ bases: sweepBases() });
       const made = createRunRoot();
       runRoot = made.root;
-      runEnv = { ...env, ...made.env };
+      runEnv = { ...runEnv, ...made.env };
     } catch (e) {
       process.stderr.write(`foreman_test_run: no run temp root (${e.message})\n`);
     }
   }
-  process.on("exit", () => {
+  let acquiredAt = lockDisabled(env) ? started : undefined; // epoch ms the lock was taken; with the lock off the enqueue time
+  process.on("exit", (exitCode) => {
+    const ended = Date.now();
+    try {
+      fs.mkdirSync(historyDir, { recursive: true });
+      const doneFile = path.join(historyDir, `${id}.done.json`);
+      const tmp = path.join(historyDir, `.${id}.done.tmp`);
+      fs.writeFileSync(tmp, JSON.stringify({ id, exit: exitCode, ended: new Date(ended).toISOString(), waitedMs: (acquiredAt ?? ended) - started, ranMs: acquiredAt === undefined ? 0 : ended - acquiredAt }));
+      fs.renameSync(tmp, doneFile);
+    } catch {}
     for (const f of [recordFile, stopFile]) {
       try {
         fs.rmSync(f, { force: true });
@@ -710,6 +1028,19 @@ async function main(rawArgv, env = process.env) {
       if (left.length) process.stderr.write(`test-run: ${left.length} temp entries left by this run: ${left.slice(0, 5).join(", ")}\n`);
       removeRunRoot(runRoot);
     }
+    appendHistory(historyDir, {
+      id,
+      mode: record.mode,
+      kind: argv[0] === "--exec" ? "exec" : "node",
+      detached: detachedRun,
+      command: record.command,
+      cwd: record.cwd,
+      tree: treeKey(record.cwd),
+      enqueued: record.started,
+      acquired: acquiredAt === undefined ? null : new Date(acquiredAt).toISOString(),
+      ended: new Date(ended).toISOString(),
+      exit: exitCode,
+    });
   });
   const stopRequested = () => fs.existsSync(stopFile);
   const stoppedLine = `foreman_test_run: run ${id} stopped on request\n`;
@@ -751,6 +1082,7 @@ async function main(rawArgv, env = process.env) {
     }
   }
   for (const [s, h] of waitSignals) process.off(s, h);
+  acquiredAt ??= Date.now();
   record.state = "running";
   writeRecord();
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(runRoot ?? os.tmpdir(), "pf-spawn-count-"));

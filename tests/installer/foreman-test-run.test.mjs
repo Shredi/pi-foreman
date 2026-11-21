@@ -1120,3 +1120,40 @@ test("the start sweep removes old pf- entries in the temp base and leaves fresh 
   assert.equal(r.code, 0);
   assert.deepEqual(fs.readdirSync(b).sort(), ["keep-old", "pf-fresh-sweep"]);
 });
+
+test("a detached run's command sees TMPDIR inside a pf-run- root, removed by the worker after the run; --wait and --history sweep nothing", { skip: process.platform === "win32" }, async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir);
+  delete e.CI;
+  const [b] = bases;
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const mkOld = (n) => {
+    fs.mkdirSync(path.join(b, n));
+    fs.utimesSync(path.join(b, n), old, old);
+  };
+  // the control calls leave an old pf- entry alone
+  mkOld("pf-old-control");
+  for (const args of [["--wait", "nope", "--max", "1"], ["--history"]]) {
+    await finish(spawn(process.execPath, [SCRIPT, ...args], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  }
+  assert.ok(fs.existsSync(path.join(b, "pf-old-control")));
+  // the launcher returns at once and leaves no root; the worker makes one for the command
+  const code = `setTimeout(() => { console.log("SEEN=" + JSON.stringify({ tmp: process.env.TMPDIR, root: process.env.FOREMAN_TEST_TMP_ROOT, exists: require("fs").existsSync(process.env.FOREMAN_TEST_TMP_ROOT) })); }, 1500)`;
+  const launch = await spawnExec({ ...e, FOREMAN_TEST_DETACH: "1" }, code);
+  assert.equal(launch.code, 0, launch.err);
+  assert.deepEqual(runRoots(bases), []);
+  const id = /run ([a-z0-9-]+) detached/.exec(launch.out)[1];
+  const w = await finish(spawn(process.execPath, [SCRIPT, "--wait", id, "--max", "30"], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  assert.equal(w.code, 0, w.out + w.err);
+  const seen = JSON.parse(/SEEN=(.*)/.exec(w.out)[1]);
+  assert.equal(seen.tmp, seen.root);
+  assert.ok(path.basename(seen.root).startsWith("pf-run-"));
+  assert.ok(bases.includes(path.dirname(seen.root)));
+  assert.equal(seen.exists, true);
+  // the done file is written before the root is removed: poll briefly
+  for (let i = 0; i < 100 && fs.existsSync(seen.root); i++) await new Promise((res) => setTimeout(res, 100));
+  assert.ok(!fs.existsSync(seen.root));
+  assert.deepEqual(runRoots(bases), []);
+  // the worker's start swept the old entry (a run mode), proving the sweep ran in the worker and not in the control calls
+  assert.ok(!fs.existsSync(path.join(b, "pf-old-control")));
+});

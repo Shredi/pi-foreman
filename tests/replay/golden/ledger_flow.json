@@ -231,7 +231,8 @@
    "decision": "allowed"
   },
   {
-   "event": "tool_error"
+   "event": "tool_error",
+   "exit": 1
   },
   {
    "event": "ledger_call"

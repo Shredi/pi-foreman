@@ -251,6 +251,8 @@ export interface ReviewGate {
   stoodAtFail?: boolean;
   /** The run id of the last counted PASS (kept across later verdicts); the V refusal and the finish hint name it. */
   passRun?: string;
+  /** The latest real verdict is FAIL: a later review that ended without a verdict (`last` "none") keeps it until a PASS. */
+  failed?: boolean;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {
@@ -266,7 +268,8 @@ export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[], no
   if (verdicts.length === 0) return g;
   const last = verdicts.includes("fail") ? "fail" : verdicts.includes(null) ? "none" : "pass";
   const passRun = last === "pass" && runId ? runId : g.passRun;
-  const next: ReviewGate = { last, revised: false, ...(passRun ? { passRun } : {}) };
+  const failed = last === "fail" || (last === "none" && (g.last === "fail" || g.failed === true));
+  const next: ReviewGate = { last, revised: false, ...(passRun ? { passRun } : {}), ...(failed ? { failed } : {}) };
   return last === "fail" && now !== undefined ? { ...next, failAt: now } : next;
 }
 

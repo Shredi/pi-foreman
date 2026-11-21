@@ -279,6 +279,41 @@ export function readConsumed(dir: string, runId: string, launchId: string, allow
   return parseRecord(raw, launchId, allowed);
 }
 
+/** The reviewer child's own context usage, overwritten at every turn end: what a resume of a cut run reads to tell whether the context is nearly full (D144). */
+export const CONTEXT_FILE = "context.json";
+export interface ContextUse {
+  tokens: number | null;
+  contextWindow: number;
+}
+
+/** Writes the usage atomically into the launch's record folder; best effort (a missing folder or an unwritable one leaves no file). */
+export function writeContextUse(dir: string, use: ContextUse): void {
+  const tmp = path.join(dir, `.context-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify({ v: 1, tokens: use.tokens, contextWindow: use.contextWindow }), { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(tmp, path.join(dir, CONTEXT_FILE));
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // best effort
+    }
+  }
+}
+
+/** The usage a child left (field by field; anything off is no usage), or null: no file, unreadable, or not numbers. */
+export function readContextUse(dir: string): ContextUse | null {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(dir, CONTEXT_FILE), "utf8")) as Record<string, unknown>;
+    const w = j.contextWindow;
+    const t = j.tokens;
+    if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) return null;
+    return { tokens: typeof t === "number" && Number.isFinite(t) ? t : null, contextWindow: w };
+  } catch {
+    return null;
+  }
+}
+
 const SWEEP_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** The newest modification time under a folder (itself, its entries, their entries). */

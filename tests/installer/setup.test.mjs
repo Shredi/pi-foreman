@@ -1268,6 +1268,22 @@ test("setup accepts a 3.13 interpreter named by PI_FOREMAN_PYTHON, with no pytho
   assert.ok(fs.readFileSync(`${env.base}-python.log`, "utf8").includes("sys.executable"));
 });
 
+test("setup finds a python3.13 when it is the only interpreter on PATH", posix, () => {
+  const env = fresh();
+  seed(env);
+  const fake = path.join(env.base, "fake");
+  fs.mkdirSync(fake);
+  writeFakePython(path.join(fake, "python3.13"), "3.13", `${env.base}-python.log`);
+  const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
+    cwd: env.cwd,
+    encoding: "utf8",
+    env: { PATH: fake, PI_FOREMAN_HOME: process.env.PI_FOREMAN_HOME, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+  });
+  const out = `${r.stdout}${r.stderr}`;
+  assert.match(out, /python 3\.13 via python3\.13/);
+  assert.doesNotMatch(out, /No Python/);
+});
+
 // ---------------------------------------------------------------- profiles, features and add-ons
 
 const foremanJson = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "foreman.json"), "utf8"));

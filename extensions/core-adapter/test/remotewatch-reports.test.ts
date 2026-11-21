@@ -34,6 +34,7 @@ function rig(o: { importReports?: (data: Buffer) => void | Promise<void> } = {})
     const res = (over: Partial<HcResult>): HcResult => ({ code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, ...over });
     if (args[0] === "get") return res({ stdout: Buffer.from(JSON.stringify({ address: "alpha/t7", labels: {}, state: "live", status: { app: "pi", state: "working" } })) });
     const f = files.get(args[4]);
+    if (!f && args[4].endsWith("/notices.jsonl")) return res({ code: 3, stderr: JSON.stringify({ error: { hint: "check the path", kind: "not_found", message: "no file" } }) }); // an older child: no queue file
     return f ? res({ stdout: f }) : res({ code: 4, stderr: "no such file" });
   };
   let onLine: (l: string) => void = () => undefined;
@@ -61,7 +62,7 @@ test("a result, update and closed notice each fetch reports.jsonl from the remot
     r.put(HANDOFF_REPORTS, `${REPORT}\n`);
     await r.send(label(1, kind, "done\n"));
     assert.deepEqual(got, [`${REPORT}\n`], kind);
-    assert.deepEqual(r.calls.filter((c) => c[0] === "file").at(-1), ["file", "read", "--on", "alpha", `${HANDOFF}/reports.jsonl`], "the file of the remote handoff dir, nothing else");
+    assert.deepEqual(r.calls.filter((c) => c[0] === "file" && c[1] === "read").at(-1), ["file", "read", "--on", "alpha", `${HANDOFF}/reports.jsonl`], "the file of the remote handoff dir, nothing else");
     assert.equal(r.wakes.length, 1);
     r.w.stop();
   }

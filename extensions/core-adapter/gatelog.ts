@@ -164,6 +164,10 @@ export interface GateRecord {
   follows?: string;
   /** The reasoning level the model call ran with (the read question). */
   reasoning?: string;
+  /** The judge's user message length, in characters. */
+  promptChars?: number;
+  /** The time limit of the judge's model call. */
+  timeoutMs?: number;
 }
 
 export interface GateLogOptions {
@@ -222,6 +226,8 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             ...(rec.cached ? { cached: true } : {}),
             ...(rec.follows ? { follows: field(rec.follows) } : {}),
             ...(rec.reasoning ? { reasoning: field(rec.reasoning) } : {}),
+            ...(typeof rec.promptChars === "number" ? { promptChars: Math.round(rec.promptChars) } : {}),
+            ...(typeof rec.timeoutMs === "number" ? { timeoutMs: Math.round(rec.timeoutMs) } : {}),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,
           }) + "\n";

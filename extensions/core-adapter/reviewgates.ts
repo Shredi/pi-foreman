@@ -31,7 +31,7 @@ export function combined(g: ReviewGates): ReviewGate {
   const last: ReviewGate["last"] = lasts.includes("fail") ? "fail" : lasts.includes("none") ? "none" : lasts.includes(null) ? null : "pass";
   const failAts = all.map((e) => e.failAt).filter((x): x is number => x !== undefined);
   const passRun = [...all].reverse().find((e) => e.passRun)?.passRun;
-  return { last, revised: all.some((e) => e.revised), ...(failAts.length > 0 ? { failAt: Math.max(...failAts) } : {}), ...(passRun ? { passRun } : {}) };
+  return { last, revised: all.some((e) => e.revised), ...(failAts.length > 0 ? { failAt: Math.max(...failAts) } : {}), ...(passRun ? { passRun } : {}), ...(all.some((e) => e.failed) ? { failed: true } : {}) };
 }
 
 /** Work happened in `root` (null = unknown checkout). */

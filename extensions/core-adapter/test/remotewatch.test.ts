@@ -44,6 +44,7 @@ function rig(entries: SessionEntry[] = [entry()]) {
     const res = (over: Partial<HcResult>): HcResult => ({ code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, ...over });
     if (args[0] === "get") return res({ code: hcGet.code, stdout: Buffer.from(JSON.stringify(hcGet.reply)), stderr: hcGet.code ? JSON.stringify({ error: { hint: "see `hc ls --all`", kind: "not_found", message: "no terminal" } }) : "" });
     const q = files.get(args[4]);
+    if ((!q || !q.length) && args[4].endsWith("/notices.jsonl")) return res({ code: 3, stderr: JSON.stringify({ error: { hint: "check the path", kind: "not_found", message: "no file" } }) }); // an older child: no queue file
     if (!q || !q.length) return res({ code: 4, stderr: "no such file\u0007: x" });
     return res({ stdout: q.length > 1 ? (q.shift() as Buffer) : q[0] });
   };
@@ -239,7 +240,7 @@ test("watcher: a plan label is fetched, checked, mirrored and wakes the wait wit
   assert.equal(e.lastError, null);
   assert.equal(e.status, "open");
   assert.equal((e.remoteLive as { state: string }).state, "working", "initial hc get");
-  assert.deepEqual(r.calls.find((c) => c[0] === "file"), ["file", "read", "--on", "alpha", `${HANDOFF}/plan.md`]);
+  assert.deepEqual(r.calls.find((c) => c[0] === "file" && !c[4].endsWith("/notices.jsonl")), ["file", "read", "--on", "alpha", `${HANDOFF}/plan.md`]);
   r.w.stop();
 });
 
@@ -280,10 +281,11 @@ test("watcher: open → ask → open → closing → closed, the ask cleared by 
 test("watcher: closed without a result (-:0) fetches nothing; fm.close=open is recorded", async () => {
   const r = rig();
   r.w.start();
-  const before = r.calls.filter((c) => c[0] === "file").length;
+  const files = (): number => r.calls.filter((c) => c[0] === "file" && !c[4].endsWith("/notices.jsonl")).length; // the queue read is not a fetch of the notice
+  const before = files();
   await r.send(ev("1:closed:-:0"));
   await r.send(lab({ "fm.close": "open" }));
-  assert.equal(r.calls.filter((c) => c[0] === "file").length, before);
+  assert.equal(files(), before);
   assert.equal(r.reg().status, "closed");
   assert.equal(r.reg().close, "open");
   assert.deepEqual(r.wakes, ["child demo: closed"]);
@@ -295,7 +297,7 @@ test("watcher: a hash mismatch is fetched twice, then pending; the identical lab
   r.put("plan.md", "tampered\n", "tampered\n");
   const v = label(1, "plan", "the plan\n");
   await r.send(ev(v));
-  assert.equal(r.calls.filter((c) => c[0] === "file").length, 2);
+  assert.equal(r.calls.filter((c) => c[0] === "file" && !c[4].endsWith("/notices.jsonl")).length, 2);
   assert.equal(r.reg().lastError, "hash mismatch, not mirrored");
   assert.equal(r.reg().noticeSeq, undefined);
   assert.equal(fs.existsSync(path.join(r.dir, "m", CHILD, "plan.md")), false);

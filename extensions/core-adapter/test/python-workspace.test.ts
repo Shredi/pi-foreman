@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { insideWorkspace, resolvePython } from "../python.ts";
 import type { SpawnResult, Spawner } from "../spawn.ts";
 import { posixOnly } from "./_platform.ts";
+import { POSIX_PYTHONS } from "../profiles.mjs";
 
 function tempDir(t: { after(fn: () => void): void }, repo: boolean): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-pyws-")));
@@ -72,7 +73,7 @@ test("a bare name found on PATH inside the workspace is not probed", { skip: pos
   const { spawner, calls } = fake({ python: out("3.13", "/usr/bin/python", "/usr/bin/python", "/usr") });
   const r = await resolvePython({ platform: "linux", spawner, cwd: repo, env: { PATH: bin } });
   assert.ok(r.ok);
-  assert.deepEqual(calls, ["python"]);
+  assert.deepEqual(calls, POSIX_PYTHONS.slice(1)); // python3 is skipped, the rest are probed in order
 });
 
 test("win32: a bare name found on PATH inside the workspace is not probed", async (t) => {

@@ -20,11 +20,11 @@ import { probeSpawner } from "./_probe-memo.ts";
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-test("loop keys: a defect with a file keys on file, line/5 and class; no class ends with a colon; now and later findings and a file-less defect give no key", () => {
-  assert.deepEqual(sigOf([], [{ kind: "defect", text: "x", file: "src/a.ts", line: 12, class: "bug" }]), ["at:src/a.ts:2:bug"]);
+test("loop keys: a defect keys on its normalized text (with or without a file); now and later findings give no key", () => {
+  assert.deepEqual(sigOf([], [{ kind: "defect", text: "x", file: "src/a.ts", line: 12, class: "bug" }]), ["txt:x"]);
   assert.equal(findingKey({ file: "src/a.ts", line: null, class: "" }), "at:src/a.ts:-:", "an absent class leaves the key ending in ':'");
-  assert.deepEqual(sigOf([], [{ kind: "defect", text: "x", file: "src/a.ts" }]), ["at:src/a.ts:-:"]);
-  assert.deepEqual(sigOf([], [{ kind: "now", text: "rename", file: "src/a.ts", line: 3 }, { kind: "later", text: "split", file: "src/b.ts" }, { kind: "defect", text: "no file" }]), []);
+  assert.deepEqual(sigOf([], [{ kind: "defect", text: "x", file: "src/a.ts" }]), ["txt:x"]);
+  assert.deepEqual(sigOf([], [{ kind: "now", text: "rename", file: "src/a.ts", line: 3 }, { kind: "later", text: "split", file: "src/b.ts" }, { kind: "defect", text: "no file" }]), ["txt:no file"]);
   assert.deepEqual(sigOf([{ id: 2, result: "fail" }, { id: 1, result: "pass" }], [{ kind: "later", text: "tidy" }]), ["item:2"]);
 });
 

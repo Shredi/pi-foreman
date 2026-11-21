@@ -27,6 +27,8 @@ export interface ReviewTarget {
   timeoutMs: number;
   /** Picked by autoReviewTarget (no review.model set). */
   auto?: boolean;
+  /** The judge's thinking level when the config sets one (`roles.review.thinking`, else the model's `:level` suffix), capped by maxThinking. */
+  level?: string;
 }
 
 /** `providers.<provider>.review` of the merged config, or null (review off for that provider). */
