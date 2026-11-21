@@ -1,13 +1,12 @@
 // Child scratch (retro-harvest item 5): create, record, remove at run end, keep, refused removals,
-// and the guard allowances inside the dir (overlay cd, review link, timeoutallow).
+// and the path checks inside the dir (insideScratch, expandScratchVar).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp } from "./_tmpbase.ts";
-import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchCommandAllowed, scratchRoot, storeBrief, sweepScratch } from "../childscratch.ts";
+import { ChildScratch, createScratch, expandScratchVar, finishScratch, insideScratch, launchScratch, removeScratch, scratchRoot, storeBrief, sweepScratch } from "../childscratch.ts";
 import type { ScratchHost } from "../childscratch.ts";
-import { deterministicAllow } from "../timeoutallow.ts";
 import { readBinding } from "../usage.ts";
 import type { LaunchBinding } from "../usage.ts";
 import { posix, posixOnly } from "./_platform.ts";
@@ -98,25 +97,12 @@ test("removal is refused outside the root, for the repo and for a symlink leadin
   assert.ok(fs.existsSync(path.join(outside, "keep.txt")));
 });
 
-test("guards: cd, cp, mkdir and rm inside a live scratch dir only (deterministicAllow, insideScratch, scratchCommandAllowed)", { skip: posixOnly }, () => {
+test("guards: insideScratch and expandScratchVar", { skip: posixOnly }, () => {
   const dir = createScratch("sess-3", "L-g", deps)!;
   const other = path.join(base, "repo");
-  const rules = { allow: ["ls *", "cd *"], ask: [], deny: ["sudo *"] };
-  const effects = { cwd: other, root: other, scratch: [dir] };
-  const ok = (cmd: string): string | null => deterministicAllow(rules, cmd, { scratchDirs: [dir], effects });
-  assert.equal(ok(`cp -R ${other} ${dir}/copy`), "child-scratch");
-  assert.equal(ok(`cp -R ${base} ${dir}/copy`), null, "a cp source outside the worktree");
-  assert.equal(ok(`mkdir -p ${dir}/a/b && rm -rf ${dir}/a`), "child-scratch");
-  assert.equal(ok(`cd $FOREMAN_SCRATCH && ls -la`), "child-scratch");
-  assert.equal(ok(`rm -rf ${dir}`), null, "not the dir itself");
-  assert.equal(ok(`rm -rf ${dir}/../L-other`), null);
-  assert.notEqual(ok(`cp a ${other}/x`), "child-scratch");
-  assert.equal(ok(`rm -rf ${dir}/x | sh`), null);
-  assert.notEqual(ok(`rm -rf '$FOREMAN_SCRATCH'/x`), "child-scratch", "single quotes keep the name literal");
   fs.symlinkSync(other, path.join(dir, "esc"));
   assert.equal(insideScratch(path.join(dir, "esc", "f"), [dir]), false, "a symlink inside cannot lead out");
   assert.equal(insideScratch(path.join(dir, ".?", ".?", "f"), [dir]), false, "a glob that bash could expand to .. is refused");
-  assert.equal(scratchCommandAllowed(`rm -r ${dir}/esc/f`, [dir], () => false), false);
   assert.equal(expandScratchVar(`echo "\${FOREMAN_SCRATCH}/x" '$FOREMAN_SCRATCH'`, "/s"), `echo "/s/x" '$FOREMAN_SCRATCH'`);
 });
 

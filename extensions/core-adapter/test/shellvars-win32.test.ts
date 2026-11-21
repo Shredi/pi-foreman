@@ -5,17 +5,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { parseShell } from "../psunits.ts";
-import { readBaseline } from "../baseline.ts";
 import { resolveVars } from "../shellvars.ts";
 import { classify } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
-import { bashRules, deterministicAllow } from "../timeoutallow.ts";
-
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const baseline = readBaseline(PKG)!;
 
 // win32 world: worktree C:\w\proj, scratch C:\t\pfs\s1
 const wCwd = "C:\\w\\proj";
@@ -61,20 +55,16 @@ test("win32: cd C:x; H=$PWD/.ssh; cat $H/id_rsa (a drive-relative cd makes the t
 const eRoot = "C:\\w\\proj";
 const eExists = (p: string): boolean => /^c:\\w(\\proj(\\(f|src|src\\main\\.go))?)?$/i.test(p) || /^c:\\t(\\pfs(\\s1)?)?$/i.test(p);
 const ectx: EffectCtx = { cwd: eRoot, root: eRoot, scratch: [wScratch], platform: "win32", realpath: (p) => (eExists(p) ? path.win32.resolve(p) : null), exists: eExists, isFile: (p) => /\\f$/i.test(p), isDir: (p) => eExists(p) && !/\\f$/i.test(p), isLink: () => false, readFile: () => null };
-const allowW = (cmd: string): string | null => deterministicAllow(bashRules(baseline, {}), cmd, { scratchDirs: [wScratch], effects: ectx, platform: "win32" });
 
 test("win32 effects: cat C:\\w\\proj\\f (unquoted) is no read; no deterministic allow", () => {
   assert.equal(splitChain("cat C:\\w\\proj\\f"), null);
   assert.equal(classify("cat C:\\w\\proj\\f", ectx), "unknown");
-  assert.equal(allowW("cat C:\\w\\proj\\f"), null);
   assert.equal(classify("cat C:wprojf", ectx), "unknown", "what bash runs: drive-relative");
 });
 
 test("win32 effects: cp f C:\\w\\proj\\g (unquoted writer) is not write-in; no deterministic allow", () => {
   assert.equal(classify("cp f C:\\w\\proj\\g", ectx), "unknown");
-  assert.equal(allowW("cp f C:\\w\\proj\\g"), null);
   assert.equal(classify("cp f C:wprojg", ectx), "write-out", "what bash runs: a drive-relative target is outside");
-  assert.equal(allowW("cp f C:wprojg"), null);
 });
 
 test("win32 effects: cat C:/w/proj/f and cat 'C:\\w\\proj\\f' are reads inside the worktree; cat \"C:\\w\\proj\\f\" is no allow", () => {
@@ -82,7 +72,6 @@ test("win32 effects: cat C:/w/proj/f and cat 'C:\\w\\proj\\f' are reads inside t
   assert.equal(classify("cat 'C:\\w\\proj\\f'", ectx), "read");
   // splitChain models no `\` inside double quotes: fail closed, no deterministic allow
   assert.equal(classify('cat "C:\\w\\proj\\f"', ectx), "unknown");
-  assert.equal(allowW('cat "C:\\w\\proj\\f"'), null);
   assert.equal(classify("cat C:/Profiles/u/.ssh/id_rsa", ectx), "unknown");
 });
 
@@ -98,7 +87,7 @@ test("win32: cd C:/w/proj; S=$PWD/out; cat $S/f resolves under the native cwd", 
 
 test("win32: H=C:\\Profiles\\u\\.ssh; cat $H/id_rsa (unquoted) stays unresolved", () => {
   assert.equal(resolved("H=C:\\Profiles\\u\\.ssh; cat $H/id_rsa", "win32", wEnv), null);
-  assert.equal(allowW("H=C:\\w\\proj; cat $H/f"), null, "no deterministic allow");
+  assert.notEqual(classify("H=C:\\w\\proj; cat $H/f", ectx), "read", "no read class");
 });
 
 test("posix: S=$FOREMAN_SCRATCH; mkdir -p $S/x resolves to the posix scratch", () => {

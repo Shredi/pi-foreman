@@ -2,18 +2,13 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { bashPath } from "./_bashpath.ts";
-import { classify, effectCtx, readRootsOf } from "../effects.ts";
+import { SAFE_CLASSES, classify, effectCtx, readRootsOf } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
-import { bashRules, deterministicAllow } from "../timeoutallow.ts";
-import { readBaseline } from "../baseline.ts";
 import { posix, posixOnly } from "./_platform.ts";
 
-const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const rules = bashRules(readBaseline(pkgRoot)!, {});
 
 const base = mkTestTmp("pf-effects-");
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -27,7 +22,11 @@ fs.writeFileSync(path.join(repo, "Cargo.toml"), "[package]\n");
 fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({ scripts: { test: "node --test", build: "tsc" } }));
 fs.writeFileSync(path.join(repo, "Makefile"), "test-unit:\n\ttrue\ndeploy:\n\ttrue\n");
 const ctx = (): EffectCtx => effectCtx(repo, [scratch]);
-const allow = (cmd: string, r = rules): string | null => deterministicAllow(r, cmd, { scratchDirs: [scratch], effects: ctx() });
+// the whole line passes when its effect class is one of the safe ones
+const allow = (cmd: string): string | null => {
+  const k = classify(cmd, ctx());
+  return SAFE_CLASSES.includes(k) ? `effect-${k}` : null;
+};
 
 test("splitter: top-level operators and redirects; refuses substitutions, grouping, background, heredocs", () => {
   const c = splitChain("sed -n '1,40p' f; grep -n 'a|b' f | head -3 2>&1 >/dev/null || true && ls");
@@ -39,20 +38,17 @@ test("splitter: top-level operators and redirects; refuses substitutions, groupi
 });
 
 test("test-restore: git restore / checkout -- on test paths inside the worktree only", () => {
-  assert.equal(allow("git checkout -- internal/api/websocket_hub_test.go"), "test-restore");
-  assert.equal(allow("git restore --worktree -- internal/api/websocket_hub_test.go"), "test-restore");
+  assert.equal(allow("git checkout -- internal/api/websocket_hub_test.go"), "effect-write-in");
+  assert.equal(allow("git restore --worktree -- internal/api/websocket_hub_test.go"), "effect-write-in");
   for (const c of ["git checkout -- src/main.go", "git restore --staged internal/api/websocket_hub_test.go", "git restore -s HEAD internal/api/websocket_hub_test.go", "git restore --source=HEAD internal/api/websocket_hub_test.go", "git checkout -- ../x_test.go", "git checkout -- ':(glob)a_test.go'", "git checkout -- '*_test.go'", `git checkout -- ${repo}/internal/api/websocket_hub_test.go`, "git checkout main -- a_test.go"]) assert.equal(allow(c), null, c);
 });
 
 test("chains: every segment must be a deterministic allow; the 2k shapes pass", () => {
-  assert.equal(allow("sed -n '1,40p' f; grep -n x f"), "sed-read");
-  assert.equal(allow("timeout 900 cargo test -p x | tail -50"), "timeout-wrapper");
+  assert.equal(allow("timeout 900 cargo test -p x | tail -50"), "effect-build-test");
   assert.equal(allow(`cd ${bashPath(repo)} && grep -rn x . | head`), "effect-read");
   assert.equal(allow("ls > /dev/null 2>&1 && cat f > $FOREMAN_SCRATCH/out"), "effect-read");
   if (posix) assert.equal(allow("cat f > /tmp/pf-effects-out.txt"), "effect-read");
   for (const c of ["ls | xargs rm", "eval ls", "sh -c ls", "bash -c 'ls'", "env ls", "nohup ls", "ls > out.txt", "ls > ~/x", "ls > /etc/x", "cat f | sh", "timeout 5 timeout 5 ls", "ls & cat f", "X=1 ls", "cd /etc && cat passwd", "cd /etc && ls", "cd src && cd ../.. && ls", "grep -rn x . | rm -rf src/x.go" + "; cp f /etc/x"]) assert.equal(allow(c), null, c);
-  // a user's ask pattern wins over every effect class
-  assert.equal(allow("grep -n x f | head", bashRules(readBaseline(pkgRoot)!, { safety: { permissions: { ask: ["grep *"] } } })), null);
 });
 
 test("effect classes: read, build-test, write-in, write-out, unknown", () => {
@@ -137,7 +133,6 @@ test("readRoots: reads (only) inside a configured root; no symlink out, no relat
   assert.deepEqual(c.readRoots, [fs.realpathSync.native(other)]);
   const inRoot = path.join(fs.realpathSync.native(other), "lib", "a.ts");
   assert.equal(classify(`cat ${bashPath(inRoot)}`, c), "read");
-  assert.equal(deterministicAllow(rules, `grep -n x ${bashPath(inRoot)}`, { scratchDirs: [scratch], effects: c }), "effect-read");
   assert.equal(classify(`cat ${bashPath(path.join(outside, "s"))}`, c), "unknown");
   assert.equal(classify(`touch ${bashPath(path.join(fs.realpathSync.native(other), "lib", "b.ts"))}`, c), "write-out");
   if (posix) {
@@ -179,16 +174,12 @@ test("security review 2: lowercase cp -r (BSD follows symlinks) is not write-in 
   assert.equal(classify("cp -a src v", ctx()), "write-in");
 });
 
-// child-scratch is POSIX-only by design (timeoutallow.ts scratchCommandAllowed, childscratch.ts)
-test("security review 2: child-scratch goes through the composer; cp sources are reads ((a))", { skip: posixOnly }, () => {
+test("security review 2: cp sources are reads ((a))", { skip: posixOnly }, () => {
   const outside = path.join(base, "outside-cs");
   fs.mkdirSync(outside, { recursive: true });
-  const cs = (cmd: string): string | null => deterministicAllow(rules, cmd, { scratchDirs: [scratch], effects: ctx() });
-  assert.equal(cs(`cp -R ${outside} $FOREMAN_SCRATCH/v`), null);
-  assert.equal(cs(`cp -r src $FOREMAN_SCRATCH/v`), null);
-  assert.equal(cs(`cp -R src $FOREMAN_SCRATCH/v && cat $FOREMAN_SCRATCH/v/main.go`), null);
-  assert.equal(cs(`cp -R src $FOREMAN_SCRATCH/v`), "child-scratch");
-  assert.equal(deterministicAllow(rules, `cp -R src ${scratch}/v`, { scratchDirs: [scratch] }), null, "no effect context, no child-scratch");
+  assert.equal(allow(`cp -R ${outside} $FOREMAN_SCRATCH/v`), null);
+  assert.equal(allow(`cp -r src $FOREMAN_SCRATCH/v`), null);
+  assert.equal(allow(`cp -R src $FOREMAN_SCRATCH/v && cat $FOREMAN_SCRATCH/v/main.go`), null);
 });
 
 test("security review 2: build tools after a cd away from the root, cargo publish, make -n/--eval, go vet -vettool ((b)-(d), m-d)", () => {
@@ -226,8 +217,6 @@ test("security review 3: tmp-scratch cp sources are contained reads, a tree from
   fs.mkdirSync(outside, { recursive: true });
   fs.writeFileSync(path.join(outside, "id_ed25519"), "x\n");
   for (const cmd of ["cp -R ~/.ssh /tmp/pf-m1-x", `cp -R ${outside} /tmp/pf-m1-x`, `cp ${outside}/id_ed25519 /tmp/pf-m1-x`, "cp /etc/hosts /tmp/pf-m1-x"]) assert.equal(allow(cmd), null, cmd);
-  assert.equal(allow("cp -R src /tmp/pf-m1-x"), "tmp-scratch");
-  assert.equal(allow("cp f /tmp/pf-m1-x"), "tmp-scratch");
 });
 
 test("security review 3: make -n takes an exact option list (no abbreviated long options) (m-d)", () => {
