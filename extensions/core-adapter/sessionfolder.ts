@@ -74,20 +74,22 @@ async function baseOf(repo: string): Promise<{ base: string; staleNote?: string 
   const cur = await git(repo, ["symbolic-ref", "--short", "-q", "HEAD"]);
   if (cur.code !== 0 || !cur.out) return { base: "HEAD" };
   let def: string | null = null;
+  let lsErr = "";
   const head = await git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
   if (head.code === 0 && head.out.startsWith("refs/remotes/origin/")) def = head.out.slice("refs/remotes/origin/".length);
   else {
     const remote = await git(repo, ["ls-remote", "--symref", "origin", "HEAD"], FETCH_TIMEOUT_MS);
+    if (remote.code !== 0) lsErr = remote.err;
     const m = remote.code === 0 ? /^ref: refs\/heads\/(\S+)\s+HEAD/m.exec(remote.out) : null;
     def = m ? m[1] : null;
   }
   if (cur.out !== def && def !== null) return { base: "HEAD" };
-  if (def === null) return { error: `the default branch of origin cannot be found in ${repo}` };
+  if (def === null) return { error: `the default branch of origin cannot be found in ${repo}${lsErr ? `: ${lsErr}` : ""}` };
   const fetched = await git(repo, ["fetch", "origin"], FETCH_TIMEOUT_MS);
   const ref = `origin/${def}`;
   const have = (await git(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`])).code === 0;
   if (fetched.code === 0 && have) return { base: ref };
-  if (!have) return { error: `git fetch origin failed in ${repo} and ${ref} does not exist locally` };
+  if (!have) return { error: fetched.code === 0 ? `git fetch origin succeeded in ${repo} but ${ref} does not exist locally` : `git fetch origin failed in ${repo} and ${ref} does not exist locally: ${fetched.err || `exit code ${fetched.code}`}` };
   return { base: ref, staleNote: `git fetch origin failed; the base ${ref} is the last fetched state and may be stale` };
 }
 

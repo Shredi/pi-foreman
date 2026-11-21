@@ -342,3 +342,13 @@ test("D118: an RPC session (hasUI true, mode rpc: bench, replay, drivers) makes 
   await tick(200);
   assert.deepEqual(roundWorktrees(stateDir, sid), []);
 });
+
+test("D118: a failed fetch with no origin/<default> ref refuses with git's fetch error and names close.worktreeDir", async (t) => {
+  const { w, a, root } = await setup(t, { origin: "broken" });
+  git(w.project, "update-ref", "-d", "refs/remotes/origin/main");
+  const r = await builder(a);
+  assert.match(r.blocked ?? "", /launch refused \[session_folder\]: .*git fetch origin failed in .* and origin\/main does not exist locally: /s);
+  assert.ok((r.blocked ?? "").includes("gone.git"), `git's error text names the missing remote ${path.join(root, "gone.git")}: ${r.blocked}`);
+  assert.match(r.blocked ?? "", /`close\.worktreeDir`/);
+  assert.equal(worktrees(w.project).length, 1, "no worktree");
+});
