@@ -74,13 +74,13 @@ test("the picker takes a profile, a flipped toggle and an add-on, then applies o
   assert.match(r.out, /safety relaxations:\n {2}WARNING/);
   assert.match(r.out, /Add-on polish: Compact Claude Code-style/);
   assert.match(r.out, /^--- \/dev\/null/m);
-  assert.match(r.out, /would run: pi install npm:pi-polish@0\.1\.2/);
+  assert.match(r.out, /would run: pi install npm:pi-polish@0\.1\.13/);
   assert.match(r.out, /equivalent: foreman setup --profile orchestration --disable codemode --addon polish/);
   const cfg = JSON.parse(fs.readFileSync(foremanFile(env), "utf8"));
   assert.equal(cfg.profile, "orchestration");
   assert.equal(cfg.roles.foreman.codemode, false);
   assert.equal(cfg.tools.pr, false);
-  assert.deepEqual(installs(env), [["install", "npm:pi-polish@0.1.2"]]);
+  assert.deepEqual(installs(env), [["install", "npm:pi-polish@0.1.13"]]);
 });
 
 test("the printed equivalent flag line reproduces the same foreman.json", () => {

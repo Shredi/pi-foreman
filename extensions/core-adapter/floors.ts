@@ -1038,6 +1038,17 @@ export function scratchGitConfigRead(word: string, env: FloorEnv): boolean {
 /** `read`: the word is only read (a read tool's path, a read-only program's operand, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
 export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+  // curl's `@file` forms: `@.env`, `-d@.env`, `--data=@.env`, `f=@.env`, `name@.env` read the file after the first `@` (a prefix with a `/` is a path itself)
+  // and `-F` form values: `f=@.env;type=x`, `f=@.env\;filename=y` (the `;` parameters are no part of the file), `f=<.env` (the file's content as the value)
+  const at = /^([^@/\s]*)@(.+)$/.exec(w) ?? /^[^@/\s=]+=<(.+)$/.exec(w);
+  if (at) {
+    const file = at[at.length - 1].replace(/[\\/]?;.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
+    // a `-F` value may list several files: `f=@a.json,.env` (only the form shape; `-d@a,b` is one name)
+    for (const f of /=[@<]/.test(w) ? file.split(",") : [file]) {
+      const h = secretPath(f, env, read);
+      if (h) return h;
+    }
+  }
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
@@ -1183,6 +1194,8 @@ export interface UnknownDelete {
 
 const UNKNOWN_DELETE = (why: string, floor = true): UnknownDelete => ({ name: "danger-delete-unknown-target", reason: `a delete with an unknown target (${why})`, floor });
 const RM_RECURSIVE = /^-[A-Za-z]*[rR]|^--recursive$/;
+/** A command word that holds an expansion and names no program: `$X`, `"$CMD"` (a word with a literal basename after the expansion, `$V/bin/pip`, reaches here as that program). */
+const varCommandWord = (p: string): boolean => /[$`]/.test(p) && !/[=\s]/.test(p);
 /** A recursive flag behind a command word that is itself a variable: short clusters only (`-rf`, `-R`), so a PowerShell parameter like `-Force` is none. */
 const VAR_CMD_RECURSIVE = /^-(?=[A-Za-z]{1,4}$)[A-Za-z]*[rR]|^--recursive$/;
 const EXEC_WORDS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
@@ -1242,7 +1255,7 @@ function unknownTargetDeletes(text: string, segments: ShellSegment[], env: Floor
     if (prog === "find" && findExecRemoves(argv)) hits.push(UNKNOWN_DELETE("a remover under find -exec"));
     // `eval "rm -rf $D"`, `sh -c "rm -rf $D"`: the string is built at run time, so its words are scanned as a runner's string under find -exec is
     if (s.opaque === "nonliteral_script" && removerInString([s.program, ...argv].join(" "))) hits.push(UNKNOWN_DELETE("a remover inside a script string built at run time"));
-    if (/[$`]/.test(s.program) && !/[=\s]/.test(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
+    if (varCommandWord(s.program) && argv.some((w) => VAR_CMD_RECURSIVE.test(w))) hits.push(UNKNOWN_DELETE("the command word is a variable with a recursive flag"));
     if (prog === "git" && argv.some((w) => /[$`]/.test(w) || w === "")) {
       const call = gitCall(s, env);
       if (call?.sub === "clean") hits.push(UNKNOWN_DELETE("git clean with a variable operand"));
@@ -1307,7 +1320,7 @@ type Where = "local" | "ssh" | "container";
  * target host, container or pod and the options included, as it joined them (`_check_remote`). So the first command of the joined text is named by the target, and
  * only a later command (`ssh host 'ls; shred /x'`) was read: the bare `ssh host shred /x` was never refused, and stays running.
  */
-function remoteCommand(seg: ShellSegment, prog: string): { words: string[]; where: Where } | null {
+export function remoteCommand(seg: ShellSegment, prog: string): { words: string[]; where: Where } | null {
   const a = seg.argv;
   if (prog === "ssh") return { words: a, where: "ssh" };
   if (["docker", "podman", "kubectl"].includes(prog) && a.length > 1 && (a[0] === "exec" || a[0] === "run")) return { words: a.slice(1), where: "container" };
@@ -1331,7 +1344,7 @@ function findExecRemoves(argv: string[]): boolean {
 function remoteKind(seg: ShellSegment, prog: string, env: FloorEnv, rmOk: boolean): string | null {
   const a = seg.argv;
   if (wordsRemove([seg.program, ...a]) || (prog === "find" && findExecRemoves(a)) || (seg.opaque === "nonliteral_script" && removerInString([seg.program, ...a].join(" ")))) return rmOk ? null : "a recursive rm";
-  if (/[$`]/.test(seg.program) && !/[=\s]/.test(seg.program) && a.some((w) => VAR_CMD_RECURSIVE.test(w))) return "a command word that is a variable with a recursive flag";
+  if (varCommandWord(seg.program) && a.some((w) => VAR_CMD_RECURSIVE.test(w))) return "a command word that is a variable with a recursive flag";
   if (prog === "shred") return "shred";
   if (prog === "find" && a.includes("-delete")) return "find -delete";
   if (pythonDisk(seg, prog)) return "a disk format or erase";
@@ -1370,6 +1383,25 @@ function behindWrapper(seg: ShellSegment): string[] | null {
     return i < seg.argv.length ? seg.argv.slice(i) : null;
   }
   return /^(?:busybox|toybox)$/.test(prog) && seg.argv.length > 0 && !seg.argv[0].startsWith("-") ? seg.argv : null;
+}
+
+/** The words as one shell line: a word with a space or a metacharacter quoted, an expansion left as it is. */
+const wordsText = (words: string[]): string => words.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
+
+/**
+ * The segments of a line and, below them, every segment the parser does not unwrap itself: the body of a function, select, coproc or arithmetic for, and the words behind
+ * `busybox`/`toybox` or a privilege program (the paths `pythonKinds` re-parses). For the judge-first rules that read a segment's own program (inline code, a remote command).
+ */
+export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth = 0): ShellSegment[] {
+  const out: ShellSegment[] = [];
+  for (const seg of segs) {
+    out.push(seg);
+    if (depth >= NORMALISE_DEPTH) continue;
+    const rest = behindWrapper(seg);
+    const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
+    for (const t of texts) out.push(...nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1));
+  }
+  return out;
 }
 
 /** The old check's decisions on one local command that the gate reads from a segment, for the commands it does not parse itself (a function body, the words behind a wrapper). */
@@ -1459,7 +1491,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     // containers, ssh), to a fixpoint. A line's own `sudo` is the privilege floor's.
     const rest = top && PRIVILEGE.has(prog) ? null : behindWrapper(seg);
     if (rest) {
-      const restText = rest.map((w) => (/^[\w@%+=:,./-]+$/.test(w) || (/[$`]/.test(w) && !/\s/.test(w)) ? w : `'${w.replace(/'/g, "'\\''")}'`)).join(" ");
+      const restText = wordsText(rest);
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
       const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it

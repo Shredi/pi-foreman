@@ -56,7 +56,7 @@ test("B: git push of anything but an own branch is dangerous; an own-branch push
 
 test("C: a write outside the worktree through the usual tools is danger-write-outside; the same inside is routine", () => {
   const out: string[] = [
-    `sed -i s/a/b/ ${OUT}/f`, `sed -i.bak s/a/b/ ${OUT}/f`, `sed --in-place s/a/b/ ${OUT}/f`, `sed -n 'w ${OUT}/f' a.txt`, `truncate -s 0 ${OUT}/f`, `perl -pi -e 's/a/b/' ${OUT}/f`,
+    `sed -i s/a/b/ ${OUT}/f`, `sed -i.bak s/a/b/ ${OUT}/f`, `sed --in-place s/a/b/ ${OUT}/f`, `sed -n 'w ${OUT}/f' a.txt`, `truncate -s 0 ${OUT}/f`,
     `dd if=a.txt of=${OUT}/f`, `sort -o ${OUT}/f a.txt`, `cp -t ${OUT} a.txt`, `install -m 644 a.txt ${OUT}/f`, `ln -sf a.txt ${OUT}/l`, `awk -i inplace '{print}' ${OUT}/f`,
     `patch ${OUT}/f p.diff`, `git -C ${OUT} commit -m x`, `npm --prefix ${OUT} install`, `cd ${OUT} && git commit -m x`, `rm -r ${SIB}`,
   ];
@@ -69,8 +69,11 @@ test("C: a write outside the worktree through the usual tools is danger-write-ou
   for (const l of inside) assert.notEqual(danger(l), "danger-write-outside", l);
 });
 
-test("C: an interpreter one-liner is no danger match any more (the opaque entry is gone, PR C)", () => {
-  for (const l of [`python3 -c "open('${OUT}/f','w').write('x')"`, `node -e "require('fs').writeFileSync('${OUT}/f','x')"`, `perl -e 'open F,">${OUT}/f"'`, `ruby -e 'File.write(1,2)'`]) assert.equal(danger(l), null, l);
+test("C: an interpreter one-liner is danger-inline-code (judge-first, owner decision of the PR C security round)", () => {
+  for (const l of [`python3 -c "open('${OUT}/f','w').write('x')"`, `node -e "require('fs').writeFileSync('${OUT}/f','x')"`, `perl -e 'open F,">${OUT}/f"'`, `ruby -e 'File.write(1,2)'`]) assert.equal(danger(l), "danger-inline-code", l);
+  // `perl -pi -e` onto a path outside the worktree: the one-liner is the label (the resolved outside path is the child deny set's job)
+  assert.equal(danger(`perl -pi -e 's/a/b/' ${OUT}/f`), "danger-inline-code");
+  assert.equal(danger(`perl -pi -e 's/a/b/' ${WT}/f`), "danger-inline-code");
 });
 
 test("C: a child's `cd .. && rm -r sibling` resolves to a path: no danger-write-outside (the child deny set decides)", () => {

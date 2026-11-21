@@ -229,6 +229,10 @@ const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
 // pi-subagents spawns the hook without a shell, so a script cannot run on Windows (docs/safety.md, known limits).
 const WORKTREE_HOOK_TIMEOUT_MS = 600000;
+// pi-subagents delivers a child's attention notice on every channel of control.notifyChannels (default event, async, intercom):
+// the event copy and the pi-intercom copy both start a parent turn. Only the event copy is deduped, so setup keeps that one.
+const NOTICE_CHANNELS = ["event"];
+const noticeChannelsSet = (cfg) => isObj(cfg.control) && JSON.stringify(cfg.control.notifyChannels) === JSON.stringify(NOTICE_CHANNELS);
 // Defaults for pi-intercom's config.json when it is absent: wake on every inbound message, the human's input first.
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
 const intercomHcKeys = (o) => ({ transport: "hc", ...(o.machineName ? { machineName: o.machineName } : {}) });
@@ -1302,7 +1306,19 @@ async function main(argv) {
       for (const k of ownedKeys) dropOverride(next, k);
     }
     if (next) say(unifiedDiff(path.basename(settingsFile), settingsText, toJson(next)));
-    if (!next && !Object.keys(derived).length) {
+    // pi-subagents config: only control.notifyChannels is ours here (the worktree hook stays, as before)
+    const subCfgFile = path.join(agentDir, "extensions", "subagent", "config.json");
+    const subCfgText = readText(subCfgFile);
+    const subCfg = parseJsonObject(subCfgText, subCfgFile) ?? {};
+    let subCfgNext = null;
+    if (isObj(subCfg.control) && "notifyChannels" in subCfg.control) {
+      subCfgNext = structuredClone(subCfg);
+      delete subCfgNext.control.notifyChannels;
+      if (Object.keys(subCfgNext.control).length === 0) delete subCfgNext.control;
+      say("subagent notices: removing control.notifyChannels from the subagent config");
+      say(unifiedDiff("extensions/subagent/config.json", subCfgText, toJson(subCfgNext)));
+    }
+    if (!next && !Object.keys(derived).length && !subCfgNext) {
       say("pi-foreman: up to date, nothing to remove.");
       say(`The package itself stays installed; to remove it run: ${removeLine}`);
       return;
@@ -1315,6 +1331,14 @@ async function main(argv) {
       if (Object.keys(cur).length > 0 && record && sha(cur) === record.subagentsHash) dropManaged(fresh);
       for (const k of ownedKeys) if (reserveOf(fresh, k) === derived[k]) dropOverride(fresh, k);
       writeFile(settingsFile, toJson(fresh));
+    }
+    if (subCfgNext) {
+      const freshCfg = parseJsonObject(readText(subCfgFile), subCfgFile) ?? {};
+      if (isObj(freshCfg.control)) {
+        delete freshCfg.control.notifyChannels;
+        if (Object.keys(freshCfg.control).length === 0) delete freshCfg.control;
+      }
+      writeFile(subCfgFile, toJson(freshCfg));
     }
     delete managed.entries[settingsFile];
     if (managedText !== null) writeFile(managedFile, toJson(managed));
@@ -1873,23 +1897,32 @@ async function main(argv) {
     // pi-subagents worktree setup hook: a plain node_modules copy instead of the symlink (scripts/foreman_worktree_setup.py)
     const hookFile = path.join(agentDir, "extensions", "subagent", "config.json");
     const hookLauncher = path.join(ROOT, "bin", "foreman-worktree-setup");
+    const hookText = readText(hookFile);
+    const hookCur = parseJsonObject(hookText, hookFile) ?? {};
     let hookNext = null;
+    const hookEdit = () => (hookNext ??= { ...hookCur });
     if (WIN) say("worktree setup hook: not registered on Windows (pi-subagents cannot spawn a script hook without a shell); the builder prompt and /foreman doctor guard node_modules links instead");
     else {
-      const hookText = readText(hookFile);
-      const hookCur = parseJsonObject(hookText, hookFile) ?? {};
       const ours = (v) => typeof v === "string" && /[\\/]bin[\\/]foreman-worktree-setup$/.test(v);
       const hookSet = typeof hookCur.worktreeSetupHook === "string" && hookCur.worktreeSetupHook.trim() !== "";
       const hookStale = hookSet && ours(hookCur.worktreeSetupHook) && hookCur.worktreeSetupHook !== hookLauncher && !fs.existsSync(hookCur.worktreeSetupHook);
       if (hookSet && !hookStale) say(`worktree setup hook: already set to ${hookCur.worktreeSetupHook}, left alone`);
       else {
-        hookNext = { ...hookCur, worktreeSetupHook: hookLauncher };
-        if (hookCur.worktreeSetupHookTimeoutMs === undefined) hookNext.worktreeSetupHookTimeoutMs = WORKTREE_HOOK_TIMEOUT_MS;
+        const e = hookEdit();
+        e.worktreeSetupHook = hookLauncher;
+        if (hookCur.worktreeSetupHookTimeoutMs === undefined) e.worktreeSetupHookTimeoutMs = WORKTREE_HOOK_TIMEOUT_MS;
         anyChange = true;
-        say(`worktree setup hook: ${dry ? "would write" : "writing"} worktreeSetupHook=${hookLauncher} and worktreeSetupHookTimeoutMs=${hookNext.worktreeSetupHookTimeoutMs} to ${hookFile}`);
-        say(unifiedDiff("extensions/subagent/config.json", hookText, toJson(hookNext)));
+        say(`worktree setup hook: ${dry ? "would write" : "writing"} worktreeSetupHook=${hookLauncher} and worktreeSetupHookTimeoutMs=${e.worktreeSetupHookTimeoutMs} to ${hookFile}`);
       }
     }
+    // one attention notice per child: every platform, other control keys kept
+    if (noticeChannelsSet(hookCur)) say("subagent notices: control.notifyChannels already [\"event\"]");
+    else {
+      hookEdit().control = { ...(isObj(hookCur.control) ? hookCur.control : {}), notifyChannels: [...NOTICE_CHANNELS] };
+      anyChange = true;
+      say(`subagent notices: ${dry ? "would write" : "writing"} control.notifyChannels=["event"] to ${hookFile} (the intercom copy of a child's attention notice is off, so the parent gets one)`);
+    }
+    if (hookNext) say(unifiedDiff("extensions/subagent/config.json", hookText, toJson(hookNext)));
 
     if (dry) {
       const edits = [!same && "subagents block", filtered && "pi-intercom filter", reordered && "package order", comp.changed && "compaction overrides", searchOff && "extensions"].filter(Boolean);

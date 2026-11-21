@@ -86,7 +86,7 @@ test("dry run writes nothing and runs no install", () => {
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
   assert.doesNotMatch(r.out, /would run: pi (install|remove)/);
-  assert.match(r.out, /package pi-subagents@0\.89\.0: bundled with pi-foreman/);
+  assert.match(r.out, /package pi-subagents@0\.89\.1: bundled with pi-foreman/);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
   assert.doesNotMatch(r.out, /permission-system config|gate migration/);
   assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);
@@ -328,14 +328,14 @@ test("--remove keeps a hand-edited block", () => {
   assert.deepEqual(readSettings(env).subagents.agentOverrides.builder.tools, ["read"]);
 });
 
-test("Pi outside 1.5.x is refused and nothing is written", () => {
+test("Pi outside 1.6.x is refused and nothing is written", () => {
   const env = fresh();
   seed(env);
   const before = snapshot(env.base);
   const r = run(env, [], { FAKE_PI_VERSION: "1.2.0" });
   assert.notEqual(r.code, 0);
-  assert.match(r.out, /outside the supported range 1\.5\.x/);
-  assert.match(r.out, /pi-coding-agent@1\.5\.2 \(pinned\)/);
+  assert.match(r.out, /outside the supported range 1\.6\.x/);
+  assert.match(r.out, /pi-coding-agent@1\.6\.0 \(pinned\)/);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
 });
@@ -1140,18 +1140,65 @@ test("setup registers the pi-subagents worktree setup hook when unset, keeps a h
   assert.equal(r.code, 0, r.out);
   const launcher = path.join(ROOT, "bin", "foreman-worktree-setup");
   assert.match(r.out, new RegExp(`worktreeSetupHookTimeoutMs=600000 to ${hookConfig(env).replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}`));
-  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: launcher, worktreeSetupHookTimeoutMs: 600000 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: launcher, worktreeSetupHookTimeoutMs: 600000, control: { notifyChannels: ["event"] } });
   assert.ok(fs.existsSync(launcher));
   assert.match(run(env, []).out, /up to date/);
   // a hook somebody else set is left alone
   fs.writeFileSync(hookConfig(env), `${JSON.stringify({ worktreeSetupHook: "/opt/own-hook.sh", other: 1 })}\n`);
   const r2 = run(env, []);
   assert.match(r2.out, /already set to \/opt\/own-hook\.sh, left alone/);
-  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: "/opt/own-hook.sh", other: 1 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: "/opt/own-hook.sh", other: 1, control: { notifyChannels: ["event"] } });
   // a stale path of our own launcher is repaired
   fs.writeFileSync(hookConfig(env), `${JSON.stringify({ worktreeSetupHook: "/gone/bin/foreman-worktree-setup", worktreeSetupHookTimeoutMs: 5000 })}\n`);
   run(env, []);
-  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: launcher, worktreeSetupHookTimeoutMs: 5000 });
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: launcher, worktreeSetupHookTimeoutMs: 5000, control: { notifyChannels: ["event"] } });
+});
+
+test("setup writes control.notifyChannels [event] into the subagent config, keeps other keys, on every platform", () => {
+  const env = fresh();
+  seed(env);
+  const dry = run(env, ["--dry-run"]);
+  assert.match(dry.out, /subagent notices: would write control\.notifyChannels=\["event"\]/);
+  assert.equal(fs.existsSync(hookConfig(env)), false);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")).control, { notifyChannels: ["event"] });
+  assert.match(run(env, []).out, /up to date/);
+  // a user's other control keys and top-level keys stay; a user value of notifyChannels is replaced
+  fs.writeFileSync(hookConfig(env), `${JSON.stringify({ other: 1, control: { needsAttentionAfterMs: 5, notifyChannels: ["event", "async", "intercom"] } })}\n`);
+  const r2 = run(env, []);
+  assert.equal(r2.code, 0, r2.out);
+  const cfg = JSON.parse(fs.readFileSync(hookConfig(env), "utf8"));
+  assert.deepEqual(cfg.control, { needsAttentionAfterMs: 5, notifyChannels: ["event"] });
+  assert.equal(cfg.other, 1);
+  assert.match(r2.out, /^-.*"intercom"/m);
+});
+
+test("setup keeps a worktree hook and writes the notice setting in one write", posix, () => {
+  const env = fresh();
+  seed(env);
+  fs.mkdirSync(path.dirname(hookConfig(env)), { recursive: true });
+  fs.writeFileSync(hookConfig(env), `${JSON.stringify({ worktreeSetupHook: "/opt/own-hook.sh" })}\n`);
+  assert.equal(run(env, []).code, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { worktreeSetupHook: "/opt/own-hook.sh", control: { notifyChannels: ["event"] } });
+});
+
+test("--remove drops only control.notifyChannels (and an emptied control) from the subagent config", () => {
+  const env = fresh();
+  seed(env);
+  fs.mkdirSync(path.dirname(hookConfig(env)), { recursive: true });
+  fs.writeFileSync(hookConfig(env), `${JSON.stringify({ other: 1, control: { notifyChannels: ["event"], needsAttentionAfterMs: 5 } })}\n`);
+  const dry = run(env, ["--remove", "--dry-run"]);
+  assert.match(dry.out, /removing control\.notifyChannels/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")).control, { notifyChannels: ["event"], needsAttentionAfterMs: 5 });
+  const r = run(env, ["--remove"]);
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /nothing to remove/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { other: 1, control: { needsAttentionAfterMs: 5 } });
+  fs.writeFileSync(hookConfig(env), `${JSON.stringify({ other: 1, control: { notifyChannels: ["event"] } })}\n`);
+  assert.equal(run(env, ["--remove"]).code, 0);
+  assert.deepEqual(JSON.parse(fs.readFileSync(hookConfig(env), "utf8")), { other: 1 });
+  assert.match(run(env, ["--remove"]).out, /nothing to remove/);
 });
 
 test("setup keeps the top-level bundled copies when a manifest entry does not resolve under the package root", posix, () => {
@@ -1374,18 +1421,18 @@ test("--addon polish runs the exact pi install and records managed.addons", () =
   seed(env);
   const r = run(env, ["--addon", "polish"], NO_PICKER);
   assert.equal(r.code, 0, r.out);
-  assert.deepEqual(installs(env), [["install", "npm:pi-polish@0.1.2"]]);
+  assert.deepEqual(installs(env), [["install", "npm:pi-polish@0.1.13"]]);
   const s = readSettings(env);
-  assert.ok(s.packages.includes("npm:pi-polish@0.1.2"));
+  assert.ok(s.packages.includes("npm:pi-polish@0.1.13"));
   assert.ok(s.subagents.agentOverrides, "the settings write kept the generated block next to the new package");
   const managed = JSON.parse(fs.readFileSync(managedFile(env), "utf8"));
-  assert.equal(managed.addons.polish.spec, "npm:pi-polish@0.1.2");
+  assert.equal(managed.addons.polish.spec, "npm:pi-polish@0.1.13");
   assert.match(managed.addons.polish.installedAt, /^\d{4}-\d\d-\d\dT/);
   assert.doesNotMatch(r.out, /optional add-on polish/);
   // installed now: a second consent installs nothing
   fs.rmSync(env.log);
   const again = run(env, ["--addon", "polish"], NO_PICKER);
-  assert.match(again.out, /add-on polish: already installed \(npm:pi-polish@0\.1\.2\), no command/);
+  assert.match(again.out, /add-on polish: already installed \(npm:pi-polish@0\.1\.13\), no command/);
   assert.deepEqual(installs(env), []);
 });
 
@@ -1395,7 +1442,7 @@ test("with --no-addons (the harness default) nothing is installed and the hint l
   const r = run(env, [], NO_PICKER);
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), []);
-  assert.match(r.out, /optional add-on polish: .*npm:pi-polish@0\.1\.2.*foreman setup --addon polish/);
+  assert.match(r.out, /optional add-on polish: .*npm:pi-polish@0\.1\.13.*foreman setup --addon polish/);
   assert.doesNotMatch(r.out, /optional add-on background-tasks/);
 });
 
@@ -1416,7 +1463,7 @@ test("--project --addon installs nothing when the add-on is installed globally",
   fs.mkdirSync(path.dirname(projFile2));
   fs.writeFileSync(projFile2, `${JSON.stringify({ packages: [FOREMAN] })}\n`);
   assert.equal(run(env2, ["--project", "--addon", "polish"], NO_PICKER).code, 0);
-  assert.deepEqual(installs(env2), [["install", "npm:pi-polish@0.1.2", "-l"]]);
+  assert.deepEqual(installs(env2), [["install", "npm:pi-polish@0.1.13", "-l"]]);
 });
 
 test("--remove lists installed add-ons with their pi remove lines and removes none", () => {
@@ -1440,7 +1487,7 @@ test("--dry-run with a profile and an add-on writes nothing and runs nothing", (
   assert.deepEqual(calls(env).filter((a) => a[0] !== "--version"), []);
   assert.match(r.out, /foreman\.json: would write changes/);
   assert.match(r.out, /^\+\+\+ b\/foreman\.json/m);
-  assert.match(r.out, /would run: pi install npm:pi-polish@0\.1\.2/);
+  assert.match(r.out, /would run: pi install npm:pi-polish@0\.1\.13/);
   // an absent foreman.json is not created either
   const env2 = fresh();
   seed(env2);
