@@ -60,10 +60,10 @@ function markOf(el) {
 
 // The chip of PR `n` and its disc.
 function chipOf(root, n) {
-  const chip = els(root).filter((e) => e.kind === "HoverCard").find((c) => els(c.props.trigger).some((e) => hasText(e, `⎇ #${n}`)));
+  const chip = els(root).filter((e) => e.kind === "HoverCard").find((c) => els(c.props.trigger).some((e) => hasText(e, `PR #${n}`) || hasText(e, `#${n}`)));
   assert.ok(chip, `#${n} is drawn`);
   const parts = els(chip.props.trigger);
-  return { disc: parts.find((e) => e.props.size === 6), parts };
+  return { disc: parts.find((e) => e.props?.font_semibold && e.props.text_size === 10), parts };
 }
 
 test("the docs table and the sample list the same keys", () => {
@@ -94,7 +94,7 @@ test("the sample draws the marker of every agent and session key", () => {
 test("the sample draws the marker of every PR key; the pulsing discs loop, the check mark does not", () => {
   const root = view(true).render({});
   const pr = Object.fromEntries(ROWS.filter((r) => r.pr).map((r) => [r.key, chipOf(root, r.pr)]));
-  const look = (k) => [pr[k].disc.props.bg, pr[k].disc.props.loop !== undefined];
+  const look = (k) => [pr[k].disc.props.text_color, pr[k].disc.props.loop !== undefined];
   assert.deepEqual(look("pr-draft"), ["#ansi5", false]);
   assert.deepEqual(look("pr-draft-running"), ["#ansi5", true]);
   assert.deepEqual(look("pr-running"), ["#ansi3", true]);
@@ -102,19 +102,20 @@ test("the sample draws the marker of every PR key; the pulsing discs loop, the c
   assert.deepEqual(look("pr-failed-running"), ["#blocked", true]);
   assert.deepEqual(look("pr-not-reviewed"), ["#ansi4", false]);
   assert.deepEqual(look("pr-ci-passing"), ["#ansi2", false]);
-  assert.equal(pr["pr-ready"].disc, undefined, "ready draws no disc");
-  assert.equal(pr["pr-ready"].parts.find((e) => hasText(e, "✓")).props.text_color, "#ansi2", "ready: green check mark");
+  assert.ok(hasText(pr["pr-ready"].disc, "✓ "), "ready: check mark in the badge");
+  assert.equal(pr["pr-ready"].disc.props.text_color, "#ansi2", "ready: green badge");
+  assert.equal(pr["pr-ready"].disc.props.loop, undefined);
   assert.deepEqual(look("pr-conflict")[1], false);
   assert.deepEqual(look("pr-no-checks"), ["#dim", false]);
   assert.deepEqual(look("pr-draft-failed"), ["#blocked", false]);
   assert.deepEqual(look("pr-merge-blocked"), ["#ansi3", false]);
-  assert.equal(pr["pr-draft-failed"].parts[0].props.text_color, "#blocked");
+  assert.equal(pr["pr-draft-failed"].disc.props.text_color, "#blocked");
   assert.ok(!pr["pr-not-reviewed"].parts.some((e) => hasText(e, "unreviewed head")), "the words are in the tooltip, not on the line");
   assert.ok(pr["pr-conflict"].parts.some((e) => hasText(e, "!")));
-  assert.equal(pr["pr-failed"].parts[0].props.text_color, "#blocked");
+  assert.equal(pr["pr-failed"].disc.props.text_color, "#blocked");
   // the three pulsing PR discs; no green disc pulses
   assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 3);
-  assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.bg === "#ansi2").length, 0, "no green pulse");
+  assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.text_color === "#ansi2").length, 0, "no green pulse");
   for (const k of Object.keys(pr)) assert.equal(pr[k].parts.filter((e) => e.kind === "svg").length, 0, `${k}: no spinner in a chip`);
 });
 

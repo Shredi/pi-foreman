@@ -43,7 +43,7 @@ const walk = (el, out = []) => {
 };
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
-const nums = (root) => cards(root).map((c) => Number(texts(c.props.trigger).find((s) => /^⎇ #\d+$/.test(s)).slice(3)));
+const nums = (root) => cards(root).map((c) => Number(texts(c.props.trigger).find((s) => /^#\d+$/.test(s)).slice(1)));
 const more = (root, repo) => walk(root).find((e) => e.props?.id === `opm-example-org/${repo}`);
 const head = (root, repo) => walk(root).find((e) => e.props?.id === `oph-example-org/${repo}`);
 const cx = { notify() {}, spawn() {} };

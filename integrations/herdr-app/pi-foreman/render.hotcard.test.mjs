@@ -42,7 +42,7 @@ const walk = (el, out = []) => {
 };
 const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
-const cardOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`⎇ #${n}`));
+const cardOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`#${n}`));
 const fullCards = (root) => cards(root).filter((c) => texts(c.contentEl).length > 0);
 const counter = () => { const cx = { n: 0, notify() { cx.n++; } }; return cx; };
 const hover = (root, n, cx, ev = {}) => cardOf(root, n).props.trigger.props.on_mouse_move(ev, cx);
@@ -98,9 +98,9 @@ test("a hot id whose chip is gone is cleared by the next render", () => {
 test("moving the pointer to another chip moves the hot card", () => {
   const m = mod(feed(3));
   hover(m.render({}), 100, counter());
-  assert.deepEqual(fullCards(m.render({})).map((c) => texts(c.props.trigger)[0]), ["⎇ #100"]);
+  assert.deepEqual(fullCards(m.render({})).map((c) => texts(c.props.trigger)[0]), ["#100"]);
   hover(m.render({}), 102, counter());
-  assert.deepEqual(fullCards(m.render({})).map((c) => texts(c.props.trigger)[0]), ["⎇ #102"]);
+  assert.deepEqual(fullCards(m.render({})).map((c) => texts(c.props.trigger)[0]), ["#102"]);
 });
 
 test("one notify per hot change: repeated moves in the same chip with the same anchor stay quiet", () => {

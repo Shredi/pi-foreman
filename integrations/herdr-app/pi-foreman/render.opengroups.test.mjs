@@ -57,7 +57,7 @@ const walk = (el, out = []) => {
 const cards = (root) => walk(root).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const fullCards = (root) => cards(root).filter((c) => texts(c.contentEl).length > 0);
-const cardOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`⎇ #${n}`));
+const cardOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`#${n}`));
 const groupId = (e) => /^op-example-org\//.exec(String(e.props?.id ?? ""));
 const groups = (root) => walk(root).filter(groupId);
 const group = (root, repo) => groups(root).find((g) => g.props.id === `op-example-org/${repo}`);
@@ -134,11 +134,10 @@ test("one line per PR: a HoverCard with the number and the title; no +k more any
     assert.ok(texts(c.props.trigger).includes(`Change ${n}`), `title of #${n}`);
   }
   assert.ok(noMore(root));
-  // a failing line: red number, bright title; a plain line: muted number and title
-  assert.equal(cardOf(root, 2).props.trigger.props.text_color, "#blocked");
-  assert.equal(cardOf(root, 5).props.trigger.props.text_color, "#muted");
+  // the state is the badge's colour; every title, failing or not, is in the normal foreground
+  assert.equal(walk(cardOf(root, 2).props.trigger).find((e) => e.kids?.includes("#2")).props.text_color, "#blocked");
   assert.equal(walk(cardOf(root, 2).props.trigger).find((e) => e.kids?.includes("Change 2")).props.text_color, "#foreground");
-  assert.equal(walk(cardOf(root, 5).props.trigger).find((e) => e.kids?.includes("Change 5")).props.text_color, "#muted");
+  assert.equal(walk(cardOf(root, 5).props.trigger).find((e) => e.kids?.includes("Change 5")).props.text_color, "#foreground");
   assert.ok(texts(cardOf(root, 4).props.trigger).includes("!"), "the conflict mark");
 });
 
@@ -149,7 +148,7 @@ test("groups with a failing check or a conflict come first; blue, amber and read
   assert.deepEqual(names.slice(0, 3).sort(), ["d-conflict", "f-fail", "g-fail"]);
   const rest = names.slice(3);
   assert.deepEqual(rest.filter((r) => r !== "c-blue"), ["a-ready", "b-run", "e-ready"].filter((r) => rest.includes(r)), "the others keep their relative order");
-  assert.ok(walk(cardOf(root, 3).props.trigger).some((e) => e.props?.bg === "#ansi4"), "#3 is drawn blue");
+  assert.ok(walk(cardOf(root, 3).props.trigger).some((e) => e.props?.bg === "#ansi42e"), "#3 is drawn blue");
   assert.ok(!texts(head(root, "c-blue")).some((s) => /failing|conflict/.test(s)), "a blue PR does not count as attention");
 });
 
@@ -263,8 +262,8 @@ test("a chip without a line option is a list line too, not a pill: full width, n
   const chip = m.prChip(t, pr, "https://example.test/x/pull/7", "k");
   const p = chip.props.trigger.props;
   assert.equal(chip.props.trigger.kind, "h_flex");
-  assert.deepEqual([p.h, p.px, p.rounded, p.border, p.bg, p.text_color, p.w_full], [18, 4, 4, undefined, undefined, "#blocked", true]);
-  assert.deepEqual(texts(chip.props.trigger), ["⎇ #7"]);
+  assert.deepEqual([p.h, p.px, p.rounded, p.border, p.bg, p.text_color, p.w_full], [18, 4, 4, undefined, undefined, "#muted", true]);
+  assert.deepEqual(texts(chip.props.trigger), ["#7"]);
 });
 
 test("lines with and without a conflict or an unreviewed head share one structure up to the title; an unreviewed PR has no token, only the blue dot", () => {
@@ -273,11 +272,11 @@ test("lines with and without a conflict or an unreviewed head share one structur
   const kidsOf = (n) => cardOf(root, n).props.trigger.kids;
   for (const n of [1, 2, 3]) {
     const [num, marks, title] = kidsOf(n);
-    assert.equal(num.props.w, 52, `#${n} number cell`);
-    assert.equal(marks.props.w, 30, `#${n} marks cell has a fixed width`);
+    assert.equal(num.props.w, 60, `#${n} number cell`);
+    assert.equal(marks.props.w, 11, `#${n} conflict slot has a fixed width`);
     assert.equal(marks.props.flex_none, true);
-    assert.equal(marks.kids.length, 2, `#${n}: conflict slot and dot`);
-    assert.equal(marks.kids[0].props.size, 11, `#${n}: the slot has the mark's width`);
+    assert.equal(marks.kids.length, 1, `#${n}: the conflict slot only`);
+    assert.equal(marks.kids[0].props.size === 11 || marks.kids[0].kids?.[0] === "!", true, `#${n}: the slot has the mark's width`);
     assert.deepEqual(texts(title), [`Change ${n}`], `#${n}: the title is the third element`);
   }
   assert.deepEqual(texts(kidsOf(2)[1]), ["!"]);
@@ -285,5 +284,5 @@ test("lines with and without a conflict or an unreviewed head share one structur
   assert.equal(kidsOf(2).length, 3);
   assert.equal(kidsOf(3).length, 3, "no token behind the title");
   assert.ok(!texts(root).includes("unreviewed head"));
-  assert.ok(walk(kidsOf(3)[1]).some((e) => e.props?.bg === "#ansi4"), "the blue dot");
+  assert.ok(walk(kidsOf(3)[0]).some((e) => e.props?.bg === "#ansi42e" && e.props.text_color === "#ansi4"), "the blue badge");
 });

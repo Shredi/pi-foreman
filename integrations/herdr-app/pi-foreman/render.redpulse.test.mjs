@@ -39,18 +39,18 @@ function render(doc = DOC) {
   return m.render({});
 }
 
-// The chip of PR `n`: the HoverCard whose trigger draws "⎇ #n"; its disc: the 6px element with the fill.
-const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes(`⎇ #${n}`)));
-const dotOf = (chip) => walk(chip.props.trigger).find((e) => e.props.size === 6);
+// The chip of PR `n`: the HoverCard whose trigger draws "PR #n"; its badge: the number element in the state colour.
+const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => ["PR #" + n, "#" + n].some((l) => (e.kids ?? []).includes(l))));
+const dotOf = (chip) => walk(chip.props.trigger).find((e) => e.props?.font_semibold && e.props.text_size === 10);
 
 test("the red disc of a failed PR with a job running carries the loop", () => {
   const dot = dotOf(chipOf(render(), 71));
-  assert.equal(dot.props.bg, "#blocked", "red");
+  assert.equal(dot.props.text_color, "#blocked", "red");
   assert.deepEqual(dot.props.loop, ["opacity", { from: 0.35, to: 1, period: 1200 }]);
 });
 
 test("the red disc of a failed PR whose jobs are all finished stands still", () => {
   const dot = dotOf(chipOf(render(), 72));
-  assert.equal(dot.props.bg, "#blocked", "red");
+  assert.equal(dot.props.text_color, "#blocked", "red");
   assert.equal(dot.props.loop, undefined, "#72 does not pulse");
 });
