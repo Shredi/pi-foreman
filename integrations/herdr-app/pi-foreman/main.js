@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prGateText, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prGateText, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
@@ -84,8 +84,6 @@ function prBadge(t, st, label) {
 }
 
 // An Open PRs line needs attention when a finished check failed (its dot is red) or the PR conflicts with its base (the conflict mark).
-// The badge cell of a PR line: the number cell plus room for the badge (and its check mark); the session form ("PR #n") is wider than the list form ("#n").
-const badgeCellWidth = (prs, form) => numberCellWidth(prs) + (form === "session" ? 32 : 8);
 const prFailing = (pr) => prDotState(pr).fill === "red";
 const prConflict = (pr) => prDotState(pr).conflict === true;
 
@@ -502,7 +500,7 @@ export default class ForemanAgents extends View {
   }
 
   // A PR is a line: the number in a badge (its colour is the state), the conflict mark, the title. A click opens its page when radar gave a URL (or a repository URL to
-  // derive it from). Resting on the line opens the hover card; the tooltip names the state in words. `line` is {title, numW}: the title and the width of the number cell.
+  // derive it from). Resting on the line opens the hover card; the tooltip names the state in words. `line` is {title, form}: the title and the form (`session` labels `PR #n`, `list` labels `#n`).
   prChip(t, pr, href, key, line = {}) {
     return this.prGuard(() => this.prChipRaw(t, pr, href, key, line), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
   }
@@ -510,11 +508,11 @@ export default class ForemanAgents extends View {
   prChipRaw(t, pr, href, key, line) {
     const st = prDotState(pr);
     const label = `${line.form === "session" ? "PR " : ""}#${pr.number}`;
-    // The number cell has a fixed width and so has the conflict slot (blank without a conflict), so the titles stand at one x.
+    // Badge, the conflict mark only when the PR conflicts, the title right after: no width cell, so no column of titles.
     const chip = h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
       .text_color(t.muted)
-      .child(h_flex().flex_none().w(line.numW ?? badgeCellWidth([pr], line.form)).items_center().child(prBadge(t, st, label)))
-      .child(h_flex().flex_none().w(11).items_center().child(st.conflict ? conflictMark(t) : div().flex_none().size(11)))
+      .child(h_flex().flex_none().items_center().child(prBadge(t, st, label)))
+      .when(st.conflict, (el) => el.child(h_flex().flex_none().items_center().child(conflictMark(t))))
       .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.foreground).child(line.title)))
       .when(Boolean(prGateText(pr)), (el) => el.child(div().flex_none().text_color(pr.gate.state === "failed" ? t.blocked : t.dim).child(prGateText(pr))));
     const id = `pr-${key}-${pr.number}`;
@@ -582,9 +580,8 @@ export default class ForemanAgents extends View {
   // The PRs of a session row: one line each (number badge, conflict mark, title), in sorted order, indented like the row's sub-rows. Hover and click are the line's.
   prLines(t, item, below, ind) {
     const lines = this.enrich(below);
-    const numW = badgeCellWidth(lines, "session");
     return v_flex().flex_none().pl(ind + 20).pr(8).gap(1)
-      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "", numW, form: "session" })));
+      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "", form: "session" })));
   }
 
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
@@ -803,10 +800,9 @@ export default class ForemanAgents extends View {
     // failing, then the rest in order, then "+N more" until a click shows all.
     const capped = (failing > 0 || conflicts > 0) && n > OPEN_PR_GROUP_LINES && !this.expanded.has(g.repo);
     const shown = capped ? [...prs.filter(prConflict), ...prs.filter((p) => !prConflict(p) && prFailing(p)), ...prs.filter((p) => !prConflict(p) && !prFailing(p))].slice(0, OPEN_PR_GROUP_LINES) : prs;
-    const numW = badgeCellWidth(prs, "list");
     const more = (_e, cx) => { this.expanded.add(g.repo); cx.notify(); };
     return group.child(v_flex().flex_none().pl(20).pr(8).gap(1)
-      .children(shown.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "", numW, form: "list" })))
+      .children(shown.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "", form: "list" })))
       .when(capped, (el) => el.child(h_flex().id(`opm-${g.repo}`).flex_none().h(18).px(4).items_center().rounded(4).cursor_pointer().text_size(10.5).text_color(t.dim)
         .hover((x) => x.bg(t.hover)).on_click(more).child(`+${n - shown.length} more`))));
   }

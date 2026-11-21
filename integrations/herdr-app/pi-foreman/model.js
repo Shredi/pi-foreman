@@ -1555,12 +1555,6 @@ export function prCardKey(pr) {
     pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(","), gate, pr.gated === true ? 1 : 0].join("|");
 }
 
-/** Width in px of the number cell of a PR line: 52 for numbers up to 4 digits, 7 more for each further digit of the widest number in `prs`. */
-export function numberCellWidth(prs) {
-  const digits = Math.max(0, ...listOf(prs).map((p) => String(int(p?.number) ?? "").length));
-  return 52 + 7 * Math.max(0, digits - 4);
-}
-
 /** Data of the hover card: title, description excerpt, conflict line, counts, and the jobs grouped failed / running / waiting / passed,
  *  at most CARD_CAP names per group then `more`. The waiting group (the required checks a passed PR waits on) shows only in the `required` pill. */
 export function prCard(pr) {

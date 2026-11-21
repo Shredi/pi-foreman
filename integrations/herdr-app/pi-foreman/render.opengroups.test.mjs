@@ -266,23 +266,18 @@ test("a chip without a line option is a list line too, not a pill: full width, n
   assert.deepEqual(texts(chip.props.trigger), ["#7"]);
 });
 
-test("lines with and without a conflict or an unreviewed head share one structure up to the title; an unreviewed PR has no token, only the blue dot", () => {
+test("lines with and without a conflict or an unreviewed head differ only by the conflict mark before the title; an unreviewed PR has no token, only the blue dot", () => {
   const spec = [["alpha", 1, "ok"], ["alpha", 2, "conflict"], ["alpha", 3, "ok"]];
   const root = mod(docOf(spec, [3])).render({});
   const kidsOf = (n) => cardOf(root, n).props.trigger.kids;
   for (const n of [1, 2, 3]) {
-    const [num, marks, title] = kidsOf(n);
-    assert.equal(num.props.w, 60, `#${n} number cell`);
-    assert.equal(marks.props.w, 11, `#${n} conflict slot has a fixed width`);
-    assert.equal(marks.props.flex_none, true);
-    assert.equal(marks.kids.length, 1, `#${n}: the conflict slot only`);
-    assert.equal(marks.kids[0].props.size, 11, `#${n}: the slot has the mark's width`);
-    assert.deepEqual(texts(title), [`Change ${n}`], `#${n}: the title is the third element`);
+    const kids = kidsOf(n);
+    const [num] = kids, title = kids.at(-1);
+    assert.equal(num.props.w, undefined, `#${n}: no fixed-width number cell`);
+    assert.deepEqual(texts(title), [`Change ${n}`], `#${n}: the title is the last element`);
+    assert.equal(kids.length, n === 2 ? 3 : 2, `#${n}: a conflict mark only when it conflicts`);
   }
   assert.deepEqual(texts(kidsOf(2)[1]), ["!"]);
-  assert.equal(kidsOf(1).length, 3);
-  assert.equal(kidsOf(2).length, 3);
-  assert.equal(kidsOf(3).length, 3, "no token behind the title");
   assert.ok(!texts(root).includes("unreviewed head"));
   assert.ok(walk(kidsOf(3)[0]).some((e) => e.props?.bg === "#ansi42e" && e.props.text_color === "#ansi4"), "the blue badge");
 });
