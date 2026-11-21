@@ -96,3 +96,35 @@ test("re-review line: with an items field the line lists the failed items that f
   const same = await a.reviewLaunch("review items 1 and 2 of the diff", { items: [1, 2] });
   assert.match(same.task, /\[re-review items: 1\]/);
 });
+
+// finding 131: the ledger block of a review task that cites items lists the items the launch's review_verdict takes
+const LEDGER10 = `# Ledger: x\nTier: standard\n\n${Array.from({ length: 10 }, (_, i) => `- [ ] ${i + 1}. thing ${i + 1}`).join("\n")}\n`;
+const blockIds = (task: string): string[] => [...(/\[pi-foreman ledger items\][^\n]*\n([\s\S]*?)\[end of ledger items\]/.exec(task)?.[1] ?? "").matchAll(/\[ \] (\d+)\./g)].map((m) => m[1]);
+
+test("finding 131: a task citing 8, 9, 10 with items [4, 6, 10] gets a block of 4, 6, 10 and the tail line", async (t) => {
+  const w = world(t);
+  const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER10);
+  const r = await a.reviewLaunch("review items 8, 9 and 10 of the diff", { items: [4, 6, 10] });
+  assert.equal(r.blocked, null, String(r.blocked));
+  assert.deepEqual(blockIds(r.task), ["4", "6", "10"]);
+  assert.deepEqual(idsOf(r.task), [4, 6, 10]);
+});
+
+test("finding 131: a task citing nothing keeps the whole ledger; a task citing items without an items field keeps its cited block", async (t) => {
+  const w = world(t);
+  const a = await w.adapter("startup");
+  await a.writeLedger(LEDGER10);
+  const plain = await a.reviewLaunch("review the diff", { items: [4, 6] });
+  assert.match(plain.task, /\[pi-foreman ledger\] The ledger of this round/);
+  assert.match(plain.task, /- \[ \] 9\. thing 9/);
+  const cited = await a.reviewLaunch("review items 2 and 3 of the diff");
+  assert.deepEqual(blockIds(cited.task), ["2", "3"]);
+});
+
+test("finding 131: a high-stakes launch (no allowed items) keeps the cited block", async () => {
+  const { reviewLedgerBlock } = await import("../ledgerblock.ts");
+  const ids = (b: string) => [...b.matchAll(/\[ \] (\d+)\./g)].map((m) => m[1]);
+  assert.deepEqual(ids(reviewLedgerBlock(LEDGER10, "review items 8, 9 and 10", null, allowedItems([4, 6], true))), ["8", "9", "10"]);
+  assert.deepEqual(ids(reviewLedgerBlock(LEDGER10, "review items 8, 9 and 10", null, [4, 6])), ["4", "6"]);
+});

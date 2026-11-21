@@ -23,13 +23,11 @@ const GUARD = /git[ -]?guard/i;
 for (const child of [false, true]) {
   const who = child ? "child" : "main";
 
-  test(`${who}: the unreadable lines sh -c "$X" and python3 -c naming git are no allow and not on the judge-first list (they run), with no guard text`, { skip: posixOnly }, () => {
+  test(`${who}: the unreadable lines sh -c "$X" and python3 -c naming git are judge-first (danger-inline-code), no allow and no floor, with no guard text`, { skip: posixOnly }, () => {
     for (const l of ['sh -c "$X"', "python3 -c \"import subprocess; subprocess.run(['git','status'])\""]) {
       const o = run(l, child);
       assert.equal(res(o).block, undefined, `${l}: ${JSON.stringify(o.result)}`);
-      assert.equal(res(o).ask, undefined, l);
-      assert.equal(o.result, undefined, l);
-      assert.equal(o.danger, null, `${l}: ${JSON.stringify(o.danger)}`);
+      assert.equal(o.danger?.name, "danger-inline-code", `${l}: ${JSON.stringify(o.danger)}`);
       assert.doesNotMatch(JSON.stringify(o), GUARD, l);
     }
   });

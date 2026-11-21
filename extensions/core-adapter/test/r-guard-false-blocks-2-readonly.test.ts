@@ -140,7 +140,9 @@ for (const mode of ["auto", "allow"]) {
     for (const line of LABELED) {
       const builder = await labeledOutcome(t, "builder", mode, line);
       for (const role of ROLES) assert.equal(await labeledOutcome(t, role, mode, line), builder, `${role} (${mode}): ${line}`);
-      if (mode === "allow") assert.equal(builder, "run", `a builder runs it in mode allow: ${line}`);
+      // `ssh host true` is judge-first since the PR C security round (danger-remote), no run
+      if (line === "ssh host true") assert.match(builder, /danger-remote/, `the judge reads it (the stub verdict is no clear, so it asks): ${line}`);
+      else if (mode === "allow") assert.equal(builder, "run", `a builder runs it in mode allow: ${line}`);
     }
   });
 }

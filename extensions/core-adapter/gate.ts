@@ -95,7 +95,7 @@ const dangerOfFloor = (h: FloorHit | null | undefined): DangerHit | null => (h?.
 /** A self-modification hit: a child is denied outright (with what to report), every other session kind is asked. */
 function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
   if (!h) return undefined;
-  if (child) return { block: true, rule: h.rule, layer: "floor", reason: `pi-foreman: self-modification rule ${h.rule}: ${h.reason}. Children cannot make this change; report this line to the foreman and continue with what you can.` };
+  if (child) return { block: true, rule: h.rule, layer: "floor", reason: `pi-foreman: self-modification rule ${h.rule}: ${h.reason}. Children cannot make this change; report this line to the foreman and continue with what you can.${h.rule === "selfmod-state-read" ? " On a re-review, the earlier findings are in your task under [pi-foreman earlier findings]; ask the foreman for any other report." : ""}` };
   return { ask: true, rule: h.rule, reason: h.reason, cause: "selfmod" };
 }
 
@@ -523,7 +523,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const scan = h?.kind === "deny" ? null : scanToolFloor(toolName, nin, cwd, env);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       const hs = strongerHit(h, scan);
-      if (!roots) return decided(h ? askFromFloor(h) : undefined);
+      if (!roots) return decided(hs ? askFromFloor(hs) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
       if (roots.child) {

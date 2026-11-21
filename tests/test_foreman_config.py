@@ -659,6 +659,11 @@ class PackageFilesTest(unittest.TestCase):
         want = expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch).replace(old_ask, new_ask)
         for old_text, new_text in role_pairs:
             want = want.replace(old_text, new_text)
+        # D117: a commit of the reviewed files unchanged keeps the PASS; one order is stated (the (current, new) pair after the roles-slim pairs)
+        old_order = 'Review is the last step before the PR: a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR.'
+        new_order = 'Review is the last step before the PR: commit exactly the reviewed files, push, then open the PR; a commit that adds or changes anything after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR.'
+        self.assertIn(old_order, want)
+        want = want.replace(old_order, new_order)
         want = review_loop_rewrite(want)
         self.assertEqual(render_prompt(text, knobs), want)
 

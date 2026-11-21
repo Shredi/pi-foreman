@@ -25,19 +25,20 @@ test("a [high-stakes] FAIL of a sibling worktree is restored after a reload with
 
   await a.down();
   const b = await w.adapter("reload"); // the state is restored from the persisted entry
-  assert.match(await pr(b), /\[pr_refused:high_stakes_failed\]/, "the FAIL is recorded");
-  assert.ok((await pr(b)).includes(`in the checkout ${sib}`), "for the sibling checkout");
+  assert.match(await pr(b, { head: "sib" }), /\[pr_refused:high_stakes_failed\]/, "the FAIL is recorded");
+  assert.ok((await pr(b, { head: "sib" })).includes(`in the checkout ${sib}`), "for the sibling checkout");
+  assert.equal(await pr(b), "", "a PR from the own checkout is not held by it (D129)");
 
   // a revision and a normal PASS in the own checkout do not clear it
   commitIn(w.project, "src/a/own.ts");
   await build(b);
-  assert.match(await pr(b), /\[pr_refused:high_stakes_failed\]/, "a normal PASS in the own checkout does not clear it");
+  assert.match(await pr(b, { head: "sib" }), /\[pr_refused:high_stakes_failed\]/, "a normal PASS in the own checkout does not clear it");
   assert.match(await settle(b), /FAILED/);
 
   // a revision and a normal PASS in the sibling do
   commitIn(sib, "src/b/fix.ts");
   await build(b, {}, sib);
-  assert.doesNotMatch(await pr(b), /high_stakes_failed/, "cleared in the checkout it ran in");
+  assert.doesNotMatch(await pr(b, { head: "sib" }), /high_stakes_failed/, "cleared in the checkout it ran in");
   assert.equal(git(sib, "rev-parse", "--is-inside-work-tree"), "true");
   assert.ok(fs.existsSync(path.join(sib, "src/b/fix.ts")));
 
