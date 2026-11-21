@@ -111,6 +111,8 @@ export interface LaunchedRun {
   role: string;
   /** Base model id (`<provider>/<model>`, level dropped), or null when it was not known. */
   model: string | null;
+  /** Set when the launch named `model` explicitly and the rank policy honoured it (not the role map's model): a resume keeps it while it stays allowed. */
+  explicitModel?: true;
 }
 export type RunRegistry = Map<string, LaunchedRun>;
 
@@ -139,7 +141,7 @@ export function endActive(active: Set<string>, data: unknown): void {
  * (`agent`, no `tasks`/`chain`); a resume inherits the record of the run it resumed (the live-state row
  * follows it the same way, ChildRuns.onResumed).
  */
-export function recordLaunch(runs: RunRegistry, input: unknown, details: unknown, isError: boolean): void {
+export function recordLaunch(runs: RunRegistry, input: unknown, details: unknown, isError: boolean, explicitModel = false): void {
   if (isError || !isObj(input) || !isObj(details)) return;
   const id = typeof details.runId === "string" && details.runId ? details.runId : typeof details.asyncId === "string" && details.asyncId ? details.asyncId : null;
   if (!id) return;
@@ -153,7 +155,7 @@ export function recordLaunch(runs: RunRegistry, input: unknown, details: unknown
   if (Array.isArray(input.tasks) || Array.isArray(input.chain) || input.workflow !== undefined) return;
   if (typeof input.agent !== "string" || input.agent === "") return;
   const model = typeof input.model === "string" && input.model ? splitLevel(input.model).base : null;
-  runs.set(id, { role: input.agent, model });
+  runs.set(id, { role: input.agent, model, ...(explicitModel && model !== null ? { explicitModel: true as const } : {}) });
 }
 
 /**
@@ -203,6 +205,8 @@ export interface ActionContext {
   maxThinking: unknown;
   /** The high-stakes state (D144): whether a run id is a high-stakes run, and the model configured for it now (null: none). A high-stakes run is held to that model, not the role map's. */
   hs?: { run: (id: string) => boolean; model: string | null; ranOn?: (id: string) => string | null };
+  /** Whether an explicit launch model is still allowed for the role now (ranks.ts explicitModelAllowed); without it a run with an explicit model is refused. */
+  explicitAllowed?: (role: string, model: string) => boolean;
 }
 
 /** Result of the action check: a block reason, or a pass (with a note when a loosening key let it through). */
@@ -290,6 +294,11 @@ function resumeCheck(input: Json, c: ActionContext): ActionDecision {
   if (c.resolution.source !== "cli" || !c.resolution.provider) return fresh(known.role, "the role map is not resolved for an active provider");
   const now = launchModel(known.role, c.resolution.roles, undefined, c.maxThinking);
   if (!now) return fresh(known.role, `role '${known.role}' has no model for provider '${c.resolution.provider}'`);
+  if (known.explicitModel) {
+    // the launch named its model and the rank policy honoured it: the resume keeps it while it is still allowed (the map's model does not matter)
+    if (c.explicitAllowed?.(known.role, known.model) === true) return {};
+    return fresh(known.role, `run '${target}' ran on ${known.model}, an explicit model that the rank policy no longer allows for ${known.role}`);
+  }
   const mapped = splitLevel(now.model).base;
   const strong = launchModel(known.role, c.resolution.roles, "strong", c.maxThinking);
   if (mapped !== known.model && (!strong || splitLevel(strong.model).base !== known.model)) return fresh(known.role, `run '${target}' ran on ${known.model}, the role map now gives ${mapped}`);

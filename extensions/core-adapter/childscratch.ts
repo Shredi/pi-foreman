@@ -313,6 +313,8 @@ export class ChildScratch {
   private launches = new Map<string, { dir: string; role: string }>();
   private runs = new Map<string, string>();
   private ended: string[] = [];
+  /** Launches whose dir was taken at a run end: a resume of that launch makes the dir again at the same path. */
+  private finished = new Map<string, { dir: string; role: string }>();
 
   add(launchId: string, dir: string, role: string): void {
     this.launches.set(launchId, { dir, role });
@@ -338,6 +340,10 @@ export class ChildScratch {
     return null;
   }
 
+  has(launchId: string): boolean {
+    return this.launches.has(launchId);
+  }
+
   /** The scratch dir of a live run, else undefined. */
   dirOfRun(runId: string): string | undefined {
     const id = this.runs.get(runId);
@@ -347,7 +353,16 @@ export class ChildScratch {
   take(launchId: string): { dir: string; role: string } | undefined {
     const e = this.launches.get(launchId);
     this.launches.delete(launchId);
+    if (e) {
+      this.finished.set(launchId, e);
+      if (this.finished.size > 200) this.finished.delete(this.finished.keys().next().value as string);
+    }
     return e;
+  }
+
+  /** The dir and role of a launch that was finished (removed or kept) earlier, else undefined. */
+  finishedLaunch(launchId: string): { dir: string; role: string } | undefined {
+    return this.finished.get(launchId);
   }
 
   /** Live scratch dirs, of one role when given (a forwarded ask names only its role). */
@@ -510,6 +525,27 @@ export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b:
   if (out) b.out = out;
   const keep = out ? ` Logs and results that must outlive the run go to ${out} (env $${OUT_ENV}); the harness keeps it for 7 days.` : "";
   if (typeof input.task === "string") input.task = `${input.task}\n\n${scratchPromptBlock(dir)}${keep}`;
+}
+
+/**
+ * A resume of a launch whose scratch dir the first run's end removed: the resumed child keeps the first launch's env
+ * (`FOREMAN_SCRATCH`), so the dir is made again at that path and registered, to be removed when the resumed run ends.
+ * Returns the launch id when the dir exists afterwards, else null.
+ */
+export function resumeScratch(h: ScratchHost, launchId: string, deps: ScratchFs = {}): string | null {
+  const e = h.scratch.finishedLaunch(launchId);
+  if (!e) return h.scratch.has(launchId) ? launchId : null;
+  if (!fs.existsSync(e.dir)) {
+    try {
+      fs.mkdirSync(e.dir, { mode: 0o700 });
+    } catch {
+      h.trace?.emit({ event: "child_scratch", role: e.role, action: "unavailable" });
+      return null;
+    }
+    if (!ownDir(e.dir, deps)) return null;
+  }
+  h.scratch.add(launchId, e.dir, e.role);
+  return launchId;
 }
 
 /**

@@ -221,6 +221,42 @@ export function readRecordFile(dir: string, launchId: string, allowed: readonly 
   return parseRecord(raw, launchId, allowed);
 }
 
+/** A resume's allowed items (a launch's binding is read once at child start): the foreman writes them here, the child's `review_verdict` reads them per call. */
+export const ITEMS_FILE = "items.json";
+
+/** Write the items a resumed review run's `review_verdict` takes into the record folder (atomic; throws the OS error). */
+export function writeItemsSidecar(dir: string, items: readonly ItemId[]): void {
+  const tmp = path.join(dir, `.items-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify({ v: 1, items }), { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(tmp, path.join(dir, ITEMS_FILE));
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // best effort
+    }
+    throw err;
+  }
+}
+
+/** The items of a resume's sidecar, else null (no file, or one that is not `{v:1, items}` with valid ids). */
+export function readItemsSidecar(dir: string): ItemId[] | null {
+  try {
+    const j: unknown = JSON.parse(fs.readFileSync(path.join(dir, ITEMS_FILE), "utf8"));
+    if (!isObj(j) || j.v !== 1 || !Array.isArray(j.items) || j.items.length > MAX_ITEMS) return null;
+    const out: ItemId[] = [];
+    for (const r of j.items) {
+      const id = itemIdOf(r);
+      if (id === null) return null;
+      if (!out.includes(id)) out.push(id);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 export const consumedName = (runId: string): string => `verdict.${safe(runId)}.json`;
 
 /** After the read: `verdict.json` becomes `verdict.<runId>.json`, so a resumed run must call the tool again to count. Best effort. */
