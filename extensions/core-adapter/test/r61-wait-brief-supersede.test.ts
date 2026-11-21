@@ -1,11 +1,11 @@
 import { mock, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { LiveState, liveDir } from "../livestate.ts";
 import { WaitRuntime, registerWait } from "../wait.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const LIMITS: WaitLimits = { batchWindowSeconds: 0, maxSeconds: 86400, maxActive: 4, ci: true };
 
@@ -72,7 +72,7 @@ test("a ruling-named file wait is a plain file wait: no file, no wake", () => {
 test("regression: a resolved or cancelled wait fires changed once and the next presence file no longer lists it", async () => {
   delete process.env.PI_SUBAGENT_CHILD;
   mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] });
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "r61w-"));
+  const agentDir = trackedTmp("r61w-");
   let tool!: { execute: (...a: unknown[]) => Promise<{ details: Record<string, unknown> }> };
   const pi = { on: () => undefined, registerTool: (t: never) => (tool = t), sendMessage: () => undefined };
   const session = { id: "s1", isChild: false, cwd: agentDir, agentDir, roots: null, config: () => ({}), trace: () => undefined };

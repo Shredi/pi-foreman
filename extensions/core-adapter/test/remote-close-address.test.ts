@@ -4,7 +4,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RemoteWatcher, usableAddress, watchState } from "../remotewatch.ts";
@@ -14,8 +13,9 @@ import type { SessionDeps, SessionEntry } from "../session.ts";
 import type { SpawnResult } from "../spawn.ts";
 import { WaitRuntime } from "../wait.ts";
 import type { Outcome } from "../wait.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-raddr-")));
+const root = fs.realpathSync.native(trackedTmp("pf-raddr-"));
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TABLE = JSON.parse(fs.readFileSync(path.join(here, "..", "..", "..", "tests", "fixtures", "remote-address-cases.json"), "utf8"));
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";

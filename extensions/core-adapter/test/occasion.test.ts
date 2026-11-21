@@ -1,8 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { entryOccasions, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd } from "../occasion.ts";
 import { composePanelBlock, parseShadowMarker, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type PendingView } from "../panel.ts";
 import { findingId, onReviewRunEnd, type RecordRunner } from "../findings.ts";
@@ -10,6 +8,7 @@ import { sanitizeTrace } from "../trace.ts";
 import { reviewVerdictsOfRunEnd } from "../bound.ts";
 import { reviewsWithOutput } from "../reviews.ts";
 import { recordFrom, type RecSpec } from "./_verdict-rig.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PANEL = { ladder: { reviewPanel: { shadows: ["p/m-a:high", "p/m-b"], gates: ["pre-pr"], visible: true } } };
 const shadowOpts = (config: Record<string, unknown> = PANEL) => ({ config, isChild: false, maxThinking: "medium", childMaxThinking: undefined, refused: (m: string) => (m.startsWith("p/m-b") ? "rank says no" : null) });
@@ -54,7 +53,7 @@ test("second-opinion and shadow verdicts do not count: no item marks, gate verdi
   assert.deepEqual(many.map((r) => r.verdict), [null, null]);
 });
 
-const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-occ-"));
+const tmp = (): string => trackedTmp("pf-occ-");
 const ctx = (runId: string) => ({ session: "S", agentDir: "/agent", runId, cwd: "/repo", head: "abc", live: "p/m-haiku", now: 5000 });
 
 test("run end: the record call gets the report on stdin and a file list; a finding of the verdict record is traced; a climbed launch records rung 1", async () => {

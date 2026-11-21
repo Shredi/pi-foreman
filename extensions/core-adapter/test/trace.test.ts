@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { openTrace, sanitizeTrace, traceFile, TRACE_FIELDS } from "../trace.ts";
 import { sessionTrace } from "../retro.ts";
 import { BINDINGS_ENV, bindLaunch, readBinding } from "../usage.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 test("trace: a protected_check allow record keeps command, rule, entry and globs", () => {
   const out: Record<string, unknown> = sanitizeTrace({ event: "protected_check", rule: "protected:P1", entries: "P1", globs: "prod-*.example.net", entry: "D1", accepted: "allow", command: "ssh prod-1 uptime" });
@@ -62,7 +62,7 @@ test("trace: only an overlay deny carries its (redacted) command; the ask event 
 });
 
 test("trace: disabled writes nothing; enabled writes one sanitized JSONL line per event", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-trace-"));
+  const dir = trackedTmp("pf-trace-");
   assert.equal(openTrace({ enabled: false, dir: null, stateDir: dir, sessionId: "s1" }), null);
   assert.equal(openTrace({ enabled: "true", dir: null, stateDir: dir, sessionId: "s1" }), null);
   const w = openTrace({ enabled: true, dir: null, stateDir: dir, sessionId: "s/1", now: () => new Date(0) })!;
@@ -87,7 +87,7 @@ test("trace: a bound child traces when the parent's retro is on, to trace-<launc
   assert.equal(sessionTrace(null, null, "json", "c", { ...b, retro: undefined }).enabled, false); // parent retro off
   assert.equal(sessionTrace(true, null, "json", "c", { ...b, retro: undefined }).enabled, true);
   assert.deepEqual(sessionTrace(null, null, "tui", "s1", null), { enabled: true, id: "s1" }); // foreman: unchanged
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-trace-"));
+  const dir = trackedTmp("pf-trace-");
   const w = openTrace({ enabled: t.enabled, dir: null, stateDir: dir, sessionId: t.id, base: t.base, now: () => new Date(0) })!;
   assert.equal(w.file, traceFile(null, dir, "L1-ab"));
   w.emit({ event: "ask", guard: "ledger_guard_spawn", toolFamily: "Bash", decision: "no-ui" });

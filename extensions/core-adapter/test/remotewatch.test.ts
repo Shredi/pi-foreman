@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { applyEvent, applyGet, commit, fail, fetchTimeoutMs, mapHcState, parseEvents, parseNoticeLabel, pollPlan, RemoteWatcher, remotePath, runHc, watchState } from "../remotewatch.ts";
 import type { HcResult, HcRun, WatchState } from "../remotewatch.ts";
@@ -10,8 +9,9 @@ import { readRegistry, writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
 import { WaitRuntime } from "../wait.ts";
 import type { Outcome } from "../wait.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-rwatch-")));
+const root = fs.realpathSync.native(trackedTmp("pf-rwatch-"));
 const sha = (b: Buffer | string): string => crypto.createHash("sha256").update(b).digest("hex");
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 const HANDOFF = "/home/u/.pi/handoff/20261103-120000-demo";

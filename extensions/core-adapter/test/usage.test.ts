@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { aggregate, appendUsage, BINDINGS_ENV, bindLaunch, stripBinding, causeOfCustom, causeOfInput, filterWorkspace, formatSummary, keepSection, launchKind, parseLines, readBinding, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "../usage.ts";
 import type { LaunchBinding, LineContext } from "../usage.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const MSG = {
   role: "assistant",
@@ -26,7 +26,7 @@ test("usage line: all fields, four token kinds and four cost parts kept apart", 
 });
 
 test("usage file: appended one line per call, never rewritten; IO errors return false", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-usage-"));
+  const dir = trackedTmp("pf-usage-");
   const file = usageFile(dir, "fs/1");
   assert.equal(file, path.join(dir, "pi-foreman", "state", "usage", "fs1.jsonl"));
   assert.ok(appendUsage(file, usageLine(CTX, MSG)));
@@ -75,7 +75,7 @@ test("MINOR-11: a foreman-supplied pi-foreman binding is stripped from every sub
 });
 
 test("aggregate: per role and per model, token kinds and cost parts separate, launches by kind; workspace filter", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-usage-"));
+  const dir = trackedTmp("pf-usage-");
   const fm: LineContext = { workspace: "/w/a", foremanSession: "fs1", role: "foreman", launchId: null, kind: "foreman" };
   appendUsage(usageFile(dir, "fs1"), usageLine(fm, MSG));
   appendUsage(usageFile(dir, "fs1"), usageLine(fm, MSG));

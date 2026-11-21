@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseShell } from "../psunits.ts";
@@ -9,6 +8,7 @@ import { readBaseline } from "../baseline.ts";
 import { GRAMMAR, resolveVars } from "../shellvars.ts";
 import { effectCtx } from "../effects.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const fx = JSON.parse(fs.readFileSync(path.join(PKG, "tests", "fixtures", "shellvars-cases.json"), "utf8")) as {
@@ -32,7 +32,7 @@ test("shared cases: grammar membership and the resolved word of the last command
   }
 });
 
-const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-varscases-")));
+const w = fs.realpathSync(trackedTmp("pf-varscases-"));
 const ws = path.join(w, "repo");
 const wt = path.join(w, "repo.worktrees", "round");
 const home = path.join(w, "home");

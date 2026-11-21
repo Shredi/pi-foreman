@@ -2,12 +2,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { shellPathSetting } from "../bg.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 test("shellPathSetting: project .pi/settings.json wins over the agent dir", () => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "pf-shellpath-"));
+  const d = trackedTmp("pf-shellpath-");
   const agent = path.join(d, "agent");
   const proj = path.join(d, "proj");
   fs.mkdirSync(agent);

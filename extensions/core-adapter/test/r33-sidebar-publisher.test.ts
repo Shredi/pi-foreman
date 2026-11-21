@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { SidebarLive, REPUSH_MS, reportMetadata, socketPath, type SidebarDeps, type Tokens } from "../sidebarlive.ts";
 import { symbolSet, spinnerFrame } from "../symbols.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r33-"));
+const tmp = () => trackedTmp("r33-");
 
 test("socket report framing: one JSON line with method, pane, source, tokens and the 15 s ttl; an error reply rejects", async () => {
   const d = tmp();

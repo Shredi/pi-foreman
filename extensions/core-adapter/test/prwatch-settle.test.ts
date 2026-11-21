@@ -3,13 +3,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { baselineOf, latestWatches, PRWATCH_ENTRY, pollWatch, prDelta, prMessage, PrWatches } from "../prwatch.ts";
 import type { Bucket, Run, SettleGate, Timers, WatchSnapshot } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { clearStoreCache, readStoreEntry, storeKey, trackedStateFile } from "../prstore.ts";
 import type { PrKey } from "../prhost.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const SHA = "abcdef0123456789";
@@ -192,7 +192,7 @@ test("the stored snapshot carries required and mergeState; one without them read
   const NOW = 10_000_000;
   const read = (extra: Record<string, unknown>) => {
     clearStoreCache();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-settle-"));
+    const dir = trackedTmp("pf-settle-");
     fs.mkdirSync(path.dirname(trackedStateFile(dir)), { recursive: true });
     const s = { state: "open", mergeable: "mergeable", head: "abc", base: "main", updatedAt: "t1", runs: [{ id: "1", name: "ci", bucket: "passed", url: "u" }], ...extra };
     fs.writeFileSync(trackedStateFile(dir), JSON.stringify({ v: 1, trackedAt: NOW - 1000, prs: { [storeKey("acme/app", 7)]: { repo: "acme/app", number: 7, at: NOW, snap: s, okAt: NOW - 1000 } } }));

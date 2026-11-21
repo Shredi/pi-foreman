@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { LiveState, liveDir, presenceState } from "../livestate.ts";
 import { symbolSet } from "../symbols.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const base = { done: false, owner: false, turn: false, children: false, externalWaits: false };
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r11p-"));
+const tmp = () => trackedTmp("r11p-");
 const wait = { id: "w1", kind: "timer", note: "n", ageSeconds: 1, leftSeconds: 60 };
 const live = { launchId: "L", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
 

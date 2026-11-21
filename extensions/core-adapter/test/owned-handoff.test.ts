@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { handoffsRootOf, ownedRoots, ownHandoffDirs } from "../owned.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-own-")));
+const tmp = fs.realpathSync(trackedTmp("pf-own-"));
 const root = path.join(tmp, "handoffs");
 const mk = (name: string, files: Record<string, string>): string => {
   const d = path.join(root, name);

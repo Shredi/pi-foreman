@@ -10,11 +10,12 @@ import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 import { shPath } from "./_shpath.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "../shellwriteguard.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const pyRes = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
 const py = pyRes.ok ? pyRes.info.executable : null;
-const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-esc-ho-")));
+const base = fs.realpathSync(trackedTmp("pf-esc-ho-"));
 const ws = path.join(base, "ws");
 const handoff = path.join(base, "agent", "handoffs", "h1");
 fs.mkdirSync(ws, { recursive: true });

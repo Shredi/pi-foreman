@@ -1,15 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatWaits, readAddonTasks } from "../bg.ts";
 import { ownTaskReadable } from "../roundsurface.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-const w = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-own-bg-")));
+const w = fs.realpathSync(trackedTmp("pf-own-bg-"));
 const ws = path.join(w, "ws");
 const own = path.join(ws, ".pi", "tasks", "sess-own-4321");
 fs.mkdirSync(own, { recursive: true });
