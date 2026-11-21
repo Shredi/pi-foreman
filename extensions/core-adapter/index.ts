@@ -1834,7 +1834,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * "" when nothing changed, or a refusal.
    */
   async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string; primary?: true } | { refuse: string }> {
-    if (s.isChild || actionOf(input) !== null) return { line: "" };
+    // only an interactive session (one with a UI) gets a folder; print and headless sessions run in their checkout
+    if (s.isChild || !ctx.hasUI || actionOf(input) !== null) return { line: "" };
     const isDir = (v: unknown): boolean => (typeof v === "string" && v !== "") || v === true;
     // `machine` (a remote launch) is an explicit choice too: a local path means nothing there
     const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree) || isDir(x.machine));

@@ -13,8 +13,8 @@ type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
 
 /** A standard-tier world over a real repo on `main`; `origin` (a bare repo) gets one commit more than the local `main`. */
-async function setup(t: Parameters<typeof world>[0], o: { origin?: "ahead" | "broken" | "none"; tier?: string; linked?: boolean; child?: boolean; remote?: boolean } = {}) {
-  const w = world(t, { ceremony: { default: o.tier ?? "standard" } });
+async function setup(t: Parameters<typeof world>[0], o: { origin?: "ahead" | "broken" | "none"; tier?: string; linked?: boolean; child?: boolean; remote?: boolean; headless?: boolean } = {}) {
+  const w = world(t, { ceremony: { default: o.tier ?? "standard" }, headless: o.headless ?? false });
   const root = path.join(w.project, "..");
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
   git(w.project, "init", "-q", "-b", "main");
@@ -310,4 +310,20 @@ test("D118: a repository without a commit refuses the launch with git's own erro
   const r = await builder(a);
   assert.match(r.blocked ?? "", /launch refused \[session_folder\]: git worktree add .* failed \(branch round\/s-.*, base HEAD\): .*invalid reference: HEAD/s);
   assert.match(r.blocked ?? "", /`close\.worktreeDir`.*explicit `cwd`.*foreman_session_open/s);
+});
+
+test("D118: a headless session (no UI) launching a builder without cwd in a primary checkout makes no folder, runs in the checkout and persists nothing", async (t) => {
+  const { w, a, stateDir, sid } = await setup(t, { origin: "none", headless: true });
+  assert.equal((a.ctx as { hasUI: boolean }).hasUI, false);
+  const first = await builder(a);
+  assert.equal(first.blocked, null, String(first.blocked));
+  assert.equal(first.input.cwd, undefined, "the launch keeps no cwd: it runs in the session checkout");
+  assert.doesNotMatch(first.note, /own folder|no session folder/);
+  const second = await builder(a);
+  assert.equal(second.blocked, null, String(second.blocked));
+  assert.equal(second.input.cwd, undefined);
+  assert.equal(worktrees(w.project).length, 1, "no worktree");
+  assert.deepEqual(w.entries.filter((e) => e.customType === "pi-foreman-session-folder"), [], "no folder or primary mark in the session file");
+  await tick(200);
+  assert.deepEqual(roundWorktrees(stateDir, sid), [], "nothing in the close manifest");
 });
