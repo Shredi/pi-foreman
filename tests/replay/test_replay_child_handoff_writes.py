@@ -20,7 +20,7 @@ CHILD = "fm-demo-abc123"
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestChildHandoffWrites(ReplayCase):
     def test_result_md_by_redirect_cp_and_write_tool(self):
-        rig = self.rig("hwrites", {"foreman": {}}, config={"sync": {"runRetro": False}}, permissions="baseline")
+        rig = self.rig("hwrites", {"foreman": {}}, config={"sync": {"runRetro": False}})
         handoff = rig.root / "handoff"
         handoff.mkdir()
         (handoff / "parent").write_text("parent-x\n", "utf-8")

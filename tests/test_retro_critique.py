@@ -22,14 +22,14 @@ class RetroCritique(unittest.TestCase):
             {"event": "critique", "kind": "raised", "role": "senior-reviewer", "runId": "r3", "count": 1},
             {"event": "critique", "kind": "other", "count": 9},
         ]
-        rep = retro.build(None, trace, None, None, 5, str(HERE))
+        rep = retro.build(None, trace, None, None, str(HERE))
         t = rep["trace"]
         self.assertEqual((t["critique_raised"], t["critique_applied"]), (4, 2))
         self.assertEqual(t["critique_rounds"], [{"raised": 3, "lines": 120}, {"raised": 0, "lines": 14}, {"raised": 1, "lines": None}])
         self.assertIn("critique: raised 4, applied 2; per round raised/diff lines: 3/120, 0/14, 1/?", retro.render_text(rep))
 
     def test_line_omitted_without_a_counted_review(self):
-        rep = retro.build(None, [{"event": "turn"}, {"event": "critique", "kind": "applied", "count": 1}], None, None, 5, str(HERE))
+        rep = retro.build(None, [{"event": "turn"}, {"event": "critique", "kind": "applied", "count": 1}], None, None, str(HERE))
         self.assertNotIn("critique:", retro.render_text(rep))
 
 

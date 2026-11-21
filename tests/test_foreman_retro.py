@@ -53,12 +53,12 @@ class RetroTest(unittest.TestCase):
         recs += ask("b", "git push origin main", "approved", "s1", "2026-01-01T00:00:02")
         recs += ask("c", "ls -la", "approved", "s1", "2026-01-01T00:00:03", {"kind": "authorizer", "name": "foreman-review", "verdict": "allow"})
         recs += ask("d", "ls", "approved", "other", "2026-01-01T00:00:04")
-        rep = fr.build(None, None, None, recs, 5, str(self.tmp))
+        rep = fr.build(None, None, None, recs, str(self.tmp))
         r = rep["review"]
         self.assertEqual((r["human_approved"], r["human_denied"], r["review_allow"]), (2, 1, 1))
         self.assertEqual(r["denials_overridden"], 1)  # no session id: every ask counts
         sess = [{"type": "session", "id": "s1"}]
-        r = fr.build(sess, None, None, recs, 5, str(self.tmp))["review"]
+        r = fr.build(sess, None, None, recs, str(self.tmp))["review"]
         self.assertEqual((r["human_approved"], r["review_allow"], r["denials_overridden"]), (1, 1, 1))
 
     def test_trace_usage_and_session_tools(self):
@@ -80,7 +80,7 @@ class RetroTest(unittest.TestCase):
         calls = [{"type": "message", "message": {"role": "assistant", "content": [
             {"type": "toolCall", "name": "bash", "arguments": {"command": "git status %d" % i}} for i in range(3)]}}]
         sess = [{"type": "session", "id": "s1"}] + calls
-        rep = fr.build(sess, trace, usage, None, 5, str(self.tmp))
+        rep = fr.build(sess, trace, usage, None, str(self.tmp))
         t = rep["trace"]
         self.assertEqual(t["guard_blocks"], {"git_guard": 1})
         self.assertEqual((t["overlay_blocks"], t["triage_gate_blocks"], t["revisions"], t["supervisor_requests"]), (1, 1, 1, 1))
@@ -111,27 +111,27 @@ class RetroTest(unittest.TestCase):
         cmds = ["cd x && git status", "git log -3", "gitleaks detect", "ls"]
         sess = [{"type": "message", "message": {"role": "assistant", "content": [
             {"type": "toolCall", "name": "bash", "arguments": {"command": c}} for c in cmds]}}]
-        rep = fr.build(sess, trace, None, None, 5, str(self.tmp))
+        rep = fr.build(sess, trace, None, None, str(self.tmp))
         self.assertEqual(rep["trace"]["git_pack"], {"status": 2, "log": 1, "move": 1})
         self.assertEqual(rep["session_tools"]["bash_git_calls"], 2)
         self.assertEqual(fr.git_pack_line(rep), "git: pack 4 calls (status 2, log 1, move 1) vs bash git 2")
         self.assertIn(fr.git_pack_line(rep), fr.render_text(rep).splitlines()[:10])
-        self.assertEqual(fr.git_pack_line(fr.build(None, None, None, None, 5, str(self.tmp))), None)
-        self.assertEqual(fr.git_pack_line(fr.build(None, [], None, None, 5, str(self.tmp))), None)
+        self.assertEqual(fr.git_pack_line(fr.build(None, None, None, None, str(self.tmp))), None)
+        self.assertEqual(fr.git_pack_line(fr.build(None, [], None, None, str(self.tmp))), None)
 
     def test_pr_line_and_git_line_split_pr_ops(self):
         ops = ("pr_checks", "pr_checks", "pr_create", "pr_watch", "status")
         trace = [{"event": "tool_pack", "pack": "git", "op": o} for o in ops]
-        rep = fr.build(None, trace, None, None, 5, str(self.tmp))
+        rep = fr.build(None, trace, None, None, str(self.tmp))
         self.assertEqual(rep["trace"]["pr_pack"], {"pr_checks": 2, "pr_create": 1, "pr_watch": 1})
         self.assertEqual(rep["trace"]["git_pack"], {"status": 1})
         self.assertEqual(fr.pr_pack_line(rep), "pr: 4 calls (create 1, checks 2, watch 1)")
         self.assertIn(fr.pr_pack_line(rep), fr.render_text(rep).splitlines())
-        self.assertIsNone(fr.pr_pack_line(fr.build(None, [], None, None, 5, str(self.tmp))))
-        self.assertIsNone(fr.pr_pack_line(fr.build(None, None, None, None, 5, str(self.tmp))))
+        self.assertIsNone(fr.pr_pack_line(fr.build(None, [], None, None, str(self.tmp))))
+        self.assertIsNone(fr.pr_pack_line(fr.build(None, None, None, None, str(self.tmp))))
 
     def test_pr_track_events_are_no_longer_counted(self):
-        rep = fr.build(None, [{"event": "pr_track", "path": "push", "count": 1}], None, None, 5, str(self.tmp))
+        rep = fr.build(None, [{"event": "pr_track", "path": "push", "count": 1}], None, None, str(self.tmp))
         self.assertNotIn("pr_track", rep["trace"])
         self.assertFalse([l for l in fr.render_text(rep).splitlines() if l.startswith("pr: tracked")])
 
@@ -163,86 +163,28 @@ class RetroTest(unittest.TestCase):
             {"event": "review_defer_headless"},
             {"event": "turn", "cause": "user"}, {"event": "turn"},
         ]
-        t = fr.build(None, trace, None, None, 5, str(self.tmp))["trace"]
+        t = fr.build(None, trace, None, None, str(self.tmp))["trace"]
         self.assertEqual({k: t[k] for k in ("rereviews", "budget_hits", "rung_up", "child_read_budget", "review_defer_headless", "turns")},
                          {"rereviews": 1, "budget_hits": 3, "rung_up": 1, "child_read_budget": 2, "review_defer_headless": 1, "turns": 2})
         out = self.run_cli("--trace", self.write("t.jsonl", trace))
         self.assertIn("friction: rereviews=1 budget_hits=3 rung_up=1 child_read_budget=2 review_defer_headless=1 turns=2", out)
 
-    def test_proposal_threshold_deny_and_baseline(self):
-        recs = []
-        n = 0
-        for fam_cmd, count in (("npm ci", 3), ("make build", 2), ("rsync -a x y", 3), ("sudo ls", 3)):
-            for i in range(count):
-                n += 1
-                recs += ask("r%d" % n, fam_cmd, "approved", "s%d" % (i % 2), "2026-01-01T00:00:%02d" % n)
-        recs += ask("bad", "rsync -a z", "denied", "s0", "2026-01-01T00:01:00")
-        rep = fr.build(None, None, None, recs, 3, str(self.tmp))
-        self.assertEqual([p["pattern"] for p in rep["proposals"]], ["npm ci *"])  # make: 2 < 3; rsync denied; sudo baseline-denied
-        one_session = []
-        for i in range(4):
-            one_session += ask("o%d" % i, "cargo build", "approved", "s1", "2026-01-01T00:00:0%d" % i)
-        self.assertEqual(fr.build(None, None, None, one_session, 3, str(self.tmp))["proposals"], [])
-
-    def test_cli_torn_line_proposals_file_and_no_content(self):
+    def test_cli_torn_line_and_no_content(self):
         recs = []
         for i in range(4):
             recs += ask("p%d" % i, "npm ci --token %s" % SECRET, "approved", "s%d" % (i % 2), "2026-01-01T00:00:0%d" % i)
         log = self.write("review.jsonl", recs, torn=True)
-        out_file = self.tmp / "sub" / "proposals.json"
-        text = self.run_cli("--review-log", log, "--proposals-out", str(out_file), "--min-reviews", "3", "--agent-dir", str(self.tmp))
+        text = self.run_cli("--review-log", log, "--agent-dir", str(self.tmp))
         self.assertNotIn(SECRET, text)
-        self.assertIn("proposals: 1 candidate", text)
+        self.assertNotIn("proposals", text)
         self.assertIn("trace: no data", text)
-        doc = json.loads(out_file.read_text(encoding="utf-8"))
-        self.assertNotIn(SECRET, json.dumps(doc))
-        self.assertEqual(doc["minReviews"], 3)
-        self.assertEqual(doc["proposals"][0]["pattern"], "npm ci *")
-        self.assertIn("safety.permissions.bash.allow", doc["apply_hint"])
         j = json.loads(self.run_cli("--review-log", log, "--json", "--agent-dir", str(self.tmp)))
-        self.assertIn("proposals", j)
+        self.assertNotIn("proposals", j)
 
     def test_missing_files_say_no_data(self):
         text = self.run_cli("--session", str(self.tmp / "nope.jsonl"), "--agent-dir", str(self.tmp / "agent"))
         self.assertIn("approvals: no data", text)
         self.assertIn("spawn cost: no data", text)
-
-    def test_code_running_families_are_never_proposed(self):
-        bad = ["python3 -c", "python3.12 script.py", "node -e", "/usr/bin/bash -c", "sh -c", "pwsh -Command", "cmd /c", "osascript -e",
-               "eval echo", "xargs rm", "env FOO=1", "sudo make", "ssh host", "git config", "git -c", "npx tool", "npm exec", "find -exec",
-               "FOO=1 make", "nohup make", "nice make", "time make", "timeout 5", "command make", "stdbuf -oL", "busybox sh",
-               "uv run", "uvx tool", "pipx run", "poetry run", "pnpm dlx", "pnpm exec", "yarn dlx", "yarn exec", "bunx tool",
-               "go run", "cargo run", "awk {print}", "gawk -f", "mawk -f", "lua x.lua", "Rscript x.R", "tclsh x", "dash -c",
-               "ksh -c", "fish -c", "git remote", "git submodule", "git -C", "git -cx=y", "git --git-dir=x", "git --work-tree",
-               "git --exec-path=x", "git --config-env=a=B", "git --namespace", "git -p", "git --paginate",
-               "doas make", "setsid make", "watch make", "parallel echo", "flock /tmp/l", "script -c", "strace make",
-               "ltrace make", "chroot /x", "runuser -u", "su -c", "wsl make", "wsl.exe make", "git hook", "git bisect",
-               "git rebase", "git filter-branch"]
-        for fam in bad:
-            self.assertTrue(fr.runs_code(fam), fam)
-        for fam in ["npm ci", "git status", "make test", "find .", "uv sync", "go build", "cargo build"]:
-            self.assertFalse(fr.runs_code(fam), fam)
-        asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["npm ci"] for sess in ("a", "b", "c")]
-        self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [])], ["npm ci *"])
-
-    def test_protected_path_families_are_never_proposed(self):
-        prot = fr.load_protect_patterns(str(self.tmp / "agent"))
-        bad = ["cat .git/config", "cp ./.pi/settings.json", "vim ~/.gitconfig", "cat %s" % (self.tmp / "agent" / "foreman.json").as_posix()]
-        for fam in bad:
-            self.assertTrue(fr.touches_protected(fam, prot), fam)
-        self.assertFalse(fr.touches_protected("cat src/a.py", prot))
-        asks = [{"family": f, "outcome": "approved", "session": sess} for f in bad + ["cat src/a.py"] for sess in ("a", "b", "c")]
-        self.assertEqual([p["pattern"] for p in fr.propose(asks, 3, [], prot)], ["cat src/a.py *"])
-        # Windows: expanduser yields backslashes and a drive; both sides must normalise the same way.
-        def win(p):
-            return "C:\\Users\\T" + p[1:].replace("/", "\\") if p.startswith("~") else p
-
-        with mock.patch.object(fr.os.path, "expanduser", win):
-            wprot = fr.load_protect_patterns(str(self.tmp / "agent"))
-            self.assertEqual(fr.norm_word("~\\.GitConfig"), "c:/users/t/.gitconfig")
-            self.assertFalse([p for p in wprot if "\\" in p], wprot)
-            for fam in ("vim ~/.gitconfig", "vim ~\\.gitconfig", "vim C:\\Users\\T\\.gitconfig"):
-                self.assertTrue(fr.touches_protected(fam, wprot), fam)
 
     def retro_run(self, *extra):
         trace = self.write("trace.jsonl", [

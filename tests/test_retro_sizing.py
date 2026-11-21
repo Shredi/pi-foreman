@@ -39,7 +39,7 @@ class RetroSizing(unittest.TestCase):
 
     def test_rendered_block(self):
         rep = {"session": None, "review": None, "trace": None, "usage": None, "explorer": None, "cache": None,
-               "sizing": retro.sizing_metrics(TRACE), "session_tools": None, "proposals": None}
+               "sizing": retro.sizing_metrics(TRACE), "session_tools": None}
         text = retro.render_text(rep)
         self.assertIn("sizing (heuristic join)", text)
         self.assertIn("small: 2 launches, rung default=2, climbs 1, fails 1", text)

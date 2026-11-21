@@ -1,6 +1,6 @@
 // R31c R4 / R5: network reads (gh, npm, curl, wget) are the `net-read` class and label: one exact grammar each, composed only with read segments, role aware
-// (wget and every output file: orchestrator dirs only; a missing role is a child). Positives, bypasses and the three entry points: timeoutallow compose
-// (deterministicAllow), the review link (own and forwarded asks) and the child overlay deny branch. The "base asks" side: the base commit had no network
+// (wget and every output file: orchestrator dirs only; a missing role is a child). Positives and bypasses go through the effect class
+// (classify). The "base asks" side: the base commit had no network
 // grammar at all (`gh`, `curl`, `npm view` were unknown programs, `known: false`); the tests below pin that the same text ask when it leaves the grammar.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -11,8 +11,6 @@ import * as path from "node:path";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { dropBase, loadBase } from "./_r31c-base.ts";
 import { classify, effectCtx, SAFE_CLASSES } from "../effects.ts";
-import { deterministicAllow } from "../timeoutallow.ts";
-import type { BashRules } from "../timeoutallow.ts";
 import { netUrlOk } from "../netread.ts";
 import { posixOnly } from "./_platform.ts";
 
@@ -26,11 +24,14 @@ execFileSync("git", ["init", "-q", repo]);
 fs.symlinkSync(os.tmpdir(), path.join(orch, "link"));
 fs.writeFileSync(path.join(repo, "tracked.txt"), "x\n");
 
+// the rule lists of the base commit's allow (the base side of R4.2 / R5.2 only)
+interface BashRules { allow: string[]; ask: string[]; deny: string[] }
 const rules: BashRules = { allow: ["python3 *"], ask: [], deny: ["curl * | sh *"] };
 const orchCtx = () => effectCtx(repo, [], process.platform, [], "orchestrator", [orch]);
 const kidCtx = () => effectCtx(repo, [kid], process.platform, [], "child", [kid]);
 const noRole = () => effectCtx(repo, [], process.platform, [], undefined, [orch]);
-const allow = (cmd: string, ctx = orchCtx()): string | null => deterministicAllow(rules, cmd, { effects: ctx, scratchDirs: ctx.scratch });
+// a whole line is a net read when its effect class is net-read (the class composes only with reads)
+const allow = (cmd: string, ctx = orchCtx()): string | null => (classify(cmd, ctx) === "net-read" ? "net-read" : null);
 
 const BOTH = [
   "gh run view 123 --log-failed | head -50",

@@ -22,7 +22,7 @@ from test_replay import REASON, ReplayCase
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestLongWait(ReplayCase):
     def test_timer_wakes_the_session(self):
-        rig = self.rig("wait", load_fixture("wait"), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig("wait", load_fixture("wait"), config={"wait": {"batchWindowSeconds": 0}})
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:w1]] wait for the timer", timeout=60)
@@ -71,7 +71,7 @@ class TestLongWait(ReplayCase):
             "s2": [{"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-second.md", "content": ledger}}]},
                    {"tools": [{"name": "foreman_wait", "arguments": {"action": "list"}}]},
                    {"text": "Woken."}, {"text": "Still open after the wake."}]}}
-        rig = self.rig("wakesec", script, config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig("wakesec", script, config={"wait": {"batchWindowSeconds": 0}})
         sec = rig.root / "sections.log"
         pi = rig.start(env={"FOREMAN_FAKE_SECTIONS": str(sec)})
         recs = list(pi.prompt("[[replay:s1]] go", timeout=60))
@@ -98,7 +98,7 @@ class TestLongWait(ReplayCase):
             "c2": [{"tools": [{"name": "foreman_wait", "arguments": {"action": "start", "kind": "timer", "seconds": 4, "note": "[[replay:c3]] t"}}]},
                    {"text": "Woken once."}],
             "c3": [{"tools": [{"name": "foreman_wait", "arguments": {"action": "list"}}]}, {"text": "Woken twice."}]}}
-        rig = self.rig("wakecompact", script, config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline",
+        rig = self.rig("wakecompact", script, config={"wait": {"batchWindowSeconds": 0}},
                        settings={"compaction": {"keepRecentTokens": 1}})
         sec = rig.root / "sections.log"
         pi = rig.start(env={"FOREMAN_FAKE_SECTIONS": str(sec)})

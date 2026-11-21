@@ -156,7 +156,7 @@ class TestWaitingForParent(ReplayCase):
         (d / "child").write_text(child + "\n", "utf-8")
 
     def test_handoff_timer_wait_waives_the_gate_until_the_next_input(self):
-        rig = self.rig("cg-parent", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig("cg-parent", script(), config={"wait": {"batchWindowSeconds": 0}})
         self.handoff(rig)
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
@@ -176,7 +176,7 @@ class TestWaitingForParent(ReplayCase):
         self.assertTrue(events(rig, sid, "finish_refused"))
 
     def test_another_sessions_handoff_does_not_waive_the_gate(self):
-        rig = self.rig("cg-other", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig("cg-other", script(), config={"wait": {"batchWindowSeconds": 0}})
         self.handoff(rig, child="fm-someone-else-111111")
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
@@ -192,7 +192,7 @@ class TestWaitingForParent(ReplayCase):
         self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
 
     def test_plain_timer_wait_without_handoff_context_is_refused(self):
-        rig = self.rig("cg-plain", script(), config={"wait": {"batchWindowSeconds": 0}}, permissions="baseline")
+        rig = self.rig("cg-plain", script(), config={"wait": {"batchWindowSeconds": 0}})
         pi = rig.start()
         sid = pi.session_id()
         pending_change(rig)

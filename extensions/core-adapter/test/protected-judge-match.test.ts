@@ -9,7 +9,7 @@ import type { ProtectedMatch, ProtectedVerdict } from "../protected.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
 import type { OpaqueReason } from "../shellast.ts";
 import { parseShell } from "../shellast.ts";
-import type { RuleCall } from "../rules.ts";
+import type { RuleCall } from "../rulecall.ts";
 
 const cwd = process.cwd();
 const home = path.join(cwd, "pf-prot-judge", "home");

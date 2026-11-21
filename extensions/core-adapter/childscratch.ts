@@ -12,17 +12,11 @@
 //
 // Each launch also gets a kept output dir `<agentDir>/pi-foreman/child-out/<session>/<launch>` (env FOREMAN_OUT, binding `out`): a second
 // scratch-like write root that is not removed at run end; the foreman's next session start sweeps folders older than 7 days (`sweepKept`).
-//
-// What the guards allow inside a scratch dir (never outside it):
-//   - timeoutallow.ts: a command that only copies into, makes, removes inside or cds into a live
-//     scratch dir of the asking role, or whose write path lies inside one, composes as `child-scratch`.
-//     POSIX shell forms only, like `tmp-scratch`; a path from the write/edit tools works everywhere.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { get } from "./config.ts";
 import { workspaceOf } from "./python.ts";
-import { shellWords } from "./sedread.ts";
 import { BINDING_NS } from "./usage.ts";
 import type { LaunchBinding } from "./usage.ts";
 
@@ -475,61 +469,6 @@ export function scratchScriptRun(words: string[], dirs: string[], platform: stri
     const v = a.startsWith("-") && a.includes("=") ? a.slice(a.indexOf("=") + 1) : a;
     return !/[\\/~]|^\./.test(v) || (!!v && insideScratch(v, dirs, platform));
   });
-}
-
-const CMD_SYNTAX = /[|<>`$()\n\r]/;
-
-/**
- * True when every `&&`/`;` unit of `command` is a scratch operation inside `dirs` (cp/mkdir/rm
- * with every destination or operand strictly inside, cd into one) or passes `unitOk`, and at
- * least one unit is a scratch operation. POSIX only. `$FOREMAN_SCRATCH` is resolved per dir.
- */
-export function scratchCommandAllowed(command: string, dirs: string[], unitOk: (unit: string) => boolean, platform: string = process.platform): boolean {
-  if (platform === "win32" || !dirs.length) return false;
-  for (const d of dirs) {
-    const text = expandScratchVar(command, d, platform);
-    if (text === null || CMD_SYNTAX.test(text) || /(^|[^&])&([^&]|$)/.test(text)) continue;
-    const units = text.split(/&&|;/).map((u) => u.trim());
-    if (units.some((u) => !u)) continue;
-    let ops = 0;
-    let ok = true;
-    for (const u of units) {
-      if (scratchUnit(u, dirs, platform)) ops++;
-      else if (!unitOk(u)) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok && ops > 0) return true;
-  }
-  return false;
-}
-
-function scratchUnit(unit: string, dirs: string[], platform: string): boolean {
-  const w = shellWords(unit);
-  if (!w || w.length < 2) return false;
-  const [prog, ...args] = w;
-  let k = 0;
-  const inside = (o: string): boolean => !!o && !o.startsWith("-") && insideScratch(o, dirs, platform);
-  if (prog === "cp") {
-    while (k < args.length && args[k].startsWith("-")) if (!/^-[Rapf]+$/.test(args[k++])) return false;
-    const ops = args.slice(k);
-    return ops.length >= 2 && ops.every((o) => !!o && !o.startsWith("-")) && inside(ops[ops.length - 1]);
-  }
-  if (prog === "mkdir") {
-    while (k < args.length && args[k].startsWith("-")) if (args[k++] !== "-p") return false;
-    const ops = args.slice(k);
-    return ops.length > 0 && ops.every(inside);
-  }
-  if (prog === "rm") {
-    while (k < args.length && args[k].startsWith("-") && args[k] !== "--") if (!/^-[rRf]+$/.test(args[k++])) return false;
-    if (args[k] === "--") k++;
-    const ops = args.slice(k);
-    return ops.length > 0 && ops.every((o) => !!o && insideScratch(o, dirs, platform));
-  }
-  if (prog === "cd") return args.length === 1 && (inside(args[0]) || dirs.some((d) => d === args[0]));
-  if (prog === "node" || prog === "python" || prog === "python3") return scratchScriptRun(w, dirs, platform);
-  return false;
 }
 
 // ------------------------------------------------------------------- wiring (index.ts)

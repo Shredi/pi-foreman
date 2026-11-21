@@ -5,18 +5,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { effectCtx } from "../effects.ts";
 import { applyLedgerItems, reviewLedgerBlock } from "../ledgerblock.ts";
-import { readBaseline } from "../baseline.ts";
 import { isolationDir, roundRoots, roundWorktreeAdd, roundWorktrees } from "../roundsurface.ts";
-import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 import { posix, posixOnly } from "./_platform.ts";
 
-const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const baseline = readBaseline(pkgRoot)!;
-const rules = bashRules(baseline, {});
 const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-round-")));
 after(async () => {
   await waitQuiet(path.join(base, "state"));
@@ -33,7 +26,6 @@ fs.writeFileSync(path.join(main, ".workflow", "LEDGER-topic.md"), "- [ ] 1. thin
 fs.writeFileSync(path.join(main, ".workflow", "scratch", "plan-x.md"), "plan\n");
 fs.writeFileSync(path.join(rt, ".workflow", "scratch", "p.md"), "p\n");
 fs.writeFileSync(path.join(iso, "src", "a.ts"), "a\n");
-const ledger = path.join(main, ".workflow", "LEDGER-topic.md");
 
 test("roundWorktrees: only the session's own unremoved worktree entries of the manifest", () => {
   const state = path.join(base, "state");
@@ -66,31 +58,6 @@ test("roundWorktreeAdd: the foreman's add of <repo>.worktrees/<round>, nothing e
     "git worktree add ../repo.worktrees/round -b round main extra",
     "git worktree remove ../repo.worktrees/round",
   ]) assert.equal(add(no), null, no);
-});
-
-test("7e line: mkdir -p <round wt>/.workflow/scratch && cp .workflow/scratch/plan-x.md <round wt>/.workflow/scratch/ by the foreman", { skip: posixOnly }, () => {
-  const line = `mkdir -p ${rt}/.workflow/scratch && cp .workflow/scratch/plan-x.md ${rt}/.workflow/scratch/`;
-  const allow = (own: string[]): string | null => deterministicAllow(rules, line, { effects: effectCtx(main), ownDirs: own });
-  assert.equal(allow([handoff, rt]), "own-handoff");
-  assert.notEqual(allow([handoff]), "own-handoff");
-});
-
-test("7c lines: a child in the round worktree reads the bound ledger by path and by glob, nothing else of main", { skip: posixOnly }, () => {
-  const allow = (cmd: string, led: string | null = ledger): string | null => {
-    const effects = effectCtx(rt, [], process.platform, led ? [led] : []);
-    return deterministicAllow(rules, cmd, { effects, ownDirs: [handoff, rt], ...(led ? { ledger: led } : {}) });
-  };
-  assert.ok(allow(`cat ${ledger}`));
-  assert.ok(allow(`cat ${main}/.workflow/LEDGER-*.md`));
-  assert.ok(allow(`cat ${main}/.workflow/LEDGER-topic.md | head -40`));
-  assert.equal(allow(`cat ${main}/.workflow/LEDGER-topic.md`, null), null);
-  assert.equal(allow(`cat ${main}/.workflow/LEDGER-*.md`, null), null);
-  assert.equal(allow(`cat ${main}/.workflow/scratch/plan-x.md`), null);
-  assert.equal(allow(`cat ${main}/other/LEDGER-*.md`), null);
-  assert.equal(allow(`cp x ${main}/.workflow/LEDGER-*.md`), null);
-  assert.equal(allow(`rm ${ledger}`), null);
-  // the round worktree is writable for a child's cp/mkdir as an owned dir
-  assert.equal(allow(`mkdir -p ${rt}/.workflow/scratch/t && cp ${ledger} ${rt}/.workflow/scratch/t/l.md`), "own-handoff");
 });
 
 test("roundRoots: the round worktree a child sits in, or its own isolation worktree, is its root", { skip: posixOnly }, () => {

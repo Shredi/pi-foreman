@@ -17,7 +17,7 @@ from test_replay import REASON, ReplayCase
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestPermissionLayers(ReplayCase):
     def baseline_rig(self, name, **kw):
-        rig = self.rig(name, load_fixture("permissions"), permissions="baseline", **kw)
+        rig = self.rig(name, load_fixture("permissions"), **kw)
         (rig.project / ".env").write_text("TOKEN=not-a-real-secret\n", "utf-8")
         (rig.project / "notes.txt").write_text("hello\n", "utf-8")
         return rig

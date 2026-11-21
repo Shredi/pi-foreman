@@ -96,7 +96,7 @@ test("a throwing settings read at arm time does not end the timer", (t) => {
 });
 
 test("retroCounters drops the command words and file names of the session, keeps tool_usage names", () => {
-  const out = JSON.parse(retroCounters(JSON.stringify({ usage: { n: 1 }, session_tools: { repeated_reads: { "x.ts": 3 } }, flagged_asks: { "git push": 1 }, tool_usage: { tools_never_used: ["foo"] }, proposals: [] }))) as Record<string, unknown>;
+  const out = JSON.parse(retroCounters(JSON.stringify({ usage: { n: 1 }, session_tools: { repeated_reads: { "x.ts": 3 } }, flagged_asks: { "git push": 1 }, tool_usage: { tools_never_used: ["foo"] } }))) as Record<string, unknown>;
   assert.deepEqual(Object.keys(out).sort(), ["tool_usage", "usage"]);
 });
 
@@ -159,5 +159,5 @@ test("foreman_reports retro answers in the steward session without session_tools
   const out = await r.call("foreman_reports", { action: "retro" });
   assert.equal(out.isError, false, out.text);
   const j = JSON.parse(out.text) as Record<string, unknown>;
-  assert.ok(!("session_tools" in j) && !("flagged_asks" in j) && !("proposals" in j));
+  assert.ok(!("session_tools" in j) && !("flagged_asks" in j));
 });

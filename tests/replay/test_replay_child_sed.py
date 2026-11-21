@@ -19,7 +19,7 @@ from test_replay import REASON, ReplayCase
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestChildSed(ReplayCase):
     def test_sed_chain_allowed_and_headless_defer_denied_with_forms(self):
-        rig = self.rig("child-sed", load_fixture("child_sed"), permissions="baseline")
+        rig = self.rig("child-sed", load_fixture("child_sed"))
         sub = rig.project / "sub"
         sub.mkdir()
         (sub / "f.go").write_text("package f\n" * 30, "utf-8")

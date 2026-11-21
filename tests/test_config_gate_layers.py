@@ -46,16 +46,16 @@ class GateLayerTest(unittest.TestCase):
         self.assertIs(res["config"]["gate"]["tmpAccess"], False)
 
     def test_timeouts_project_may_only_lower(self):
-        res = self.load(l2={"gate": {"askTimeoutMs": 60000, "reviewTimeoutMs": 5000}},
-                        proj={"gate": {"askTimeoutMs": 120000, "reviewTimeoutMs": 9000}})
-        self.assertEqual(res["config"]["gate"]["askTimeoutMs"], 60000)
+        res = self.load(l2={"gate": {"reviewTimeoutMs": 5000}}, proj={"gate": {"reviewTimeoutMs": 9000}})
         self.assertEqual(res["config"]["gate"]["reviewTimeoutMs"], 5000)
-        self.warned(res, "project gate.askTimeoutMs ignored")
         self.warned(res, "project gate.reviewTimeoutMs ignored")
-        res = self.load(l2={"gate": {"askTimeoutMs": 60000, "reviewTimeoutMs": 5000}},
-                        proj={"gate": {"askTimeoutMs": 30000, "reviewTimeoutMs": 2000}})
-        self.assertEqual(res["config"]["gate"]["askTimeoutMs"], 30000)
+        res = self.load(l2={"gate": {"reviewTimeoutMs": 5000}}, proj={"gate": {"reviewTimeoutMs": 2000}})
         self.assertEqual(res["config"]["gate"]["reviewTimeoutMs"], 2000)
+
+    def test_ask_timeout_no_longer_tightens(self):
+        res = self.load(l2={"gate": {"askTimeoutMs": 60000}}, proj={"gate": {"askTimeoutMs": 120000}})
+        self.assertEqual(res["config"]["gate"]["askTimeoutMs"], 120000)
+        self.assertEqual(res["warnings"], [])
 
     def test_review_timeout_below_schema_minimum_is_dropped(self):
         res = self.load(proj={"gate": {"reviewTimeoutMs": 10}})

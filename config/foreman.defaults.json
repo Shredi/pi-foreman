@@ -71,7 +71,7 @@
   "sync": { "repos": [], "runRetro": true },
   "knowledge": { "nudgeDays": 30 },
   "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": true, "refreshSeconds": 120, "mine": true, "authors": [], "scope": [], "hideRepos": [] } },
-  "retro": { "proposalMinReviews": 5, "enabled": null, "report": true, "workspaceKey": null, "expireDays": 14, "startNote": true },
+  "retro": { "enabled": null, "report": true, "workspaceKey": null, "expireDays": 14, "startNote": true },
   "steward": { "enabled": false, "minNew": 3, "maxWaitHours": 24, "checkMinutes": 30, "maxProposals": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent", "remote-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },
@@ -83,7 +83,7 @@
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },
   "paths": { "hubWorkflow": [] },
-  "gate": { "reviewTimeoutMs": 15000, "askTimeoutMs": 900000, "childAsk": "parent", "readClear": true, "readonlyClear": true, "tmpAccess": true, "logMaxBytes": 20971520, "readTools": {}, "protected": { "check": "model" } },
+  "gate": { "reviewTimeoutMs": 15000, "childAsk": "parent", "tmpAccess": true, "logMaxBytes": 20971520, "readTools": {}, "protected": { "check": "model" } },
   "safety": {
     "preBash": { "hooks": [], "strict": false },
     "requiredChildExtensions": [],

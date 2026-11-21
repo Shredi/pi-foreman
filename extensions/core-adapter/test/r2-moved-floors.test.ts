@@ -7,7 +7,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { gateDecide, gateEvaluate, type GateResult } from "../gate.ts";
 import { BUILTIN_DENY_INLINE, lineFloors, scanToolFloor, type FloorEnv } from "../floors.ts";
-import { readBaseline } from "../baseline.ts";
 import { parseShell } from "../shellast.ts";
 import { GATE_DENY_PREFIXES } from "../gatedialog.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
@@ -336,6 +335,13 @@ test("floor-builtin-deny: the powershell tool sees a statement after a closing b
   }
 });
 
-test("the inline copy of bash.deny equals the baseline file's list", () => {
-  assert.deepEqual([...BUILTIN_DENY_INLINE], readBaseline(PKG_ROOT)?.bash.deny);
+test("the inline built-in deny table is the 16 command patterns", () => {
+  assert.deepEqual([...BUILTIN_DENY_INLINE], [
+    "sudo *", "doas *",
+    "curl * | sh *", "curl * | bash *", "curl * | zsh *", "curl * | sudo *",
+    "wget * | sh *", "wget * | bash *", "wget * | zsh *", "wget * | sudo *",
+    "gh auth token*", "gh auth status --show-token*",
+    "git credential fill*",
+    "security find-generic-password* -w*", "security find-generic-password* -g*", "security find-internet-password*",
+  ]);
 });
