@@ -879,13 +879,13 @@ export function namedOutsideExpansion(line: string, name: string): boolean {
   const words: string[] = [];
   const walk = (n: any, depth: number): void => {
     if (!n || typeof n !== "object" || depth > 200) return;
-    if (Array.isArray(n)) return n.forEach((c) => walk(c, depth + 1));
     if (n.type === "Assignment") words.push(String(n.name));
     if (n.type === "Word") {
       const lit = (p: any): string => (p.type === "Literal" || p.type === "SingleQuoted" || p.type === "AnsiCQuoted" ? String(p.value) : p.type === "DoubleQuoted" || p.type === "LocaleString" ? p.parts.map(lit).join("") : "\0");
       words.push(n.parts ? n.parts.map(lit).join("") : String(n.value));
     }
-    for (const v of Object.values(n)) if (v && typeof v === "object") walk(v, depth + 1);
+    // the library's own traversal: Assignment name/value, Word parts, expansion scripts and the like are prototype getters that `Object.values` never reads
+    forEachChild(n, (c) => walk(c, depth + 1));
   };
   try {
     const s = parse(line) as any;
