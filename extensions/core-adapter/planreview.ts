@@ -45,6 +45,11 @@ export function planReviewOn(config: unknown, tier: string): boolean {
   return !!pr && typeof pr === "object" && pr[tier] === true;
 }
 
+/** The advice after the first valid write of a plan that has no review yet: a ready explorer task for the code-claims check. Advice only. */
+export function claimsHintLine(planPath: string): string {
+  return `pi-foreman: advice: before the first [plan-review] have an inexpensive explorer check the plan's claims about the code; a wrong claim found now saves a review round. Explorer task: "Read ${planPath}. List every claim it makes about code (file:line, symbol, caller, consumer, test named) and check each against the code with file:line. Report claims that are wrong, unverifiable or unread." Fix what it reports, then launch the review. This never blocks a review.`;
+}
+
 export interface PlanVerdict {
   hash: string;
   verdict: Verdict;

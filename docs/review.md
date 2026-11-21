@@ -185,6 +185,8 @@ The form of the plan is checked by code before the reviewer starts: a `[plan-rev
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
 (`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.
 
+Claims check before the first review: the foreman's instructions have an inexpensive `explorer` check every claim the plan makes about the code (file:line, symbol, caller, test named) before the first `[plan-review]`, so wrong claims are fixed before a review round is spent on them. The harness reminds the foreman once per plan path: the write or edit result of a plan whose Summary form passes carries one advice line with the plan path and a ready explorer task, while the plan's lineage has no recorded verdict. The line is advice, never a refusal, comes in the tool result (never the system prompt), is off with `ceremony.planReview` off, and the once-per-plan memory is not saved (after a reload with no recorded verdict it may come once more).
+
 ## Security findings
 
 The one `reviewer` is modular: `roles.reviewer.skills` names the shipped `security-review` skill (`skills/security-review/SKILL.md`), which the reviewer reads from its catalog and applies when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input. There is no separate security reviewer role.

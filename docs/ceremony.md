@@ -86,6 +86,8 @@ Owner text: text written for the owner (the owner section, `ask_user_question`, 
 
 Plan-review limits: `ceremony.planReviewRounds` counts plan versions per lineage. The number of `[plan-review]` runs is not capped; a plan review that fails again on the same plan version with the same findings or nothing new, or on a revised plan with the same located finding, stops further plan and builder launches through the loop guard (see Loop guard above); new findings under the same checklist item on a revised plan do not.
 
+Claims check: before the first `[plan-review]` the foreman has an inexpensive explorer check every claim the plan makes about the code (instructions, `<!--planReview=on-->` variant). The first valid write of a plan with no verdict yet gets one advice line in its result with a ready explorer task (once per plan path, in memory; advice only, see [review](review.md#plan-review)).
+
 One tier source: `/ceremony <tier>` sets a sticky `userTier`, persisted in the entry above. While it is set, the ledger `Tier:` line and `foreman_triage` never raise the tier above it. Automatic escalations from a new signal (a second launch, the file count, prompt signals) still apply, but a later ledger refresh cannot raise the tier further. Only the next `/ceremony` replaces `userTier`. The tier line reads `set by the user (ledger says heavy)` when they differ.
 
 Plan phase: the harness-native replacement for plan mode. It starts with `foreman session open --plan-first` (the CLI and the `foreman_session_open` tool's `planFirst: true` pass `PI_FOREMAN_PLAN_PHASE=1` to the child), or with the user command `/foreman plan`. While it is on:

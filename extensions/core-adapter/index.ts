@@ -256,7 +256,7 @@ import { closeLines } from "./reviewrounds.ts";
 import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
-import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PlanReviews, claimsHintLine, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
 import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
@@ -562,6 +562,8 @@ interface Session {
   scriptRun: { pid: number | undefined; since: number; stopRequested: boolean; shutdown: boolean; stop: ScriptRunDetached["stop"]; done: Promise<unknown> } | null;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
+  /** Foreman only: plan paths that got the claims-check advice (in memory; a reload may repeat it once, never a refusal). */
+  claimsHinted: Set<string>;
   /** Foreman only: read budget (budget.ts), in memory only. */
   budget: ReadBudget;
   /** Read-budget warn notices by tool call id, added to the result. */
@@ -1238,6 +1240,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       script: newScriptState(),
       scriptRun: null,
       planReviews: new PlanReviews(),
+      claimsHinted: new Set<string>(),
       budget: new ReadBudget(),
       readNotices: new Map(),
       childFiles: new Set(),
@@ -5891,6 +5894,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a Summary that misses a part of its form is advice on its own line too, never a refusal
         const hints = ownerFormHints(written.plan.markdown);
         if (hints.length) planFormNote += `${planFormNote ? "\n" : ""}pi-foreman: advice: the Summary section misses parts of its form (${hints.join("; ")}): a **Goal:** paragraph, numbered steps, boxes at the end. This never blocks a review.`;
+        // before the first [plan-review] of a lineage: advice to have an inexpensive explorer check the code claims (once per plan path, tool result only)
+        if (issues.length === 0 && planReviewOn(owner.config.config, owner.ceremony.tier) && !owner.planReviews.lineage(written.plan.path) && !owner.claimsHinted.has(written.plan.path)) {
+          owner.claimsHinted.add(written.plan.path);
+          planFormNote += `${planFormNote ? "\n" : ""}${claimsHintLine(written.plan.path)}`;
+        }
       }
     } else if (owner && wroteFile) {
       // `rulings-<topic>.md` is the rulings sidecar of an HTML plan: the copy is derived again, with or without a plan page open
