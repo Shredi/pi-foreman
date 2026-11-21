@@ -110,7 +110,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.foremanReads[.<phase>]  not an object: ignored
     ceremony.required.<tier>         union only (a project can add required steps, not remove one)
     ceremony.required                not an object: ignored; unknown steps dropped
-    sync.repos, retro.proposalMinReviews   ignored (L1/L3/L2 only)
+    sync.repos                     ignored (L1/L3/L2 only)
     intercom.allowRemote, intercom.allowOpenPane, wait.ci         only false is accepted
     close.from                       intersect (a project can only narrow the allowed sources)
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
@@ -244,7 +244,6 @@ IGNORED_KEYS = [
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),
     (("radar", "openPrs"), "the open PRs source (a GitHub search through gh) comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
-    (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),
     (("retro", "workspaceKey"), "the workspace key comes from the user or overlay config"),
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
@@ -336,14 +335,11 @@ LAYER_TIGHTEN = [
     (("tools", "deferred"), "union"),
     (("skills", "hidden"), "union"),
     (("gate", "tmpAccess"), "false_only"),
-    (("gate", "askTimeoutMs"), "lower_only"),
     (("gate", "reviewTimeoutMs"), "lower_only"),
     (("gate", "childAsk"), ("ordered", ("deny", "parent"))),
-    (("gate", "readClear"), "false_only"),
-    (("gate", "readonlyClear"), "false_only"),
     (("gate", "protected", "check"), ("ordered", ("ask", "read-only", "model"))),
 ]
-# gate keys the project and session layers may set (the LAYER_TIGHTEN rows above); every other gate key is user or overlay only
+# gate keys the project and session layers may set (tmpAccess, reviewTimeoutMs, childAsk and protected have LAYER_TIGHTEN rows; askTimeoutMs, readClear and readonlyClear have no effect and load as they are); every other gate key is user or overlay only
 GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk", "readClear", "readonlyClear", "protected")
 LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "heavyFileCount": 1,
                  "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1,

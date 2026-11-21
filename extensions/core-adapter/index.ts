@@ -7639,6 +7639,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return Array.isArray(v) ? v.some((x) => typeof x === "string" && x.trim() !== "") : typeof v === "string" && v.trim() !== "";
     });
     if (commitKeySet) out.push("INFO safety.git.commit.* is no longer used; commit messages are checked by the project's commit hooks");
+    // Keys the schema still accepts so old configs load; the shipped defaults no longer set them, so a value here comes from a user or project layer.
+    for (const k of ["gate.mode", "gate.askTimeoutMs", "gate.readClear", "gate.readonlyClear", "retro.proposalMinReviews"]) {
+      if (get(s.config.config, k) !== undefined) out.push(`INFO ${k} is no longer used and has no effect`);
+    }
 
     // Host pressure: a fresh sample (the sampler timer's call); a missing probe is never a FAIL.
     try {
