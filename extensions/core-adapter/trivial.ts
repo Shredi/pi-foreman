@@ -192,7 +192,7 @@ export async function checkTrivial(dirs: readonly [string, string | null][], cwd
  * `git status --porcelain` of the whole checkout of `cwd` (`:/`), without the `.workflow/` folders from `cwd` up to the toplevel and the scratch dir
  * (structured pathspecs, anchored at the toplevel, literal). Null when git fails or `cwd` is no work tree (fail closed).
  */
-export async function cleanTreeStatus(cwd: string, scratchDir: string, platform: string = process.platform): Promise<string | null> {
+export async function cleanTreeStatus(cwd: string, scratchDir: string, platform: string = process.platform, z = false): Promise<string | null> {
   const topRaw = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
   if (!topRaw) return null;
   let top: string;
@@ -206,7 +206,19 @@ export async function cleanTreeStatus(cwd: string, scratchDir: string, platform:
   const excludes = workflowDirs(realCwd, top, platform).map((d) => path.relative(top, d).split(path.sep).join("/"));
   const parts = scratchParts(scratchDir);
   if (parts && parts[0] !== ".workflow") excludes.push(parts.join("/"));
-  return git(cwd, ["status", "--porcelain", "--", ":/", ...excludes.map((e) => `:(top,exclude,literal)${e}`)]);
+  return git(cwd, ["status", "--porcelain", ...(z ? ["-z"] : []), "--", ":/", ...excludes.map((e) => `:(top,exclude,literal)${e}`)]);
+}
+
+/** The paths of `git status --porcelain -z` output (unquoted, so a non-ASCII name matches); a rename's origin is skipped. */
+export function statusPaths(z: string): Set<string> {
+  const out = new Set<string>();
+  const f = z.split("\0");
+  for (let i = 0; i < f.length; i++) {
+    if (f[i].length < 4) continue;
+    out.add(f[i].slice(3));
+    if (f[i][0] === "R" || f[i][0] === "C") i++;
+  }
+  return out;
 }
 
 /**
@@ -216,11 +228,13 @@ export async function cleanTreeStatus(cwd: string, scratchDir: string, platform:
  */
 export async function checkoutBaseline(cwd: string, scratchDir: string, platform: string = process.platform): Promise<string | null> {
   const status = await cleanTreeStatus(cwd, scratchDir, platform);
+  if (status === "") return null; // nothing to compare: the empty-status rule covers a clean start, a later change by anyone's hand is then refused
   const tree = status === null ? null : await worktreeTree(cwd, true);
   const top = tree === null ? null : (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
   const staged = top ? await git(top, ["ls-files", "--stage", "-z"]) : null;
   if (!top || staged === null) return null;
-  const subs = staged.split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1)).filter((p) => p !== "" && status!.includes(p));
+  const dirtyPaths = statusPaths((await cleanTreeStatus(cwd, scratchDir, platform, true)) ?? "");
+  const subs = staged.split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1)).filter((p) => p !== "" && dirtyPaths.has(p));
   const inner: string[] = [];
   for (const p of subs) inner.push(`${p}=${(await worktreeTree(path.join(top, p))) ?? "?"}`);
   return createHash("sha1").update([tree, status, ...inner].join("\n")).digest("hex");

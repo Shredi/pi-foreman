@@ -1825,7 +1825,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
-    if (reason !== "fork") s.baseline = e.baseline ?? null;
+    s.baseline = e.baseline ?? null; // a fork keeps its parent's fingerprint too: the parent's unreviewed work is still in the checkout
     if (reason !== "fork") s.lastFailFindings = e.lastFailFindings ?? null;
     if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
@@ -2159,7 +2159,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (hidesDeclaredTools(s.isChild) && get(s.config.config, "retro.report") === false && pi.getActiveTools().includes(REPORT_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== REPORT_TOOL)); // retro.report: false = the tool is not offered (a child keeps a declared tool; execute refuses there)
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
-    if (!s.isChild && (event.reason === "fork" || !latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]))) s.baseline = await checkoutBaseline(ctx.cwd, editModeOfSession(s).scratchDir, platform); // a first start or a fork; a reload or resume keeps the stored one
+    if (!s.isChild && event.reason !== "fork" && (!latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]))) s.baseline = await checkoutBaseline(ctx.cwd, editModeOfSession(s).scratchDir, platform); // a brand-new session only; a reload, resume or fork keeps the stored one (a fork without one has none)
     restoreCeremonyState(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
     if (!s.isChild) {
