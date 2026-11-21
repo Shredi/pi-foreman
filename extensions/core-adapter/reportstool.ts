@@ -107,12 +107,11 @@ function emitAll(s: Pick<ReportSession, "emit">, list: readonly Lesson[]): void 
   }
 }
 
-/** The `retro` action's answer: the JSON of `foreman retro --json` without the permission proposals and without `session_tools` and `flagged_asks` (both carry command words and file names): counters plus the tool and skill names of `tool_usage`. Anything that is not JSON is returned as it is. */
+/** The `retro` action's answer: the JSON of `foreman retro --json` without `session_tools` and `flagged_asks` (both carry command words and file names): counters plus the tool and skill names of `tool_usage`. Anything that is not JSON is returned as it is. */
 export function retroCounters(text: string): string {
   try {
     const j = JSON.parse(text) as Record<string, unknown>;
     if (!j || typeof j !== "object" || Array.isArray(j)) return text;
-    delete j.proposals;
     delete j.session_tools; // repeated bash command heads and base names of files read
     delete j.flagged_asks; // keyed by the first words of the flagged commands
     return JSON.stringify(j, null, 1);

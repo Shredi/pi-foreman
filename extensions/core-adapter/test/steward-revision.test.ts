@@ -112,8 +112,8 @@ test("a throw inside a tick is traced and the timer keeps running", (t) => {
   assert.equal(r.wakes.length, 1, "the next tick works");
 });
 
-test("retroCounters drops the permission proposals and passes non-JSON through", () => {
-  const out = JSON.parse(retroCounters(JSON.stringify({ usage: { n: 1 }, proposals: [{ family: "x" }] }))) as Record<string, unknown>;
+test("retroCounters keeps the counters and passes non-JSON through", () => {
+  const out = JSON.parse(retroCounters(JSON.stringify({ usage: { n: 1 } }))) as Record<string, unknown>;
   assert.deepEqual(out, { usage: { n: 1 } });
   assert.equal(retroCounters("no data"), "no data");
 });
@@ -159,14 +159,13 @@ test("a steward session launches the top explorer with a long brief once the sta
   assert.ok(boundLedger(path.join(r.a.agentDir, "pi-foreman", "state"), r.a.sessionId));
 });
 
-test("foreman_reports retro runs the retro inputs of the session and returns counters without proposals", { skip }, async (t) => {
+test("foreman_reports retro runs the retro inputs of the session and returns counters", { skip }, async (t) => {
   const r = await adapterRig(t);
   await r.command("steward on");
   const out = await r.call("foreman_reports", { action: "retro" });
   assert.equal(out.isError, false, out.text);
   const j = JSON.parse(out.text) as Record<string, unknown>;
   assert.ok("usage" in j && "trace" in j);
-  assert.ok(!("proposals" in j));
 });
 
 test("foreman_reports retro is refused in a child", async (t) => {
