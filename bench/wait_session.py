@@ -173,12 +173,12 @@ def run_bench_retro(args, row, agent, status, runner=subprocess.run):
         print("WARNING bench retro failed: %s" % exc, file=sys.stderr, flush=True)
 
 
-def foreman_config(row, work=None):
+def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
     the review model (the row's review_model; the fake provider's allowing review model for
     fake rows; else none, so the harness picks the cheapest role-map model, review.ts), trace on, and the row's `project_commands` as
     safety.permissions.projectCommands. The row's `foreman_edits` becomes ceremony.foremanEdits; ceremony.requireTriage
-    stays at its default. With `work` (the cell's scratch root), `close.worktreeDir` is `<work>/worktrees/<repo>`: the task repo (`/app`) has no writable parent, and a builder launch without `cwd` needs the session folder (D118). The row's `user_config` object is deep-merged in last, so a preset can set any knob."""
+    stays at its default. The row's `user_config` object is deep-merged in last, so a preset can set any knob."""
     provider = row["provider"]
     roles = row["roles"]
     review = row.get("review_model")
@@ -201,8 +201,6 @@ def foreman_config(row, work=None):
             l2.setdefault("ceremony", {})[name] = row[key]
     if row.get("project_commands"):  # the repo's test/build commands, as an owner would set them
         l2.setdefault("safety", {})["permissions"] = {"projectCommands": list(row["project_commands"])}
-    if work:
-        l2["close"] = {"worktreeDir": "%s/worktrees/<repo>" % str(work).replace("\\", "/")}
     if isinstance(row.get("user_config"), dict):
         _deep_merge(l2, row["user_config"])
     return l2
@@ -406,7 +404,7 @@ def build_world(args, row):
     packages = list(row.get("_packages") or [])
     settings = {"packages": packages}
     if row.get("agent") == "foreman":
-        write_json(agent / "foreman.json", foreman_config(row, root))
+        write_json(agent / "foreman.json", foreman_config(row))
         gen = subprocess.run([sys.executable, str(REPO / "scripts" / "foreman_config.py"), "generate-subagents", "--json",
                               "--agent-dir", str(agent), "--project-dir", args.cwd],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
@@ -431,7 +429,6 @@ def pi_env(args, agent, secret):
                 "CLAUDE_CONFIG_DIR": str(claude_dir)})
     if args.fake_script:
         env["FOREMAN_FAKE_SCRIPT"] = args.fake_script
-        env["FOREMAN_FAKE_CWD"] = str(args.cwd)  # scripted builder launches run in the task repo, not in a D118 session folder (the verifier reads the repo)
     if secret:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = secret
     return env

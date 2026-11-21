@@ -315,6 +315,7 @@ test("D118: a repository without a commit refuses the launch with git's own erro
 test("D118: a headless session (no UI) launching a builder without cwd in a primary checkout makes no folder, runs in the checkout and persists nothing", async (t) => {
   const { w, a, stateDir, sid } = await setup(t, { origin: "none", headless: true });
   assert.equal((a.ctx as { hasUI: boolean }).hasUI, false);
+  (a.ctx as { mode: string }).mode = "print";
   const first = await builder(a);
   assert.equal(first.blocked, null, String(first.blocked));
   assert.equal(first.input.cwd, undefined, "the launch keeps no cwd: it runs in the session checkout");
@@ -326,4 +327,18 @@ test("D118: a headless session (no UI) launching a builder without cwd in a prim
   assert.deepEqual(w.entries.filter((e) => e.customType === "pi-foreman-session-folder"), [], "no folder or primary mark in the session file");
   await tick(200);
   assert.deepEqual(roundWorktrees(stateDir, sid), [], "nothing in the close manifest");
+});
+
+test("D118: an RPC session (hasUI true, mode rpc: bench, replay, drivers) makes no folder and persists nothing", async (t) => {
+  const { w, a, stateDir, sid } = await setup(t, { origin: "none" });
+  (a.ctx as { mode: string }).mode = "rpc";
+  assert.equal((a.ctx as { hasUI: boolean }).hasUI, true);
+  const first = await builder(a);
+  assert.equal(first.blocked, null, String(first.blocked));
+  assert.equal(first.input.cwd, undefined, "the launch keeps no cwd");
+  assert.doesNotMatch(first.note, /own folder|no session folder/);
+  assert.equal(worktrees(w.project).length, 1, "no worktree");
+  assert.deepEqual(w.entries.filter((e) => e.customType === "pi-foreman-session-folder"), []);
+  await tick(200);
+  assert.deepEqual(roundWorktrees(stateDir, sid), []);
 });
