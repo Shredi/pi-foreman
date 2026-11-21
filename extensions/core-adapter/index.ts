@@ -1569,7 +1569,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const dir = hsDirOf(ctx, input, marked[0]);
     const top = await rootOf(dir);
     const root = top ?? realDir(dir);
-    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top) }); // an unresolved checkout reads every entry
+    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top), root });
     if (r) return refused(r);
     // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
     const key = await repoKeyOf(root);
@@ -4691,7 +4691,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const { given, r } = launchItemsFor(e);
           if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
           if (given && "items" in given) givenItems.set(e, given.items);
-          if (!r) continue;
+          if (!r || occasions.get(e) === "high-stakes") continue; // a high-stakes review marks no items: the items it names are never used
           if ("unknown" in r) {
             s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };

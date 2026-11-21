@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { allowedMcp, allowedMcpNamed, directMaxTools, inCeiling, roleMcpEntries, serverKey, splitEntry } from "./mcpscope.ts";
-import { fromJsonText } from "./jsontext.ts";
+import { filler, fromJsonText } from "./jsontext.ts";
 import { groupEntryObjects, singleLaunchRole } from "./usage.ts";
 
 type Json = Record<string, unknown>;
@@ -90,6 +90,8 @@ export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntr
   if (isObj(input.options) && "mcp" in input.options) {
     return refuse("mcp_launch", "pi-foreman: options.mcp is not a launch option; mcp is a top-level key of the call, beside agent and task (or a key of a tasks/chain entry), never inside options: subagent({agent, task, mcp})");
   }
+  if (filler(input.mcp)) delete input.mcp; // an empty filler counts as absent
+  for (const e of groupEntryObjects(input)) if (filler(e.mcp)) delete e.mcp;
   const single = singleLaunchRole(input);
   const group = Array.isArray(input.tasks) || Array.isArray(input.chain);
   const entries: McpEntry[] = [];
