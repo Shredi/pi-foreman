@@ -3,12 +3,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { writeBrief } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 test("brief path: writeBrief returns a forward-slash path that names the written brief-<n>.md", () => {
-  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-brief-path-")));
+  const dir = fs.realpathSync.native(trackedTmp("pf-brief-path-"));
   const first = writeBrief(dir, "one\n");
   const second = writeBrief(dir, "two\n");
   assert.equal(first, path.join(dir, "brief-1.md").split(path.sep).join("/"));

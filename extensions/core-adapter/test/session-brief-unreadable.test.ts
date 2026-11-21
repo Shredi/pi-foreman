@@ -2,12 +2,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { runSessionCommand, runSessionOpenTool } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-brief-")));
+const root = fs.realpathSync.native(trackedTmp("pf-session-brief-"));
 fs.writeFileSync(path.join(root, "ok.md"), "brief\n");
 fs.mkdirSync(path.join(root, "dir.md"));
 

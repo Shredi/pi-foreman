@@ -12,6 +12,7 @@ import { resolvePython } from "../python.ts";
 import { runGuard } from "../runguard.ts";
 import { defaultSpawner } from "../spawn.ts";
 import { evaluateRun, translateToolCall } from "../translate.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const coreDir = [process.env.PI_FOREMAN_TEST_CORE, path.join(repo, "core")].find((d) => d && fs.existsSync(path.join(d, "scripts", "ledger_guard_spawn.py")));
@@ -19,7 +20,7 @@ const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platfor
 const skip = !coreDir ? "no core checkout" : !py.ok ? "no Python >= 3.13" : false;
 
 async function decide(prompt: string, threshold: number) {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pf-int-"));
+  const cwd = trackedTmp("pf-int-");
   const python = py.ok ? py.info.executable : null;
   const env = buildGuardEnv({ base: process.env, coreDir: coreDir!, sessionId: "int-test", guard: "ledger_guard_spawn", markerDir: cwd, threshold });
   const payload = { ...preToolPayload("subagent", { task: prompt, agent: "builder" }, { sessionId: "int-test", cwd, home: os.homedir() }), permission_mode: "default" };

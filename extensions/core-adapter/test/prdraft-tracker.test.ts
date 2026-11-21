@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { registerPrPack } from "../gitpack.ts";
 import type { PrPackSession } from "../gitpack.ts";
@@ -10,6 +9,7 @@ import type { StoreRead, Timers, WatchSnapshot } from "../prwatch.ts";
 import { clearStoreCache, readStoreEntry, SERVE_FRESH_MS, trackedStateFile } from "../prstore.ts";
 import type { ReviewFacts } from "../prready.ts";
 import type { Spawner } from "../spawn.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
@@ -100,7 +100,7 @@ test("flow off: the line says the PR is not a draft; the caller's draft: true st
 
 test("readStoreEntry down: missing, unparseable, off, stale, fresh", () => {
   const NOW = 10_000_000;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-live-"));
+  const dir = trackedTmp("pf-live-");
   const file = trackedStateFile(dir);
   const write = (body: string) => {
     fs.mkdirSync(path.dirname(file), { recursive: true });

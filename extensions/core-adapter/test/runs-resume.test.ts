@@ -2,15 +2,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ChildRuns, UsageTail } from "../runs.ts";
 import { resumeTarget } from "../actions.ts";
 import { LiveState, liveDir } from "../livestate.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const MODEL = "anthropic/claude-sonnet-5-5";
 const usage = (launchId: string, cost: number) => JSON.stringify({ role: "builder", launchId, input: 10, cacheRead: 0, cacheWrite: 0, output: 2, cost: { total: cost } });
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "runs-resume-"));
+const tmp = () => trackedTmp("runs-resume-");
 
 function launched(c: ChildRuns): void {
   c.onLaunchCall("call1", { launchId: "L1", role: "builder", rung: "model", model: MODEL });

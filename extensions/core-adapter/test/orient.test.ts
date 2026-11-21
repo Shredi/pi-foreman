@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildOrientation, collectOrientation } from "../orient.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const reads = { warn: 4, every: 6 };
 const files = ["src/a/x.ts", "src/a/y.ts", "src/b/z.ts", "src/top.ts", "tests/t.py", "README.md", "package.json", "Cargo.toml", "pyproject.toml"];
@@ -46,7 +47,7 @@ test("orient: deterministic for any input order", () => {
 });
 
 test("orient: collector prints relative paths only; no packet outside a git repo", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orient-"));
+  const dir = trackedTmp("orient-");
   assert.equal(await collectOrientation(dir, { reads, maxLines: 120 }), "");
   const g = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "ignore" });
   g("init", "-q");

@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pollPrs } from "../prs-cli.ts";
@@ -11,6 +10,7 @@ import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, parseSnap, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -20,7 +20,7 @@ const row = (o: Row = {}): Row => ({ repo: "acme/app", number: 1, state: "open",
 
 async function setup(phases: unknown, r: Row) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prphases-"));
+  const agentDir = trackedTmp("pf-prphases-");
   const clock = { t: T0 };
   const deps: PollDeps = {
     agentDir,

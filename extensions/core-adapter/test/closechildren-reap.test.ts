@@ -2,13 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { closeChildren } from "../closechildren.ts";
 import { readRegistry, writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-closereap-")));
+const root = fs.realpathSync.native(trackedTmp("pf-closereap-"));
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 const local = (): SessionEntry => ({ label: "demo", child: CHILD, parent: "p", handoff: "/h", status: "open", backend: "hc", hc: { address: "t7" }, briefs: 0, lastError: null, last: null }) as unknown as SessionEntry;
 

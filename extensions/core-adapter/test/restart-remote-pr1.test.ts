@@ -1,15 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { bridgeAuthNotice, BRIDGE_PROVIDER } from "../bridgeiso.ts";
 import { intercomBlock, remoteChildAddress } from "../intercomguard.ts";
 import { parseSessionArgs, runSessionCommand, SESSION_USAGE, writeRegistry } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
 import type { SpawnResult } from "../spawn.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-restart-pr1-")));
+const root = fs.realpathSync.native(trackedTmp("pf-restart-pr1-"));
 const REMOTE_CHILD = "fm-demo-abc123";
 const LOCAL_CHILD = "fm-local-def456";
 const spawnOk = (stdout = "restarted", code = 0, stderr = ""): SpawnResult => ({ code, stdout, stderr, timedOut: false });

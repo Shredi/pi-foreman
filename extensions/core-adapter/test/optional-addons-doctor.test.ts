@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { optionalAddonsDoctor, onPath } from "../bg.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function dirs() {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "pf-opt-addons-"));
+  const base = trackedTmp("pf-opt-addons-");
   return { agentDir: path.join(base, "agent"), cwd: path.join(base, "project"), base };
 }
 function install(root: string, pkg: string) {
@@ -34,7 +34,7 @@ test("optionalAddonsDoctor adds the qmd line when memory is present and qmd is n
 });
 
 test("onPath honours Windows extensions and the platform's separator", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-onpath-"));
+  const dir = trackedTmp("pf-onpath-");
   fs.writeFileSync(path.join(dir, "qmd.cmd"), "");
   assert.equal(onPath("qmd", dir, "win32"), true);
   assert.equal(onPath("qmd", dir, "linux"), false);

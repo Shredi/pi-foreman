@@ -8,9 +8,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyAccept, compareSource, discoverLinks, hashText, knowledgeNudge, normalise } from "../../../scripts/foreman_knowledge.mjs";
 import { withNudge } from "../knowledge.ts";
+import { trackedTmp } from "./_tmpbase.ts";
+
+const mk = trackedTmp;
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "foreman_knowledge.mjs");
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pf-knowledge-"));
+const tmp = () => mk("pf-knowledge-");
 
 const PAGE = `<!DOCTYPE html><html><head><title>t</title><style>.a{color:red}</style><script>var x = "<p>noise</p>";</script></head>
 <body><header>Site header</header><nav><a href="/x">Menu</a></nav>

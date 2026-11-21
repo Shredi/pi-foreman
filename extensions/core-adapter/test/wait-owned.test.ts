@@ -7,9 +7,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ownedRoots } from "../owned.ts";
 import { checkWaitPath, parseStart } from "../wait.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-waitown-")));
+const root = fs.realpathSync(trackedTmp("pf-waitown-"));
 const ws = path.join(root, "work", "repo");
 const agentDir = path.join(root, "agent");
 const handoff = path.join(agentDir, "pi-foreman", "handoffs", "h1");

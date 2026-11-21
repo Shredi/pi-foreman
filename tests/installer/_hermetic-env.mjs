@@ -2,6 +2,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+// A direct run gets its own temp root first, so the dirs below land inside it.
+import "../../scripts/test_tmp_root_preload.mjs";
 // setup.mjs writes the resume block under PI_FOREMAN_HOME (else the real home): an unset one gets its own temp directory.
 import "./_sandbox-home.mjs";
 import { scrubSessionEnv } from "../../scripts/session_env.mjs";

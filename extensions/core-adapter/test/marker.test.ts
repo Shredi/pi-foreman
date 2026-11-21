@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "../marker.ts";
 import { registerViaGlobalRegistry } from "../childext.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function tmp(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "pf-adapter-"));
+  return trackedTmp("pf-adapter-");
 }
 
 test("session marker: core file name, started kept on re-run, binding read back", () => {

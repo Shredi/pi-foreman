@@ -9,6 +9,9 @@ import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
+
+const mk = trackedTmp;
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -20,7 +23,7 @@ const row = (o: Row = {}): Row => ({ repo: "acme/app", number: 1, state: "open",
 
 async function setup(config: Record<string, unknown> = {}) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prsettle-"));
+  const agentDir = mk("pf-prsettle-");
   const clock = { t: T0 };
   const world: { row: Row } = { row: row() };
   const deps: PollDeps = {

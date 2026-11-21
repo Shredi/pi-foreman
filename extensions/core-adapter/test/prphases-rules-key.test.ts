@@ -8,13 +8,13 @@ import type { PhaseRule } from "../prphases.ts";
 import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pollPrs } from "../prs-cli.ts";
 import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, parseSnap, trackedStateFile } from "../prstore.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const rulesOf = (r: unknown): PhaseRule[] => parsePhases(r).rules;
@@ -88,7 +88,7 @@ const row = (o: Row = {}): Row => ({ repo: "acme/app", number: 1, state: "open",
 
 async function setup(phases: unknown, r: Row) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prphases-"));
+  const agentDir = trackedTmp("pf-prphases-");
   const clock = { t: T0 };
   const deps: PollDeps = {
     agentDir,

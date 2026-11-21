@@ -1,7 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pollPrs } from "../prs-cli.ts";
@@ -14,6 +12,7 @@ import type { WatchSnapshot } from "../prwatch.ts";
 import { DEFAULT_RULES } from "../prwake.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const FIX = path.join(PKG, "tests", "fixtures", "fake_pr_source.mjs");
@@ -26,7 +25,7 @@ const ghRow = { repo: REPO, number: 1, state: "open", mergeable: "mergeable", he
 /** A tracker over one gating source whose answer mode the test switches; the store is read back through readStoreEntry. */
 function harness() {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-noans-"));
+  const agentDir = trackedTmp("pf-noans-");
   const clock = { t: T0 };
   const mode = { v: "pass" };
   const deps: PollDeps = {
@@ -104,7 +103,7 @@ test("reordering duplicate-named checks between polls does not replay a failure"
 
 test("runSource called with the process cwd at the filesystem root finds the source program through PATH", async () => {
   const cwd = process.cwd();
-  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-noans-state-"));
+  const stateDir = trackedTmp("pf-noans-state-");
   const cfg: SourceCfg = { name: "ci", argv: [path.parse(process.execPath).name, FIX, "pass"], repos: null, timeoutMs: 20_000, gates: true };
   const ctx: PrContext = { host: "github.com", repo: REPO, number: 1, head: "abc123", base: "main" };
   process.chdir(path.parse(cwd).root);
