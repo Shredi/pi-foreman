@@ -65,6 +65,8 @@ export interface ShellSegment {
   bodies?: string[];
   /** Set (not enumerable): the texts of the here-documents and here-strings that feed stdin (`bash <<'E'` runs its body as code). */
   heredocs?: string[];
+  /** Set (not enumerable) on a segment that is a stage of a `|` / `|&` pipeline: the pipeline's id (one per parse) and the stage's index; unset for any other command, and for a command inside a substitution of a stage. */
+  pipeline?: { id: number; stage: number };
   /** Set (true, not enumerable) on a `$( )` the walker stopped at on MAX_DEPTH with a script inside it: that script was never walked. */
   tooDeep?: boolean;
 }
@@ -132,6 +134,8 @@ interface Run {
   strings: string[];
   /** The whole line being parsed (a nested string is walked with its own `src`). */
   root?: string;
+  /** Pipelines numbered so far (`ShellSegment.pipeline`). */
+  pipes?: number;
   /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` are not resolved as constants and no trial of its own starts. */
   trial?: boolean;
 }
@@ -150,6 +154,8 @@ interface Scope {
   /** The texts of the here-documents and here-strings on stdin. */
   docs: string[];
   reason: OpaqueReason | null;
+  /** The pipeline stage the commands walked here belong to (`ShellSegment.pipeline`). */
+  pipe?: { id: number; stage: number };
   /** The source text of the script being walked (set by `walkScript`), for the body slices. */
   src?: string;
 }
@@ -307,6 +313,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
   Object.defineProperty(out, "passThrough", { value: [...(sc.passAt ?? [])], enumerable: false, configurable: true });
   Object.defineProperty(out, "heredocs", { value: [...(c ? c.docs : sc.docs)], enumerable: false, configurable: true });
+  if (sc.pipe) Object.defineProperty(out, "pipeline", { value: sc.pipe, enumerable: false, configurable: true });
   sc.run.out.push(out);
 }
 
@@ -324,7 +331,7 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
       if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     }
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null });
+    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined });
   }
 }
 
@@ -391,9 +398,10 @@ function walkNode(n: any, sc: Scope): string | null {
       return doCommand(n as Command, sc);
     case "Pipeline": {
       let docs = sc.docs;
+      const id = (sc.run.pipes = (sc.run.pipes ?? 0) + 1);
       (n.commands as CommandNode[]).forEach((cmd, i) => {
         const before = sc.run.out.length;
-        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0 });
+        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0, pipe: { id, stage: i } });
         // a here-document of one command flows down the pipe: the shell at the end of `cat <<E | bash` reads its body as code
         const fed = sc.run.out.slice(before).flatMap((x) => x.heredocs ?? []);
         if (fed.length) docs = [...new Set([...docs, ...fed])];
@@ -946,6 +954,91 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
   };
   visit(script as SyntaxNode, 0);
   return spans;
+}
+
+/** `command` with every here-document body blanked (spaces, newlines kept; same length), from the parser's body positions; a text that does not parse is returned as it is. */
+export function blankHeredocBodies(command: string): string {
+  try {
+    const script = parse(command) as Script;
+    if (!script || script.errors?.length) return command;
+    let out = command;
+    const visit = (n: SyntaxNode): void => {
+      const x = n as any;
+      if (x.type === "HereDoc") {
+        const body = command.slice(x.body.pos, x.body.end).replace(/[^\n]/g, " ");
+        out = out.slice(0, x.body.pos) + body + out.slice(x.body.end);
+      }
+      forEachChild(n, visit);
+    };
+    visit(script as SyntaxNode);
+    return out;
+  } catch {
+    return command;
+  }
+}
+
+/**
+ * `command` with its comments blanked (each `#` to the end of its line replaced by spaces; same length), read from the parser's node positions. Every token node is
+ * covered: each word (also the words of compound commands: for/select names and lists, case words and patterns, function and coproc names; a substitution is part of its
+ * word), assignment, redirect, here-string, here-document with its body and closing line, `[[ ]]` and `(( ))` command and the header of an arithmetic for. What lies
+ * outside every token is keywords, operators, whitespace and comments (unbash has no comment nodes); the parser opens a comment only at a word boundary, so a `#` there
+ * is always a comment, and the blanking stops at the end of its line. A text that does not parse is returned as it is.
+ */
+export function blankComments(command: string): string {
+  try {
+    const script = parse(command) as Script;
+    if (!script || script.errors?.length) return command;
+    const spans: Array<[number, number]> = [];
+    const eol = (i: number): number => {
+      const j = command.indexOf("\n", i);
+      return j < 0 ? command.length : j;
+    };
+    const visit = (n: SyntaxNode): void => {
+      const x = n as any;
+      switch (x.type) {
+        case "Word":
+        case "Assignment":
+        case "Redirect":
+        case "HereString":
+        case "TestCommand":
+        case "ArithmeticCommand":
+          spans.push([x.pos, x.end]);
+          return;
+        case "HereDoc":
+          spans.push([x.pos, x.end], [x.body.pos, x.body.end]);
+          if (x.closing) spans.push([x.closing.pos, eol(x.closing.end)]);
+          return;
+        case "ArithmeticFor":
+          spans.push([x.pos, x.body.pos]);
+          visit(x.body);
+          return;
+      }
+      forEachChild(n, visit);
+    };
+    visit(script as SyntaxNode);
+    spans.sort((a, b) => a[0] - b[0]);
+    const gaps: Array<[number, number]> = [];
+    let at = 0;
+    for (const [a, b] of spans) {
+      if (a > at) gaps.push([at, a]);
+      at = Math.max(at, b);
+    }
+    if (at < command.length) gaps.push([at, command.length]);
+    let out = command;
+    for (const [a, b] of gaps) {
+      let i = a;
+      while (i < b) {
+        const h = command.indexOf("#", i);
+        if (h < 0 || h >= b) break;
+        const e = Math.min(eol(h), b);
+        out = out.slice(0, h) + " ".repeat(e - h) + out.slice(e);
+        i = Math.max(e, h + 1);
+      }
+    }
+    return out;
+  } catch {
+    return command;
+  }
 }
 
 /**
