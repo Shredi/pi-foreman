@@ -1833,31 +1833,37 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * the first builder launch and every later entry without `cwd` gets it; an explicit `cwd` (also `workdir`, `worktree`) is left alone. Returns the launch line,
    * "" when nothing changed, or a refusal.
    */
-  async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string } | { refuse: string }> {
+  async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string; primary?: true } | { refuse: string }> {
     if (s.isChild || actionOf(input) !== null) return { line: "" };
     const isDir = (v: unknown): boolean => (typeof v === "string" && v !== "") || v === true;
     // `machine` (a remote launch) is an explicit choice too: a local path means nothing there
     const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree) || isDir(x.machine));
-    const bare = launchEntries(input).filter((e) => typeof e.agent === "string" && !explicit(e));
-    if (bare.length === 0) return { line: "" };
-    if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") {
-      // a builder at trivial tier works in the session's own checkout: later tiers keep launching there (the work is not in a new folder)
-      if (!s.sessionFolder && !s.primaryWork && bare.some((e) => e.agent === "builder") && (await primaryCheckout(s.cwd))) {
-        s.primaryWork = true;
-        try {
-          pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
-        } catch {
-          // the session file is not writable now: the decision stays in memory
-        }
+    const entries = launchEntries(input).filter((e) => typeof e.agent === "string");
+    const bare = entries.filter((e) => !explicit(e));
+    // A builder that works in the session's own primary checkout (no `cwd`, or an explicit `cwd` inside it) is the work a later folder would split; the caller
+    // sets the mark once the launch is accepted.
+    let primary: true | undefined;
+    if (!s.sessionFolder && !s.primaryWork && entries.some((e) => e.agent === "builder")) {
+      const top = await primaryCheckout(s.cwd);
+      if (top) {
+        const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+        const inTop = (e: Record<string, unknown>): boolean => {
+          const c = [e, input].map((x) => x.cwd).find((v) => typeof v === "string" && v !== "") as string | undefined;
+          if (c === undefined) return s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy" && !explicit(e);
+          const rel = path.relative(real(top), real(path.resolve(s.cwd, c)));
+          return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+        };
+        if (entries.some((e) => e.agent === "builder" && inTop(e))) primary = true;
       }
-      return { line: "" };
     }
+    if (bare.length === 0) return { line: "", ...(primary ? { primary } : {}) };
+    if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") return { line: "", ...(primary ? { primary } : {}) };
     if (!s.sessionFolder && s.primaryWork) {
       if (s.primaryNoted) return { line: "" };
       s.primaryNoted = true;
       return { line: "pi-foreman: no session folder was made: a builder already worked in this session's own checkout, so launches stay there." };
     }
-    if (!s.sessionFolder && !bare.some((e) => e.agent === "builder")) return { line: "" };
+    if (!s.sessionFolder && !bare.some((e) => e.agent === "builder")) return { line: "", ...(primary ? { primary } : {}) };
     if (!s.sessionFolder && !(await primaryCheckout(s.cwd))) return { line: "" };
     const r = await ensureSessionFolder({ cwd: s.cwd, sessionId: s.id, sessionName: pi.getSessionName?.(), worktreeDir: get(s.config.config, "close.worktreeDir"), branchPrefix: get(s.config.config, "sessions.worktree.branchPrefix"), recorded: s.sessionFolder });
     if ("reason" in r) {
@@ -1876,7 +1882,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "session_folder", path: r.folder.path, branch: r.folder.branch, base: r.base });
     }
     for (const e of bare) e.cwd = r.folder.path;
-    return { line: folderLine(r) };
+    return { line: folderLine(r), ...(primary ? { primary } : {}) };
   }
 
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
@@ -4039,6 +4045,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
       let folderNote = "";
+      let primaryBuilder = false;
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
@@ -4094,6 +4101,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const folder = await sessionFolderFor(s, ctx, input);
         if ("refuse" in folder) return { block: true, reason: folder.refuse };
         folderNote = folder.line;
+        primaryBuilder = folder.primary === true;
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
         // The owner-approval request of a deferred launch leaves every call here, before the copy: pi-subagents and a relaunch never carry it.
@@ -4726,6 +4734,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         await noteReadonlyStart(s, event.toolCallId, input, ctx.cwd);
       }
       // Kept for the tool result only once the launch passed every check.
+      if (primaryBuilder && !s.sessionFolder && !s.primaryWork) {
+        s.primaryWork = true;
+        try {
+          pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
+        } catch {
+          // the session file is not writable now: the decision stays in memory
+        }
+      }
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
       const reviewOccasions = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o);
       if (reviewOccasions.length > 0) capSet(launchOccasions, event.toolCallId, reviewOccasions);

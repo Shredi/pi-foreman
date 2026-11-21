@@ -252,3 +252,51 @@ test("D118: local commits of the primary checkout that origin/main lacks are nam
   assert.equal(r.blocked, null, String(r.blocked));
   assert.match(r.note, /primary checkout has 1 local commit not on origin\/main; it is not in the session folder/);
 });
+
+test("D118: a standard builder with an explicit cwd of the primary is work in the primary: a later launch without cwd gets no folder", async (t) => {
+  const { w, a } = await setup(t);
+  const first = await builder(a, { cwd: w.project });
+  assert.equal(first.blocked, null, String(first.blocked));
+  const next = await builder(a);
+  assert.equal(next.input.cwd, undefined, "no folder is injected");
+  assert.equal(worktrees(w.project).length, 1);
+});
+
+test("D118: a `cwd` of `.` counts as the primary too", async (t) => {
+  const { w, a } = await setup(t);
+  const first = await builder(a, { cwd: "." });
+  assert.equal(first.blocked, null, String(first.blocked));
+  const next = await builder(a);
+  assert.equal(next.input.cwd, undefined);
+  assert.equal(worktrees(w.project).length, 1);
+});
+
+test("D118: a trivial builder with an explicit cwd of the primary, after an escalation, leaves no folder to a launch without cwd", async (t) => {
+  const { w, a } = await setup(t, { tier: "trivial" });
+  const first = await builder(a, { cwd: w.project });
+  assert.equal(first.blocked, null, String(first.blocked));
+  await a.command("ceremony", "standard");
+  const next = await builder(a);
+  assert.equal(next.input.cwd, undefined);
+  assert.equal(worktrees(w.project).length, 1);
+});
+
+test("D118: a trivial builder refused by a later gate leaves no mark: after the escalation the next builder gets the folder", async (t) => {
+  const { w, a } = await setup(t, { tier: "trivial" });
+  const refused = await builder(a, { size: "nonsense" });
+  assert.ok(refused.blocked, "the launch is refused by a later gate");
+  await a.command("ceremony", "standard");
+  const next = await builder(a);
+  assert.equal(next.blocked, null, String(next.blocked));
+  assert.ok(next.input.cwd, "the folder is made");
+  assert.equal(worktrees(w.project).length, 2);
+});
+
+test("D118: a trivial builder that escalates in the same call and runs in the primary counts as primary work", async (t) => {
+  const { w, a } = await setup(t, { tier: "trivial" });
+  const first = await launch(a, { tasks: [{ agent: "builder", task: "build" }, { agent: "explorer", task: "look" }] });
+  assert.equal(first.blocked, null, String(first.blocked));
+  const next = await builder(a);
+  assert.equal(next.input.cwd, undefined, "no folder after work in the primary");
+  assert.equal(worktrees(w.project).length, 1);
+});
