@@ -37,6 +37,10 @@ class NodeFallback(unittest.TestCase):
         env = {"PATH": str(self.bindir), "HOME": str(self.tmp), "PI_CODING_AGENT_DIR": str(self.agent)}
         return subprocess.run(["/bin/sh", str(ROOT / "bin" / "foreman"), "prs", "poll"], env=env, capture_output=True, text=True, timeout=30)
 
+    def run_pane_resume(self):
+        env = {"PATH": str(self.bindir), "HOME": str(self.tmp), "PI_CODING_AGENT_DIR": str(self.agent)}
+        return subprocess.run(["/bin/sh", str(ROOT / "bin" / "foreman"), "pane-resume", "--shell-pid", "5"], env=env, capture_output=True, text=True, timeout=30)
+
     def test_recorded_node_runs_prs(self):
         node = self.fake_node()
         self.record(f"{node}\n")
@@ -55,6 +59,15 @@ class NodeFallback(unittest.TestCase):
         r = self.run_foreman()
         self.assertEqual(r.returncode, 1)
         self.assertIn("needs Node", r.stderr)
+
+    def test_pane_resume_with_no_record_exits_127(self):
+        r = self.run_pane_resume()
+        self.assertEqual(r.returncode, 127, r.stderr)
+
+    def test_pane_resume_with_a_record_of_a_missing_file_exits_127(self):
+        self.record(f"{self.tmp}/gone/node\n")
+        r = self.run_pane_resume()
+        self.assertEqual(r.returncode, 127, r.stderr)
 
     def test_record_of_a_binary_not_named_node_keeps_the_old_message(self):
         node = self.fake_node()

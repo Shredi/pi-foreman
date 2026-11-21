@@ -4,6 +4,7 @@ import { test } from "node:test";
 import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,10 @@ const win = process.platform === "win32";
 const SYSTEM = path.join(process.env.SystemRoot || "C:\\Windows", "System32");
 const PS = path.join(SYSTEM, "WindowsPowerShell", "v1.0", "powershell.exe");
 const CMD = path.join(SYSTEM, "cmd.exe");
+// An empty home and agent dir for every launcher run: bin/foreman falls back to the node-path record under the agent dir, so a record in the
+// runner's real home (written by a Pi session of another test step) would put node back on PATH.
+const SANDBOX = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-launcher-home-")));
+process.on("exit", () => fs.rmSync(SANDBOX, { recursive: true, force: true }));
 
 const launchers = {
   ps1: (args, env) => spawnSync(PS, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(ROOT, "bin", "foreman.ps1"), "pane-resume", ...args], { encoding: "utf8", input: "", env, timeout: 60_000 }),
@@ -23,6 +28,9 @@ for (const [name, run] of Object.entries(launchers)) {
   const env = () => {
     const e = { ...process.env };
     delete e.HC_TERMINAL_ID;
+    e.PI_CODING_AGENT_DIR = path.join(SANDBOX, "agent");
+    e.HOME = SANDBOX;
+    e.USERPROFILE = SANDBOX;
     return e;
   };
   test(`${name}: pane-resume with no HC_TERMINAL_ID is silent and exits 0`, { skip: !win }, () => {
