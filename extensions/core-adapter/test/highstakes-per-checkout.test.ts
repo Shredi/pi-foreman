@@ -271,3 +271,16 @@ test("T7: the report's order: B builder, PASS, high-stakes FAIL; then A builder,
   assert.match(again.blocked ?? "", /\[high_stakes_early\]|\[high_stakes_done\]/, "A's own FAIL holds A");
   assert.match(await pr(s.a, { head: "wtb" }), FAILED, "B's FAIL holds B");
 });
+
+test("T3e wiring: a high-stakes FAIL with no recorded head in A: a normal review in sibling B gets no findings; A still gets them", async (t) => {
+  const { a, A, B } = await two(t);
+  const s = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: A });
+  assert.equal(s.blocked, null, String(s.blocked));
+  commitIn(A, "src/a/during.ts"); // the head moved while the reviewer ran: the verdict keeps no head
+  await end(a, s, "reviewer", "1. FAIL src/x.ts:1 headless defect\nOverall verdict: FAIL", A);
+  commitIn(B, "src/b/more.ts"); // new work, so a normal review there is not held as a repeat
+  const inB = await normal(a, B);
+  assert.doesNotMatch(String(inB.input.task), /high-stakes findings|headless defect/, "B gets none");
+  const inA = await normal(a, A);
+  assert.ok(String(inA.input.task).startsWith(FINDINGS) && String(inA.input.task).includes("headless defect"), "A gets them");
+});

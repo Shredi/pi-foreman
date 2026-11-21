@@ -72,7 +72,7 @@ async function launch(a: Awaited<ReturnType<ReturnType<typeof world>["adapter"]>
   return input.task;
 }
 
-test("facts: no diff on a first review; a diff and the instruction on a re-review; none after the plan changed during the run", async (t) => {
+test("facts: no diff on a first review; a diff and the instruction on a re-review; after the plan changed during the run the diff is against the text the reviewer read", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
   const first = await launch(a, "f1");
@@ -94,6 +94,8 @@ test("facts: no diff on a first review; a diff and the instruction on a re-revie
   fs.writeFileSync(w.planFile, PLAN.replace("Ship it.", "Ship it thrice."));
   a.endRun("f3", "Overall verdict: FAIL\n");
   await tick();
+  // the verdict of run f3 counts for the text its reviewer read (D7), so the next re-review diffs against that text
   const fourth = await launch(a, "f4");
-  assert.match(fourth, /no diff \(the last reviewed version is not in memory\)/);
+  assert.match(fourth, /^-Ship it twice\.$/m);
+  assert.match(fourth, /^\+Ship it thrice\.$/m);
 });

@@ -68,35 +68,79 @@ export class PlanReviews {
   private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number; reviews: number }>();
   /** The plan path of the newest recorded or restored verdict. */
   private newestPath: string | null = null;
-  /** The plan text a launched reviewer reads, and the text the last verdict is for (in memory only; keyed by the real plan path). */
-  private readonly launched = new Map<string, { hash: string; text: string }>();
+  /**
+   * The plan text each `[plan-review]` launch's reviewer reads, per launch: keyed by the tool call id until the launch result names the run (`bindRun`), then by the run id. A verdict
+   * counts for the snapshot of its own run (`keepRun`); a second launch never overwrites the first one's. In memory only.
+   */
+  private readonly launches = new Map<string, { batch: number | null; bound: boolean; plans: Map<string, { hash: string; text: string }> }>();
+  /** The text the last verdict is for (in memory only; keyed by the real plan path). */
   private readonly reviewed = new Map<string, { hash: string; text: string }>();
+  /** The key `noteLaunch` uses when no launch is named (the older per-path form). */
+  private static readonly legacy = (planPath: string): string => `path:${planPath}`;
 
-  /** The tool batch (LaunchBatch generation) a still-open launch started in, per plan path. */
-  private readonly open = new Map<string, number>();
-
-  /** A `[plan-review]` launch: the text the reviewer will read; `batch` is the tool batch it starts in (open until `closeLaunch` or the next batch). */
-  noteLaunch(planPath: string, hash: string, text: string, batch?: number): void {
-    this.launched.set(planPath, { hash, text });
-    if (batch === undefined) this.open.delete(planPath);
-    else this.open.set(planPath, batch);
+  /** A `[plan-review]` launch (`launchKey`: its tool call id): the text the reviewer will read; `batch` is the tool batch it starts in (open until `closeLaunch`/`closeRun` or the next batch). */
+  noteLaunch(planPath: string, hash: string, text: string, batch?: number, launchKey: string = PlanReviews.legacy(planPath)): void {
+    if (batch !== undefined) for (const [k, l] of this.launches) if (!l.bound && l.batch !== null && l.batch < batch) this.launches.delete(k); // a launch of an earlier batch that never got its result
+    const l = this.launches.get(launchKey) ?? { batch: null, bound: false, plans: new Map() };
+    l.plans.set(planPath, { hash, text });
+    l.batch = batch ?? null;
+    this.launches.delete(launchKey);
+    this.launches.set(launchKey, l);
+    while (this.launches.size > 64) this.launches.delete(this.launches.keys().next().value as string);
   }
 
-  /** A plan write of tool batch `batch`: when a launch of that batch is still open, the reviewer reads these bytes, so the launch record takes them. */
+  /** The launch started run `runId`: its snapshot moves to the run. */
+  bindRun(launchKey: string, runId: string): void {
+    const l = this.launches.get(launchKey);
+    if (!l) return;
+    this.launches.delete(launchKey);
+    l.bound = true;
+    this.launches.set(runId, l);
+  }
+
+  /** The launch was refused or failed: its snapshot goes. */
+  dropLaunch(launchKey: string): void {
+    this.launches.delete(launchKey);
+  }
+
+  /** The snapshot of the plan the run's reviewer read, or null (no snapshot: after a reload, or a run this adapter did not launch). */
+  snapshotOf(runId: string, planPath: string): { hash: string; text: string } | null {
+    return this.launches.get(runId)?.plans.get(planPath) ?? null;
+  }
+
+  /** A plan write of tool batch `batch`: every launch of that batch still open takes these bytes (the reviewer reads them). */
   refreshLaunch(planPath: string, hash: string, text: string, batch: number): boolean {
-    if (this.open.get(planPath) !== batch) return false;
-    this.launched.set(planPath, { hash, text });
-    return true;
+    let any = false;
+    for (const l of this.launches.values()) {
+      if (l.batch !== batch || !l.plans.has(planPath)) continue;
+      l.plans.set(planPath, { hash, text });
+      any = true;
+    }
+    return any;
   }
 
   /** The launch's run ended: a later write in the same batch is a change the reviewer did not read. */
-  closeLaunch(planPath: string): void {
-    this.open.delete(planPath);
+  closeRun(runId: string): void {
+    const l = this.launches.get(runId);
+    if (l) l.batch = null;
   }
 
-  /** The verdict is recorded for the plan version `hash`: the text noted at launch becomes the reviewed text when its hash is the same, else the reviewed text is cleared (the plan changed while the reviewer ran). */
+  /** The older per-path form of `closeRun`: every launch of the plan is closed. */
+  closeLaunch(planPath: string): void {
+    for (const l of this.launches.values()) if (l.plans.has(planPath)) l.batch = null;
+  }
+
+  /** The verdict of run `runId` is recorded: the text its reviewer read is the reviewed text, and its hash is the version the verdict counts for. Null without a snapshot (the reviewed text is then cleared). */
+  keepRun(planPath: string, runId: string): { hash: string; text: string } | null {
+    const snap = this.snapshotOf(runId, planPath);
+    if (snap) this.reviewed.set(planPath, snap);
+    else this.reviewed.delete(planPath);
+    return snap;
+  }
+
+  /** The verdict is recorded for the plan version `hash` (a launch noted without a launch key): the text noted at launch becomes the reviewed text when its hash is the same, else the reviewed text is cleared. */
   keepReviewed(planPath: string, hash: string): void {
-    const l = this.launched.get(planPath);
+    const l = this.launches.get(PlanReviews.legacy(planPath))?.plans.get(planPath);
     if (l && l.hash === hash) this.reviewed.set(planPath, l);
     else this.reviewed.delete(planPath);
   }
@@ -169,6 +213,9 @@ export function planReviewSection(v: PlanVerdict, findings: readonly PanelFindin
   if (findings.length === 0) out.push(capped ? "  (no located findings) The review cap is reached: the owner may override this FAIL at the checkpoint (approve the plan)." : "  (no located findings)");
   return out.join("\n");
 }
+
+/** The facts line of a re-review whose launch shares its tool batch with a plan write (the bytes the reviewer reads may differ from the bytes the facts saw). */
+export const PLAN_SAME_BATCH_LINE = "the plan is written in the same tool batch as this launch; no diff at launch: review the whole plan against the earlier findings";
 
 /** At most this many diff lines go into the facts of a re-review. */
 export const PLAN_DIFF_LINES = 200;

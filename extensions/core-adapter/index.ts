@@ -168,7 +168,7 @@ import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatch
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
 import { ownerFactsLines, ownerFormHints, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
-import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
+import { isPlanNotice, NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
 import { OpenPrsRefresher, ReloadingConfig, openPrsConfig, realGh } from "./openprs.ts";
@@ -259,7 +259,7 @@ import { closeLines } from "./reviewrounds.ts";
 import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
-import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PLAN_SAME_BATCH_LINE, PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
 import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
@@ -2099,14 +2099,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const plan = s.plan && s.plan.status !== "rejected" ? s.plan : null;
     const l = plan ? s.planReviews.lineage(plan.path) : null;
     const newest = plan ? l : s.planReviews.newest(); // before a checkpoint s.plan is unset: the newest verdict still says whether the review passed
+    const now = plan ? currentPlanHash(plan, { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir }) : null; // the plan version on disk, not the checkpointed one
     writeRoundState({
       handoffDir: dir,
       plan: plan ? { topic: plan.topic, hash: plan.hash } : null,
       planReview: l ? { hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds } : null,
       round: s.round,
       tier: s.ceremony.tier,
-      reviewPassed: newest?.latest.verdict === "pass" && (!plan || newest.latest.hash === plan.hash),
-      planOpen: plan?.status !== "approved",
+      reviewPassed: newest?.latest.verdict === "pass" && (!plan || newest.latest.hash === now),
+      planOpen: plan?.status !== "approved" || now !== plan.hash, // approved only while the plan bytes are the approved bytes
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
@@ -3609,21 +3610,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return out;
   }
 
-  /** Plan review (planreview.ts): each primary `[plan-review]` verdict is kept for the plan bytes on disk now; traced `plan_review`. */
+  /** Whether a tool call of the assistant message that holds the launch (LaunchBatch.toolCalls) may write the plan `plan-<topic>`: a `write`/`edit` naming it, or a `bash`/`codemode` call whose arguments name it. */
+  function sameBatchPlanWrite(s: Session, ctx: ExtensionContext, topic: string): boolean {
+    const stem = `plan-${topic}.`;
+    return s.launchBatch.toolCalls.some((c) => {
+      const args = c.arguments && typeof c.arguments === "object" ? (c.arguments as Record<string, unknown>) : {};
+      if (c.name === "write" || c.name === "edit") return typeof args.path === "string" && path.basename(args.path).startsWith(stem) && isPlanPath(args.path, planOpts(s, ctx));
+      return (c.name === "bash" || c.name === "codemode") && JSON.stringify(args).includes(stem);
+    });
+  }
+
+  /** Plan review (planreview.ts): each primary `[plan-review]` verdict is kept for the plan version its reviewer read (the launch's snapshot), else for the bytes on disk now; traced `plan_review`. */
   function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
     const plans = planPathsOf(s.reviewRuns.byRun.get(runId)?.files ?? [], opts.scratchDir);
     const reviewed = new Set<string>();
+    const current = new Set<string>(); // plans whose reviewed version is the one on disk now
     for (const r of planReviewResults(results)) {
       s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
       const findings = Promise.resolve(findingsOfResult(r));
       for (const rp of readPlansOnce(plans, opts)) {
-        s.planReviews.record(rp.plan.path, { hash: rp.plan.hash, verdict: r.verdict, model: r.model, findings });
-        s.planReviews.keepReviewed(rp.plan.path, rp.plan.hash);
-        s.planReviews.closeLaunch(rp.plan.path);
-        s.show?.planReviewed(r.verdict === "pass", rp.plan.hash); // plan page state and milestone (show.ts)
+        // the verdict counts for the version the run's reviewer read; a plan changed while it ran stays unreviewed. No snapshot (after a reload): the bytes on disk now.
+        const snap = s.planReviews.keepRun(rp.plan.path, runId);
+        const hash = snap?.hash ?? rp.plan.hash;
+        s.planReviews.record(rp.plan.path, { hash, verdict: r.verdict, model: r.model, findings });
+        s.planReviews.closeRun(runId);
+        s.show?.planReviewed(r.verdict === "pass", hash); // plan page state and milestone (show.ts)
         reviewed.add(rp.plan.path);
-        const state = rp.plan.hash;
+        if (hash === rp.plan.hash) current.add(rp.plan.path);
+        const state = hash;
         s.reviewSync = s.reviewSync.then(async () => {
           const prev = s.reviews.findLast((x) => x.kind === "plan");
           const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.items, r.findings) : [] };
@@ -3631,17 +3646,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           loopCheck(s, runId, prev, rec);
         });
         const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
-        saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
+        saveStored(s.agentDir, hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
       }
     }
     for (const p of reviewed) {
-      if (s.planReviews.lineage(p)?.latest.verdict === "pass" && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
+      if (s.planReviews.lineage(p)?.latest.verdict === "pass" && current.has(p) && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
         // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
         s.planPhase = false;
         delete process.env.PI_FOREMAN_PLAN_PHASE; // child shells must not see the ended phase
         s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
       } else if (s.planPhase && s.planPhaseOrigin === "parent") {
-        const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
+        const cause = s.ceremony.tier === "heavy" ? "heavy" : s.planReviews.lineage(p)?.latest.verdict !== "pass" ? "not_pass" : !current.has(p) ? "no_reviewed_text" : s.planReviews.reviewedText(p) === null ? "no_reviewed_text" : "untriaged";
         s.trace?.emit({ event: "plan_phase", decision: "kept", cause });
       }
     }
@@ -4137,6 +4152,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.runningCalls.add(event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
+      // a child's `Plan from` notice reaches its parent: the round state it reads must say what the child really waits for
+      if (event.toolName === INTERCOM_TOOL && (event.input as Record<string, unknown>).action === "send" && isPlanNotice((event.input as Record<string, unknown>).message)) persistRounds(ms);
       if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
         ms.questionCalls.add(event.toolCallId);
         holdQuestion(event.toolCallId, event.toolName, event.input);
@@ -4959,9 +4976,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const before = s.planReviews.reviewedText(rp.plan.path);
             if (s.planReviews.lineage(rp.plan.path)) {
               rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
-              rereview.push(...(before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
+              // a plan write in the tool batch of this launch may land after the bytes above were read: no diff is claimed then
+              rereview.push(...(sameBatchPlanWrite(s, ctx, rp.plan.topic) ? [PLAN_SAME_BATCH_LINE] : before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
             }
-            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text, s.launchBatch.generation);
+            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text, s.launchBatch.generation, event.toolCallId);
           }
           // one entry per plan (a page and its copy named together are one); a plan that cannot be read stays listed
           const raws = new Set(readable.map((rp) => rp.raw));
@@ -6200,6 +6218,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const launchAt = s.launchAtByCall.get(event.toolCallId);
         s.launchAtByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
+        if (!s.isChild) {
+          if (runId) s.planReviews.bindRun(event.toolCallId, runId); // the plan text this launch's reviewer reads belongs to its run now
+          else s.planReviews.dropLaunch(event.toolCallId); // a refused or failed launch read nothing
+        }
         if (runId && s.reviewRootsByCall.has(event.toolCallId)) capSet(s.reviewRoots, runId, s.reviewRootsByCall.get(event.toolCallId) ?? null);
         {
           const resumedRoots = runId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume" ? s.reviewRoots.get(runId) : null;
@@ -7345,6 +7367,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Pending first: a crash, an abort or no answer leaves it pending, never approved.
         const rec: PlanRecord = { topic: plan.topic, path: plan.path, hash: plan.hash, status: "pending", approvedAt: null, by: null };
         s.plan = rec;
+        persistRounds(s); // the open checkpoint is on file before the owner answers (a parent reads the waits-for line from it)
         s.waitingForParent = true; // pending: the owner answers; the finish gate lets the turn end until the next input
         const pendingText = `No answer from the owner; the checkpoint of ${name} (${hash8}) stays pending — ask the owner in your reply. The owner answers a checkpoint in this session's pane only (a session on another machine: \`hc attach <machine>/<t>\`, the address the open reported); a file or message does not answer it. Builders stay refused at tier heavy until the owner approves (call ${CHECKPOINT_TOOL} again).`;
         // The owner answers in this session's own pane, also in a session opened by another session: no file from a parent approves a plan.

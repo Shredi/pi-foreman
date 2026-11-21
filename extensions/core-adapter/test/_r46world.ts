@@ -39,6 +39,8 @@ export interface WorldOpts {
   config?: Record<string, unknown>;
   /** The adapter's spawner (default: the version-probe memo over the real one); a file whose cases do not test the python guards passes _light-spawner.ts. */
   spawner?: Spawner;
+  /** The session's cwd is this subdirectory of the project (made when the world is built), not the project root. */
+  subdir?: string;
   /** Collects the custom messages the adapter sends (`pi.sendMessage`) with their options. */
   sent?: { message: { customType: string; content: string }; options: unknown }[];
 }
@@ -81,6 +83,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     else delete process.env.PI_FOREMAN_PARENT_INTERCOM;
   };
   applyEnv();
+  if (o.subdir) fs.mkdirSync(path.join(project, o.subdir), { recursive: true });
   const planFile = path.join(project, ".workflow", "scratch", "plan-widget.md");
   fs.writeFileSync(planFile, PLAN);
   fs.writeFileSync(path.join(handoff, "plan.md"), PLAN);
@@ -127,7 +130,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     coreAdapter(pi as never, { env: {}, pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
-      cwd: project,
+      cwd: o.subdir ? path.join(project, o.subdir) : project,
       model: { provider: "fake", id: "foreman" },
       mode: "tui",
       hasUI: !o.headless,

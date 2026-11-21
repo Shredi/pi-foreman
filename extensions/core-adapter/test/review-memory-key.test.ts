@@ -27,3 +27,22 @@ test("a review result of a run with no recorded checkout is filed under the sess
   assert.equal(own.blocked, null, String(own.blocked));
   assert.match(String(own.input.task), /\[re-review items: 1\]/, String(own.input.task));
 });
+
+test("a session whose cwd is a subdirectory of its checkout files the facts of an outside-git run under the toplevel key and reads them from there", async (t) => {
+  const { w, a } = await setup(t, { world: { subdir: "pkg/sub" } });
+  assert.equal(path.basename(String(a.ctx.cwd)), "sub", "the session cwd is the subdirectory");
+  w.state.answer = "allow once";
+  await a.writeLedger(LEDGER);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-memkey-"));
+  t.after(() => rmTestTmp(dir));
+  const b = await launch(a, "builder", "build the widget", { cwd: dir });
+  assert.equal(b.blocked, null, String(b.blocked));
+  await end(a, b, "builder", "done", dir);
+  const r = await launch(a, "reviewer", "review items of the widget", { cwd: dir });
+  assert.equal(r.blocked, null, String(r.blocked));
+  a.record(r.id, { verdict: "fail", items: [{ id: 1, result: "fail", note: "x" }], findings: [{ kind: "defect", text: "alpha defect", file: "src/x.ts", line: 1 }] });
+  await a.endRunAs(r.id, "reviewer", "report", dir);
+  const own = await launch(a, "reviewer", "review items of the widget", {}); // no cwd: the session's subdirectory, whose checkout is the toplevel
+  assert.equal(own.blocked, null, String(own.blocked));
+  assert.match(String(own.input.task), /\[re-review items: 1\]/, String(own.input.task));
+});
