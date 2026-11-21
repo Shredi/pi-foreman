@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatWaits, readAddonTasks } from "../bg.ts";
 import { ownTaskReadable } from "../roundsurface.ts";
+import { OWN_TOOLS, toolDefault } from "../defaults.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -14,9 +15,11 @@ const ws = path.join(w, "ws");
 const own = path.join(ws, ".pi", "tasks", "sess-own-4321");
 fs.mkdirSync(own, { recursive: true });
 
-test("bg_status, bg_logs and bg_kill carry a tool-level allow in the baseline (no permission dialog)", () => {
-  const tools = (JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { tools: Record<string, string> }).tools;
-  for (const t of ["bg_status", "bg_logs", "bg_kill", "bg_wait"]) assert.equal(tools[t], "allow", t);
+test("bg_status, bg_logs, bg_kill and bg_wait are own tools (the built-in tool default allows them)", () => {
+  for (const t of ["bg_status", "bg_logs", "bg_kill", "bg_wait"]) {
+    assert.ok(OWN_TOOLS.has(t), t);
+    assert.equal(toolDefault(t, {}), "default-own-tool", t);
+  }
 });
 
 test("ownTaskReadable: an empty session id gives no readable task pattern", () => {
