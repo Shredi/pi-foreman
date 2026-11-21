@@ -48,7 +48,7 @@ test("the title is in the normal brightness and truncates; the badge cell and th
   assert.equal(t.props.text_color, "#foreground");
   assert.equal(t.props.truncate, true);
   assert.equal(t.props.flex_1, true);
-  assert.equal(cell.props.w, numberCellWidth([{ number: 12 }], "session"));
+  assert.equal(cell.props.w, numberCellWidth([{ number: 12 }]) + 32);
   assert.equal(slot.props.w, 11);
   assert.equal(chip.props.trigger.props.on_click !== undefined, true, "the click stays");
 });

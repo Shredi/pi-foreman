@@ -1536,11 +1536,10 @@ export function prCardKey(pr) {
     pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(","), gate, pr.gated === true ? 1 : 0].join("|");
 }
 
-/** Width in px of the number cell of a PR line (it holds the badge, with room for a check mark): for numbers up to 4 digits 60 in the "list" form
- *  (`#n`), 84 in the "session" form (`PR #n`); 7 more for each further digit of the widest number in `prs`. */
-export function numberCellWidth(prs, form = "list") {
+/** Width in px of the number cell of a PR line: 52 for numbers up to 4 digits, 7 more for each further digit of the widest number in `prs`. */
+export function numberCellWidth(prs) {
   const digits = Math.max(0, ...listOf(prs).map((p) => String(int(p?.number) ?? "").length));
-  return (form === "session" ? 84 : 60) + 7 * Math.max(0, digits - 4);
+  return 52 + 7 * Math.max(0, digits - 4);
 }
 
 /** Data of the hover card: title, description excerpt, conflict line, counts, and the jobs grouped failed / running / waiting / passed,

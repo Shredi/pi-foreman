@@ -83,6 +83,8 @@ function prBadge(t, st, label) {
 }
 
 // An Open PRs line needs attention when a finished check failed (its dot is red) or the PR conflicts with its base (the conflict mark).
+// The badge cell of a PR line: the number cell plus room for the badge (and its check mark); the session form ("PR #n") is wider than the list form ("#n").
+const badgeCellWidth = (prs, form) => numberCellWidth(prs) + (form === "session" ? 32 : 8);
 const prFailing = (pr) => prDotState(pr).fill === "red";
 const prConflict = (pr) => prDotState(pr).conflict === true;
 
@@ -505,11 +507,11 @@ export default class ForemanAgents extends View {
 
   prChipRaw(t, pr, href, key, line) {
     const st = prDotState(pr);
-        const label = `${line.form === "session" ? "PR " : ""}#${pr.number}`;
+    const label = `${line.form === "session" ? "PR " : ""}#${pr.number}`;
     // The number cell has a fixed width and so has the conflict slot (blank without a conflict), so the titles stand at one x.
     const chip = h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
       .text_color(t.muted)
-      .child(h_flex().flex_none().w(line.numW ?? numberCellWidth([pr], line.form)).items_center().child(prBadge(t, st, label)))
+      .child(h_flex().flex_none().w(line.numW ?? badgeCellWidth([pr], line.form)).items_center().child(prBadge(t, st, label)))
       .child(h_flex().flex_none().w(11).items_center().child(st.conflict ? conflictMark(t) : div().flex_none().size(11)))
       .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.foreground).child(line.title)))
       .when(Boolean(prGateText(pr)), (el) => el.child(div().flex_none().text_color(pr.gate.state === "failed" ? t.blocked : t.dim).child(prGateText(pr))));
@@ -578,7 +580,7 @@ export default class ForemanAgents extends View {
   // The PRs of a session row: one line each (number badge, conflict mark, title), in sorted order, indented like the row's sub-rows. Hover and click are the line's.
   prLines(t, item, below, ind) {
     const lines = this.enrich(below);
-    const numW = numberCellWidth(lines, "session");
+    const numW = badgeCellWidth(lines, "session");
     return v_flex().flex_none().pl(ind + 20).pr(8).gap(1)
       .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "", numW, form: "session" })));
   }
@@ -798,7 +800,7 @@ export default class ForemanAgents extends View {
     // failing, then the rest in order, then "+N more" until a click shows all.
     const capped = (failing > 0 || conflicts > 0) && n > OPEN_PR_GROUP_LINES && !this.expanded.has(g.repo);
     const shown = capped ? [...prs.filter(prConflict), ...prs.filter((p) => !prConflict(p) && prFailing(p)), ...prs.filter((p) => !prConflict(p) && !prFailing(p))].slice(0, OPEN_PR_GROUP_LINES) : prs;
-    const numW = numberCellWidth(prs, "list");
+    const numW = badgeCellWidth(prs, "list");
     const more = (_e, cx) => { this.expanded.add(g.repo); cx.notify(); };
     return group.child(v_flex().flex_none().pl(20).pr(8).gap(1)
       .children(shown.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "", numW, form: "list" })))
