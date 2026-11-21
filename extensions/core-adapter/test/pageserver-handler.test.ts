@@ -48,11 +48,11 @@ test("a right id serves the page; a missing, wrong or short id gives 404", () =>
   assert.equal(text(get(`/${id}/plan.html`)), "<h1>plan</h1>");
   assert.equal(get("/plan.html").status, 404);
   assert.equal(get("/").status, 404);
-  assert.equal(get(`/${"A".repeat(43)}/plan.html`).status, 404);
-  assert.equal(get(`/${id.slice(0, 42)}/plan.html`).status, 404);
+  assert.equal(get(`/${"a".repeat(26)}/plan.html`).status, 404);
+  assert.equal(get(`/${id.slice(0, 25)}/plan.html`).status, 404);
   assert.equal(get(`/${id}`).status, 404);
   assert.equal(get(`/${id.toLowerCase() === id ? id.toUpperCase() : id.toLowerCase()}/plan.html`).status, 404);
-  assert.equal(text(get(`/${"A".repeat(43)}/plan.html`)), "not found\n");
+  assert.equal(text(get(`/${"a".repeat(26)}/plan.html`)), "not found\n");
 });
 
 test("a root id is looked up by file name, never used as a path", () => {

@@ -29,7 +29,27 @@ const START_WAIT_MS = 2000;
 const LOCK_STALE_MS = 10_000;
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const LOG_MAX_BYTES = 64 * 1024;
-const ROOT_ID_RE = /^[A-Za-z0-9_-]{43}$/;
+const B32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** 16 random bytes as lowercase RFC 4648 base32 without padding: 26 chars of [a-z2-7]. */
+function newRootId(): string {
+  let bits = 0;
+  let acc = 0;
+  let out = "";
+  for (const b of randomBytes(16)) {
+    acc = (acc << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(acc >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    acc &= (1 << bits) - 1;
+  }
+  if (bits > 0) out += B32[(acc << (5 - bits)) & 31];
+  return out;
+}
+
+const ROOT_ID_RE = /^[a-z2-7]{26}$/;
 
 export type RootKind = "dir" | "file";
 
@@ -167,7 +187,7 @@ export function registerRoot(stateDir: string, absPath: string, kind: RootKind, 
         return id;
       }
     }
-    const id = randomBytes(32).toString("base64url");
+    const id = newRootId();
     writeAtomic(path.join(rootsDir(stateDir), `${id}.json`), { path: real, kind, touchedAt: now } satisfies RootRecord);
     return id;
   } catch {

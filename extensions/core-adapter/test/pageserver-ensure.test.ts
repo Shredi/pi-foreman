@@ -182,7 +182,7 @@ test("registerRoot reuses the same real path, touches it, and keeps the id; reco
   const b = registerRoot(state, dir, "dir", 2000);
   assert.ok(a);
   assert.equal(a, b);
-  assert.match(a, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(a, /^[a-z2-7]{26}$/);
   assert.equal(JSON.parse(fs.readFileSync(path.join(rootsDir(state), `${a}.json`), "utf8")).touchedAt, 2000);
   assert.equal(countRoots(state), 1);
   if (posix) assert.equal(fs.statSync(path.join(rootsDir(state), `${a}.json`)).mode & 0o777, 0o600);
@@ -239,7 +239,7 @@ test("pageUrlFor: a page of a pages/ folder gets a served URL that serves the pa
   fs.writeFileSync(path.join(dir, "plan.html"), "<p>served</p>");
   const url = await pageUrlFor(path.join(dir, "plan.html"), "dir", undefined, urlDeps());
   assert.ok(url);
-  assert.match(url, new RegExp(`^http://127\\.0\\.0\\.1:${port}/[A-Za-z0-9_-]{43}/plan\\.html$`));
+  assert.match(url, new RegExp(`^http://127\\.0\\.0\\.1:${port}/[a-z2-7]{26}/plan\\.html$`));
   const r = await request(port, new URL(url).pathname);
   assert.deepEqual(r, { status: 200, body: "<p>served</p>" });
   assert.equal(await pageUrlFor(path.join(dir, "plan.html"), "dir", undefined, urlDeps()), url);
@@ -270,7 +270,7 @@ test("pageUrlFor: a remote session keeps file links unless its own baseUrl is se
   for (const env of [{ SSH_CONNECTION: "1.2.3.4 5 6.7.8.9 22" }, { PI_FOREMAN_REMOTE_PARENT: "1" }]) {
     assert.equal(await pageUrlFor(f, "file", undefined, urlDeps(env)), null, JSON.stringify(env));
     const url = await pageUrlFor(f, "file", { pages: { server: { baseUrl: "https://box.example" } } }, urlDeps(env));
-    assert.match(url ?? "", /^https:\/\/box\.example\/[A-Za-z0-9_-]{43}\/brief\.md$/, JSON.stringify(env));
+    assert.match(url ?? "", /^https:\/\/box\.example\/[a-z2-7]{26}\/brief\.md$/, JSON.stringify(env));
   }
   assert.match((await pageUrlFor(f, "file", undefined, urlDeps({ PI_FOREMAN_REMOTE_PARENT: "0" }))) ?? "", /^http:/);
 });

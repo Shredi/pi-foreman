@@ -94,7 +94,7 @@ test("url prints the served URL of a page file of a show pages/ folder", async (
   const f = showPage("note-12.html", "abc.DEF-1");
   const r = await run(["url", f]);
   assert.equal(r.code, 0);
-  assert.match(r.out, new RegExp(`^http://127\\.0\\.0\\.1:${port}/[A-Za-z0-9_-]{43}/note-12\\.html\\n$`));
+  assert.match(r.out, new RegExp(`^http://127\\.0\\.0\\.1:${port}/[a-z2-7]{26}/note-12\\.html\\n$`));
   assert.equal(r.err, "");
   for (const name of ["plan.html", "result.html"]) assert.equal((await run(["url", showPage(name)])).code, 0, name);
 });

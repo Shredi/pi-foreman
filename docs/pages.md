@@ -14,7 +14,7 @@ One small background server per machine serves the pages the harness writes, so 
 
 ## URL shape and secrets
 
-A link is `<base>/<id>/<path>`: `<base>` is `pages.server.baseUrl` when set, else `http://127.0.0.1:<port>`; `<id>` is a random 256-bit secret (43 base64url characters), one per registered folder or brief; `<path>` is the file below it (a brief: its file name). The secret in the path keeps relative links between the files of one folder working. A request without a known secret, a wrong method (only GET and HEAD), a path with `..`, `.`, a leading dot, `\`, `:` or NUL, a `Host` header that is not this machine (`127.0.0.1`, `localhost`, `[::1]`, the bind address or the `baseUrl` host; this closes DNS rebinding) all get "not found".
+A link is `<base>/<id>/<path>`: `<base>` is `pages.server.baseUrl` when set, else `http://127.0.0.1:<port>`; `<id>` is a random 128-bit secret (26 lowercase base32 characters, `[a-z2-7]`), one per registered folder or brief; `<path>` is the file below it (a brief: its file name). The secret in the path keeps relative links between the files of one folder working. A request without a known secret, a wrong method (only GET and HEAD), a path with `..`, `.`, a leading dot, `\`, `:` or NUL, a `Host` header that is not this machine (`127.0.0.1`, `localhost`, `[::1]`, the bind address or the `baseUrl` host; this closes DNS rebinding) all get "not found".
 
 Every answer carries `Content-Security-Policy: sandbox allow-scripts allow-popups` (the page runs with an opaque origin: no browser storage, no read of another page), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.
 

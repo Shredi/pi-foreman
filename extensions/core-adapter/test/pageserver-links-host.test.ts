@@ -5,7 +5,7 @@ import { hostAllowed, servedUrl } from "../pageserver.ts";
 import type { ServerRecord } from "../pageserver.ts";
 
 const rec = (bind: string): ServerRecord => ({ pid: 1, port: 47317, configPort: 47317, bind, version: "1", startedAt: 0, healthKey: "k" });
-const id = "A".repeat(43);
+const id = "a".repeat(26);
 
 test("servedUrl: non-loopback bind and empty baseUrl gives a file link", () => {
   assert.equal(servedUrl(rec("0.0.0.0"), { baseUrl: "" }, id, "plan.html"), null);

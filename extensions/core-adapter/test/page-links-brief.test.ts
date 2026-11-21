@@ -64,7 +64,7 @@ function link(over: { env?: NodeJS.ProcessEnv; config?: Record<string, unknown>;
 
 test("pageUrlFor: a local session gets a URL under the secret of its root; the root is recorded", async () => {
   const u = await link();
-  assert.match(u!, /^http:\/\/127\.0\.0\.1:47317\/[A-Za-z0-9_-]{43}\/b\.md$/);
+  assert.match(u!, /^http:\/\/127\.0\.0\.1:47317\/[a-z2-7]{26}\/b\.md$/);
   assert.equal(fs.readdirSync(path.join(pagesStateDir(path.join(root, "agent-url")), "roots")).length, 1);
 });
 
@@ -73,7 +73,7 @@ test("pageUrlFor: a remote session (SSH_CONNECTION or PI_FOREMAN_REMOTE_PARENT) 
   assert.equal(await link({ env: { PI_FOREMAN_REMOTE_PARENT: "1" } }), null);
   const cfg = { pages: { server: { baseUrl: "https://box.example.net:8443" } } };
   const u = await link({ env: { SSH_CONNECTION: "x" }, config: cfg });
-  assert.match(u!, /^https:\/\/box\.example\.net:8443\/[A-Za-z0-9_-]{43}\/b\.md$/);
+  assert.match(u!, /^https:\/\/box\.example\.net:8443\/[a-z2-7]{26}\/b\.md$/);
 });
 
 test("pageUrlFor: disabled, no server and a missing file give no URL", async () => {
