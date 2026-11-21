@@ -49,6 +49,7 @@ Entries get there silently, with no model turn and no tokens:
   `-b`/`-B`, else the path's basename when there is no commit-ish and no `--detach`). `mkdir [-p]` of a new dir under
   `.workflow/scratch/<topic>/` or `<state>/scratch/<x>/` records that topic dir.
 - A write or edit into a new `.workflow/scratch/<topic>/` subdir records the topic dir.
+- The adapter records the session folder (a worktree the session made itself at its first builder launch, see [sessions](sessions.md#parallel-rounds)) with the session as owner and the branch `<sessions.worktree.branchPrefix>/<slug>`, so close and `foreman worktree sweep` clean it under the usual preconditions.
 - `foreman close record --kind worktree|scratch|handoff --path P [--branch B] [--base B] [--owner O] [--class private|round|durable] [--session S]`
   appends one by hand.
 

@@ -62,9 +62,9 @@ test("(a) a PASS in A stands while a builder runs in B: the finish names only B,
 
 test("(b) a PASS in A, then a builder in A: the finish is refused with today's hint, a review is no repeat, [high-stakes] is early", async (t) => {
   const { a, w } = await two(t);
-  await build(a);
+  await build(a, {}, w.project);
   await tick(300);
-  await builder(a);
+  await builder(a, w.project);
   const text = await settle(a);
   assert.match(text, /requires reviewer \(re-review needed: revised after the last PASS\)/, "no path: the only open checkout is the session's own");
   const rev = await launch(a, "reviewer", "[pre-pr] review the branch");
@@ -78,7 +78,7 @@ test("an unknown checkout acts on every entry: a builder or a project edit there
   const { a, w } = await two(t);
   const nowhere = fs.mkdtempSync(path.join(os.tmpdir(), "pf-nogit-"));
   t.after(() => fs.rmSync(nowhere, { recursive: true, force: true }));
-  await build(a);
+  await build(a, {}, w.project);
   await tick(300);
   const rep = await launch(a, "reviewer", "review it", { cwd: nowhere });
   assert.match(rep.blocked ?? "", /the last review passed/, "an unknown root reads every entry: all stand, so a repeat");
@@ -112,7 +112,7 @@ test("a project edit in a never-reviewed B (a worktree inside the workspace) aft
   const { a, w } = await two(t);
   const inner = path.join(w.project, "inner");
   git(w.project, "worktree", "add", "-q", "-b", "inner", inner);
-  await build(a);
+  await build(a, {}, w.project);
   await tick(300);
   await edit(a, path.join(inner, "x.ts"));
   const text = await settle(a);

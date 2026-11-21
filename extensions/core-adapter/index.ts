@@ -252,6 +252,7 @@ import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyS
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
+import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
 import { climbNotesOf, rungNote } from "./launchreceipt.ts";
 import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
@@ -306,6 +307,9 @@ function releaseLedgerHold(toolCallId: string): void {
 
 /** Session entry type: one small record per review launch or launch that named a ledger (run id, paths, cited, and for a review its launch, items and occasion), so the route survives a reload (D31). */
 const LEDGER_ROUTE_ENTRY = "pi-foreman-ledger-route";
+
+/** Session entry type: the session folder (sessionfolder.ts, D118) the session made at its first builder launch, so a reload or resume reuses it. */
+const SESSION_FOLDER_ENTRY = "pi-foreman-session-folder";
 
 /** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). A review launch also carries its launch id, the ids its verdict tool accepts and its occasion (the record dir is derived from the launch id, never stored). */
 interface LedgerRoute {
@@ -455,6 +459,8 @@ interface Session {
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
   ceremonyRestored: boolean;
+  /** Foreman only: the session folder made at the first builder launch from a primary checkout (D118), else null. */
+  sessionFolder: SessionFolder | null;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -1141,6 +1147,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
+      sessionFolder: null,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1802,6 +1809,51 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
+  /** session_start: the session folder of the latest entry of the branch (a fork is another session and makes its own). */
+  function restoreSessionFolder(s: Session, ctx: ExtensionContext, reason: string): void {
+    if (s.isChild || reason === "fork") return;
+    const entries = (ctx.sessionManager.getBranch?.() ?? []) as { type?: unknown; customType?: unknown; data?: { v?: unknown; path?: unknown; branch?: unknown } }[];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (!e || e.type !== "custom" || e.customType !== SESSION_FOLDER_ENTRY) continue;
+      if (e.data?.v === 1 && typeof e.data.path === "string" && typeof e.data.branch === "string") s.sessionFolder = { path: e.data.path, branch: e.data.branch };
+      return;
+    }
+  }
+
+  /**
+   * D118: the folder a launch entry without `cwd` runs in. A foreman session at standard or heavy tier in a primary checkout makes its own linked worktree at
+   * the first builder launch and every later entry without `cwd` gets it; an explicit `cwd` (also `workdir`, `worktree`) is left alone. Returns the launch line,
+   * "" when nothing changed, or a refusal.
+   */
+  async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string } | { refuse: string }> {
+    if (s.isChild || actionOf(input) !== null || (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy")) return { line: "" };
+    const isDir = (v: unknown): boolean => (typeof v === "string" && v !== "") || v === true;
+    const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree));
+    const bare = launchEntries(input).filter((e) => typeof e.agent === "string" && !explicit(e));
+    if (bare.length === 0) return { line: "" };
+    if (!s.sessionFolder && !bare.some((e) => e.agent === "builder")) return { line: "" };
+    if (!s.sessionFolder && !(await primaryCheckout(s.cwd))) return { line: "" };
+    const r = await ensureSessionFolder({ cwd: s.cwd, sessionId: s.id, sessionName: pi.getSessionName?.(), worktreeDir: get(s.config.config, "close.worktreeDir"), branchPrefix: get(s.config.config, "sessions.worktree.branchPrefix"), recorded: s.sessionFolder });
+    if ("reason" in r) {
+      s.trace?.emit({ event: "launch_refused", reason: "session_folder", tier: s.ceremony.tier, ...launchDeny(input) });
+      return { refuse: `pi-foreman: launch refused [session_folder]: ${r.reason}` };
+    }
+    if (r.created) {
+      s.sessionFolder = r.folder;
+      try {
+        pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, path: r.folder.path, branch: r.folder.branch });
+      } catch {
+        // the session file is not writable now: the folder stays in memory
+      }
+      const o = manifestOwner({ id: s.id, isChild: false }, process.env);
+      await recordEntries([{ kind: "worktree", path: r.folder.path, branch: r.folder.branch }], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000), (k, why) => s.trace?.emit({ event: "manifest_record_failed", kind: k.kind, error: why }));
+      s.trace?.emit({ event: "session_folder", path: r.folder.path, branch: r.folder.branch, base: r.base });
+    }
+    for (const e of bare) e.cwd = r.folder.path;
+    return { line: folderLine(r) };
+  }
+
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
@@ -2155,6 +2207,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
+    restoreSessionFolder(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
     if (!s.isChild) {
       try {
@@ -3960,6 +4013,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let folderNote = "";
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
@@ -4012,6 +4066,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return c;
       };
       if (event.toolName === "subagent") {
+        const folder = await sessionFolderFor(s, ctx, input);
+        if ("refuse" in folder) return { block: true, reason: folder.refuse };
+        folderNote = folder.line;
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
         // The owner-approval request of a deferred launch leaves every call here, before the copy: pi-subagents and a relaunch never carry it.
@@ -4658,7 +4715,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
       }
-      if (notices.length + budgetNotes.length + mcpNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes]);
+      if (notices.length + budgetNotes.length + mcpNotes.length > 0 || folderNote) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes, ...(folderNote ? [folderNote] : [])]);
       if (event.toolName === "subagent" && !s.isChild && subagentAgents(input).includes("builder")) {
         const applied = s.critique.onBuilder();
         if (applied) s.trace?.emit(applied);
