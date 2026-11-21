@@ -100,7 +100,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, MAX_SUITES, PRE_PR_SUITES_LINE, SUITE_COMMAND_MAX, SUITE_RESULTS, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
 import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
@@ -132,7 +132,8 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
+import { reviewFactsFor } from "./prbody.ts";
+import { appendHeadLine, suitesLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -1065,6 +1066,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         draftFlow: () => draftFlowOn(s),
         draft: (key, cwd, draft) => prRun(s, cwd, "pr_draft", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), draft }, 30_000),
         label: (key, cwd, label, on) => prRun(s, cwd, "pr_label", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), label, on }, 30_000),
+        body: (key, cwd, block) => prRun(s, cwd, "pr_body", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), block }, 30_000),
+        bodyFacts: (head) => reviewFactsFor(gateReviews(s), head),
         readyLabel: () => {
           const v = get(s.config.config, "tools.prReadyLabel");
           return typeof v === "string" ? v : "";
@@ -3382,15 +3385,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const top = await rootOf(cwd);
               const endTree = await worktreeTree(cwd, true);
               const tree = reviewedTree(startTreesWf, cwd, endTree);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}) };
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}), run: runId, ...(full?.suites.length ? { suites: full.suites } : {}) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
+              if (rec.verdict === "pass") void s.prWatches.bodyOpened(); // the reviews line of a PR this session opened follows a new PASS (prbody.ts)
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
               s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
               s.live?.flush(); // the pill's review facts
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
-              if (r.outputPath) appendHeadLine(r.outputPath, h);
+              if (r.outputPath) appendHeadLine(r.outputPath, h, suitesLine(rec.suites, rec.verdict === "pass" && rec.occasion === "pre-pr"));
               s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why, ...(h.via ? { via: h.via } : {}) });
               persistCeremonyState(s);
             });
@@ -4913,7 +4917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
         }
         // every review task of a single launch ends with the ids review_verdict takes (the set the tool and the binding use), after the facts the plan review added
-        if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
+        if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${occasions.get(e) === "pre-pr" ? `${PRE_PR_SUITES_LINE}\n\n` : ""}${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null, ...(s.lastFailFindings ? { findings: s.lastFailFindings } : {}) } : null;
@@ -6746,8 +6750,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Review verdict",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. Then write your report for the foreman.",
-    parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
+    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. suites: the test suites you ran or skipped (command, result pass, fail or skip), as your task asks. Then write your report for the foreman.",
+    parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, suites: { type: "array", maxItems: MAX_SUITES, items: { type: "object", properties: { command: { type: "string", maxLength: SUITE_COMMAND_MAX, description: "One line, without HTML comment markers." }, result: { type: "string", enum: [...SUITE_RESULTS] } }, required: ["command", "result"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const refuse = (text: string, reason: string) => {

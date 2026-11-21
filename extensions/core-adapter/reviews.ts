@@ -10,6 +10,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Verdict } from "./rounds.ts";
 import type { ReviewKind } from "./reviewloop.ts";
+import { checkVerdictCall } from "./verdict.ts";
+import type { VerdictSuite } from "./verdict.ts";
 
 export interface ReviewRecord {
   role: string;
@@ -36,6 +38,10 @@ export interface ReviewRecord {
   via?: "same_tree";
   /** When the record was appended (ms); absent in a record from before it. The same-tree alias reads it against the high-stakes FAILs of the session. */
   at?: number;
+  /** The id of the reviewer run that gave the verdict (the PR body `## Reviews` line); absent in a record from before it. */
+  run?: string;
+  /** The test suites the reviewer named in its verdict (verdict.ts); absent without the field. */
+  suites?: VerdictSuite[];
 }
 
 export const MAX_REVIEWS = 50;
@@ -67,11 +73,17 @@ export function headLine(h: { head: string | null; why?: NoHeadWhy }): string {
   return h.head ? `Head: ${h.head}` : `Head: unknown (${h.why ?? "head_unread"})`;
 }
 
-/** Appends the Head line as the last line of an existing reviewer output file; false when the file is missing or not writable (it is never created). */
-export function appendHeadLine(file: string, h: { head: string | null; why?: NoHeadWhy }): boolean {
+/** The verdict-file line for the suites a reviewer named: `suites: a (pass), b (fail)`; `none named by the pre-pr reviewer` for a `[pre-pr]` PASS without any; null otherwise. */
+export function suitesLine(suites: readonly VerdictSuite[] | undefined, prePrPass: boolean): string | null {
+  if (suites && suites.length > 0) return `suites: ${suites.map((s) => `${s.command} (${s.result})`).join(", ")}`;
+  return prePrPass ? "suites: none named by the pre-pr reviewer" : null;
+}
+
+/** Appends the suites line (when given) and then the Head line as the last lines of an existing reviewer output file; false when the file is missing or not writable (it is never created). */
+export function appendHeadLine(file: string, h: { head: string | null; why?: NoHeadWhy }, suites?: string | null): boolean {
   try {
     const cur = fs.readFileSync(file, "utf8");
-    fs.appendFileSync(file, `${cur === "" || cur.endsWith("\n") ? "" : "\n"}${headLine(h)}\n`);
+    fs.appendFileSync(file, `${cur === "" || cur.endsWith("\n") ? "" : "\n"}${suites ? `${suites}\n` : ""}${headLine(h)}\n`);
     return true;
   } catch {
     return false;
@@ -309,6 +321,8 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
     if (!r || typeof r !== "object" || typeof r.role !== "string" || (r.verdict !== "pass" && r.verdict !== "fail")) continue;
     if (r.head !== null && !(typeof r.head === "string" && /^[0-9a-f]{40,64}$/.test(r.head))) continue;
     const sig = Array.isArray(r.sig) && r.sig.every((x) => typeof x === "string") ? (r.sig as string[]).slice(0, MAX_SIG) : null;
+    const checked = r.suites === undefined ? null : checkVerdictCall({ verdict: "pass", suites: r.suites }, []); // the tool's own check; a bad list is dropped
+    const suites = checked && "call" in checked ? checked.call.suites : undefined;
     out.push({
       role: r.role,
       verdict: r.verdict,
@@ -323,6 +337,8 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(typeof r.tree === "string" && /^[0-9a-f]{40,64}$/.test(r.tree) ? { tree: r.tree } : {}),
       ...(r.via === "same_tree" ? { via: "same_tree" as const } : {}),
       ...(typeof r.at === "number" && Number.isFinite(r.at) ? { at: r.at } : {}),
+      ...(typeof r.run === "string" && r.run && r.run.length <= 200 ? { run: r.run } : {}),
+      ...(suites && suites.length > 0 ? { suites } : {}),
     });
   }
   return out.slice(-MAX_REVIEWS);

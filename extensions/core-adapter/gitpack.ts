@@ -16,6 +16,7 @@ import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, remoteReposOf, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
+import { bodyWithReviews, markOf, reviewFactsFor } from "./prbody.ts";
 import { commitOf, headOf, prGateRefusal } from "./reviews.ts";
 import { currentBranch } from "./workspacekey.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
@@ -29,7 +30,7 @@ const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 export const GIT_PACK = "git";
 export const PACK_ENV = "PI_FOREMAN_TOOL_PACKS";
 export const PR_PACK = "pr";
-export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch" | "pr_draft" | "pr_label";
+export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch" | "pr_draft" | "pr_label" | "pr_body";
 export type GitReadOp = "status" | "log" | "diff_stat" | "branch_state";
 
 const str = (max: number, description: string) => ({ type: "string", minLength: 1, maxLength: max, description });
@@ -428,21 +429,35 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           const push = await deps.pushRefusal(ctx, dir);
           if (push) return failure(`pr_create: a push floor refuses pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
+        // pr_create writes the `## Reviews` block of the newest PASS on the head into the body (prbody.ts); the PR gate off or no PASS on the head: the body as given
+        let sent = params;
+        let reviewMark: { head: string; run: string } | undefined;
+        let bodyNote = "";
+        if (t.op === "pr_create" && !s.isChild && typeof params.body === "string") {
+          const named = headBranch(params.head);
+          const sha = await commitOf(dir ?? ctx.cwd, named ?? "HEAD").catch(() => null);
+          const facts = sha ? reviewFactsFor((await s.records?.()) ?? [], sha) : null;
+          const merged = bodyWithReviews(params.body, facts);
+          if (merged.written && facts) {
+            sent = { ...params, body: merged.body };
+            reviewMark = markOf(facts);
+          } else if (merged.capped) bodyNote = "\nthe `## Reviews` line was not written: the body with it would be over 65536 bytes";
+        }
         // pr_create under the draft flow opens as a draft; GitHub's refusal of drafts (a repository without them) is answered by one more create without it
         const asked = t.op === "pr_create" ? await askDraft(s, ctx, dir) : "no";
         let draftAsked = asked === "yes";
         let refusedDraft = false;
-        let outcome = await run(t.op as PrOp, draftAsked ? { ...params, draft: true } : params);
+        let outcome = await run(t.op as PrOp, draftAsked ? { ...sent, draft: true } : sent);
         if (draftAsked && outcome.kind !== "ran" && draftRefused(outcome)) {
           draftAsked = false;
           refusedDraft = true;
-          outcome = await run("pr_create", { ...params, draft: false });
+          outcome = await run("pr_create", { ...sent, draft: false });
         }
         const res = report(t.op === "pr_status" ? await withReview(s, outcome, dir ?? ctx.cwd) : t.op === "pr_checks" ? await withPhases(s, outcome, params, dir ?? ctx.cwd) : outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
         const openedOn = typeof params.head === "string" && params.head ? await commitOf(dir ?? ctx.cwd, params.head) : await headOf(dir ?? ctx.cwd);
-        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn, draftAsked).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn, draftAsked, undefined, reviewMark).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
         const r0 = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
         let draftNote = "";
         let out = armed.tracked ? { ...r0, details: { ...r0.details, tracked: armed.tracked } } : r0;
@@ -457,7 +472,8 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         } else if (managed) draftNote = `\n${DRAFT_MANAGED}`;
         else if (params.draft === true && !refusedDraft) draftNote = "\nthe PR is a draft (draft: true) and nothing takes it out of draft automatically: do it by hand";
         else draftNote = `\n${asked === "no_tracker" ? "the PR is not a draft: no PR tracker is running, so nothing would take it out of draft" : refusedDraft ? "the PR is not a draft (the repository has no draft pull requests)" : "the PR is not a draft (draft handling is off or does not cover this host)"}`;
-        const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote }] };
+        if (reviewMark) bodyNote = `\n${"key" in armed && armed.down ? "the body has a `## Reviews` line; no PR tracker is running, so the watch cannot refresh it" : "key" in armed && armed.tracked === "off" ? "the body has a `## Reviews` line; the PR feed is off, so the watch cannot refresh it" : "key" in armed ? "the body has a `## Reviews` line; the watch refreshes it when a new PASS lands on a new head" : "the body has a `## Reviews` line (written at create, not refreshed: the PR is not watched)"}`;
+        const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote + bodyNote }] };
         out = { ...out, content: r.content };
         await notePr(s, armed, { cwd: dir ?? ctx.cwd, branch: headBranch(params.head) ?? currentBranch(dir ?? ctx.cwd), head: openedOn ?? null });
         if ("duplicate" in armed) return out;
@@ -656,7 +672,7 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey, bodyMark?: { head: string; run: string }): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = explicit ?? (await watchKey(s, ctx, n, url, cwd));
@@ -678,12 +694,12 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     tracked ??= await track();
     // the watch owns the PR's draft state only when it was opened as a draft, a tracker runs and it will report the PR
     const owned = draftAsked && st?.kind !== "down" && (tracked === "added" || tracked === "present");
-    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created);
+    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created, bodyMark);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
       if (createdHead) await s.cover?.(cwd ?? ctx.cwd, createdHead).catch(() => undefined);
       const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
-      s.watches.startPending(key, undefined, seed, owned, created);
+      s.watches.startPending(key, undefined, seed, owned, created, bodyMark);
     }
     s.trace({ event: "pr_watch", outcome: "started" });
     return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked, owned };

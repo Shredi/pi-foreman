@@ -35,12 +35,15 @@ test("justfile: the Windows shell is PowerShell", () => {
 
 test("justfile: the recipes exist", () => {
   const names = recipes();
-  for (const name of ["default", "test", "test-node", "test-installer", "typecheck", "lint", "ci-extra", "ci"]) {
+  for (const name of ["default", "test", "test-node", "test-installer", "typecheck", "lint", "ci"]) {
     assert.ok(names.has(name), `recipe ${name} is missing`);
   }
 });
 
-test("justfile: ci depends on lint, typecheck, test, test-node and ci-extra", () => {
-  const deps = recipes().get("ci") ?? [];
-  assert.deepEqual([...deps].sort(), ["ci-extra", "lint", "test", "test-node", "typecheck"]);
+test("justfile: ci has no dependencies, has no ci-extra recipe and runs npm run test:ci", () => {
+  const names = recipes();
+  assert.ok(!names.has("ci-extra"), "ci-extra is gone");
+  assert.deepEqual(names.get("ci"), []);
+  const at = lines.findIndex((l) => /^ci:\s*$/.test(l));
+  assert.ok(at >= 0 && lines[at + 1]?.trim() === "npm run test:ci", "ci runs npm run test:ci");
 });

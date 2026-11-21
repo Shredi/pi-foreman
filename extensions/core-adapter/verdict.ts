@@ -22,6 +22,10 @@ export const FINDING_CLASSES = ["auth", "shell-injection", "path-traversal", "se
 
 export const MAX_ITEMS = 64;
 export const MAX_FINDINGS = 50;
+export const MAX_SUITES = 20;
+export const SUITE_COMMAND_MAX = 200;
+export const SUITE_RESULTS = ["pass", "fail", "skip"] as const;
+export type SuiteResult = (typeof SUITE_RESULTS)[number];
 const NOTE_MAX = 200;
 const TEXT_MAX = 300;
 const FILE_MAX = 200;
@@ -47,12 +51,19 @@ export interface VerdictFinding {
   class?: string;
 }
 
+/** A test suite the reviewer ran (or skipped): the command and its result. */
+export interface VerdictSuite {
+  command: string;
+  result: SuiteResult;
+}
+
 export interface VerdictRecord {
   v: 1;
   launchId: string;
   verdict: VerdictValue;
   items: VerdictItem[];
   findings: VerdictFinding[];
+  suites?: VerdictSuite[];
   reason?: string;
   at: string;
 }
@@ -62,6 +73,7 @@ export interface VerdictCall {
   verdict: VerdictValue;
   items: VerdictItem[];
   findings: VerdictFinding[];
+  suites?: VerdictSuite[];
   reason?: string;
 }
 
@@ -135,6 +147,18 @@ export function checkVerdictCall(params: unknown, allowed: readonly ItemId[]): {
     }
     findings.push(f);
   }
+  let suites: VerdictSuite[] | undefined;
+  if (params.suites !== undefined) {
+    if (!Array.isArray(params.suites)) return { error: `${VERDICT_TOOL}: suites is a list of {command, result}.` };
+    if (params.suites.length > MAX_SUITES) return { error: `${VERDICT_TOOL}: at most ${MAX_SUITES} suites per call.` };
+    suites = [];
+    for (const raw of params.suites) {
+      if (!isObj(raw)) return { error: `${VERDICT_TOOL}: each suite is {command, result}.` };
+      if (typeof raw.command !== "string" || !raw.command.trim() || !oneLine(raw.command) || raw.command.length > SUITE_COMMAND_MAX || raw.command.includes("<!--") || raw.command.includes("-->")) return { error: `${VERDICT_TOOL}: the command of a suite is one line, at most ${SUITE_COMMAND_MAX} characters, without "<!--" or "-->".` };
+      if (typeof raw.result !== "string" || !(SUITE_RESULTS as readonly string[]).includes(raw.result)) return { error: `${VERDICT_TOOL}: the result of a suite must be one of ${list(SUITE_RESULTS)}.` };
+      suites.push({ command: raw.command.trim(), result: raw.result as SuiteResult });
+    }
+  }
   const defects = findings.some((f) => f.kind === "defect");
   const failed = items.some((i) => i.result === "fail");
   if (verdict === "pass" && (failed || defects)) return { error: `${VERDICT_TOOL}: a pass cannot carry a failed item or a defect finding. Give verdict fail, or correct the items and findings.` };
@@ -145,7 +169,7 @@ export function checkVerdictCall(params: unknown, allowed: readonly ItemId[]): {
     if (params.reason.trim()) reason = params.reason.trim();
   }
   if (verdict === "incomplete" && !reason) return { error: `${VERDICT_TOOL}: an incomplete verdict needs a reason (why the checks could not run).` };
-  return { call: { verdict: verdict as VerdictValue, items, findings, ...(reason ? { reason } : {}) } };
+  return { call: { verdict: verdict as VerdictValue, items, findings, ...(suites ? { suites } : {}), ...(reason ? { reason } : {}) } };
 }
 
 // ------------------------------------------------------------------ record files
@@ -182,7 +206,7 @@ export function writeRecord(dir: string, rec: VerdictRecord): { replaced: boolea
 }
 
 /** The record of a verdict call. */
-export const recordOf = (launchId: string, call: VerdictCall, now: Date = new Date()): VerdictRecord => ({ v: 1, launchId, verdict: call.verdict, items: call.items, findings: call.findings, ...(call.reason ? { reason: call.reason } : {}), at: now.toISOString() });
+export const recordOf = (launchId: string, call: VerdictCall, now: Date = new Date()): VerdictRecord => ({ v: 1, launchId, verdict: call.verdict, items: call.items, findings: call.findings, ...(call.suites ? { suites: call.suites } : {}), ...(call.reason ? { reason: call.reason } : {}), at: now.toISOString() });
 
 /** The record a child writes when `review_verdict` is not among its active tools (A6): fixed harness text. */
 export const noToolRecord = (launchId: string, now?: Date): VerdictRecord => recordOf(launchId, { verdict: "incomplete", items: [], findings: [], reason: NO_TOOL_REASON }, now);
@@ -205,9 +229,9 @@ export function parseRecord(raw: string | null, launchId: string, allowed: reado
   if (j.v !== 1) return { invalid: "version" };
   if (j.launchId !== launchId) return { invalid: "launch_mismatch" };
   if (typeof j.at !== "string") return { invalid: "no_time" };
-  const c = checkVerdictCall({ verdict: j.verdict, items: j.items, findings: j.findings, reason: j.reason }, allowed);
+  const c = checkVerdictCall({ verdict: j.verdict, items: j.items, findings: j.findings, suites: j.suites, reason: j.reason }, allowed);
   if ("error" in c) return { invalid: "schema" };
-  return { record: { v: 1, launchId, verdict: c.call.verdict, items: c.call.items, findings: c.call.findings, ...(c.call.reason ? { reason: c.call.reason } : {}), at: j.at } };
+  return { record: { v: 1, launchId, verdict: c.call.verdict, items: c.call.items, findings: c.call.findings, ...(c.call.suites ? { suites: c.call.suites } : {}), ...(c.call.reason ? { reason: c.call.reason } : {}), at: j.at } };
 }
 
 /** The `verdict.json` of a record folder; null when there is none. */
@@ -343,6 +367,9 @@ export function launchItemsLine(allowed: readonly ItemId[]): string {
     ? `[pi-foreman verdict items] review_verdict takes results for these items only: ${list(allowed.map(idText))}. Give no result for any other id (V included unless listed).`
     : "[pi-foreman verdict items] this launch takes no items: give review_verdict no items.";
 }
+
+/** The line a `[pre-pr]` review task carries: the reviewer runs what the repository's CI runs locally and names each suite in `review_verdict` `suites`. */
+export const PRE_PR_SUITES_LINE = `[pi-foreman pre-pr suites] Run every test suite the repository's CI runs that can run locally (read the CI config; where the repository's docs name one command for it, use that command), and list each in ${VERDICT_TOOL} suites with its result (pass, fail, or skip for one that cannot run here).`;
 
 /** The numbers of the items a record marks `fail` (V is not a numbered item), in order, without repeats, as strings (the ledger's item numbers). */
 export const failedItemIds = (items: readonly VerdictItem[]): string[] => [...new Set(items.filter((i) => i.result === "fail" && typeof i.id === "number").map((i) => String(i.id)))];
