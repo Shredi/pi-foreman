@@ -4819,9 +4819,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (launch && s.ledgerByRun.get(target)?.review && s.hs.ownerOf(target) === null) {
             const given = resumeItemsRaw !== undefined ? parseItemsField(resumeItemsRaw) : undefined;
             if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
-            const lf = boundLedger(s.markerDir, s.id);
+            // the ledger the target run was launched for (a task that named one), else the bound one
+            const rlf = s.ledgerByRun.get(target)?.paths[0] ?? boundLedger(s.markerDir, s.id);
             let text: string | null = null;
-            try { text = lf ? fs.readFileSync(lf, "utf8") : null; } catch { text = null; }
+            try { text = rlf ? fs.readFileSync(rlf, "utf8") : null; } catch { text = null; }
             const r = launchItemsOf(text, given?.items);
             if ("unknown" in r) {
               s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
