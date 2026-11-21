@@ -79,11 +79,11 @@ test("the number cell never wraps and widens with the widest number", () => {
   const badge = (n) => walk(lineOf(six, n).props.trigger).find((e) => (e.kids ?? []).includes(`PR #${n}`));
   for (const n of [123456, 7]) {
     assert.equal(badge(n).props.whitespace_nowrap, true, `#${n} nowrap`);
-    assert.equal(cell(n).props.w, 98, `#${n}: the cell is as wide for the whole list`);
+    assert.equal(cell(n).props.w, undefined, `#${n}: no fixed-width cell`);
   }
   assert.equal(numberCellWidth([{ number: 1234 }]), 52);
   assert.equal(numberCellWidth([{ number: 12345 }, { number: 1 }]), 59);
   assert.equal(numberCellWidth([]), 52);
   const four = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(1234, "ok")] })]).render({});
-  assert.equal(walk(lineOf(four, 1234).props.trigger).find((e) => (e.kids ?? []).some((k) => k?.kids?.includes("PR #1234"))).props.w, 84);
+  assert.equal(walk(lineOf(four, 1234).props.trigger).find((e) => (e.kids ?? []).some((k) => k?.kids?.includes("PR #1234"))).props.w, undefined);
 });

@@ -5,7 +5,7 @@ import { register } from "node:module";
 register("./stubs-hooks.mjs", import.meta.url);
 const stubs = await import("./stubs.mjs");
 const { default: Mod } = await import("./main.js");
-const { PR_LEGEND, numberCellWidth } = await import("./model.js");
+const { PR_LEGEND } = await import("./model.js");
 const { sess, treeOf } = await import("./fixtures.mjs");
 
 const walk = (el, out = []) => {
@@ -41,15 +41,14 @@ for (const [key, form, label] of [["k", "session", "PR #12"], ["op-x/y", "list",
   });
 }
 
-test("the title is in the normal brightness and truncates; the badge cell and the conflict slot have fixed widths", () => {
+test("the title is in the normal brightness and truncates; the badge has no fixed-width cell", () => {
   const chip = lineOf("k", SAMPLE[0], "session");
-  const [cell, slot, title] = chip.props.trigger.kids;
+  const [cell, title] = chip.props.trigger.kids;
   const t = walk(title).find((e) => e.kids?.includes("Change twelve"));
   assert.equal(t.props.text_color, "#foreground");
   assert.equal(t.props.truncate, true);
   assert.equal(t.props.flex_1, true);
-  assert.equal(cell.props.w, numberCellWidth([{ number: 12 }]) + 32);
-  assert.equal(slot.props.w, 11);
+  assert.equal(cell.props.w, undefined);
   assert.equal(chip.props.trigger.props.on_click !== undefined, true, "the click stays");
 });
 
