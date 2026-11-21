@@ -75,6 +75,10 @@ export interface HsIncomplete {
   tree: string | null;
   /** The run's output file, when its run end named one. */
   reportPath: string | null;
+  /** The model the run ran on (base id), null when unknown; a resume after a reload is held to the high-stakes model by it. */
+  model?: string | null;
+  /** The launch id the run's record folder belongs to (a resume keeps it); a reload finds the verdict record of a resumed run through it. */
+  launch?: string;
   /** When the run ended (ms). */
   at: number;
 }
@@ -125,7 +129,7 @@ function runIdsOf(list: unknown): { id: string; cwd: string; from?: string }[] {
 const incompleteOf = (v: unknown): HsIncomplete | undefined => {
   if (!isObj(v) || typeof v.runId !== "string" || !v.runId || typeof v.cwd !== "string" || !v.cwd) return undefined;
   const id = (x: unknown): string | null => (typeof x === "string" && x ? x : null);
-  return { runId: v.runId, cwd: v.cwd, head: id(v.head), tree: id(v.tree), reportPath: id(v.reportPath), at: typeof v.at === "number" && Number.isFinite(v.at) ? v.at : 0 };
+  return { runId: v.runId, cwd: v.cwd, head: id(v.head), tree: id(v.tree), reportPath: id(v.reportPath), ...(id(v.model) ? { model: id(v.model) } : {}), ...(id(v.launch) ? { launch: id(v.launch) as string } : {}), at: typeof v.at === "number" && Number.isFinite(v.at) ? v.at : 0 };
 };
 
 function runsOf(list: unknown, cwdOf: (r: Json) => string | null): HsRun[] {

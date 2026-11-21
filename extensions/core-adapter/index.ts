@@ -1686,7 +1686,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null || x.incomplete);
     // a run without a verdict (the reviewer recorded `incomplete`, it was cut off, or it left no record) records no run and changes no gate; it is kept to be resumed or handed on (D144)
     const keepIncomplete = (): void => {
-      s.hs.noteIncomplete({ runId, cwd: root, head: startValueOf(start, root), tree: startValueOf(treesWf, root), reportPath: outputPathOf(data), at: Date.now() });
+      const launch = launchOfRun(s, runId);
+      s.hs.noteIncomplete({ runId, cwd: root, head: startValueOf(start, root), tree: startValueOf(treesWf, root), reportPath: outputPathOf(data), model: s.runs.get(runId)?.model ?? s.hs.incomplete()?.model ?? null, ...(launch ? { launch } : {}), at: Date.now() });
       persistCeremonyState(s);
     };
     if (r?.incomplete) {
@@ -4181,7 +4182,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
-        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking"), hs: { run: (id) => s.hs.ownerOf(id) !== null, model: hsModel(s) } });
+        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking"), hs: { run: (id) => s.hs.ownerOf(id) !== null, model: hsModel(s), ranOn: (id) => (s.hs.incomplete()?.runId === id ? (s.hs.incomplete()?.model ?? null) : null) } });
         if (act.block) return { block: true, reason: act.block };
         // r68 (A22): a workflow script that names a binding could forge one for any child.
         const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
@@ -5622,7 +5623,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
   /** The launch a run of this session belongs to: the live mapping, else the route entry of a review launch (it survives a reload or a session restart). */
-  const launchOfRun = (s: Session, runId: string): string | undefined => parkFor(s).launchFor(runId) ?? s.ledgerByRun.get(runId)?.review?.launch;
+  const launchOfRun = (s: Session, runId: string): string | undefined => {
+    const inc = s.hs.incomplete();
+    return parkFor(s).launchFor(runId) ?? s.ledgerByRun.get(runId)?.review?.launch ?? (inc?.runId === runId ? inc.launch : undefined); // the incomplete high-stakes run keeps its launch in the persisted state
+  };
 
   /**
    * D3: a resume of a run this session launched keeps the first launch's binding (same ask dir) but gets a new run id. The tool result maps the new run to
@@ -5889,6 +5893,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         parkFor(s).dropCall(event.toolCallId);
         recordLaunch(s.runs, event.input, event.details, event.isError);
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
+        // a high-stakes resume allowed from the persisted incomplete record (after a reload the registry has no entry of the target): the new run is a high-stakes reviewer run like an in-process resume
+        const hsResumedId = launchId(event.input, event.details, event.isError);
+        if (hsResumedId && !s.isChild && !s.launchedRoles.has(hsResumedId) && actionOf(event.input as Record<string, unknown>) === "resume" && s.hs.ownerOf(resumeTarget(event.input as Record<string, unknown>) ?? "") !== null) s.launchedRoles.set(hsResumedId, ["reviewer"]);
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const trees = s.launchTreesByCall.get(event.toolCallId);

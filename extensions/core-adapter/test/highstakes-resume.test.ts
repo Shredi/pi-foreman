@@ -7,12 +7,13 @@ import { used, hsResumeRefusal, emptyState, type HsState } from "../highstakes.t
 import { writeContextUse } from "../verdict.ts";
 import type { RecSpec } from "./_verdict-rig.ts";
 import { bindingOf } from "./_verdict-rig.ts";
-import { build, commitIn, git, hsRun, launch, persisted, setup, tick, traces, worktree, type Rig, type World } from "./_hsrig.ts";
+import { subagentActionCheck } from "../actions.ts";
+import { MODEL, build, commitIn, git, hsRun, launch, persisted, pr, setup, tick, traces, worktree, type Rig, type World } from "./_hsrig.ts";
 
 const sized = (risk: string[]) => ({ size: { files: ["src/a/x.ts"] }, risk });
 const INCOMPLETE: RecSpec = { verdict: "incomplete", reason: "checks left: 3, 4" };
 const PASS: RecSpec = { verdict: "pass" };
-const hsOf = (w: World) => (w.ceremonyEntries().at(-1)?.data as { highStakes?: { runs?: { verdict: string; head: string | null; cwd: string }[]; incomplete?: { runId: string; head: string | null }; runIds?: { id: string; from?: string }[] } } | undefined)?.highStakes;
+const hsOf = (w: World) => (w.ceremonyEntries().at(-1)?.data as { highStakes?: { runs?: { verdict: string; head: string | null; cwd: string }[]; incomplete?: { runId: string; head: string | null; model?: string }; runIds?: { id: string; from?: string }[] } } | undefined)?.highStakes;
 
 async function standing(t: Parameters<typeof setup>[0], world?: Record<string, unknown>) {
   const r = await setup(t, { onMain: true, ...(world ? { world } : {}) });
@@ -162,4 +163,33 @@ test("the incomplete run and the fresh run after it count as one review: only a 
   const s = st({ incomplete: inc, runIds: [{ id: "r1", cwd: "/c" }, { id: "r2", cwd: "/c", from: "r1" }], runs: [{ verdict: "fail", head: "h", cwd: "/c", revised: true, handed: true, cleared: true }] });
   assert.equal(s.runs.length, 1);
   assert.equal(used(s), false, "one counted review: the second is still available");
+});
+
+const FAIL_SPEC: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "broken", file: "src/a/x.ts", line: 1 }] };
+
+test("after a reload the resumed run's verdict is recorded: one high-stakes run, the incomplete record cleared, a FAIL sets the gate", async (t) => {
+  const { w, a } = await standing(t);
+  const first = await incompleteRun(a, w);
+  await a.down();
+  const b = await w.adapter("reload");
+  await tick(50);
+  const r = await resume(b, first);
+  assert.equal(r.blocked, null, String(r.blocked));
+  a.record(first.id, FAIL_SPEC); // the folder of the first launch (only the first rig knows its binding)
+  await b.endRunAs(r.id, "reviewer", "report");
+  await persisted(w, (hs) => hs?.runs?.length === 1 && hs.incomplete === undefined);
+  assert.equal(hsOf(w)?.runs?.[0]?.verdict, "fail");
+  assert.match(await pr(b), /\[pr_refused:high_stakes_failed\]/, "the FAIL set the gate");
+});
+
+test("the incomplete record carries the model the run ran on, and a resume after a reload is held to the high-stakes model by it", async (t) => {
+  const { w, a } = await standing(t);
+  await incompleteRun(a, w);
+  await persisted(w, (hs) => hs?.incomplete?.model === MODEL);
+  const call = { action: "resume", id: "run-x" };
+  const ctx = { allowWorkflow: false, runs: new Map(), allowed: [] as string[], resolution: {} as never, maxThinking: undefined };
+  const check = (ranOn: string | null) => subagentActionCheck(call, { ...ctx, hs: { run: () => true, model: MODEL, ranOn: () => ranOn } });
+  assert.deepEqual(check(MODEL), {});
+  assert.deepEqual(check(null), {});
+  assert.match(check("fake/other").block ?? "", /ran on fake\/other, the high-stakes model now is fake\/hs/);
 });

@@ -24,7 +24,7 @@ export const V_REFUSAL = "V closes after a reviewer PASS that still stands (no P
 export const V_ATTESTED_NOTE = "closed by the foreman after a reviewer PASS (harness-attested)";
 
 /** V may close when the gate's last verdict is PASS, or a counting reviewer PASS run exists and no checkout's last reviewer verdict is FAIL; work after the PASS (`revised`) and a review that ended without a verdict do not matter. */
-const vOpen = (g: { last: string | null; passRun?: string }): boolean => g.last === "pass" || (g.passRun !== undefined && g.last !== "fail");
+const vOpen = (g: { last: string | null; passRun?: string; failed?: boolean }): boolean => g.last === "pass" || (g.passRun !== undefined && g.last !== "fail" && !g.failed);
 
 /** `ceremony.ledgerHelper`; anything else is the default "tool". */
 export function ledgerHelperMode(v: unknown): LedgerHelper {
@@ -183,6 +183,7 @@ export interface GateView {
   last: string | null;
   revised: boolean;
   passRun?: string;
+  failed?: boolean;
 }
 
 /** The most entries one `add` (texts) or `upsert` (entries) call takes. */

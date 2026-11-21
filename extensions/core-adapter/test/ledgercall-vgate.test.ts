@@ -3,11 +3,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { planLedgerCall } from "../ledgercall.ts";
+import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { build, end, launch, setup, tick, worktree } from "./_hsrig.ts";
 import type { Rig } from "./_hsrig.ts";
 
 const mark = { action: "mark", items: ["V"] };
-const refused = (gate: { last: string | null; revised: boolean; passRun?: string }): boolean => "error" in planLedgerCall(mark, { child: false, gate });
+const refused = (gate: { last: string | null; revised: boolean; passRun?: string; failed?: boolean }): boolean => "error" in planLedgerCall(mark, { child: false, gate });
 
 test("pure: V opens on a PASS gate (revised or not, with or without a run id) or a PASS run id with no FAIL; never on a FAIL or no PASS", () => {
   assert.equal(refused({ last: "pass", revised: true }), false, "work after the PASS");
@@ -66,4 +67,31 @@ test("wiring: checkout B's last review FAIL keeps V open while checkout A passed
   await end(a, rb, "reviewer", FAIL, b);
   await tick(300);
   assert.match(await markV(a), REFUSED);
+});
+
+const seq = (...vs: ("pass" | "fail" | null)[]) => vs.reduce((g, v, i) => onReviewVerdicts(g, [v], i, `r${i}`), initialReviewGate());
+
+test("pure: a review without a verdict keeps a standing FAIL (PASS, FAIL, none refuses V; a later PASS opens it; PASS, none stays open)", () => {
+  assert.equal(refused(seq("pass", "fail", null)), true);
+  assert.equal(refused(seq("pass", "fail", null, null)), true, "two runs without a verdict");
+  assert.equal(refused(seq("pass", "fail", null, "pass")), false);
+  assert.equal(refused(seq("pass", null)), false);
+  assert.equal(refused({ last: "none", revised: false, passRun: "r1", failed: true }), true);
+  assert.equal(refused({ last: "none", revised: false, passRun: "r1" }), false);
+});
+
+test("wiring: PASS, FAIL, a reviewer run with no verdict: mark V stays refused; a later PASS opens it", async (t) => {
+  const { a } = await setup(t);
+  await a.writeLedger(LEDGER);
+  await build(a);
+  await tick(300);
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch again"), "reviewer", FAIL);
+  await tick(300);
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch once more"), "reviewer", "no verdict");
+  await tick(300);
+  assert.match(await markV(a), REFUSED, "the FAIL still stands");
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch finally"), "reviewer", "Overall verdict: PASS");
+  await tick(300);
+  const text = await markV(a);
+  assert.doesNotMatch(text, REFUSED, text);
 });
