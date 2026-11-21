@@ -44,6 +44,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
+import { ReviewMemory } from "./reviewmemory.ts";
 import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd } from "./bound.ts";
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
@@ -481,8 +482,10 @@ interface Session {
   primaryWork: boolean;
   /** Foreman only: the launch line named why no session folder is made. */
   primaryNoted: boolean;
-  /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
-  failItems: string[];
+  /** Foreman only: what reviews left for the next one, per checkout (reviewmemory.ts): the open FAIL, its findings and failed items, the items judged. */
+  mem: ReviewMemory;
+  /** Foreman only: the items a launch named in `items`, by tool call id, as [checkout, ids] (kept as judged once the launch started). */
+  namedItemsByCall: Map<string, [string, string[]][]>;
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
   critique: CritiqueCounter;
   /** Foreman only: the 80 % budget warning was given (ceremony.budgetUsd). */
@@ -497,16 +500,12 @@ interface Session {
   panels: PendingPanels;
   /** Foreman only: reviewer verdicts with the HEAD they covered, newest last, at most 50 (reviews.ts; the PR gate reads it). */
   reviews: ReviewRecord[];
-  /** R26 item 3: the latest counted review verdict is FAIL and no owner prompt came since; the next reviewer launch is a re-review (ledgerblock.ts reReviewLine). */
-  reviewFailOpen: boolean;
   /** The session-wide high-stakes state (highstakes.ts); persisted with the ceremony state. */
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
   /** The checkout fingerprint at the session's first start (trivial.ts checkoutBaseline; persisted; a fork keeps its parent's; only a brand-new startup or new session takes one, a resume without a stored one has none); null: none, the no-change rule needs a clean status. */
   baseline: string | null;
-  /** The findings of the last normal-review FAIL, for the next re-review task (persisted; cleared by a PASS, replaced by the next FAIL). */
-  lastFailFindings: string | null;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
@@ -1203,17 +1202,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       sessionFolder: null,
       primaryWork: false,
       primaryNoted: false,
-      failItems: [],
+      mem: new ReviewMemory(),
+      namedItemsByCall: new Map(),
       critique: new CritiqueCounter(),
       budgetWarned: false,
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
       panels: new PendingPanels({ send: (text) => pi.sendMessage({ customType: "pi-foreman-panel", content: text, display: true }, { triggerTurn: false }), trace: (r) => s.trace?.emit(r), extra: () => prChecksLine(s) }),
       reviews: [],
-      reviewFailOpen: false,
       hs: new HighStakes(),
       hsReminded: null,
       baseline: null,
-      lastFailFindings: null,
       ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
@@ -1449,7 +1447,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(s.hold ? { hold: s.hold } : {}),
       hsReminded: s.hsReminded,
       baseline: s.baseline,
-      lastFailFindings: s.lastFailFindings,
+      lastFailFindings: s.mem.findings(s.hsOwn ?? s.cwd),
+      reviewMemory: s.mem.snapshot(),
       ledgerRev: s.ledgerRev,
     });
     const json = JSON.stringify(data);
@@ -1486,6 +1485,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function rootsOf(dirs: readonly string[]): Promise<string[] | null> {
     const roots = await Promise.all(dirs.map(rootOf));
     return roots.length > 0 && roots.every((r): r is string => r !== null) ? [...new Set(roots)] : null;
+  }
+
+  /** The checkout whose review facts (reviewmemory.ts) a result of run `runId` belongs to: the run's recorded root that holds `cwd`, else its first one, else the session's own checkout. */
+  function memoryRoot(s: Session, runId: string, cwd?: string | null): string {
+    const roots = s.reviewRoots.get(runId);
+    if (roots && roots.length > 0) {
+      const hit = cwd ? roots.find((r) => cwd === r || cwd.startsWith(r.endsWith(path.sep) ? r : r + path.sep)) : undefined;
+      return hit ?? roots[0];
+    }
+    return s.hsOwn ?? s.cwd;
   }
 
   /** The directory of each reviewer entry of a fresh launch (not `launchCwds`, which always adds the session cwd). */
@@ -1737,7 +1746,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const live = liveRecords(s.reviews, s.hs.state().runs);
         if (live.length !== s.reviews.length) s.reviews.splice(0, s.reviews.length, ...live); // stale aliases do not persist
       }
-      if (verdict === "fail") s.lastFailFindings = null; // D128: the last FAIL is now a high-stakes one; its findings block is the one a re-review gets
+      if (verdict === "fail") s.mem.setFindings(root, null); // D128: the last FAIL is now a high-stakes one; its findings block is the one a re-review gets
       s.trace?.emit({ event: "review_high_stakes", verdict, head: h.head, count: n });
       persistCeremonyState(s);
     });
@@ -2003,7 +2012,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
     s.baseline = e.baseline ?? null; // a fork keeps its parent's fingerprint too: the parent's unreviewed work is still in the checkout
     if (reason !== "fork" && e.hold) (s.hold = e.hold), s.live?.setHold(true, e.hold.note); // a hold survives the reload; the entry is written below
-    if (reason !== "fork") s.lastFailFindings = e.lastFailFindings ?? null;
+    if (reason !== "fork") {
+      s.mem.load(e.reviewMemory);
+      // an older entry: its findings belong to the session's own checkout (the store has none for it yet)
+      if (e.lastFailFindings && !e.reviewMemory) {
+        const legacy = e.lastFailFindings;
+        s.reviewSync = s.reviewSync.then(async () => {
+          const own = await hsOwnRoot(s);
+          if (!s.mem.has(own)) s.mem.setFindings(own, legacy);
+        });
+      }
+    }
     if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (reason !== "fork" && e.pause) {
@@ -3399,11 +3418,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const r of reviewResults) if (r.counts) {
               s.trace?.emit(s.critique.onReview(r.findings, r.role, runId, reviewLaunch?.lines));
               const items = failedItemIds(r.items);
-              if (items.length > 0) s.failItems = items;
-              else if (r.verdict === "pass") s.failItems = [];
+              const mine = memoryRoot(s, runId, r.cwd);
+              s.mem.judge(mine, r.items.filter((i) => i.result === "pass" || i.result === "fail").map((i) => String(i.id)));
+              if (items.length > 0) s.mem.setFailItems(mine, items);
+              else if (r.verdict === "pass") s.mem.setFailItems(mine, []);
               if (r.occasion === "item" || r.occasion === "pre-pr") {
-                if (r.verdict === "fail") s.lastFailFindings = failFindingsText(r.findings, r.items) || null;
-                else if (r.verdict === "pass") s.lastFailFindings = null;
+                if (r.verdict === "fail") s.mem.setFindings(mine, failFindingsText(r.findings, r.items) || null);
+                else if (r.verdict === "pass") s.mem.setFindings(mine, null);
               }
               if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
             }
@@ -3445,7 +3466,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const r of reviewsWithOutput(data, counting)) {
             const full = counting[nth]?.role === r.role ? counting[nth] : undefined;
             const first = nth++ === 0;
-            s.reviewFailOpen = r.verdict === "fail";
+            const factsRoot = memoryRoot(s, runId, r.cwd);
+            s.mem.setFailOpen(factsRoot, r.verdict === "fail");
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? resumedCheckout ?? s.cwd;
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
@@ -3455,6 +3477,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const tree = reviewedTree(startTreesWf, cwd, endTree);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}) };
               appendReview(s.reviews, rec);
+              if (rec.verdict === "fail") s.mem.setFailHead(factsRoot, rec.head ?? null); // the head the next re-review there starts from
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
               s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
@@ -4258,6 +4281,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let hsLaunch: { root: string; gateKey: string; base: string | null; from?: string } | null = null;
       // The items of a review entry, computed once (verdict.ts): the re-review line, the items line of the task and the review_verdict tool read this set.
       const launchItemsCache = new Map<Record<string, unknown>, { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null }>();
+      // the checkout of each review entry (the key of its review facts, reviewmemory.ts), resolved before the first launchItemsFor
+      const entryCheckout = new Map<Record<string, unknown>, string>();
+      const resolveCheckouts = async (): Promise<void> => {
+        for (const e of launchEntries(input)) if (typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && !entryCheckout.has(e)) entryCheckout.set(e, (await rootOf(hsDirOf(ctx, input, e))) ?? (await hsOwnRoot(s)));
+      };
+      const checkoutOfEntry = (e: Record<string, unknown>): string => entryCheckout.get(e) ?? s.hsOwn ?? s.cwd;
       const launchItemsFor = (e: Record<string, unknown>): { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null } => {
         const known = launchItemsCache.get(e);
         if (known) return known;
@@ -4267,7 +4296,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const lf = boundLedger(s.markerDir, s.id);
           const read = (f: string | null): string | null => { try { return f ? fs.readFileSync(f, "utf8") : null; } catch { return null; } };
           const named = typeof e.task === "string" ? taskLedger(e.task, ctx.cwd, lf, [s.cwd, ctx.cwd]).path : lf;
-          r = launchItemsOf((named === lf ? null : read(named)) ?? read(lf), given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.failItems });
+          r = launchItemsOf((named === lf ? null : read(named)) ?? read(lf), given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.mem.failItems(checkoutOfEntry(e)), occasion: occasions.get(e), judged: s.mem.judgedIn(checkoutOfEntry(e)), judgedElsewhere: s.mem.judgedElsewhere(checkoutOfEntry(e)) });
         }
         const c = { given, r };
         launchItemsCache.set(e, c);
@@ -4600,11 +4629,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
             return { block: true, reason: (process.env.PI_FOREMAN_HANDOFF_DIR?.trim() && process.env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
           }
-          if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") {
+          await resolveCheckouts();
+          for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") {
+            const failItems = s.mem.failItems(checkoutOfEntry(e)); // this checkout's failed items only
+            if (failItems.length === 0) continue;
             // the line names only the failed items inside the launch's set (verdict.ts launchItemsOf: the given items, else the failed items still open); with an `items` field it also asks for a result on each
             const { given, r } = launchItemsFor(e);
             const take = r && "items" in r ? allowedItems(r.items, hsLaunch !== null) : [];
-            e.task = given && "items" in given ? prependReReviewScoped(e.task, s.failItems, take) : prependReReview(e.task, s.failItems.filter((f) => take.map(String).includes(f)));
+            e.task = given && "items" in given ? prependReReviewScoped(e.task, failItems, take) : prependReReview(e.task, failItems.filter((f) => take.map(String).includes(f)));
           }
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
           if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
@@ -4969,6 +5001,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (actionOf(input) !== "resume") capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
         // The items of each review launch (verdict.ts): the `items` field, else every open item; after a FAIL the item occasion's default is the failed items still open.
         const givenItems = new Map<Json, ItemId[]>();
+        if (actionOf(input) === null) await resolveCheckouts();
         if (actionOf(input) === null) for (const e of agentEntries) {
           if (!REVIEW_ROLES.includes(e.agent as string)) continue;
           const { given, r } = launchItemsFor(e);
@@ -4977,10 +5010,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!r || occasions.get(e) === "high-stakes") continue; // a high-stakes review marks no items: the items it names are never used
           if ("unknown" in r) {
             s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
-            return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
+            return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}. Only a [pre-pr] launch may name closed items.` };
           }
           verdictItems.set(e, r.items);
         }
+        // the items a launch names count as judged in its checkout once it started (the tool_result keeps them)
+        const named: [string, string[]][] = [...givenItems].filter(([e]) => occasions.get(e) !== "high-stakes").map(([e, ids]): [string, string[]] => [checkoutOfEntry(e), ids.filter((x) => typeof x === "number").map(String)]).filter(([, ids]) => ids.length > 0);
+        if (named.length > 0) capSet(s.namedItemsByCall, event.toolCallId, named);
         // A resumed review run keeps its first launch's binding, so its allowed items are made again here the way a fresh launch makes them (the resume's `items` field, else the open ledger items) and reach both sides: the child through the record folder, the parent through the route (tool_result).
         if (!s.isChild && actionOf(input) === "resume") {
           const target = resumeTarget(input) ?? "";
@@ -4993,11 +5029,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const rlf = s.ledgerByRun.get(target)?.paths[0] ?? bound;
             let text: string | null = null;
             try { text = rlf ? fs.readFileSync(rlf, "utf8") : null; } catch { text = null; }
-            // the same rule as a fresh launch, after-FAIL included (s.failItems, whatever ledger is named)
-            const r = launchItemsOf(text, given && "items" in given ? given.items : undefined, { reReview: s.ledgerByRun.get(target)?.review?.occasion === "item", failed: s.failItems });
+            // the same rule as a fresh launch, after-FAIL included (the failed items of the target's checkout, whatever ledger is named)
+            const root = memoryRoot(s, target);
+            const occasion = s.ledgerByRun.get(target)?.review?.occasion;
+            const r = launchItemsOf(text, given && "items" in given ? given.items : undefined, { reReview: occasion === "item", failed: s.mem.failItems(root), occasion, judged: s.mem.judgedIn(root), judgedElsewhere: s.mem.judgedElsewhere(root) });
             if ("unknown" in r) {
               s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
-              return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
+              return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}. Only a [pre-pr] launch may name closed items.` };
             }
             resumeItems = r.items;
           }
@@ -5014,19 +5052,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // every review task of a single launch ends with the ids review_verdict takes (the set the tool and the binding use), after the facts the plan review added
         if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
-        // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
-        if (s.reviewFailOpen) await s.reviewSync;
-        const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null, ...(s.lastFailFindings ? { findings: s.lastFailFindings } : {}) } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger, occasions, (e) => (givenItems.has(e) || (reReview && occasions.get(e) === "item") ? allowedItems(verdictItems.get(e), hsLaunch !== null) : []))) s.trace?.emit(r);
+        // R26 item 3: a reviewer launched after an open FAIL of its own checkout names the head that FAIL reviewed (its record's head lands in reviewSync); a FAIL of another checkout never counts
+        await resolveCheckouts();
+        if (agentEntries.some((e) => s.mem.failOpen(checkoutOfEntry(e)))) await s.reviewSync;
+        const reReviews = new Map<Record<string, unknown>, { sha: string | null; findings?: string }>();
+        for (const e of agentEntries) {
+          const root = checkoutOfEntry(e);
+          if (!s.mem.failOpen(root)) continue;
+          const findings = s.mem.findings(root);
+          reReviews.set(e, { sha: s.mem.failHead(root), ...(findings ? { findings } : {}) });
+        }
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), (e) => reReviews.get(e) ?? null, pickLedger, occasions, (e) => (givenItems.has(e) || (reReviews.has(e) && occasions.get(e) === "item") ? allowedItems(verdictItems.get(e), hsLaunch !== null) : []))) s.trace?.emit(r);
         // The re-review line tells a reviewer to check the revision diff; numbered items of its `items` beyond the failed set get one sentence: check them against the whole change.
-        if (reReview) {
-          const line = reReviewLine(reReview.sha);
-          for (const [e, ids] of givenItems) {
-            const extra = wholeChangeSentence(s.failItems, ids);
-            if (extra && typeof e.task === "string" && e.task.startsWith(line)) e.task = line + extra + e.task.slice(line.length);
-          }
+        for (const [e, ids] of givenItems) {
+          const re = reReviews.get(e);
+          if (!re) continue;
+          const line = reReviewLine(re.sha);
+          const extra = wholeChangeSentence(s.mem.failItems(checkoutOfEntry(e)), ids);
+          if (extra && typeof e.task === "string" && e.task.startsWith(line)) e.task = line + extra + e.task.slice(line.length);
         }
       }
+
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
       if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id), ledgerFor: (task, e) => (entryLedger.has(e) ? entryLedger.get(e) ?? null : taskLedger(task, ctx.cwd, boundLedger(s.markerDir, s.id), [s.cwd, ctx.cwd]).path) })) s.trace?.emit(r);
@@ -5299,7 +5345,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && isOwnerPrompt(event.source, event.text)) {
       s.round = initialRounds();
       s.loopStop = null;
-      s.reviewFailOpen = false;
+      s.mem.clearOpen();
       s.trace?.emit({ event: "chain_clear", kind: event.source });
     }
     // The refusal count belongs to the unchanged state, not to the prompt (D28); the prompt only opens a new pause window (D27).
@@ -6121,6 +6167,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (runId && resumedRoots && resumedRoots.length === 1) capSet(resumeCheckouts, runId, resumedRoots[0]);
         }
         s.reviewRootsByCall.delete(event.toolCallId);
+        const namedItems = s.namedItemsByCall.get(event.toolCallId);
+        s.namedItemsByCall.delete(event.toolCallId);
+        if (runId && namedItems) for (const [root, ids] of namedItems) s.mem.judge(root, ids);
         const boundId = boundLaunchId(event.input);
         if (boundId && runId && !s.isChild) parkFor(s).noteRun(runId, boundId); // a later resume of this run finds its launch
         // a resume names no binding: its scratch is the target launch's, made again at the resume's tool_call

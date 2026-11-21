@@ -20,6 +20,7 @@ import type { ReviewRecord } from "./reviews.ts";
 import type { LoopStop } from "./reviewloop.ts";
 import type { PassMark, ReviewGate, StepCounts } from "./bound.ts";
 import { combined, type ReviewGates } from "./reviewgates.ts";
+import { factsOfEntry, type CheckoutFacts } from "./reviewmemory.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
 
@@ -114,6 +115,8 @@ export interface CeremonyStateEntry {
   hsReminded?: string[];
   /** The findings of the last normal-review FAIL for the next re-review task (ledgerblock.ts failFindingsText); absent: none. */
   lastFailFindings?: string;
+  /** What reviews left for the next one, per checkout (reviewmemory.ts); absent: none (an older entry has only `lastFailFindings`). */
+  reviewMemory?: Record<string, CheckoutFacts>;
   /** The count of subject changes to the bound ledger (index.ts ledgerRev, bound.ts PassMark.ledger); absent: 0. */
   ledgerRev?: number;
   /** The checkout fingerprint taken at session start (trivial.ts checkoutBaseline) for the no-change rule; absent: none. */
@@ -147,7 +150,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hold?: { note: string; since: string } | null; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null; baseline?: string | null }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hold?: { note: string; since: string } | null; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null; reviewMemory?: Record<string, CheckoutFacts>; baseline?: string | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -171,6 +174,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.ledgerRev ? { ledgerRev: o.ledgerRev } : {}),
     ...(o.baseline ? { baseline: o.baseline } : {}),
     ...(o.lastFailFindings ? { lastFailFindings: o.lastFailFindings } : {}),
+    ...(o.reviewMemory ? { reviewMemory: o.reviewMemory } : {}),
   };
 }
 
@@ -230,6 +234,8 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     const rev = count(d.ledgerRev);
     if (rev) out.ledgerRev = rev;
     if (typeof d.lastFailFindings === "string" && d.lastFailFindings !== "") out.lastFailFindings = d.lastFailFindings;
+    const mem = factsOfEntry(d.reviewMemory);
+    if (mem) out.reviewMemory = mem;
     return out;
   }
   return null;
