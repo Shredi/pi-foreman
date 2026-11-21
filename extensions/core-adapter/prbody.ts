@@ -2,6 +2,7 @@
 // PR's head. `pr_create` builds it from the session's review records and merges it into the body it was given; the PR watch of a PR the session opened refreshes
 // it through the host op `pr_body` when a new PASS lands on a new head. Lines outside the markers are never touched. scripts/pr_ops.py merge_reviews_block does the same merge on the host's body.
 import type { ReviewRecord } from "./reviews.ts";
+import { redactCommand } from "./trace.ts";
 
 export const REVIEWS_OPEN = "<!-- pi-foreman:reviews -->";
 export const REVIEWS_CLOSE = "<!-- /pi-foreman:reviews -->";
@@ -29,8 +30,8 @@ export function reviewFactsFor(records: readonly ReviewRecord[], head: string): 
 
 const safeRun = (run: string): string => (/^[A-Za-z0-9._-]{1,100}$/.test(run) ? run : "");
 
-/** A suite command as one inline code span (backticks and line breaks taken out), so an @mention in it pings no one. */
-const codeSpan = (command: string): string => `\`${command.replace(/`/g, "").replace(/\s+/g, " ").trim() || "unnamed"}\``;
+/** A suite command as one inline code span (secret-shaped tokens redacted, backticks and line breaks taken out), so an @mention in it pings no one. */
+const codeSpan = (command: string): string => `\`${redactCommand(command).replace(/`/g, "").replace(/\s+/g, " ").trim() || "unnamed"}\``;
 
 /** `Pre-pr review: PASS on <short sha> (run <run id>; suites: a (pass), b (fail))`; `Review: PASS (<occasion>) on …` when the PASS is not a `[pre-pr]` one. Absent parts are left out. */
 export function reviewsLine(f: ReviewPass): string {

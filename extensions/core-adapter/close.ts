@@ -212,7 +212,7 @@ export interface CloseDeps {
   /** Close report after the sync (foreman_close.py, cleanup + `## Close` into `file`); null = none. */
   report?: (file: string) => Promise<CloseReport | null>;
   /** Mark this session's own registry entry closed (a child; before the `foreman:closed` ack). */
-  markClosed?: (file: string) => void;
+  markClosed?: (file: string, pending?: boolean) => void;
   /** Close this session's own child sessions (bounded wait); one report line per child. Never fails the close. */
   closeChildren?: () => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
@@ -561,14 +561,14 @@ export class CloseFlow {
     }
     const head = `pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`;
     this.d.notify([head, ...(report ? closeReportLines(report) : []), ...childLines].join("\n"), sync.ok && report?.ready !== false ? "info" : "warning");
+    const remembered = this.d.mergedPr?.() ?? null;
     try {
-      this.d.markClosed?.(req.file);
+      this.d.markClosed?.(req.file, remembered !== null); // a self-finish follows: the entry is closed (the self-clean needs that) but its result is pending, so no wait resolves on the path the cleanup deletes
     } catch (err) {
       this.d.notify(`pi-foreman: could not mark the registry entry closed: ${(err as Error).message}`, "warning");
     }
     let spawn: (() => void) | undefined;
     let shown = req.file; // the result file as the later messages name it
-    const remembered = this.d.mergedPr?.() ?? null;
     const selfReq: CloseRequest | null = remembered === null ? null : { ...req, pr: { n: remembered, label: "" } };
     if (selfReq?.pr) {
       let fin: SelfFinish;
@@ -592,12 +592,10 @@ export class CloseFlow {
           this.d.notify(`pi-foreman: could not keep a copy of the result file ${req.file} outside the worktree: ${(err as Error).message}`, "warning");
         }
       }
-      if (shown !== req.file) {
-        try {
-          this.d.markClosed?.(shown); // the worktree cleanup deletes req.file: the registry entry names the kept copy
-        } catch {
-          // the entry keeps the first path
-        }
+      try {
+        this.d.markClosed?.(shown); // the final mark clears the pending marker; after a kept copy the entry names it (the worktree cleanup deletes req.file)
+      } catch {
+        // the marker times out (childblocked.ts PENDING_RESULT_MS)
       }
       const tail = spawn || fin.lines.length === 0 ? "" : ` (${fin.lines.join("; ")})`; // a refusal goes to the parent too
       if (req.replyTo && tail) {
@@ -666,7 +664,7 @@ export interface CloseSession {
   report?: (ctx: ExtensionContext, file: string) => Promise<CloseReport | null>;
   retro: (ctx: ExtensionContext) => Promise<string>;
   /** Mark this session's own registry entry closed, with the result file it names (session.ts markOwnClosed). */
-  markClosed?: (file: string) => void;
+  markClosed?: (file: string, pending?: boolean) => void;
   /** Close the session's own child sessions; `send` delivers `foreman:close` over the intercom outbox. */
   closeChildren?: (send: (to: string, text: string) => Promise<string>) => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
@@ -758,7 +756,7 @@ export function registerClose(
       sendUserMessage: (text) => pi.sendUserMessage(text, { deliverAs: "followUp" }),
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
-      markClosed: s.markClosed ? (file) => s.markClosed!(file) : undefined,
+      markClosed: s.markClosed ? (file, pending) => s.markClosed!(file, pending) : undefined,
       ceremonyNote: s.ceremonyNote,
       watchedPrs: s.watchedPrs,
       refreshWatched: s.refreshWatched,

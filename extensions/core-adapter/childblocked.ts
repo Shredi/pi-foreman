@@ -28,6 +28,8 @@ const STALE_CONTACT_MS = 3 * SLOW_POLL_MS;
 /** The only kind words a notice prints; anything else a live file holds prints as `dialog`. */
 const KIND_WORDS = new Set(["approval", "question", "checkpoint", "script", "confirm", "dialog", "hold"]);
 const OPEN = new Set(["open", "pending", "closing"]);
+/** A closed entry with `resultPending` (a self-finish is still running) keeps its wait unresolved for at most this long, so a crashed close cannot hang a wait. */
+export const PENDING_RESULT_MS = 10 * 60_000;
 const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 
 /** The registry entries `opener` opened that are still open (not closed or gone). */
@@ -237,11 +239,13 @@ export class ChildBlocked {
 
   /** The first pass that sees a local child's entry turned closed resolves the wait on it; an entry whose `last.kind` is already `closed` (parseInbound read the line) says nothing. True when the seen set changed. */
   private closedPass(mine: SessionEntry[]): boolean {
-    const open = new Set(mine.filter((e) => typeof e.machine !== "string").map((e) => e.child));
+    const reg = readRegistry(this.d.agentDir).sessions;
+    const now = (this.d.now ?? Date.now)();
+    const pending = reg.filter((e) => e.parent === this.d.opener() && e.status === "closed" && typeof e.resultPending === "number" && now - e.resultPending < PENDING_RESULT_MS); // closed, result not final yet: still open for the wait
+    const open = new Set([...mine, ...pending].filter((e) => typeof e.machine !== "string").map((e) => e.child));
     const gone = [...this.seenOpen].filter((c) => !open.has(c));
     const grew = [...open].some((c) => !this.seenOpen.has(c));
     if (gone.length === 0 && !grew) return false;
-    const reg = gone.length > 0 ? readRegistry(this.d.agentDir).sessions : [];
     this.seenOpen = open;
     for (const child of gone) {
       const e = reg.find((x) => x.child === child);

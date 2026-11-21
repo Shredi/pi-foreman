@@ -440,7 +440,7 @@ export function launchItemsLine(allowed: readonly ItemId[]): string {
 }
 
 /** The line a `[pre-pr]` review task carries: the reviewer runs what the repository's CI runs locally and names each suite in `review_verdict` `suites`. */
-export const PRE_PR_SUITES_LINE = `[pi-foreman pre-pr suites] Run every test suite the repository's CI runs that can run locally (read the CI config; where the repository's docs name one command for it, use that command; run each full suite the way your test rule says, detached, and collect it with --wait), and list each in ${VERDICT_TOOL} suites with its result (pass, fail, or skip for one that cannot run here).`;
+export const PRE_PR_SUITES_LINE = `[pi-foreman pre-pr suites] Run every test suite the repository's CI runs that can run locally (read the CI config; where the repository's docs name one command for it, use that command; run each full suite the way your test rule says), and list each in ${VERDICT_TOOL} suites with its result (pass, fail, or skip for one that cannot run here).`;
 
 /** The numbers of the items a record marks `fail` (V is not a numbered item), in order, without repeats, as strings (the ledger's item numbers). */
 export const failedItemIds = (items: readonly VerdictItem[]): string[] => [...new Set(items.filter((i) => i.result === "fail" && typeof i.id === "number").map((i) => String(i.id)))];

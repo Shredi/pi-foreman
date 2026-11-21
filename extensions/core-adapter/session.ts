@@ -297,7 +297,7 @@ export function applyInbound(reg: Registry, sender: string, msg: Inbound, now: D
  * A child's own close: its registry entry (matched by its handoff dir, the one `foreman session open` sets for it)
  * becomes `closed` (with its result path when given) before the parent's `foreman:closed` arrives. True when the registry changed.
  */
-export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>, resultPath?: string): boolean {
+export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>, resultPath?: string, pending = false): boolean {
   const handoff = env.PI_FOREMAN_HANDOFF_DIR?.trim();
   if (!handoff) return false;
   const reg = readRegistry(agentDir);
@@ -305,15 +305,20 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
   for (const s of reg.sessions) {
     if (!s.handoff || path.basename(s.handoff) !== path.basename(handoff)) continue;
     if (s.status === "closed") {
-      // already closed: only a different result path (the kept copy after a merge cleanup) is written
-      if (resultPath && s.result !== resultPath) {
+      // already closed: only a different result path (the kept copy after a merge cleanup) is written, and the pending marker goes with the final mark
+      if (!pending && s.resultPending !== undefined) {
+        delete s.resultPending;
+        changed = true;
+      }
+      if (!pending && resultPath && s.result !== resultPath) {
         s.result = resultPath;
         changed = true;
       }
       continue;
     }
     s.status = "closed";
-    if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
+    if (pending) s.resultPending = Date.now(); // a self-finish follows: the result path is not final yet (childblocked.ts waits for the final mark, up to PENDING_RESULT_MS)
+    else if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
     s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
     changed = true;
   }

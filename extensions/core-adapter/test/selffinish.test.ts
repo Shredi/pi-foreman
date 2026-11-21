@@ -65,7 +65,7 @@ test("merged then a parent close: result.md, the cleanup lines, the closed ack t
   r.files.set(FILE, "written by the model");
   await drive(r);
   const seq = r.log.filter((l) => /^(prompt|sync|report|markClosed|selfFinish|reply|spawn|shutdown)/.test(l));
-  assert.deepEqual(seq, [`prompt:pi-foreman close: write your result file now at ${FILE} (summary, commits, open items). Do not start new work.`, "sync", "report", "markClosed", "selfFinish", `reply:parent-1:foreman:closed ${FILE}`, "spawn", "shutdown"]);
+  assert.deepEqual(seq, [`prompt:pi-foreman close: write your result file now at ${FILE} (summary, commits, open items). Do not start new work.`, "sync", "report", "markClosed", "selfFinish", "markClosed", `reply:parent-1:foreman:closed ${FILE}`, "spawn", "shutdown"]);
   assert.match(r.files.get(FILE)!, /## Merge cleanup\n\ncleanup: ok/);
   assert.ok(r.log.includes("trace:cleanup"));
 });
