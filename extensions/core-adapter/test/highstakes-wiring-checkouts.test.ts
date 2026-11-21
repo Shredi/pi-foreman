@@ -113,7 +113,7 @@ test("item 4/6: a tagged builder in a second checkout makes the session's review
   const again = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wt2Real });
   assert.match(again.blocked ?? "", /\[high_stakes_early\]/, "the FAIL of the second checkout is not cleared by a PASS elsewhere");
   assert.match(await pr(a, { head: "other" }), /\[pr_refused:high_stakes_failed\]/);
-  assert.match(await pr(a), /\[pr_refused:high_stakes_failed\]/, "the FAIL also refuses a PR from the own checkout (one state)");
+  assert.equal(await pr(a), "", "a PR from the own checkout is not held by a FAIL that ran in the second checkout (D129)");
   assert.match(await settle(a), /high-stakes review in the checkout .* FAILED/, "the finish hint names the checkout of the FAIL");
 });
 
@@ -169,7 +169,7 @@ test("item 4/6: an open PR is held through the PR watch's review facts by the se
   const watches = new PrWatches({
     storeEntry: () => store,
     githubHosts: () => ({ hosts: ["github.com"] }),
-    reviewFacts: (head) => holdFacts(reviewFactsForHead([rec], head, []), readyOverride(hs.state(), dueReasons(hs.state(), false), head)),
+    reviewFacts: (head) => holdFacts(reviewFactsForHead([rec], head, []), readyOverride(hs.state(), dueReasons(hs.state(), false), head, [rec].filter((r) => r.head === head && r.cwd).map((r) => r.cwd as string))),
     reviewGate: () => true,
     cwd: () => "/w/own",
     send: () => {},

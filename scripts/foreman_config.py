@@ -70,6 +70,7 @@ Keys outside safety that the project and session layers cannot loosen either
     tools.prGithubHosts              ignored (it names the hosts the PR tracker polls: user or overlay config only)
     tools.prReadyLabel               ignored (a project file must not make the harness write to the PR host: user or overlay config only)
     tools.prSources / prWake         ignored (prSources runs programs, prWake decides what wakes the session: user or overlay config only)
+    tools.prPhases                   ignored (it makes the harness add a label to the PR host: user or overlay config only)
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
     sidebar.strip                    ignored (the usage sources run programs, the interval is the user's: L1/L3/L2 only)
@@ -238,6 +239,7 @@ IGNORED_KEYS = [
     (("tools", "prReadyLabel"), "the label the harness writes to the PR host comes from the user or overlay config"),
     (("tools", "prSources"), "PR sources run programs: user or overlay config only"),
     (("tools", "prWake"), "the wake rules for PR watches come from the user or overlay config"),
+    (("tools", "prPhases"), "the PR phase rules (and the merge label the harness writes to the PR host) come from the user or overlay config"),
     (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),

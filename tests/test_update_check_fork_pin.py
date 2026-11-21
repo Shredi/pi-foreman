@@ -4,9 +4,11 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,7 +47,7 @@ class ForkPinTest(unittest.TestCase):
             seen.append(name)
             return {"dist-tags": {"latest": "1.0.0"}, "versions": {"1.0.0": {}}}
 
-        with tempfile.TemporaryDirectory() as d:
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(Path(d) / "agent")}):
             f = Path(d) / "lock.json"
             f.write_text(json.dumps(lock), encoding="utf-8")
             out = io.StringIO()

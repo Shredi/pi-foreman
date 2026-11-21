@@ -236,6 +236,23 @@ def read_strip(adir, now):
 
 
 OPEN_PR_STATES = ("fail", "run", "ok", "none")
+GATE_STATES = ("waiting", "running", "failed", "passed")
+
+
+def _phase_fields(src):
+    """The tracker's `tools.prPhases` result of a snap or search entry (gate state, gated, ruled), passed through as written: nothing is classified here."""
+    out = {}
+    g = src.get("gate")
+    if isinstance(g, dict) and g.get("state") in GATE_STATES:
+        out["gate"] = {"state": g["state"]}
+        w = g.get("waiting")
+        if isinstance(w, list) and w and all(isinstance(n, str) for n in w):
+            out["gate"]["waiting"] = [n[:120] for n in w[:10]]
+    for key in ("gated", "ruled"):
+        if src.get(key) is True:
+            out[key] = True
+    return out
+
 RADAR_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?$")  # pr_ops.py HOST_RE
 
 
@@ -260,9 +277,11 @@ def read_open_prs(adir):
         for c in (p.get("checks") if isinstance(p.get("checks"), list) else [])[:20]:
             if isinstance(c, dict) and c.get("state") in OPEN_PR_STATES and isinstance(c.get("n"), str) and isinstance(c.get("label"), str):
                 checks.append({"n": c["n"][:120], "state": c["state"], "label": c["label"][:20]})
+                if c.get("phase") in (2, "ignore") and not isinstance(c.get("phase"), bool):
+                    checks[-1]["phase"] = c["phase"]
         state = p.get("state") if p.get("state") in ("open", "draft") else "open"
         out.append({"repo": repo[:140], "number": num_, "title": title[:200], "url": p["url"], "state": state,
-                    "author": author[:60], "checks": checks})
+                    "author": author[:60], "checks": checks, **_phase_fields(p)})
         host = p.get("host")
         if isinstance(host, str) and RADAR_HOST_RE.match(host.lower()):
             out[-1]["host"] = host.lower()
@@ -315,8 +334,11 @@ def _tracked_entries(adir):
         for r in (snap.get("runs") if isinstance(snap.get("runs"), list) else [])[:20]:
             if isinstance(r, dict) and isinstance(r.get("name"), str):
                 checks.append({"n": r["name"][:120], "state": TRACKED_BUCKET.get(r.get("bucket"), "run"), "label": r["name"][:20]})
+                if r.get("phase") in (2, "ignore") and not isinstance(r.get("phase"), bool):
+                    checks[-1]["phase"] = r["phase"]
         ent = {"repo": repo[:140], "number": number, "title": title[:200], "url": url,
                "state": "draft" if meta.get("draft") is True else "open", "author": "", "checks": checks}
+        ent.update(_phase_fields(snap))
         if e.get("unsettled") is True:  # the poll holds a pass until the PR watch's settle rule is met: the display shows pending
             ent["unsettled"] = True
         waiting = e.get("waiting")

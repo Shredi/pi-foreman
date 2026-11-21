@@ -121,7 +121,7 @@ test("A: a win32 spelling of the folder carries no label on a win32 rig", () => 
 // ------------------------------------------------------------------ part B: pins of today's labels
 const nl = (...l: string[]): string => l.join("\n");
 
-test("B1: a heredoc or pipe fed to a shell carries no label for every role", () => {
+test("B1: a heredoc or pipe fed to a shell is judge-first (danger-inline-code) for every role, the shell's stdin is no text the gate reads", () => {
   const lines = [
     nl("cat <<'EOT' | sh", `cat ${SECRET}`, "EOT"),
     nl("sh <<EOT", `cat ${SECRET}`, "EOT"),
@@ -130,7 +130,7 @@ test("B1: a heredoc or pipe fed to a shell carries no label for every role", () 
     `echo 'cat ${SECRET}' | sh -s`,
   ];
   for (const l of lines) {
-    for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, l, "undecided", []);
+    for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, l, "undecided", ["danger-inline-code"]);
   }
 });
 

@@ -26,6 +26,9 @@ const run = (tool: string, command: string, child = false): string => {
 const refused = (line: string): void => {
   for (const child of [false, true]) assert.notEqual(run("bash", line, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
 };
+const judged = (line: string): void => {
+  for (const child of [false, true]) assert.equal(run("bash", line, child), "judge", `${child ? "child" : "foreman"}: ${line}`);
+};
 const runs = (line: string): void => {
   for (const child of [false, true]) assert.equal(run("bash", line, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
 };
@@ -37,7 +40,9 @@ test("a shell that reads a heredoc or here-string runs its body: the body gets t
       if (sh === "sudo bash") continue;
       refused(`${sh} <<'E'\n${b}\nE`);
     }
-    if (sh !== "sudo bash") runs(`${sh} <<'E'\nls\nE`);
+    // a shell fed on stdin is judge-first (danger-inline-code), a remote one too (danger-remote), whatever the body runs
+    // (`busybox sh` stays a runner the walker reads: its body gets the checks above and nothing more, as before)
+    if (sh !== "sudo bash") (sh === "busybox sh" ? runs : judged)(`${sh} <<'E'\nls\nE`);
   }
   for (const b of bodies) {
     refused(`bash <<< '${b}'`);
@@ -45,14 +50,14 @@ test("a shell that reads a heredoc or here-string runs its body: the body gets t
     refused(`sh <<-E\n\t${b}\n\tE`);
   }
   for (const child of [false, true]) assert.notEqual(run("bash", "sudo bash <<'E'\nrm -rf $X\nE", child), "allow");
-  runs("bash <<< 'ls'");
+  judged("bash <<< 'ls'");
   runs("cat <<'E'\nrm -rf $X\nE");
   runs("cat <<< 'rm -rf $X'");
 });
 
 test("a compound command in a remote string reads as the same body without the compound", () => {
   for (const l of ["docker exec c sh -c 'if true; then echo hi > $F; fi'", "ssh h '{ echo hi > $F; }'", "docker exec c sh -c 'if true; then rm -rf /data; fi'", "docker exec c sh -c '{ rm -rf $X; }'"]) refused(l);
-  for (const l of ["ssh h 'if true; then echo hi; fi'", "docker exec c sh -c 'while :; do echo hi; done'", "ssh h '{ ls; }'", "ssh h 'if true; then rm -rf /data; fi'", "docker exec c sh -c 'for i in 1 2; do echo $i; done'"]) runs(l);
+  for (const l of ["ssh h 'if true; then echo hi; fi'", "docker exec c sh -c 'while :; do echo hi; done'", "ssh h '{ ls; }'", "ssh h 'if true; then rm -rf /data; fi'", "docker exec c sh -c 'for i in 1 2; do echo $i; done'"]) judged(l);
 });
 
 test("each compound in a remote string has the verdict of its plain form, for ssh and docker", () => {

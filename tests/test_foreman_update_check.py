@@ -4,11 +4,13 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
 import unittest
 import urllib.error
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +34,9 @@ class UpdateCheckTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="uc_test_"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        patcher = mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": str(self.tmp / "agent")})  # main() reads live files from the agent dir
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.lock = self.tmp / "lock.json"
         self.lock.write_text(json.dumps({"schema": 1, "pi": {"name": "pi-missing", "version": "1.0.0"},
                                          "packages": [{"name": "pi-subagents", "version": "0.75.0", "mode": "install",

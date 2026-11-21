@@ -89,7 +89,7 @@ test("answered after a notice: one quiet note that starts no turn, and a second 
   cb.tick();
   assert.equal(r.sent.length, 1);
   r.advance(MIN);
-  r.live({});
+  r.live({ lastAnswer: { kind: "approval", at: new Date(r.at()).toISOString(), outcome: "answered" } }); // D130: "answered" needs a stored answer
   cb.tick();
   assert.equal(r.sent.length, 2);
   assert.equal(r.sent[1].wake, false, "quiet");
