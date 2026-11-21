@@ -317,8 +317,11 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
       continue;
     }
     s.status = "closed";
-    if (pending) s.resultPending = Date.now(); // a self-finish follows: the result path is not final yet (childblocked.ts waits for the final mark, up to PENDING_RESULT_MS)
-    else if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
+    delete s.resultPending; // a stale marker of an earlier close (a restarted entry) must not hold this one
+    if (pending) {
+      s.resultPending = Date.now(); // a self-finish follows: the result path is not final yet (childblocked.ts waits for the final mark, up to PENDING_RESULT_MS)
+      if (resultPath) s.result = resultPath; // the fallback after a crash resolves with this path; the final mark overwrites it with the kept copy
+    } else if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
     s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
     changed = true;
   }

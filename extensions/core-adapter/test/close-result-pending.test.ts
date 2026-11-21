@@ -57,7 +57,7 @@ test("a pass inside the self-finish gap resolves nothing; the next pass resolves
   await run(flow, s.wtFile);
   assert.equal(entry?.status, "closed"); // closed before the self-clean
   assert.equal(typeof entry?.resultPending, "number");
-  assert.equal(entry?.result, undefined);
+  assert.equal(entry?.result, s.wtFile); // the crash fallback path
   assert.deepEqual(gap, []);
   const e = readRegistry(s.agentDir).sessions[0];
   assert.equal(e.resultPending, undefined);
@@ -88,6 +88,29 @@ test("no self-finish: a single mark without the marker, resolved by the next pas
   assert.equal(e.status, "closed");
   assert.equal(e.resultPending, undefined);
   assert.equal(e.result, s.wtFile);
+  s.cb.tick();
+  assert.deepEqual(s.calls, [["job", s.wtFile]]);
+});
+
+test("crash fallback: the pending mark carries req.file, so the stale marker resolves with that path", (t) => {
+  const s = setup(t);
+  const env = { PI_FOREMAN_HANDOFF_DIR: path.join(s.agentDir, "handoffs", "20261121-100000-job") };
+  markOwnClosed(s.agentDir, env, s.wtFile, true);
+  const e = readRegistry(s.agentDir).sessions[0];
+  assert.equal(e.result, s.wtFile);
+  assert.equal(typeof e.resultPending, "number");
+});
+
+test("a re-opened entry's stale marker is cleared by the next close", (t) => {
+  const s = setup(t);
+  const env = { PI_FOREMAN_HANDOFF_DIR: path.join(s.agentDir, "handoffs", "20261121-100000-job") };
+  const reg = readRegistry(s.agentDir);
+  reg.sessions[0].resultPending = Date.now();
+  writeRegistry(s.agentDir, reg);
+  markOwnClosed(s.agentDir, env, s.wtFile);
+  const e = readRegistry(s.agentDir).sessions[0];
+  assert.equal(e.status, "closed");
+  assert.equal(e.resultPending, undefined);
   s.cb.tick();
   assert.deepEqual(s.calls, [["job", s.wtFile]]);
 });
