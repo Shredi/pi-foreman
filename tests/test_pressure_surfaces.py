@@ -65,12 +65,12 @@ class RadarPressure(tr.Fixture):
 class RetroPressure(unittest.TestCase):
     def test_counts_and_line(self):
         trace = [{"event": "launch_deferred"}, {"event": "launch_narrowed"}, {"event": "launch_narrowed"}]
-        rep = retro.build(None, trace, None, None, 5, str(HERE))
+        rep = retro.build(None, trace, None, None, str(HERE))
         self.assertEqual((rep["trace"]["launch_deferred"], rep["trace"]["launch_narrowed"]), (1, 2))
         self.assertIn("pressure: deferred 1, narrowed 2", retro.render_text(rep))
 
     def test_line_omitted_when_both_zero(self):
-        rep = retro.build(None, [{"event": "turn"}], None, None, 5, str(HERE))
+        rep = retro.build(None, [{"event": "turn"}], None, None, str(HERE))
         self.assertNotIn("pressure:", retro.render_text(rep))
 
 

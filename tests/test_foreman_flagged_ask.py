@@ -22,7 +22,7 @@ class FlaggedAskTest(unittest.TestCase):
         self.assertEqual(fr.flagged_counts([flag(), flag(), flag("trace_read")]), {"state_usage_read": 2, "trace_read": 1})
         self.assertIsNone(fr.flagged_counts(None))
         rep = {"session": "s", "review": None, "trace": None, "usage": None, "explorer": None, "cache": None, "session_tools": None,
-               "proposals": None, "flagged_asks": {"state_usage_read": 2}}
+               "flagged_asks": {"state_usage_read": 2}}
         self.assertIn("Flagged asks: state_usage_read=2", fr.render_text(rep).replace(" ", "").replace("Flaggedasks:", "Flagged asks: "))
 
 
