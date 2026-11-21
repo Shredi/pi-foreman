@@ -88,8 +88,8 @@ test("queuePlan and parseQueue: records above lastSeq up to the label, ascending
   assert.equal(bad.length, 2);
   const label = parseNoticeLabel(`2:plan:${h}:3`);
   assert.ok(label);
-  assert.deepEqual(queuePlan(0, records, label).map((s) => [s.seq, s.kind]), [[1, "result"], [2, "plan"]]);
-  assert.deepEqual(queuePlan(1, records, label).map((s) => s.seq), [2]);
+  assert.deepEqual(queuePlan(0, records, label).map((s) => [s.seq, s.kind]), [[1, "result"], [2, "plan"], [4, "refused"], [5, "closed"]]); // every record above lastSeq, also above the label
+  assert.deepEqual(queuePlan(1, records, label).map((s) => s.seq), [2, 4, 5]);
   const ahead = parseNoticeLabel(`6:update:${h}:3`);
   assert.ok(ahead);
   assert.deepEqual(queuePlan(4, records, ahead).map((s) => [s.seq, s.kind, s.kind !== "refused" && s.queued]), [[5, "closed", true], [6, "update", false]]);
@@ -239,4 +239,41 @@ test("T1: index.ts sends the batch as REMOTE_NOTICE_TYPE, a turn when idle and a
   const src = fs.readFileSync(path.join(import.meta.dirname, "..", "index.ts"), "utf8");
   assert.match(src, /if \(!waits\.childNotice\(s\.id, label, kind, text\)\) remoteBatch\.add\(label, kind, text, machine\)/);
   assert.match(src, /customType: REMOTE_NOTICE_TYPE, content, display: true \}, idle \? \{ triggerTurn: true \} : \{ deliverAs: "followUp" \}/);
+});
+
+test("hs2: queue 1,2 with the label at 1 delivers both, once, in poll mode and at start", async () => {
+  const a = "plan one\n";
+  const b = "the result\n";
+  const poll = rig();
+  poll.put("notices/1-plan.md", a);
+  poll.put("notices/2-result.md", b);
+  poll.queue(rec(1, "plan", a), rec(2, "result", b));
+  poll.state.getLabels = { "fm.notice": labelOf(1, "plan", a) };
+  poll.w.start();
+  await poll.w.idle();
+  assert.equal(poll.reg().noticeSeq, 2);
+  assert.deepEqual(poll.wakes.map((x) => x.split(" ")[0]), ["plan", "result"]);
+  await poll.send(labelOf(1, "plan", a));
+  assert.equal(poll.wakes.length, 2, "each once");
+  const live = rig();
+  live.put("notices/1-plan.md", a);
+  live.put("notices/2-result.md", b);
+  live.queue(rec(1, "plan", a), rec(2, "result", b));
+  live.w.start();
+  await live.w.idle();
+  await live.send(labelOf(1, "plan", a));
+  assert.equal(live.reg().noticeSeq, 2);
+  assert.equal(live.wakes.length, 2);
+});
+
+test("hs2: a hostile child id writes no contact file outside state/remote-contact", async () => {
+  const r = rig({ child: "../../../auth" });
+  r.w.start();
+  await r.w.idle();
+  const base = path.join(r.dir, "pi-foreman", "state");
+  assert.equal(fs.existsSync(path.join(r.dir, "auth.json")), false);
+  assert.equal(fs.existsSync(path.join(r.dir, "pi-foreman", "auth.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "auth.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "remote-contact")) ? fs.readdirSync(path.join(base, "remote-contact")).length : 0, 0);
+  assert.equal(fs.existsSync(path.join(path.dirname(r.dir), "auth.json")), false);
 });
