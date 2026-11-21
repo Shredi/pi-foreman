@@ -6,12 +6,15 @@
 //   trigger    a builder launch with a risk tag of HS_RISKS, a heavy task that built something, or the foreman's own `[high-stakes]` launch. Sticky, no size is measured.
 //   state      one per session: the fired reasons, the run ids, up to two runs (verdict, head, checkout, revised, handed, cleared, findings) and the first HEAD per repository.
 //   rules      a pass is due while a counting reason stands and no run ran, or the one FAIL was cleared; at most two runs per session; any PASS opens every PR.
+//   incomplete a run that ended without a verdict is kept (`HsIncomplete`): it may be resumed while the head and tree of its checkout are unchanged and its context is not nearly full
+//              (`resumeRefusal`); else a fresh run gets its report as a handoff (`incompleteBlock`). Both count as one review: only verdicts count (`runs`).
 //
 // Nothing here runs without a model (the callers read `highStakesConfig` first).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { get, type Json } from "./config.ts";
 import { git as gitIn } from "./diffscan.ts";
+import { overFinalGate, type ContextUsageLike } from "./compaction.ts";
 import type { Verdict } from "./rounds.ts";
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
@@ -62,10 +65,25 @@ export interface HsRun {
   failAt?: number;
 }
 
+/** The last high-stakes run that ended without a verdict, with what it saw at its launch; cleared by any high-stakes verdict or a head or tree change seen at a resume check. */
+export interface HsIncomplete {
+  runId: string;
+  /** Real path of the checkout it reviewed. */
+  cwd: string;
+  /** HEAD and work-tree id (without `.workflow/`) of that checkout at the run's launch; null = unknown. */
+  head: string | null;
+  tree: string | null;
+  /** The run's output file, when its run end named one. */
+  reportPath: string | null;
+  /** When the run ended (ms). */
+  at: number;
+}
+
 export interface HsState {
   fired: HsFired | null;
-  /** Run ids of the high-stakes launches of the session with the checkout each ran in (a reload keeps both). */
-  runIds: { id: string; cwd: string }[];
+  /** Run ids of the high-stakes launches of the session with the checkout each ran in (a reload keeps both); `from` links a resumed run, or a fresh run that got the handoff, to the incomplete run it continues. */
+  runIds: { id: string; cwd: string; from?: string }[];
+  incomplete?: HsIncomplete;
   runs: HsRun[];
   /** The first HEAD the session saw per repository (key: realpath of the git common dir), the base when no merge-base resolves. */
   bases: Record<string, string>;
@@ -80,7 +98,7 @@ const SHA = /^[0-9a-f]{40,64}$/;
 
 export const emptyState = (): HsState => ({ fired: null, runIds: [], runs: [], bases: {} });
 /** Nothing fired, ran or was seen (a legacy sighting still counts as content). */
-export const hsEmpty = (s: HsState): boolean => s.fired === null && s.runs.length === 0 && s.runIds.length === 0 && Object.keys(s.bases).length === 0 && !(s.legacy && s.legacy.length > 0);
+export const hsEmpty = (s: HsState): boolean => s.fired === null && s.runs.length === 0 && s.runIds.length === 0 && !s.incomplete && Object.keys(s.bases).length === 0 && !(s.legacy && s.legacy.length > 0);
 
 const lastRun = (s: HsState): HsRun | undefined => s.runs[s.runs.length - 1];
 /** The last run is a FAIL no normal PASS has cleared yet. */
@@ -99,10 +117,16 @@ export const required = (s: HsState, due: readonly string[]): boolean => due.len
 const sha = (x: unknown): x is string => typeof x === "string" && SHA.test(x);
 const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((r): r is string => typeof r === "string" && r !== "") : []);
 
-function runIdsOf(list: unknown): { id: string; cwd: string }[] {
+function runIdsOf(list: unknown): { id: string; cwd: string; from?: string }[] {
   if (!Array.isArray(list)) return [];
-  return list.filter((r): r is Json => isObj(r) && typeof r.id === "string" && r.id !== "" && typeof r.cwd === "string" && r.cwd !== "").map((r) => ({ id: r.id as string, cwd: r.cwd as string }));
+  return list.filter((r): r is Json => isObj(r) && typeof r.id === "string" && r.id !== "" && typeof r.cwd === "string" && r.cwd !== "").map((r) => ({ id: r.id as string, cwd: r.cwd as string, ...(typeof r.from === "string" && r.from ? { from: r.from } : {}) }));
 }
+
+const incompleteOf = (v: unknown): HsIncomplete | undefined => {
+  if (!isObj(v) || typeof v.runId !== "string" || !v.runId || typeof v.cwd !== "string" || !v.cwd) return undefined;
+  const id = (x: unknown): string | null => (typeof x === "string" && x ? x : null);
+  return { runId: v.runId, cwd: v.cwd, head: id(v.head), tree: id(v.tree), reportPath: id(v.reportPath), at: typeof v.at === "number" && Number.isFinite(v.at) ? v.at : 0 };
+};
 
 function runsOf(list: unknown, cwdOf: (r: Json) => string | null): HsRun[] {
   const runs: HsRun[] = [];
@@ -139,7 +163,8 @@ export function hsStateOfEntry(v: unknown): HsState | null {
   const reasons = isObj(v.fired) ? strs(v.fired.reasons).slice(0, 8) : [];
   const bases: Record<string, string> = {};
   if (isObj(v.bases)) for (const [k, h] of Object.entries(v.bases)) if (k && sha(h)) bases[k] = h;
-  return { fired: reasons.length > 0 ? { reasons } : null, runIds: runIdsOf(v.runIds).slice(-MAX_RUN_IDS), runs: runsOf(v.runs, (r) => (typeof r.cwd === "string" && r.cwd ? r.cwd : null)), bases };
+  const incomplete = incompleteOf(v.incomplete);
+  return { fired: reasons.length > 0 ? { reasons } : null, runIds: runIdsOf(v.runIds).slice(-MAX_RUN_IDS), runs: runsOf(v.runs, (r) => (typeof r.cwd === "string" && r.cwd ? r.cwd : null)), bases, ...(incomplete ? { incomplete } : {}) };
 }
 
 /** The state of a session. `pending`, `running` and `legacy` are in memory only. */
@@ -153,6 +178,8 @@ export class HighStakes {
   private readonly pendingKeys = new Map<string, string>();
   /** runId -> the same key, kept after the run ends so its FAIL finds its gate entry (memory only, at most MAX_RUN_IDS). */
   private readonly gateKeys = new Map<string, string>();
+  /** callId -> the incomplete run an accepted launch continues (a resume, or a fresh run that got its report), until its result. */
+  private readonly pendingFrom = new Map<string, string>();
   /** callId of a launch that carried the findings, until its result. */
   private readonly handedCalls = new Set<string>();
   /** The run ids of the normal runs that got the findings of the open FAIL (memory only, reset by a new FAIL; at most MAX_RUN_IDS). */
@@ -163,6 +190,7 @@ export class HighStakes {
     this.pending.clear();
     this.running.clear();
     this.pendingKeys.clear();
+    this.pendingFrom.clear();
     this.gateKeys.clear();
     this.handedCalls.clear();
     this.handedRuns = [];
@@ -220,10 +248,28 @@ export class HighStakes {
     this.pending.set(callId, cwd);
   }
 
-  /** As `begin`, with the review gate key of the launch's checkout (reviewgates.ts: the toplevel, "" when it did not resolve). */
-  beginKeyed(callId: string, cwd: string, gateKey: string): void {
+  /** As `begin`, with the review gate key of the launch's checkout (reviewgates.ts: the toplevel, "" when it did not resolve) and the incomplete run the launch continues (`from`). */
+  beginKeyed(callId: string, cwd: string, gateKey: string, from?: string): void {
     this.begin(callId, cwd);
     this.pendingKeys.set(callId, gateKey);
+    if (from) this.pendingFrom.set(callId, from);
+  }
+
+  /** The run that ended without a verdict and may still be resumed, if any. */
+  incomplete(): HsIncomplete | undefined {
+    return this.st.incomplete;
+  }
+
+  /** A high-stakes run ended without a verdict: it replaces the one kept before. */
+  noteIncomplete(i: HsIncomplete): void {
+    this.st.incomplete = { ...i };
+  }
+
+  /** True when there was one to clear. */
+  clearIncomplete(): boolean {
+    if (!this.st.incomplete) return false;
+    delete this.st.incomplete;
+    return true;
   }
 
   /** The gate key of a high-stakes run launched in this process; null when unknown (evicted, or the run ended before a reload): then the FAIL is session-wide. */
@@ -238,13 +284,15 @@ export class HighStakes {
     this.pending.delete(callId);
     const key = this.pendingKeys.get(callId);
     this.pendingKeys.delete(callId);
+    const from = this.pendingFrom.get(callId);
+    this.pendingFrom.delete(callId);
     if (failed || !runId) return cwd;
     if (key !== undefined) {
       this.gateKeys.set(runId, key);
       for (const k of [...this.gateKeys.keys()].slice(0, Math.max(0, this.gateKeys.size - MAX_RUN_IDS))) this.gateKeys.delete(k);
     }
     this.running.set(runId, cwd);
-    if (!this.st.runIds.some((r) => r.id === runId)) this.st.runIds = [...this.st.runIds, { id: runId, cwd }].slice(-MAX_RUN_IDS);
+    if (!this.st.runIds.some((r) => r.id === runId)) this.st.runIds = [...this.st.runIds, { id: runId, cwd, ...(from ? { from } : {}) }].slice(-MAX_RUN_IDS);
     return cwd;
   }
 
@@ -265,6 +313,7 @@ export class HighStakes {
 
   /** A verdict of a high-stakes run in `cwd`: appended as the next pass (at most two); returns its number, or 0 when nothing was recorded. */
   record(cwd: string, verdict: Verdict, head: string | null, findings: string): number {
+    this.clearIncomplete(); // a verdict ends the incomplete run's story, whether or not it is counted
     if (this.st.runs.length >= MAX_RUNS) return 0;
     this.st.runs.push({ verdict, head, cwd, revised: false, handed: false, cleared: verdict === "pass", ...(verdict === "fail" && findings.trim() ? { findings: findings.trim().slice(0, MAX_FINDINGS) } : {}) });
     return this.st.runs.length;
@@ -438,7 +487,7 @@ export function taskLine(base: string | null): string {
 }
 
 /** The launch refusals, traced as `review_high_stakes_refused {reason}`. */
-export type HsLaunchReason = "high_stakes_unset" | "high_stakes_single" | "high_stakes_resume" | "high_stakes_done" | "high_stakes_early" | "high_stakes_unrevised";
+export type HsLaunchReason = "high_stakes_unset" | "high_stakes_single" | "high_stakes_resume" | "high_stakes_resume_context" | "high_stakes_done" | "high_stakes_early" | "high_stakes_unrevised";
 
 export interface HsLaunchInput {
   model: string | null;
@@ -454,9 +503,53 @@ export interface HsLaunchInput {
   root?: string;
 }
 
-/** The refusal of a `resume` of a `[high-stakes]` run. */
-export function resumeRefusal(): { reason: HsLaunchReason; text: string } {
-  return { reason: "high_stakes_resume", text: `pi-foreman: launch refused [high_stakes_resume]: a resumed run cannot be a ${HS_TAG} review; launch a fresh reviewer with occasion: "high-stakes" (or ${HS_TAG} first in its task).` };
+/** The refusal of a `resume` of a `[high-stakes]` run; `why` names the failed condition. */
+export function resumeRefusal(why = "a resumed run is only a high-stakes review when that run ended without a verdict and nothing changed since its launch"): { reason: HsLaunchReason; text: string } {
+  return { reason: "high_stakes_resume", text: `pi-foreman: launch refused [high_stakes_resume]: ${why}; launch a fresh reviewer with occasion: "high-stakes" (or ${HS_TAG} first in its task).` };
+}
+
+export interface HsResumeInput {
+  /** The run id the resume names (a run of the high-stakes state). */
+  target: string;
+  state: HsState;
+  /** A high-stakes launch is accepted or running in this process. */
+  running: boolean;
+  /** HEAD and work-tree id (without `.workflow/`) of the incomplete run's checkout now; null = unreadable. */
+  head: string | null;
+  tree: string | null;
+  /** The context usage the incomplete run's child left, null when it left none (read as below the threshold). */
+  usage: ContextUsageLike | null;
+}
+
+/**
+ * A `resume` of a high-stakes run: allowed only for the incomplete run (ended without a verdict) while the head and tree of its checkout are those of its
+ * launch and its context is below the final-compaction share (a fuller one needs a fresh run that gets the report). Null when it may go ahead.
+ */
+export function hsResumeRefusal(i: HsResumeInput): { reason: HsLaunchReason; text: string } | null {
+  const inc = i.state.incomplete;
+  if (i.running) return resumeRefusal("a high-stakes review is still running");
+  if (!inc || inc.runId !== i.target) return resumeRefusal(`run ${i.target} is not the incomplete high-stakes run (it ended with a verdict, or a later high-stakes run replaced it)`);
+  if (i.head !== inc.head) return resumeRefusal("the head moved since the high-stakes run was launched");
+  if (i.tree !== inc.tree) return resumeRefusal("the work tree changed since the high-stakes run was launched");
+  if (overFinalGate(i.usage)) return { reason: "high_stakes_resume_context", text: `pi-foreman: launch refused [high_stakes_resume_context]: the context of run ${i.target} is nearly full; launch a fresh reviewer with occasion: "high-stakes": it gets that run's report as a handoff and both count as one high-stakes review.` };
+  return null;
+}
+
+/** The output file a run end names (`artifactPaths.outputPath` of its first result, else of the event itself), or null. */
+export function outputPathOf(data: unknown): string | null {
+  const first = (d: unknown): string | null => {
+    const ap = isObj(d) ? d.artifactPaths : undefined;
+    const p = isObj(ap) ? ap.outputPath : undefined;
+    return typeof p === "string" && p ? p : null;
+  };
+  const d = isObj(data) ? data : null;
+  const kids = d && Array.isArray(d.results) ? d.results : [];
+  return first(kids[0]) ?? first(d);
+}
+
+/** The handoff a fresh `[high-stakes]` run gets while an incomplete run is kept: its id and report path; the new run continues it. */
+export function incompleteBlock(i: HsIncomplete): string {
+  return `A high-stakes review of this change (run ${i.runId}) ended without a verdict${i.reportPath ? `; its report is at ${i.reportPath}` : ""}. Read it first, take over what it found, finish the review and give your own verdict.\n\n`;
 }
 
 /** A `[high-stakes]` launch: the first refusal in the order unset, single, resume, done, early; null when it may go ahead. */

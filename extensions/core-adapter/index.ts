@@ -87,7 +87,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, hsResumeRefusal, incompleteBlock, outputPathOf, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -99,7 +99,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readContextUse, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeContextUse, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
 import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
@@ -131,7 +131,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, startValueOf, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -1582,7 +1582,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * (a fresh normal reviewer is never refused: it gets the findings). Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
    * and the base its facts are collected against; null otherwise.
    */
-  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; gateKey: string; base: string | null } | null> {
+  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; gateKey: string; base: string | null; from?: string } | null> {
     const refused = (r: { reason: string; text: string }): string => {
       s.trace?.emit({ event: "review_high_stakes_refused", reason: r.reason });
       return r.text;
@@ -1592,7 +1592,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (action === "resume") {
       const target = resumeTarget(input);
       // the run-id lookup holds whatever the model says
-      if (target && s.hs.ownerOf(target) !== null) return refused(resumeRefusal());
+      if (target && s.hs.ownerOf(target) !== null) {
+        // a high-stakes run resumes only while it is the incomplete one, its checkout is as at its launch and its context has room (highstakes.ts hsResumeRefusal)
+        await s.reviewSync; // a run end still being recorded lands before the state is read
+        const inc = s.hs.incomplete();
+        const here = inc?.runId === target ? inc : undefined;
+        const head = here ? await headOf(here.cwd) : null;
+        const tree = here ? await launchSnapshot(here.cwd, true).catch(() => null) : null; // the snapshot the launch took (a test rig injects its own)
+        const launch = launchOfRun(s, target);
+        const refusal = hsResumeRefusal({ target, state: s.hs.state(), running: s.hs.isRunning(), head, tree, usage: launch ? readContextUse(recordDir(s.agentDir, s.id, launch)) : null });
+        if (refusal) {
+          if (here && (head !== here.head || tree !== here.tree) && s.hs.clearIncomplete()) persistCeremonyState(s); // changed: the run can no longer be resumed
+          return refused(refusal);
+        }
+        const top = await rootOf(here!.cwd);
+        return { root: here!.cwd, gateKey: top ?? SESSION_WIDE, base: null, from: target };
+      }
       if (model && launchRoles(s, input).some((r) => REVIEW_ROLES.includes(r))) {
         await s.reviewSync; // a FAIL still being recorded lands before it is read
         for (const d of launchCwds(input, ctx.cwd)) {
@@ -1617,12 +1632,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const key = await repoKeyOf(root);
     const configured = get(s.config.config, "safety.ops.baseBranch");
     const base = await reviewBaseOf(root, { baseBranch: typeof configured === "string" ? configured : null, ...(key && s.hs.base(key) ? { recorded: s.hs.base(key) } : {}) });
+    // an earlier run that ended without a verdict: the fresh run gets its id and report path and continues it (both count as one review: only verdicts count)
+    const inc = s.hs.incomplete();
     for (const e of marked) {
       if (base) reviewFacts.setStepBase(e, base);
-      if (typeof e.task === "string") e.task = taskLine(base) + e.task;
+      if (typeof e.task === "string") e.task = taskLine(base) + (inc ? incompleteBlock(inc) : "") + e.task;
       hsEntries.add(e);
     }
-    return { root, gateKey: top ?? SESSION_WIDE, base };
+    return { root, gateKey: top ?? SESSION_WIDE, base, ...(inc ? { from: inc.runId } : {}) };
   }
 
   /**
@@ -1665,15 +1682,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
-  function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1]): void {
+  function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1], treesWf?: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null || x.incomplete);
+    // a run without a verdict (the reviewer recorded `incomplete`, it was cut off, or it left no record) records no run and changes no gate; it is kept to be resumed or handed on (D144)
+    const keepIncomplete = (): void => {
+      s.hs.noteIncomplete({ runId, cwd: root, head: startValueOf(start, root), tree: startValueOf(treesWf, root), reportPath: outputPathOf(data), at: Date.now() });
+      persistCeremonyState(s);
+    };
     if (r?.incomplete) {
-      // the reviewer recorded `incomplete` (it could not run its checks): nothing is recorded (no run, no gate change), as for a run with no verdict
       s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
+      keepIncomplete();
       return;
     }
     const verdict = r?.verdict;
-    if (!r || !verdict) return;
+    if (!r || !verdict) {
+      keepIncomplete();
+      return;
+    }
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
     if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
@@ -2638,6 +2663,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.selfWarm.requestFailed(); // the request of this turn is over (a reply already ended it; an error or abort did not)
     toolUsage.noteMessage(event.message);
     flushToolUsage(s);
+    // a reviewer child leaves its context usage in its record folder at every turn end (overwritten, so a run cut by the turn cap keeps the last one): a resume of a cut high-stakes run reads it (D144)
+    if (s.isChild && launchBinding?.verdictDir && REVIEW_ROLES.includes(launchBinding.role) && fs.existsSync(launchBinding.verdictDir)) {
+      const u = ctx.getContextUsage?.();
+      if (u && typeof u.contextWindow === "number" && Number.isFinite(u.contextWindow)) writeContextUse(launchBinding.verdictDir, { tokens: typeof u.tokens === "number" ? u.tokens : null, contextWindow: u.contextWindow });
+    }
   });
   pi.on("agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
@@ -3282,7 +3312,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const startAt = s.launchAt.get(runId);
           s.launchAt.delete(runId);
           const hsRoot = s.hs.ownerOf(runId);
-          if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees);
+          if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees, startTreesWf);
           const counting = reviewResultsOfRun(s, runId, data).filter((x) => x.counts && x.verdict !== null);
           let nth = 0;
           for (const r of reviewsWithOutput(data, counting)) {
@@ -4093,7 +4123,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let shadow: ShadowDecision = { kind: "none" };
       /** The `[high-stakes]` entries of this launch (highstakes.ts) and the checkout they review. */
       const hsEntries = new Set<Json>();
-      let hsLaunch: { root: string; gateKey: string; base: string | null } | null = null;
+      let hsLaunch: { root: string; gateKey: string; base: string | null; from?: string } | null = null;
       // The items of a review entry, computed once (verdict.ts): the re-review line, the items line of the task and the review_verdict tool read this set.
       const launchItemsCache = new Map<Record<string, unknown>, { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null }>();
       const launchItemsFor = (e: Record<string, unknown>): { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null } => {
@@ -4151,7 +4181,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
-        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
+        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking"), hs: { run: (id) => s.hs.ownerOf(id) !== null, model: hsModel(s) } });
         if (act.block) return { block: true, reason: act.block };
         // r68 (A22): a workflow script that names a binding could forge one for any child.
         const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
@@ -4363,7 +4393,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           hsLaunch = hs;
         }
         // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused (a pre-pr, high-stakes or plan review is no repeat).
-        const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
+        const ownOccasion = hsLaunch !== null || [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
         const dupOn = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false;
         // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
         // the FAIL's record lands in reviewSync (hsRunEnd): a slow host (Windows git) must not read the state before it
@@ -4732,7 +4762,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
-          const cwds = launchCwds(input, ctx.cwd);
+          const cwds = action === "resume" && hsLaunch ? [hsLaunch.root] : launchCwds(input, ctx.cwd); // a resumed high-stakes run: the checkout it reviews, not the session's
           capSet(s.launchAtByCall, event.toolCallId, Date.now());
           const [heads, trees, treesWf] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot), treesAt(cwds, (c) => launchSnapshot(c, true))]);
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
@@ -4883,7 +4913,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent" && !s.isChild && hsLaunch) {
         // the launch passed every check: it counts as running; the foreman's own request is a reason too (foreman)
-        s.hs.beginKeyed(event.toolCallId, hsLaunch.root, hsLaunch.gateKey);
+        s.hs.beginKeyed(event.toolCallId, hsLaunch.root, hsLaunch.gateKey, hsLaunch.from);
         hsFire(s, ["foreman"]);
         persistCeremonyState(s);
       }
@@ -6738,7 +6768,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Every call returns ledger status.",
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" after a reviewer PASS that still stands: no checkout's last review failed), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Every call returns ledger status.",
     parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v", ""] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);

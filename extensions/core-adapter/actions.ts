@@ -201,6 +201,8 @@ export interface ActionContext {
   allowed: readonly string[];
   resolution: RoleResolution;
   maxThinking: unknown;
+  /** The high-stakes state (D144): whether a run id is a high-stakes run, and the model configured for it now (null: none). A high-stakes run is held to that model, not the role map's. */
+  hs?: { run: (id: string) => boolean; model: string | null };
 }
 
 /** Result of the action check: a block reason, or a pass (with a note when a loosening key let it through). */
@@ -275,6 +277,12 @@ function resumeCheck(input: Json, c: ActionContext): ActionDecision {
   if (input.dir !== undefined) return fresh(known?.role, "resume by async directory is not checked");
   if (Array.isArray(input.chain) || Array.isArray(input.tasks)) return fresh(known?.role, "resume with an attached chain is not checked");
   if (!target) return fresh(undefined, "no single run id (id/runId missing or different)");
+  if (c.hs?.run(target)) {
+    // a high-stakes run is held to the model configured for it now, not the role map's; after a reload the run registry is empty and the high-stakes state vouches for the run
+    if (!c.hs.model) return fresh(known?.role ?? "reviewer", "no high-stakes model is set (ceremony.highStakes.model)");
+    const configured = splitLevel(c.hs.model).base;
+    return known?.model && known.model !== configured ? fresh(known.role, `run '${target}' ran on ${known.model}, the high-stakes model now is ${configured}`) : {};
+  }
   if (!known) return fresh(undefined, `run '${target}' was not launched by this session`);
   if (!c.allowed.includes(known.role)) return fresh(undefined, `role '${known.role}' of run '${target}' is no longer an allowed role`);
   if (known.model === null) return fresh(known.role, `the model of run '${target}' is not known`);

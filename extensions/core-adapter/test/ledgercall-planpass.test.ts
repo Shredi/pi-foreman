@@ -19,7 +19,7 @@ test("pure: planPass lets mark V through with the attested note; without it the 
     assert.ok(r.error.includes(V_REFUSAL));
     assert.match(r.error, /\[plan-review\] PASS on the current version of every plan/);
   }
-  assert.ok("error" in planLedgerCall({ action: "mark", items: ["V"] }, { child: false, gate: { last: "pass", revised: true }, planPass: false }));
+  assert.ok("error" in planLedgerCall({ action: "mark", items: ["V"] }, { child: false, gate: { last: "fail", revised: true }, planPass: false }));
 });
 
 const markV = async (a: Rig): Promise<string> => {
@@ -45,9 +45,9 @@ test("wiring: a plan-only session closes V after a PASS on the current plan vers
 test("wiring: refused after the plan body changed since the PASS, and after a FAIL", async (t) => {
   const { a, w } = await planned(t);
   fs.appendFileSync(w.planFile, "\nOne more step before the first.\n");
-  assert.match(await markV(a), /V closes after a reviewer PASS with no revision since/);
+  assert.match(await markV(a), /V closes after a reviewer PASS that still stands/);
   const f = await planned(t, "FAIL");
-  assert.match(await markV(f.a), /V closes after a reviewer PASS with no revision since/);
+  assert.match(await markV(f.a), /V closes after a reviewer PASS that still stands/);
 });
 
 test("wiring: refused while another plan's latest review is a FAIL", async (t) => {
@@ -57,22 +57,22 @@ test("wiring: refused while another plan's latest review is a FAIL", async (t) =
   assert.equal(r.blocked, null, String(r.blocked));
   a.endRun(r.id, "1. FAIL plan-other.md:1 gap\nOverall verdict: FAIL");
   await tick(100);
-  assert.match(await markV(a), /V closes after a reviewer PASS with no revision since/);
+  assert.match(await markV(a), /V closes after a reviewer PASS that still stands/);
 });
 
 test("wiring: refused with a builder launched (running, then completed)", async (t) => {
   const { a } = await planned(t);
   const b = await launch(a, "builder", "build the widget");
   assert.equal(b.blocked, null, String(b.blocked));
-  assert.match(await markV(a), /V closes after a reviewer PASS with no revision since/, "running");
+  assert.match(await markV(a), /V closes after a reviewer PASS that still stands/, "running");
   await end(a, b, "builder", "done");
-  assert.match(await markV(a), /V closes after a reviewer PASS with no revision since/, "completed");
+  assert.match(await markV(a), /V closes after a reviewer PASS that still stands/, "completed");
 });
 
 test("wiring: refused with a project edit counted", async (t) => {
   const { a, w } = await planned(t);
   await a.fire("tool_result", { toolName: "write", toolCallId: "e1", input: { path: path.join(w.project, "src", "x.ts"), content: "x\n" }, details: {}, content: [{ type: "text", text: "ok" }], isError: false });
-  assert.match(await markV(a), /V closes after a reviewer PASS with no revision since/);
+  assert.match(await markV(a), /V closes after a reviewer PASS that still stands/);
 });
 
 test("wiring: the code-review path still closes V after a [pre-pr] PASS", async (t) => {

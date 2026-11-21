@@ -20,8 +20,11 @@ export type LedgerAction = (typeof LEDGER_ACTIONS)[number];
 export const LEDGER_TOOL_ACTIONS = [...LEDGER_ACTIONS, "init"] as const;
 export const LEDGER_TOPIC_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const LEDGER_INIT_MAX_TEXTS = 32;
-export const V_REFUSAL = "V closes after a reviewer PASS with no revision since";
-export const V_ATTESTED_NOTE = "closed by the foreman after a reviewer PASS with no revision since (harness-attested)";
+export const V_REFUSAL = "V closes after a reviewer PASS that still stands (no PASS yet, or a checkout whose last review failed, keeps it open)";
+export const V_ATTESTED_NOTE = "closed by the foreman after a reviewer PASS (harness-attested)";
+
+/** V may close when the gate's last verdict is PASS, or a counting reviewer PASS run exists and no checkout's last reviewer verdict is FAIL; work after the PASS (`revised`) and a review that ended without a verdict do not matter. */
+const vOpen = (g: { last: string | null; passRun?: string }): boolean => g.last === "pass" || (g.passRun !== undefined && g.last !== "fail");
 
 /** `ceremony.ledgerHelper`; anything else is the default "tool". */
 export function ledgerHelperMode(v: unknown): LedgerHelper {
@@ -283,7 +286,7 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child?: 
     case "mark": {
       if (items.length === 0) return { error: `${LEDGER_TOOL}: mark needs items.` };
       const v = items.includes("V");
-      if (v && !(opts.gate.last === "pass" && !opts.gate.revised) && !opts.planPass) return { error: `${LEDGER_TOOL}: refused: ${V_REFUSAL} (${opts.gate.passRun ? `last counted PASS: run ${opts.gate.passRun}` : "no counted PASS this round"}). Launch a reviewer; after its PASS mark V again. In a session with no builder and no project edit, a [plan-review] PASS on the current version of every plan also closes V.` };
+      if (v && !vOpen(opts.gate) && !opts.planPass) return { error: `${LEDGER_TOOL}: refused: ${V_REFUSAL} (${opts.gate.passRun ? `last counted PASS: run ${opts.gate.passRun}` : "no counted PASS this round"}). Launch a reviewer; after its PASS mark V again (a FAIL needs a fixed change and a new PASS). In a session with no builder and no project edit, a [plan-review] PASS on the current version of every plan also closes V.` };
       const nums = items.filter((x) => x !== "V");
       const calls = nums.map((n) => ["mark", n, ...(text ? [text] : [])]);
       if (v) calls.push(["mark", "V", V_ATTESTED_NOTE, "--verifier"]);
