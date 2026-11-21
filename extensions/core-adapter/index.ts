@@ -4684,6 +4684,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
         // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
+        reviewFacts.mergeBase = (dir) => {
+          const configured = get(s.config.config, "safety.ops.baseBranch");
+          return reviewBaseOf(dir, { baseBranch: typeof configured === "string" ? configured : null });
+        };
         await reviewFacts.noteBuilders(input, ctx.cwd);
         if (occasions.size > 0) {
           // Review bookkeeping to the run end (occasion.ts): occasion, shadow, model per entry; the files the findings are located in.
