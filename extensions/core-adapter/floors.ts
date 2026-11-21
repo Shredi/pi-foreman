@@ -657,7 +657,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   const words = [...seg.argv, ...seg.redirects.map((r) => r.target)];
   const reads = readOperands(seg, prog);
   for (const [i, w] of words.entries()) {
-    if (dataWord(w) || payload.includes(w) || patterns.has(i)) continue;
+    if ((dataWord(w) && !FORM_LIST.test(w)) || payload.includes(w) || patterns.has(i)) continue;
     const s = secretPath(w, { ...env, segCwd: seg.cwd ?? null }, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
     if (s) return s;
   }
@@ -869,6 +869,9 @@ function searchPatterns(seg: ShellSegment, prog: string): Set<number> {
   return new Set(nonPathArgs([seg.program, ...seg.argv], new Set()).map((i) => i - 1).filter((i) => i >= 0));
 }
 
+/** A curl `-F` value (`f=@a.json, .env`): its file list may hold a space, so the word is read by `secretPath` although it holds whitespace. */
+const FORM_LIST = /^[^@/\s=]+=[@<]/;
+
 /** A word that is text or a pattern, not a path: it holds whitespace (and does not start like a path), or an alternation or group character. */
 function dataWord(w: string): boolean {
   return (/\s/.test(w) && !/^(?:~|\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(w)) || /[|()]/.test(w);
@@ -1042,9 +1045,9 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   // and `-F` form values: `f=@.env;type=x`, `f=@.env\;filename=y` (the `;` parameters are no part of the file), `f=<.env` (the file's content as the value)
   const at = /^([^@/\s]*)@(.+)$/.exec(w) ?? /^[^@/\s=]+=<(.+)$/.exec(w);
   if (at) {
-    const file = at[at.length - 1].replace(/[\\/]?;.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
-    // a `-F` value may list several files: `f=@a.json,.env` (only the form shape; `-d@a,b` is one name)
-    for (const f of /=[@<]/.test(w) ? file.split(",") : [file]) {
+    const unq = (f: string): string => f.trim().replace(/[\\/]?;.*$/, "").trim().replace(/^(["'])(.*)\1$/, "$2");
+    // a `-F` value may list several files: `f=@a.json,.env` (only the form shape; `-d@a,b` is one name); split on `,` first, then strip each part's `;…` parameters
+    for (const f of /=[@<]/.test(w) ? at[at.length - 1].split(",").map(unq) : [unq(at[at.length - 1])]) {
       const h = secretPath(f, env, read);
       if (h) return h;
     }
