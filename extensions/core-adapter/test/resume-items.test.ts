@@ -78,7 +78,7 @@ test("adapter: item 16 added after the launch, resume, verdict on 16: written fo
   const dir = bindingOf(a.inputOf(first.id))!.verdictDir!;
   assert.deepEqual(bindingOf(a.inputOf(first.id))!.items, [1, 2]);
   assert.equal(readItemsSidecar(dir), null, "a first launch writes none");
-  a.endRun(first.id, "Overall verdict: FAIL\n1. FAIL: first is wrong\n");
+  a.endRun(first.id, "stopped before a verdict\n"); // no counted FAIL, so the resume's default is every open item
   await tick(200);
 
   await a.writeLedger(LEDGER_16);
