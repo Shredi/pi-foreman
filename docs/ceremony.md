@@ -63,7 +63,7 @@ Ledger and review rules: the session is bound to the ledger it last wrote (`core
 
 Reviewer rules: a changed exported signature, a weakened or removed test or assertion, or a skipped test is a FAIL
 unless asked for (callers are grepped). A "Facts to rule on" block from `git diff` (against the HEAD at the first
-builder launch) is appended to a reviewer's launch task (`diffscan.ts`; trace `review_facts {count}`).
+builder launch, or the merge-base, see [review](review.md)) is appended to a reviewer's launch task (`diffscan.ts`; trace `review_facts {count}`). The block lists at most 20 facts; with more, the full list is written to `<reviewed checkout>/.workflow/facts/facts-<hash>.md` (the newest 20 such files are kept) and the block ends with `(+N more not shown; all <total> in <path>)`; the reviewer reads that file and rules on every fact.
 
 Multi-session plans: a heavy task with several phases may run one child session per phase instead of builders in one session. The foreman opens each with `--plan-first`, waits with `foreman_wait kind:child`, reads the child's `plan.md` and sends notes as a brief, and reviews its `result.md` before the next phase. The child owns its plan; the parent approves nothing (see [sessions](sessions.md#child-orchestrator-sessions)).
 

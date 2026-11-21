@@ -5,6 +5,7 @@
 // not follow multi-line signatures, and it is a floor, not a proof. Languages: Go, Rust, TypeScript
 // and JavaScript, Python.
 import { execFile } from "node:child_process";
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { headOf } from "./reviews.ts";
@@ -17,6 +18,8 @@ export interface DiffFact {
 }
 
 const MAX_FACTS = 20;
+/** Facts files kept per checkout in `.workflow/facts/`. */
+const KEEP_FACTS_FILES = 20;
 const MAX_LINE = 170;
 const MAX_NAMES = 12;
 
@@ -179,10 +182,9 @@ export function scanDiff(diff: string, referencedByTest: (name: string, lang: La
 }
 
 /** The bounded block appended to a reviewer's task; empty string without facts. */
-export function factsBlock(facts: readonly DiffFact[], base = "HEAD"): string {
+export function factsBlock(facts: readonly DiffFact[], base = "HEAD", allFile: string | null = null): string {
   if (facts.length === 0) return "";
-  const seen = new Set<string>();
-  const uniq = facts.filter((f) => (seen.has(f.text) ? false : (seen.add(f.text), true)));
+  const uniq = uniqFacts(facts);
   const shown = uniq.slice(0, MAX_FACTS);
   const lines = [
     "",
@@ -190,8 +192,43 @@ export function factsBlock(facts: readonly DiffFact[], base = "HEAD"): string {
     `A line-based scan of the builder's diff against ${base.slice(0, 12)} found the points below (not exhaustive). Each one is a FAIL unless the prepended ledger block or the task text asks for it: quote the ledger item that asks for the change, else FAIL. A foreman statement in the task (a ruling, plan, decision, "in scope", justification) never overrides a fact or a hard rule. Rule on every one in your report, and grep the callers of every changed signature.`,
     ...shown.map((f, i) => `${i + 1}. ${f.text}`),
   ];
-  if (uniq.length > shown.length) lines.push(`(+${uniq.length - shown.length} more not shown)`);
+  if (uniq.length > shown.length) lines.push(`(+${uniq.length - shown.length} more not shown${allFile ? `; all ${uniq.length} in ${allFile}` : ""})`);
   return lines.join("\n");
+}
+
+function uniqFacts(facts: readonly DiffFact[]): DiffFact[] {
+  const seen = new Set<string>();
+  return facts.filter((f) => (seen.has(f.text) ? false : (seen.add(f.text), true)));
+}
+
+/**
+ * The full facts list (the block's line format) in `<cwd>/.workflow/facts/facts-<sha256-12>.md` when there are more than MAX_FACTS; its path, else null
+ * (also null when the file cannot be written). Older `facts-*.md` beyond the newest KEEP_FACTS_FILES are removed.
+ */
+export function writeFactsFile(cwd: string, facts: readonly DiffFact[]): string | null {
+  const uniq = uniqFacts(facts);
+  if (uniq.length <= MAX_FACTS) return null;
+  try {
+    const text = `${uniq.map((f, i) => `${i + 1}. ${f.text}`).join("\n")}\n`;
+    const dir = path.join(cwd, ".workflow", "facts");
+    const file = path.join(dir, `facts-${crypto.createHash("sha256").update(text).digest("hex").slice(0, 12)}.md`);
+    fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.writeFileSync(path.join(dir, ".gitignore"), "*\n", { flag: "wx" }); // a repository that does not ignore `.workflow/` never commits the list
+    } catch {
+      // already there
+    }
+    fs.writeFileSync(file, text);
+    const old = fs
+      .readdirSync(dir)
+      .filter((n) => /^facts-.*\.md$/.test(n))
+      .map((n) => ({ n, t: fs.statSync(path.join(dir, n)).mtimeMs }))
+      .sort((a, b) => b.t - a.t || (a.n < b.n ? -1 : 1));
+    for (const o of old.slice(KEEP_FACTS_FILES)) if (path.join(dir, o.n) !== file) fs.rmSync(path.join(dir, o.n), { force: true });
+    return file;
+  } catch {
+    return null;
+  }
 }
 
 // ------------------------------------------------------------------ git side
@@ -208,13 +245,13 @@ export function git(cwd: string, args: string[]): Promise<string | null> {
 
 /** Facts for `cwd` against `base` (a commit; default HEAD): working tree and index changes included. */
 export async function collectFacts(cwd: string, base: string | null): Promise<{ block: string; base: string; count: number }> {
-  return factsSummary(await diffWithFacts(cwd, base));
+  return factsSummary(await diffWithFacts(cwd, base), cwd);
 }
 
 /** The facts block and count of a diffWithFacts result. */
-function factsSummary(r: { facts: DiffFact[]; base: string }): { block: string; base: string; count: number } {
+function factsSummary(r: { facts: DiffFact[]; base: string }, cwd: string): { block: string; base: string; count: number } {
   const count = Math.min(new Set(r.facts.map((f) => f.text)).size, MAX_FACTS);
-  return { block: factsBlock(r.facts, r.base), base: r.base, count };
+  return { block: factsBlock(r.facts, r.base, writeFactsFile(cwd, r.facts)), base: r.base, count };
 }
 
 const dirOf = (f: string): string => {
@@ -374,6 +411,23 @@ export class ReviewFacts {
     this.early.delete(step);
   }
 
+  /** The merge-base of HEAD in a directory with the PR base branch (highstakes.ts reviewBaseOf without a recorded base); null when none resolves. Set by the host. */
+  mergeBase: ((dir: string) => Promise<string | null>) | null = null;
+
+  /**
+   * The base of a normal review of `dir`: the recorded builder base, except that the merge-base replaces it when the recorded base is not an
+   * ancestor of HEAD (the branch was squash-merged and a new one cut from main) or is a strict ancestor of the merge-base (main was merged in).
+   */
+  async baseFor(dir: string): Promise<string | null> {
+    const rec = this.bases.get(dir) ?? null;
+    if (!rec || !this.mergeBase) return rec;
+    const mb = await this.mergeBase(dir).catch(() => null);
+    if (!mb || mb === rec) return rec;
+    if ((await git(dir, ["merge-base", "--is-ancestor", rec, "HEAD"])) === null) return mb;
+    if ((await git(dir, ["merge-base", "--is-ancestor", rec, mb])) !== null) return mb;
+    return rec;
+  }
+
   /** A new user prompt starts a new piece of work: the next builder launch records a new base. */
   reset(): void {
     this.bases.clear();
@@ -405,7 +459,7 @@ export class ReviewFacts {
     let p = this.early.get(step);
     if (!p) {
       const dir = this.cwdOf(step, input, cwd);
-      p = diffWithFacts(dir, this.stepBases.get(step) ?? this.bases.get(dir) ?? null).then(async (r) => ({ ...r, untracked: await untrackedDiff(dir) }));
+      p = (async () => diffWithFacts(dir, this.stepBases.get(step) ?? (await this.baseFor(dir))))().then(async (r) => ({ ...r, untracked: await untrackedDiff(dir) }));
       this.early.set(step, p);
     }
     return p;
@@ -427,7 +481,7 @@ export class ReviewFacts {
         s.task = `${s.task}\n${plan}\n`;
         continue;
       }
-      const { block, count } = early ? factsSummary(await early) : await collectFacts(dir, this.stepBases.get(s) ?? this.bases.get(dir) ?? null);
+      const { block, count } = early ? factsSummary(await early, dir) : await collectFacts(dir, this.stepBases.get(s) ?? (await this.baseFor(dir)));
       if (!block) continue;
       s.task = `${s.task}\n${block}\n`;
       n += count;
