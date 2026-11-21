@@ -23,11 +23,11 @@ function repo(dir: string): { git: (...a: string[]) => string; commit: (m: strin
 }
 
 /** One `[pre-pr]` reviewer run, from launch to run end; `during` runs between the two. */
-async function review(a: Rig, verdict: "PASS" | "FAIL", during?: () => void): Promise<string | null> {
+async function review(a: Rig, verdict: "PASS" | "FAIL", during?: () => void, finding = ""): Promise<string | null> {
   const r = await a.reviewLaunch("[pre-pr] review the branch");
   if (r.blocked) return r.blocked;
   during?.();
-  a.endRun(r.id, `Overall verdict: ${verdict}`);
+  a.endRun(r.id, `Overall verdict: ${verdict}${finding ? `\n1. FAIL ${finding}` : ""}`);
   await tick(100);
   return null;
 }
@@ -41,8 +41,9 @@ for (const how of ["compaction", "reload"] as const) {
     const g = repo(w.project);
     const h = g.commit("chore: a");
     let a = await w.adapter("startup");
-    assert.equal(await review(a, "FAIL"), null);
-    assert.equal(await review(a, "FAIL"), null);
+    // two different findings: the same one twice would stop the loop (D133)
+    assert.equal(await review(a, "FAIL", undefined, "src/a.ts:1 first problem"), null);
+    assert.equal(await review(a, "FAIL", undefined, "src/b.ts:2 second problem"), null);
     if (how === "compaction") await a.fire("session_compact", { reason: "manual", compactionEntry: { summary: "s" } });
     else {
       await a.down();

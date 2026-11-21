@@ -1,8 +1,8 @@
 """Replay: ceremony.ledgerHelper (foreman_ledger tool, pure-ledger bash, off) on the fake provider.
 
 After a reviewer PASS four ledger marks through the tool, or a pure-ledger bash compound, go through
-and so does the finish. The tool closes V only after a PASS with no
-revision since (traced attested, no stop_hold after it); before a review and after a FAIL it
+and so does the finish. The tool closes V after a PASS that still stands
+(traced attested, no stop_hold after it); before a review and after a FAIL it
 refuses, and the escape-hatch finish leaves V open. A reviewer child launched with `items: ["V"]` closes V on the foreman's
 ledger through its `review_verdict` call (a result for item 1 is refused: not a launch item) and may do nothing else with it; it has no foreman_ledger tool. The other reviewer records carry no item results, so the harness marks nothing itself. "off" keeps the old behaviour: no tool,
 every ledger shell call counts. A foreman ledger shell call refused by a permission rule is traced ledger_call allowed false.
@@ -19,7 +19,7 @@ from driver import PROVIDER_A, load_fixture, tool_results
 from test_replay import REASON, ReplayCase
 from test_replay_ceremony_gate import events
 
-V_REFUSAL = "V closes after a reviewer PASS with no revision since"
+V_REFUSAL = "V closes after a reviewer PASS that still stands"
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)

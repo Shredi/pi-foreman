@@ -278,7 +278,7 @@ function oneGate(rg: unknown): ReviewGate | null {
   const r = rg as Record<string, unknown> | null | undefined;
   if (!r || typeof r !== "object") return null;
   if (!(r.last === null || r.last === "pass" || r.last === "fail" || r.last === "none") || typeof r.revised !== "boolean") return null;
-  return { last: r.last as ReviewGate["last"], revised: r.revised, ...(typeof r.failAt === "number" && Number.isFinite(r.failAt) ? { failAt: r.failAt } : {}), ...(r.stoodAtFail === true ? { stoodAtFail: true } : {}), ...(typeof r.passRun === "string" ? { passRun: r.passRun } : {}) };
+  return { last: r.last as ReviewGate["last"], revised: r.revised, ...(typeof r.failAt === "number" && Number.isFinite(r.failAt) ? { failAt: r.failAt } : {}), ...(r.stoodAtFail === true ? { stoodAtFail: true } : {}), ...(typeof r.passRun === "string" ? { passRun: r.passRun } : {}), ...(r.failed === true ? { failed: true } : {}) };
 }
 
 /** One pass mark, shape-checked; null when absent or off. */

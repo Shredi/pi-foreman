@@ -42,7 +42,7 @@ test(".workflow not ignored: a builder run that only appends to the ledger betwe
   assert.equal(await codeReview(a, reportItem(2, "x"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
   fs.appendFileSync(ledger, "- launch note\n");
-  assert.equal(await codeReview(a, reportItem(2, "y"), 2), null);
+  assert.equal(await codeReview(a, reportItem(2, "x"), 2), null);
   assert.equal((await w.traceEvents()).filter((r) => r.event === "review_loop").length, 1);
   assert.ok(loopRefused(await a.launch("builder")));
 });

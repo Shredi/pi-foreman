@@ -95,7 +95,7 @@ test("the plan-review refusal texts", () => {
   assert.doesNotMatch(phase, /ask the owner with ask_user_question/);
 });
 
-// a plan review has no ledger items: its findings are located defects (a different line band is a new finding)
+// a plan review has no ledger items: its findings are defects keyed on their text (a different text is a new finding)
 const FAIL1: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "the goal is vague", file: "plan.md", line: 1, class: "off-by-one" }] };
 const FAIL2: RecSpec = { verdict: "fail", findings: [{ kind: "defect", text: "the scope is unclear", file: "plan.md", line: 20, class: "off-by-one" }] };
 const isLoop = (s: string | null): boolean => /\[review_loop\]/.test(s ?? "");
