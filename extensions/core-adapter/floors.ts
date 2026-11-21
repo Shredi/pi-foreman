@@ -657,7 +657,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   const words = [...seg.argv, ...seg.redirects.map((r) => r.target)];
   const reads = readOperands(seg, prog);
   for (const [i, w] of words.entries()) {
-    if (dataWord(w) || payload.includes(w) || patterns.has(i)) continue;
+    if ((dataWord(w) && !FORM_LIST.test(w)) || payload.includes(w) || patterns.has(i)) continue;
     const s = secretPath(w, { ...env, segCwd: seg.cwd ?? null }, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
     if (s) return s;
   }
@@ -869,6 +869,9 @@ function searchPatterns(seg: ShellSegment, prog: string): Set<number> {
   return new Set(nonPathArgs([seg.program, ...seg.argv], new Set()).map((i) => i - 1).filter((i) => i >= 0));
 }
 
+/** A curl `-F` value (`f=@a.json, .env`): its file list may hold a space, so the word is read by `secretPath` although it holds whitespace. */
+const FORM_LIST = /^[^@/\s=]+=[@<]/;
+
 /** A word that is text or a pattern, not a path: it holds whitespace (and does not start like a path), or an alternation or group character. */
 function dataWord(w: string): boolean {
   return (/\s/.test(w) && !/^(?:~|\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(w)) || /[|()]/.test(w);
@@ -1042,9 +1045,9 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   // and `-F` form values: `f=@.env;type=x`, `f=@.env\;filename=y` (the `;` parameters are no part of the file), `f=<.env` (the file's content as the value)
   const at = /^([^@/\s]*)@(.+)$/.exec(w) ?? /^[^@/\s=]+=<(.+)$/.exec(w);
   if (at) {
-    const file = at[at.length - 1].replace(/[\\/]?;.*$/, "").replace(/^(["'])(.*)\1$/, "$2");
-    // a `-F` value may list several files: `f=@a.json,.env` (only the form shape; `-d@a,b` is one name)
-    for (const f of /=[@<]/.test(w) ? file.split(",") : [file]) {
+    const unq = (f: string): string => f.trim().replace(/[\\/]?;.*$/, "").trim().replace(/^(["'])(.*)\1$/, "$2");
+    // a `-F` value may list several files: `f=@a.json,.env` (only the form shape; `-d@a,b` is one name); split on `,` first, then strip each part's `;…` parameters
+    for (const f of /=[@<]/.test(w) ? at[at.length - 1].split(",").map(unq) : [unq(at[at.length - 1])]) {
       const h = secretPath(f, env, read);
       if (h) return h;
     }
@@ -1399,7 +1402,15 @@ export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platfor
     if (depth >= NORMALISE_DEPTH) continue;
     const rest = behindWrapper(seg);
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
-    for (const t of texts) out.push(...nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1));
+    const mux = rest !== null && /^(?:busybox|toybox)$/.test(base(seg.program)) && seg.stdinFed !== false;
+    for (const t of texts) {
+      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1);
+      // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
+      if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
+        inner[0] = { ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs };
+      }
+      out.push(...inner);
+    }
   }
   return out;
 }
@@ -1947,6 +1958,21 @@ const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
 /** The key forms of an unread line: dotted (`safety.permissions`, `gate.mode`) or quoted (`"permissions"`); a bare word in a path (`cleanup-permissions-2`) is no key. */
 const UNREAD_KEYS = /\bsafety\.(?:permissions|policy[A-Za-z]*)|\bgate\.|["'](?:permissions|policy[A-Za-z]*|gate)["']/;
 
+/**
+ * A settings schema (`*.schema.json`) the session may edit: it lies inside the floor checks' `writeRoots` (the worktree, the temp dirs) and not under the package root
+ * (the installed schema `foreman_config.py` validates against, also when the session runs in the package checkout). Whole path segments, real paths too.
+ * A schema holds the words `gate` and `permissions` in its descriptions, which is no config key written.
+ */
+function editableSchema(abs: string, env: FloorEnv): boolean {
+  if (!/\.schema\.json$/i.test(abs)) return false;
+  const plat = env.platform ?? process.platform;
+  const real = realDeep(abs);
+  const roots = (env.writeRoots ?? []).flatMap((r) => [r, realDeep(r)].filter((x): x is string => !!x));
+  const pkg = env.pkgRoot ?? DEFAULT_PKG_ROOT;
+  const pkgs = [pkg, realDeep(pkg)].filter((x): x is string => !!x);
+  return [abs, ...(real ? [real] : [])].every((c) => roots.some((r) => insideRoot(c, r, plat)) && !pkgs.some((k) => insideRoot(c, k, plat)));
+}
+
 const foldFor = (env: FloorEnv): boolean => (env.platform ?? process.platform) === "win32" || (env.platform ?? process.platform) === "darwin";
 
 /** realpath of the deepest existing ancestor with the missing tail re-appended. */
@@ -2198,7 +2224,7 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
   const configWord = (w: string): boolean => {
     if (!keys || dataWord(w)) return false;
     const abs = resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env);
-    return CONFIG_FILE.test(slash(abs ?? w)) && !(abs !== null && inOwnTemp([abs], env));
+    return CONFIG_FILE.test(slash(abs ?? w)) && !(abs !== null && (inOwnTemp([abs], env) || editableSchema(abs, env)));
   };
   for (const r of seg.redirects) {
     if (r.op === "<" || r.op === "dup") continue;
@@ -2247,7 +2273,7 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   if (UNREAD_KEYS.test(text)) {
     const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
     const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
-    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(reads.has(x) && !others.has(x)));
+    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
   }
   return null;
@@ -2264,7 +2290,7 @@ function protectedToolWrite(tool: string, input: Record<string, unknown>, env: F
     if (typeof v !== "string" || !v) continue;
     if (protectedWord(v, env.cwd, env, entries)) return protHit(`\`${tool}\` writes`, v);
     const abs = resolveWord(v, env.cwd, env);
-    if (!moves && abs !== null && CONFIG_FILE.test(slash(abs)) && !inOwnTemp([abs], env) && body.some((b) => FLOOR_KEYS.test(b))) return configHit(`\`${tool}\` writes`, v);
+    if (!moves && abs !== null && CONFIG_FILE.test(slash(abs)) && !inOwnTemp([abs], env) && !editableSchema(abs, env) && body.some((b) => FLOOR_KEYS.test(b))) return configHit(`\`${tool}\` writes`, v);
   }
   return null;
 }

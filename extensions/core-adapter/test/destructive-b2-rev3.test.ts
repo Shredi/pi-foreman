@@ -41,8 +41,8 @@ test("a shell that reads a heredoc or here-string runs its body: the body gets t
       refused(`${sh} <<'E'\n${b}\nE`);
     }
     // a shell fed on stdin is judge-first (danger-inline-code), a remote one too (danger-remote), whatever the body runs
-    // (`busybox sh` stays a runner the walker reads: its body gets the checks above and nothing more, as before)
-    if (sh !== "sudo bash") (sh === "busybox sh" ? runs : judged)(`${sh} <<'E'\nls\nE`);
+    // (`busybox sh` too since PR D1: the inner shell inherits the heredoc marker)
+    if (sh !== "sudo bash") judged(`${sh} <<'E'\nls\nE`);
   }
   for (const b of bodies) {
     refused(`bash <<< '${b}'`);
