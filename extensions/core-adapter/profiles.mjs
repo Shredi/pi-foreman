@@ -335,13 +335,17 @@ export function equivalentCommand({ profile, enable = [], disable = [], addons =
 
 // ---------------------------------------------------------------- Python
 
-/** Same order as extensions/core-adapter/python.ts. */
+/** The one default interpreter list: python.ts and setup build from it; the bin/ launchers keep a copy that a test pins equal to it. */
+export const POSIX_PYTHONS = ["python3", "python3.14", "python3.13", "python"];
+export const WIN_PYTHONS = [{ command: "py", args: ["-3"] }, { command: "python", args: [] }];
+
+/** python.path, PI_FOREMAN_PYTHON, then the default lists above (the same order as python.ts). */
 function pythonCandidates(configPath, envPath) {
   const out = [];
   if (configPath && configPath.trim()) out.push({ command: configPath.trim(), args: [], source: "python.path" });
   if (envPath && envPath.trim()) out.push({ command: envPath.trim(), args: [], source: "PI_FOREMAN_PYTHON" });
-  if (WIN) out.push({ command: "py", args: ["-3"], source: "py -3" }, { command: "python", args: [], source: "python" });
-  else out.push({ command: "python3", args: [], source: "python3" }, { command: "python", args: [], source: "python" });
+  if (WIN) for (const c of WIN_PYTHONS) out.push({ command: c.command, args: [...c.args], source: [c.command, ...c.args].join(" ") });
+  else for (const c of POSIX_PYTHONS) out.push({ command: c, args: [], source: c });
   return out;
 }
 

@@ -15,7 +15,7 @@ function fake(table: Record<string, Partial<SpawnResult>>): { spawner: Spawner; 
 }
 
 test("candidate order: python.path, PI_FOREMAN_PYTHON, then per-OS defaults", () => {
-  assert.deepEqual(pythonCandidates({ configPath: "/opt/py", envPath: "/env/py", platform: "linux" }).map((c) => c.source), ["python.path", "PI_FOREMAN_PYTHON", "python3", "python"]);
+  assert.deepEqual(pythonCandidates({ configPath: "/opt/py", envPath: "/env/py", platform: "linux" }).map((c) => c.source), ["python.path", "PI_FOREMAN_PYTHON", "python3", "python3.14", "python3.13", "python"]);
   assert.deepEqual(pythonCandidates({ platform: "win32" }).map((c) => [c.command, ...c.args].join(" ")), ["py -3", "python"]);
 });
 

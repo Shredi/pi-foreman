@@ -17,3 +17,19 @@ test("7f: message is kept only on a tool_error; fields were appended", () => {
   assert.deepEqual(TRACE_FIELDS.slice(-5), ["tool", "message", "width", "reasons", "level"]);
   assert.equal(sanitizeTrace(toolErrorRecord("read", undefined)).message, "");
 });
+
+test("tool_error keeps the exit code of a result whose message was cut", () => {
+  const long = [{ type: "text", text: "line of neutral output\n".repeat(30) + "Command exited with code 1" }];
+  const rec = sanitizeTrace(toolErrorRecord("bash", long, { exit_code: 1 }));
+  assert.equal(rec.exit, 1);
+  assert.doesNotMatch(String(rec.message), /exited with code/);
+});
+
+test("tool_error has no exit without a finite numeric exit_code", () => {
+  const c = [{ type: "text", text: "failed" }];
+  assert.equal("exit" in toolErrorRecord("bash", c), false);
+  assert.equal("exit" in toolErrorRecord("bash", c, {}), false);
+  assert.equal("exit" in toolErrorRecord("bash", c, { exit_code: "1" }), false);
+  assert.equal("exit" in toolErrorRecord("bash", c, { exit_code: Number.NaN }), false);
+  assert.equal(toolErrorRecord("bash", c, { exit_code: 0 }).exit, 0);
+});

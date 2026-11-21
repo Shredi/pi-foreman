@@ -552,7 +552,7 @@ without a record, nothing changes.
 ## Windows
 
 `pi` is a `.cmd` shim there and Node cannot spawn `.cmd` directly, so setup reads the shim and runs Pi's JS entry with
-Node. Python is found as `py -3`, then `python`; the Microsoft Store alias stub is rejected. If none works, install
+Node. Python is found as `py -3`, then `python` (the POSIX list is `python3`, `python3.14`, `python3.13`, `python`; setup and the adapter share it from `profiles.mjs`, the `bin/` launchers keep a copy pinned equal by a test); the Microsoft Store alias stub is rejected. If none works, install
 Python 3.13+ from python.org (or `winget install Python.Python.3.13`) with the py launcher.
 
 ### A fresh Windows machine, from zero

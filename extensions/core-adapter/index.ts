@@ -5887,7 +5887,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("tool_result", async (event, ctx) => {
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
-    if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content)); // R6 lane 7f
+    if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content, event.structuredContent as { exit_code?: unknown } | undefined)); // R6 lane 7f
     const created = manifest.onToolResult(event.toolCallId, event.isError);
     if (owner && created.length) {
       const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
