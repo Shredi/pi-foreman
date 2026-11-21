@@ -1,6 +1,6 @@
 // D3b items 14 and 15: the caller path (the real tool_call handler of a child session). A line the parser no longer binds to the harness folder is a judge-first danger class;
 // a read-only reviewer's call of that class is refused (no ask dir: denied at once), a builder's call goes to the judge (an `unsure` answer asks the parent, here nobody: denied).
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -8,6 +8,16 @@ import { r11Rig } from "./_r11rig.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { posixOnly } from "./_platform.ts";
+
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup; PI_OFFLINE makes that return null without starting npm.
+const savedOffline = process.env.PI_OFFLINE;
+before(() => {
+  process.env.PI_OFFLINE = "1";
+});
+after(() => {
+  if (savedOffline === undefined) delete process.env.PI_OFFLINE;
+  else process.env.PI_OFFLINE = savedOffline;
+});
 
 type T = Parameters<typeof r11Rig>[0];
 const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });

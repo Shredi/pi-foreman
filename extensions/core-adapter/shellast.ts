@@ -65,6 +65,8 @@ export interface ShellSegment {
   opaque: OpaqueReason | null;
   /** Set (not enumerable) on a segment that stands for a function, select, coproc or arithmetic for, or a nested string too deep to walk: the source text of the bodies it holds. */
   bodies?: string[];
+  /** Set (not enumerable) with `bodies`: the harness constants (`FOREMAN_SCRATCH`, `FOREMAN_OUT`) the line they stand in still reads as constants; a body is parsed with only these. */
+  bodyConsts?: string[];
   /** Set (not enumerable): the texts of the here-documents and here-strings that feed stdin (`bash <<'E'` runs its body as code). */
   heredocs?: string[];
   /** Set (not enumerable) on a segment that is a stage of a `|` / `|&` pipeline: the pipeline's id (one per parse) and the stage's index; unset for any other command, and for a command inside a substitution of a stage. */
@@ -156,6 +158,8 @@ interface Scope {
   passAt?: number[];
   /** Names an env-clearing wrapper (`env -i`, `env -`, `env -u NAME`, `exec -c`) took out of the environment of what it runs; `*` is every name. A nested `-c` string under it sees them empty. */
   cleared?: string[];
+  /** The harness constants the script being walked reads as constants (set by `prepare`). */
+  consts?: string[];
   depth: number;
   /** stdin comes from a pipe, a heredoc, a here-string or `<`. */
   stdin: boolean;
@@ -332,7 +336,10 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
 /** Hangs the body texts on the segment just emitted (not enumerable: a segment's own keys stay as they were). */
 function withBodies(sc: Scope, bodies: string[]): void {
   const last = sc.run.out[sc.run.out.length - 1];
-  if (last && bodies.length > 0) Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
+  if (last && bodies.length > 0) {
+    Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
+    Object.defineProperty(last, "bodyConsts", { value: [...(sc.consts ?? [])], enumerable: false });
+  }
 }
 
 function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {
@@ -875,7 +882,7 @@ export function namedOutsideExpansion(line: string, name: string): boolean {
     if (Array.isArray(n)) return n.forEach((c) => walk(c, depth + 1));
     if (n.type === "Assignment") words.push(String(n.name));
     if (n.type === "Word") {
-      const lit = (p: any): string => (p.type === "Literal" || p.type === "SingleQuoted" || p.type === "AnsiCQuoted" ? String(p.value) : p.type === "DoubleQuoted" ? p.parts.map(lit).join("") : "\0");
+      const lit = (p: any): string => (p.type === "Literal" || p.type === "SingleQuoted" || p.type === "AnsiCQuoted" ? String(p.value) : p.type === "DoubleQuoted" || p.type === "LocaleString" ? p.parts.map(lit).join("") : "\0");
       words.push(n.parts ? n.parts.map(lit).join("") : String(n.value));
     }
     for (const v of Object.values(n)) if (v && typeof v === "object") walk(v, depth + 1);
@@ -887,7 +894,7 @@ export function namedOutsideExpansion(line: string, name: string): boolean {
   } catch {
     return true;
   }
-  return !words.every((t) => onlyExpanded(t.replace(/['"\\]/g, ""), name));
+  return !words.every((t) => onlyExpanded(t, name));
 }
 
 function prepare(script: Script, src: string, sc: Scope): void {
@@ -953,9 +960,10 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const runs = rn.trial || !(rn.env.FOREMAN_SCRATCH || rn.env.FOREMAN_OUT) ? true : runsCode(script, passNames(script, src, sc));
   // the mention rule reads the whole line, not the nested string being walked: `env FOREMAN_OUT=/x sh -c 'echo > $FOREMAN_OUT/f'` rebinds it
   const whole = rn.root ?? src;
-  const harnessConst = (name: string): boolean => !!env[name] && !runs && onlyExpanded(whole, name) && !namedOutsideExpansion(whole, name);
+  const harnessConst = (name: string): boolean => !!env[name] && !runs && onlyExpanded(whole, name) && ![whole, src, ...rn.strings].some((t) => namedOutsideExpansion(t, name));
   const scratchConst = harnessConst("FOREMAN_SCRATCH");
   const outConst = harnessConst("FOREMAN_OUT");
+  sc.consts = [...(scratchConst ? ["FOREMAN_SCRATCH"] : []), ...(outConst ? ["FOREMAN_OUT"] : [])];
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {

@@ -893,17 +893,23 @@ export function inlineCode(s: ShellSegment): boolean {
 
 /** The index into `argv` of the word that carries the code flag of an interpreter one-liner (`deno eval`: 0), or -1. */
 function inlineCodeAt(s: ShellSegment): number {
+  return inlineCodeAts(s)[0] ?? -1;
+}
+
+/** Every index of `inlineCodeAt`'s kind (`node -e a -e b` has two). */
+function inlineCodeAts(s: ShellSegment): number[] {
   const p = progOf(s);
-  if (p === "deno") return s.argv[0] === "eval" ? 0 : -1;
+  if (p === "deno") return s.argv[0] === "eval" ? [0] : [];
   const key = /^python/.test(p) ? "python" : p.replace(/[0-9.]+$/, "");
   const re = CODE_FLAG[key];
-  if (!re) return -1;
+  if (!re) return [];
+  const at: number[] = [];
   for (const [i, w] of s.argv.entries()) {
-    if (key === "python" && (w === "-m" || !w.startsWith("-"))) return -1;
-    if (/\.(?:[cm]?js|ts|mts|cts|pl|rb|php|lua)$/.test(w)) return -1;
-    if (re.test(w)) return i;
+    if (key === "python" && (w === "-m" || !w.startsWith("-"))) return at;
+    if (/\.(?:[cm]?js|ts|mts|cts|pl|rb|php|lua)$/.test(w)) return at;
+    if (re.test(w)) at.push(i);
   }
-  return -1;
+  return at;
 }
 
 /** The path words one segment writes (resolved against its cwd by the caller); `.` stands for the cwd itself. In-place and output-flag forms included. */
@@ -1275,9 +1281,9 @@ const inlineCodeHits = (c: DangerCall, e: DangerEnv): ShellSegment[] =>
 
 /** A hit whose code text is in the command itself: `-c`/`-e` text, or a heredoc or here-string body fed to the interpreter. */
 const codeInCommand = (s: ShellSegment): boolean => {
-  const at = inlineCodeAt(s);
+  const ats = inlineCodeAts(s);
   // the flag word and the one after it hold the code (`-c CODE`, `-cCODE`, `--eval=CODE`); an expansion in either means the text is built at run time
-  if (at >= 0) return !s.dynamicArgs?.some((i) => i === at || i === at + 1);
+  if (ats.length) return ats.every((at) => !s.dynamicArgs?.some((i) => i === at || i === at + 1));
   return s.opaque === "stdin_fed" && (s.heredocs?.length ?? 0) > 0 && ownStdinText(s) && !s.dynamicCode;
 };
 

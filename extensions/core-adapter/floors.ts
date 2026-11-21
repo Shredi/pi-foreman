@@ -1589,7 +1589,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { FOREMAN_SCRATCH: env.scratch[0], ...(env.out ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
