@@ -84,7 +84,6 @@ function prBadge(t, st, label) {
 }
 
 // An Open PRs line needs attention when a finished check failed (its dot is red) or the PR conflicts with its base (the conflict mark).
-// The badge cell of a PR line: the number cell plus room for the badge (and its check mark); the session form ("PR #n") is wider than the list form ("#n").
 const prFailing = (pr) => prDotState(pr).fill === "red";
 const prConflict = (pr) => prDotState(pr).conflict === true;
 

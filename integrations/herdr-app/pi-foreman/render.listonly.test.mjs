@@ -5,7 +5,7 @@ import { register } from "node:module";
 register("./stubs-hooks.mjs", import.meta.url);
 const stubs = await import("./stubs.mjs");
 const { default: Mod } = await import("./main.js");
-const { parseRadarDoc, buildTree, numberCellWidth } = await import("./model.js");
+const { parseRadarDoc, buildTree } = await import("./model.js");
 const { sess } = await import("./fixtures.mjs");
 const { world } = stubs;
 
@@ -73,7 +73,7 @@ test("a click on a session row's free area opens the session; the name, the fold
   assert.equal(f.stopped, 1, "the fold slot stops its click");
 });
 
-test("the number cell never wraps and widens with the widest number", () => {
+test("the number cell never wraps and has no fixed-width cell", () => {
   const six = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(123456, "ok"), dot(7, "ok")] })]).render({});
   const cell = (n) => walk(lineOf(six, n).props.trigger).find((e) => (e.kids ?? []).some((k) => k?.kids?.includes(`PR #${n}`)));
   const badge = (n) => walk(lineOf(six, n).props.trigger).find((e) => (e.kids ?? []).includes(`PR #${n}`));
@@ -81,9 +81,6 @@ test("the number cell never wraps and widens with the widest number", () => {
     assert.equal(badge(n).props.whitespace_nowrap, true, `#${n} nowrap`);
     assert.equal(cell(n).props.w, undefined, `#${n}: no fixed-width cell`);
   }
-  assert.equal(numberCellWidth([{ number: 1234 }]), 52);
-  assert.equal(numberCellWidth([{ number: 12345 }, { number: 1 }]), 59);
-  assert.equal(numberCellWidth([]), 52);
   const four = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(1234, "ok")] })]).render({});
   assert.equal(walk(lineOf(four, 1234).props.trigger).find((e) => (e.kids ?? []).some((k) => k?.kids?.includes("PR #1234"))).props.w, undefined);
 });
