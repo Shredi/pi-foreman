@@ -684,7 +684,8 @@ export class RemoteWatcher {
 
   private async retryAck(w: Watched): Promise<void> {
     const a = this.acks.get(w.child);
-    if (w.lastSeq > 0 && w.lastSeq > (a?.acked ?? 0) && (a?.misses ?? 0) < ACK_MISSES && this.lastKinds.get(w.child) !== "closed") await this.writeAck(w, w.lastSeq);
+    const seq = this.state.get(w.child)?.lastSeq ?? w.lastSeq; // the current entry: a refresh replaces the Watched objects
+    if (seq > 0 && seq > (a?.acked ?? 0) && (a?.misses ?? 0) < ACK_MISSES && this.lastKinds.get(w.child) !== "closed") await this.writeAck(w, seq);
   }
 
   /** One notice per open entry of this session whose recorded address `watchState` refused. */
@@ -957,6 +958,7 @@ export class RemoteWatcher {
       records = parseQueue(r.stdout.toString("utf8"), (line) => this.d.trace?.({ event: "remote_queue_line_ignored", child: w.child, line: strip(line).slice(0, 80) }));
     }
     let applied = 0;
+    let committed = 0; // the seq this run applied: a refresh may have replaced `w`, so the receipt never reads `w.lastSeq`
     for (const step of queuePlan(w.lastSeq, records, label)) {
       if (this.stopped || step.seq <= w.lastSeq) continue;
       if (step.kind === "refused") {
@@ -968,14 +970,15 @@ export class RemoteWatcher {
         this.lastKinds.set(w.child, step.kind);
       }
       applied++;
+      committed = step.seq;
     }
     if (applied > 0) {
       this.failCounts.delete(w.child);
       const a0 = this.acks.get(w.child);
       if (a0) a0.misses = 0;
-      if (!this.stopped && this.lastKinds.get(w.child) !== "closed") await this.writeAck(w, w.lastSeq);
-    }
-    this.d.flush?.();
+      this.d.flush?.(); // the parent has the message before the child is told it was delivered
+      if (!this.stopped && this.lastKinds.get(w.child) !== "closed") await this.writeAck(w, committed);
+    } else this.d.flush?.();
   }
 
   private setError(child: string, message: string): void {
