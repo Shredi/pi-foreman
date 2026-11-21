@@ -582,10 +582,11 @@ async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url:
   return at ? { host: at.host, repo: at.repo, n } : { host: "", repo: "", n };
 }
 
-export const NOT_GITHUB = "only github.com PRs can be watched (the PR tracker covers github.com)";
-
 const hostsOf = (s: PrPackSession): GithubHosts => s.githubHosts?.() ?? DEFAULT_HOSTS;
-const notTracked = (hosts: string[]): string => `only ${hosts.join(", ")} PRs can be watched (the PR tracker covers ${hosts.join(", ")})`;
+const notTracked = (hosts: string[], host: string): string =>
+  host === "github.com" && !hosts.includes("github.com")
+    ? `github.com is not in tools.prGithubHosts (it lists ${hosts.join(", ")}); add it to watch github.com PRs`
+    : `only ${hosts.join(", ")} PRs can be watched (the PR tracker covers ${hosts.join(", ")})`;
 /** Why the current directory names no repository: no git checkout at all (a file-system walk, no spawn), or one whose repository could not be read. */
 function noRepoCause(cwd: string): string {
   for (let dir = path.resolve(cwd); ; dir = path.dirname(dir)) {
@@ -661,7 +662,7 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = explicit ?? (await watchKey(s, ctx, n, url, cwd));
   if (!key.repo) return { error: noRepoCause(cwd ?? ctx.cwd), noRepo: true };
-  if (!isTrackedKey(key, hosts.hosts)) return { error: notTracked(hosts.hosts), hostUnsupported: true };
+  if (!isTrackedKey(key, hosts.hosts)) return { error: notTracked(hosts.hosts, key.host), hostUnsupported: true };
   const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n, key.host).catch((): TrackOutcome => "unavailable") : undefined);
   let tracked = created ? await track() : undefined;
   if (!s.watches.reserve(key)) return { duplicate: true, tracked: tracked ?? (await track()) };

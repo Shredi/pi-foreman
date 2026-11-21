@@ -140,7 +140,7 @@ function normNode(raw, depth, budget) {
   return {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
-    hcTerminal: str(raw.hcTerminal), attach: str(raw.attach), regOpen: raw.regOpen === true, restartable: raw.restartable === true, child: str(raw.child), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
+    hcTerminal: str(raw.hcTerminal), attach: str(raw.attach), regOpen: raw.regOpen === true, restartable: raw.restartable === true, child: str(raw.child), pid: int(raw.pid), machine: str(raw.machine), remoteStale: int(raw.remoteStale) ?? 0, parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
     repo: nameOf(raw.repo), branch: str(raw.branch),
@@ -857,6 +857,9 @@ function extraRecords(n, recs) {
   });
 }
 
+/** Whole minutes (at least 1) a remote node was last heard from, when radar marked it `remoteStale`; 0 for any other node. */
+export const staleMinutes = (n) => (isObj(n) && n.machine && num(n.remoteStale) > 0 ? Math.max(1, Math.floor(num(n.remoteStale) / 60)) : 0);
+
 /** Status for the glyph, most urgent first: hidden (ended session), blocked, working, agents (own agents still run, also after
  *  the turn ended), done (hc: finished turn not yet seen, no agents running), bg, waiting or idle. `hcStatus` is the status of the joined hc terminal; without one the radar state decides. `recs` are the
  *  parseRecords of that terminal; `n` may be null for a terminal with no radar node. */
@@ -870,6 +873,8 @@ export function nodeStatus(n, hcStatus = null, recs = []) {
   if (n.sym === "needs-you" || n.state === "ask" || listOf(n.asks).length > 0 || hcStatus === "blocked" || extra.some((r) => r.state === "blocked")) return "blocked";
   const running = radarRuns(n).length > 0 || extra.length > 0;
   // a remote child waiting on a person: the local attach terminal's own "working" (its pane never idles) does not hide that
+  // a remote child the parent has not heard from for minutes: its last state is not shown as live (the row stays, the ask above still wins)
+  if ((hcStatus === null || hcStatus === undefined) && staleMinutes(n) > 0) return "idle";
   if (hcStatus === "working") return n.machine && (n.state === "blocked" || n.sym === "blocked") ? "blocked" : "working";
   if (hcStatus === "done") return running ? "agents" : "done";
   if (hcStatus === null || hcStatus === undefined) {
@@ -1222,7 +1227,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, r
     const total = isTop ? totalCost(n) : num(n.cost);
     const prs = sortPrs(src.prs);
     return {
-      id, type: "session", node: n, label: n.name, dim: closed, elsewhere: !isTop && (n.machine || !n.hcTerminal) ? n.machine || "elsewhere" : "", tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
+      id, type: "session", node: n, label: n.name, dim: closed, elsewhere: !isTop && (n.machine || !n.hcTerminal) ? [n.machine || "elsewhere", staleMinutes(n) > 0 && !closed ? `stale ${staleMinutes(n)}m` : ""].filter(Boolean).join(" · ") : "", tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
       sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
       urgent: urgentStatus([closed ? "idle" : status, ...children.map((c) => c.urgent)]), children,
       prs, summary: prSummary(prs), ...splitPrs(prs), recs: root ? listOf(recs) : recsOf ? listOf(recsOf(n)) : [],

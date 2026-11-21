@@ -37,6 +37,7 @@ DONE_TTL_MINUTES = 30.0
 NOTE_KEEP_SECONDS = 14 * 86400.0  # a live record named by a pane note outlives the TTL this long (the note sweep uses the same bound)
 RECENT_RUN_SECONDS = 8
 STARTING_WINDOW = 120.0
+REMOTE_STALE_S = 180  # a remote child the parent has not heard from this long is drawn stale
 SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
 SYM_ORDER = ("working", "waiting", "asking", "blocked", "done", "lost")
 SYM_COLORS = {"working": "32", "waiting": "90", "asking": "33", "blocked": "33", "done": "90", "lost": "31"}
@@ -644,6 +645,13 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
                         "path": str(p),
                         "piSessionId": live_id.get("piSessionId") if isinstance(live_id.get("piSessionId"), str) else None,
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
+    for e in reg:  # the parent's last contact with a remote child's terminal (`remotewatch` writes it; none from an older parent)
+        child = e.get("child")
+        if e.get("machine") and isinstance(child, str) and child and "/" not in child and "\\" not in child and child != "..":
+            c = read_json(base / "state" / "remote-contact" / (child + ".json"))
+            at = parse_ts(c.get("contactAt")) if isinstance(c, dict) else None
+            if at is not None:
+                e["contactAt"] = at
     data = {"live": live, "registry": reg, "handoffs": handoffs, "usage": usage, "trace": trace}
     keep = None if only is None else subtree_sids(data, only)
     for d in live:
@@ -949,6 +957,9 @@ def build(data, now):
                 local = att.get("address") if isinstance(att, dict) else None
                 n["attach"] = local if isinstance(local, str) and local else None
                 n["glyph"], n["state"] = remote_glyph(e, opened, now)
+                at = e.get("contactAt")
+                if n["state"] != "ask" and e.get("status") in ("open", "pending", "closing") and isinstance(at, float) and now - at > REMOTE_STALE_S:
+                    n["remoteStale"] = int(now - at)
                 ask = e.get("ask")
                 # the number and topic come from the ask.md header the watcher stored; `seq` (the notice counter) is never shown
                 if n["state"] == "ask" and isinstance(ask, dict) and isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool):
@@ -1266,6 +1277,8 @@ def to_json_node(n, now, symbols):
             out["machine"] = n["machine"]
             if n.get("attach"):
                 out["attach"] = n["attach"]
+        if n.get("remoteStale"):
+            out["remoteStale"] = n["remoteStale"]
         if n.get("regOpen"):
             out["regOpen"] = True
         if n.get("restartable"):
