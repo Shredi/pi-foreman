@@ -56,6 +56,12 @@ export const REAP_KILL_POLLS = 5;
 /** Foreground program names (case-folded, `.exe` stripped) that mean pi is gone and `--keep` left a shell in its place. */
 const SHELL_NAMES = new Set(["sh", "bash", "zsh", "fish", "dash", "ash", "ksh", "tcsh", "csh", "cmd", "powershell", "pwsh"]);
 export const isShellName = (name: unknown): boolean => typeof name === "string" && SHELL_NAMES.has(name.trim().toLowerCase().replace(/^.*[\\/]/, "").replace(/\.exe$/, ""));
+/** The `hc get` probe of every watched entry also runs while the events stream is live; after a failed notice it comes sooner (5, 15, then 60 s). */
+export const PROBE_MS = 60_000;
+export const RETRY_MS = [5_000, 15_000, 60_000];
+/** A contact gap longer than this lets the receipt write try again (3 misses stop it until then); radar marks a remote row stale after the same 3 minutes. */
+const CONTACT_GAP_MS = 180_000;
+const ACK_MISSES = 3;
 const GET_TIMEOUT_MS = 10_000;
 const MAX_FETCH_BYTES = 8 * 1024 * 1024;
 
@@ -65,6 +71,7 @@ export function fetchTimeoutMs(v: unknown): number {
   return Math.min(600, Math.max(5, n)) * 1000;
 }
 
+const QUEUE_FILE = "notices.jsonl";
 const FILES: Record<NoticeKind, string> = { plan: "plan.md", result: "result.md", update: "result.md", ask: "ask.md", closed: "result.md" };
 const NOTICE_RE = /^(\d+):(plan|result|update|ask|closed):([0-9a-f]{64}|-):(\d+)$/;
 const REFUSED_RE = /^(\d+):refused:([a-z0-9-]{1,40})$/;
@@ -281,6 +288,61 @@ export function fail(state: WatchState, child: string, value: string): void {
   if (w && w.seen === value) delete w.seen;
 }
 
+/** One line of the child's `notices.jsonl`: `{seq, kind, sha256, bytes, at}` (`reason` for a refused notice, `sha256` null for a closed one without a result). */
+export interface QueueRecord {
+  seq: number;
+  kind: NoticeKind | "refused";
+  sha256: string | null;
+  bytes: number;
+  reason?: string;
+}
+export type PlanStep =
+  | { seq: number; kind: NoticeKind; sha256: string; bytes: number; queued: boolean }
+  | { seq: number; kind: "refused"; slug: string };
+
+const RECORD_KINDS = new Set<string>(["plan", "result", "update", "ask", "closed", "refused"]);
+
+/** The records of a `notices.jsonl` text; a malformed line is skipped and handed to `bad` once. */
+export function parseQueue(text: string, bad?: (line: string) => void): QueueRecord[] {
+  const out: QueueRecord[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let o: Record<string, unknown> | undefined;
+    try {
+      o = objOf(JSON.parse(line));
+    } catch {
+      o = undefined;
+    }
+    const kind = o?.kind;
+    const ok =
+      o !== undefined &&
+      typeof o.seq === "number" && Number.isInteger(o.seq) && o.seq > 0 &&
+      typeof kind === "string" && RECORD_KINDS.has(kind) &&
+      typeof o.bytes === "number" && Number.isInteger(o.bytes) && o.bytes >= 0 &&
+      (kind === "refused" ? typeof o.reason === "string" && /^[a-z0-9-]{1,40}$/.test(o.reason) : o.sha256 === null ? kind === "closed" && o.bytes === 0 : typeof o.sha256 === "string" && /^[0-9a-f]{64}$/.test(o.sha256));
+    if (!ok || !o) {
+      bad?.(line);
+      continue;
+    }
+    out.push({ seq: o.seq as number, kind: kind as QueueRecord["kind"], sha256: (o.sha256 as string | null | undefined) ?? null, bytes: o.bytes as number, ...(kind === "refused" ? { reason: o.reason as string } : {}) });
+  }
+  return out;
+}
+
+/**
+ * The notices to apply for a label naming `label.seq`: the queue records above `lastSeq` up to that seq, ascending (one per seq, the first
+ * line wins), then the label's own notice by the single-file path when the queue holds no record for its seq (a queue write failed).
+ */
+export function queuePlan(lastSeq: number, records: QueueRecord[], label: ParsedLabel): PlanStep[] {
+  const bySeq = new Map<number, QueueRecord>();
+  for (const r of records) if (r.seq > lastSeq && r.seq <= label.seq && !bySeq.has(r.seq)) bySeq.set(r.seq, r);
+  const out: PlanStep[] = [...bySeq.values()]
+    .sort((a, b) => a.seq - b.seq)
+    .map((r): PlanStep => (r.kind === "refused" ? { seq: r.seq, kind: "refused", slug: r.reason as string } : { seq: r.seq, kind: r.kind, sha256: r.sha256 ?? "-", bytes: r.bytes, queued: true }));
+  if (!bySeq.has(label.seq) && label.seq > lastSeq) out.push(label.kind === "refused" ? { seq: label.seq, kind: "refused", slug: label.slug } : { seq: label.seq, kind: label.kind, sha256: label.sha256, bytes: label.bytes, queued: false });
+  return out;
+}
+
 export interface PollItem {
   child: string;
   machine: string;
@@ -318,14 +380,15 @@ export interface HcResult {
   overflow: boolean;
   error?: Error;
 }
-export type HcRun = (args: string[], timeoutMs: number, signal?: AbortSignal) => Promise<HcResult>;
+/** `input` is written to the program's stdin (`hc file write`); without it stdin is closed. */
+export type HcRun = (args: string[], timeoutMs: number, signal?: AbortSignal, input?: Buffer) => Promise<HcResult>;
 /** `extra` is appended to `hc events --json` (a `--terminal` filter). */
 export type HcEvents = (onLine: (line: string) => void, onEnd: () => void, extra?: string[]) => { kill(): void };
 
 const hcBin = (): string => process.env.HC_BIN?.trim() || "hc";
 
 /** `hc <args>` without a shell; stdout is kept as bytes. */
-export const runHc: HcRun = (args, timeoutMs, signal) =>
+export const runHc: HcRun = (args, timeoutMs, signal, input) =>
   new Promise((resolve) => {
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -356,10 +419,14 @@ export const runHc: HcRun = (args, timeoutMs, signal) =>
     }
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      child = spawn(hcBin(), args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(hcBin(), args, { shell: false, windowsHide: true, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
     } catch (error) {
       finish(null, error as Error);
       return;
+    }
+    if (input) {
+      child.stdin?.on("error", () => undefined); // a program that exits early: the exit code tells
+      child.stdin?.end(input);
     }
     child.stdout?.on("data", (c: Buffer) => {
       size += c.length;
@@ -418,8 +485,10 @@ export interface WatchDeps {
   events?: HcEvents;
   /** `sessions.remote.fetchTimeoutSeconds` (raw config value). */
   fetchTimeoutSeconds?: () => unknown;
-  /** Wakes `foreman_wait kind child`: label, kind, text (mirror path or refused slug). */
-  wake: (label: string, kind: string, text: string) => void;
+  /** Wakes `foreman_wait kind child`: label, kind, text (mirror path or refused slug), machine. */
+  wake: (label: string, kind: string, text: string, machine: string) => void;
+  /** The end of one catch-up run (all notices of one label applied): the place to send what the wakes collected. */
+  flush?: () => void;
   /** A trace record (`remote_notice_ignored`) for a label that does not follow the grammar. */
   trace?: (rec: Record<string, unknown>) => void;
   notify?: (message: string, level: "info" | "warning") => void;
@@ -427,6 +496,8 @@ export interface WatchDeps {
   importReports?: (data: Buffer) => void | Promise<void>;
   now?: () => number;
   timer?: (fn: () => void, ms: number) => Cancel;
+  /** The timer of the per-entry probe and its backoff (tests drive it apart from the stream and poll timers); default: a real, unref'd timer. */
+  probeTimer?: (fn: () => void, ms: number) => Cancel;
 }
 
 interface MachineRun {
@@ -457,6 +528,13 @@ export class RemoteWatcher {
   state: WatchState = new Map();
   /** Per child, the time (ms) of the last stream line of its machine or successful `hc get` of its terminal; in memory only (childblocked.ts reads it). */
   private readonly contacts = new Map<string, number>();
+  /** Per child: the probe timer, the run of failed notices (backoff step), the contact file's last write, the receipt state. */
+  private readonly probes = new Map<string, Cancel>();
+  private readonly failCounts = new Map<string, number>();
+  private readonly contactWrites = new Map<string, number>();
+  /** The kind of the last applied notice per child: a closed child gets no receipt. */
+  private readonly lastKinds = new Map<string, string>();
+  private readonly acks = new Map<string, { acked: number; misses: number }>();
   private machines = new Map<string, MachineRun>();
   private readonly named = new Set<string>();
   private chain: Promise<void> = Promise.resolve();
@@ -466,6 +544,7 @@ export class RemoteWatcher {
   private readonly hc: HcRun;
   private readonly events: HcEvents;
   private readonly timer: (fn: () => void, ms: number) => Cancel;
+  private readonly probeTimer: (fn: () => void, ms: number) => Cancel;
 
   private readonly d: WatchDeps;
 
@@ -474,6 +553,7 @@ export class RemoteWatcher {
     this.hc = d.hc ?? runHc;
     this.events = d.events ?? spawnEvents;
     this.timer = d.timer ?? defaultTimer;
+    this.probeTimer = d.probeTimer ?? defaultTimer;
   }
 
   /** The last time the watcher heard from the child's machine or terminal, or undefined when it has not since this watcher was built. */
@@ -498,6 +578,8 @@ export class RemoteWatcher {
     this.abort.abort(); // in-flight hc get / file read children end now
     this.cancelRefresh?.();
     this.cancelRefresh = null;
+    for (const c of this.probes.values()) c();
+    this.probes.clear();
     for (const m of [...this.machines.keys()]) this.stopMachine(m);
   }
 
@@ -521,6 +603,7 @@ export class RemoteWatcher {
       if (!this.machines.has(w.machine)) this.startMachine(w.machine);
       if (!prev.has(w.child)) {
         this.enqueue(() => this.pollOne(w.child));
+        if (!this.probes.has(w.child)) this.scheduleProbe(w.child, PROBE_MS);
         const m = this.machines.get(w.machine);
         if (m && !m.stream) this.schedulePoll(m, w.child); // the machine is in poll fallback: no stream will report this entry
       }
@@ -534,6 +617,75 @@ export class RemoteWatcher {
       }
     }
     for (const m of [...this.machines.keys()]) if (![...this.state.values()].some((w) => w.machine === m)) this.stopMachine(m);
+    for (const [child, cancel] of [...this.probes]) {
+      if (this.state.has(child)) continue;
+      cancel();
+      this.probes.delete(child);
+    }
+  }
+
+  /** The next `hc get` probe of an entry: it re-reads the label (a failed notice is tried again), counts as contact and retries the receipt. */
+  private scheduleProbe(child: string, ms: number): void {
+    this.probes.get(child)?.();
+    this.probes.set(
+      child,
+      this.probeTimer(() => {
+        this.enqueue(async () => {
+          const w = this.state.get(child);
+          if (!w || this.stopped) return;
+          await this.pollOne(child);
+          await this.retryAck(w);
+          if (this.state.has(child) && !this.stopped) this.scheduleProbe(child, this.failCounts.has(child) ? RETRY_MS[Math.min(this.failCounts.get(child) as number, RETRY_MS.length) - 1] : PROBE_MS);
+        });
+      }, ms),
+    );
+  }
+
+  /** A notice of `value` could not be applied: the label is read again, after 5, 15 and then 60 s. */
+  private failed(w: Watched, value: string): void {
+    fail(this.state, w.child, value);
+    const n = Math.min((this.failCounts.get(w.child) ?? 0) + 1, RETRY_MS.length);
+    this.failCounts.set(w.child, n);
+    this.scheduleProbe(w.child, RETRY_MS[n - 1]);
+  }
+
+  /** The watcher heard from the entry's terminal: remembered in memory, and in `state/remote-contact/<child>.json` (radar's stale marker) at most once a minute. */
+  private contact(w: Watched): void {
+    const at = (this.d.now ?? Date.now)();
+    const before = this.contacts.get(w.child);
+    this.contacts.set(w.child, at);
+    const a = this.acks.get(w.child);
+    if (a && before !== undefined && at - before > CONTACT_GAP_MS) a.misses = 0; // contact came back after a gap: the receipt may be written again
+    const last = this.contactWrites.get(w.child);
+    if (last !== undefined && at - last < PROBE_MS) return;
+    this.contactWrites.set(w.child, at);
+    try {
+      writeBytes(path.join(this.d.agentDir, "pi-foreman", "state", "remote-contact", `${w.child}.json`), Buffer.from(`${JSON.stringify({ child: w.child, contactAt: new Date(at).toISOString() })}\n`));
+    } catch {
+      // the marker is best effort
+    }
+  }
+
+  /** `notice-ack.json` `{seq, at}` into the remote handoff dir (`hc file write`, stdin): the child learns which seq the parent applied. */
+  private async writeAck(w: Watched, seq: number): Promise<void> {
+    const a = this.acks.get(w.child) ?? { acked: 0, misses: 0 };
+    this.acks.set(w.child, a);
+    const body = Buffer.from(`${JSON.stringify({ seq, at: new Date((this.d.now ?? Date.now)()).toISOString() })}\n`);
+    const r = await this.hc(["file", "write", "--on", w.machine, remotePath(w, "notice-ack.json")], GET_TIMEOUT_MS, this.abort.signal, body);
+    if (this.stopped) return;
+    if (r.code === 0 && !r.timedOut) {
+      a.acked = Math.max(a.acked, seq);
+      a.misses = 0;
+      return;
+    }
+    a.misses++;
+    this.d.trace?.({ event: "remote_ack_failed", child: w.child, seq, why: strip(r.timedOut ? "timed out" : r.error ? r.error.message : r.stderr || `exit ${String(r.code)}`).slice(0, 80) });
+  }
+
+  private async retryAck(w: Watched): Promise<void> {
+    const a = this.acks.get(w.child);
+    const seq = this.state.get(w.child)?.lastSeq ?? w.lastSeq; // the current entry: a refresh replaces the Watched objects
+    if (seq > 0 && seq > (a?.acked ?? 0) && (a?.misses ?? 0) < ACK_MISSES && this.lastKinds.get(w.child) !== "closed") await this.writeAck(w, seq);
   }
 
   /** One notice per open entry of this session whose recorded address `watchState` refused. */
@@ -598,6 +750,7 @@ export class RemoteWatcher {
         } catch {
           return;
         }
+        for (const ev of parseEvents(raw)) for (const w of this.state.values()) if (w.machine === machine && sameTerminal(w, ev)) this.contact(w);
         this.run(applyEvent(this.state, raw, machine));
       },
       () => {
@@ -727,7 +880,7 @@ export class RemoteWatcher {
       } catch {
         return;
       }
-      this.contacts.set(child, (this.d.now ?? Date.now)());
+      this.contact(w);
       this.run(applyGet(this.state, child, reply));
     } else if (r.code === 3 && notFound(r.stderr)) {
       this.run([{ type: "live", child, state: "lost" }]);
@@ -762,24 +915,70 @@ export class RemoteWatcher {
         e.close = a.close;
         return true;
       });
-    } else if (a.type === "refused") {
-      this.update(a.child, (e) => {
-        const reg = { version: 1, sessions: [{ ...e, originMachine: w.machine }] };
-        const hit = applyRemoteNotice(reg, { machine: w.machine, sessionId: w.child }, { kind: "refused", reason: a.slug });
-        if (hit) {
-          const { originMachine: _o, ...rest } = reg.sessions[0];
-          Object.assign(e, rest);
-        }
-        e.lastError = `refused ${a.slug}`;
-        e.noticeSeq = a.seq;
-        return true;
-      });
-      commit(this.state, a.child, a.seq);
-      this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: refused ${a.slug}`, "warning");
-      this.d.wake(w.label, "refused", a.slug);
     } else {
-      await this.notice(w, a);
+      await this.catchUp(w, a);
     }
+  }
+
+  /** The refused notice `seq`: recorded, committed, woken. */
+  private applyRefused(w: Watched, seq: number, slug: string): void {
+    this.update(w.child, (e) => {
+      const reg = { version: 1, sessions: [{ ...e, originMachine: w.machine }] };
+      const hit = applyRemoteNotice(reg, { machine: w.machine, sessionId: w.child }, { kind: "refused", reason: slug });
+      if (hit) {
+        const { originMachine: _o, ...rest } = reg.sessions[0];
+        Object.assign(e, rest);
+      }
+      e.lastError = `refused ${slug}`;
+      e.noticeSeq = seq;
+      return true;
+    });
+    commit(this.state, w.child, seq);
+    this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: refused ${slug}`, "warning");
+    this.d.wake(w.label, "refused", slug, w.machine);
+  }
+
+  /**
+   * A label named notice `a.seq`. The child's queue (`notices.jsonl`) holds every notice up to it: all above `lastSeq` are applied in order.
+   * No queue file (an older child): the label's own notice by the single-file path. Any other read error fails the run (probe retry).
+   */
+  private async catchUp(w: Watched, a: Extract<Action, { type: "notice" | "refused" }>): Promise<void> {
+    const label: ParsedLabel = a.type === "refused" ? { seq: a.seq, kind: "refused", slug: a.slug } : { seq: a.seq, kind: a.kind, sha256: a.sha256, bytes: a.bytes };
+    const r = await this.hc(["file", "read", "--on", w.machine, remotePath(w, QUEUE_FILE)], fetchTimeoutMs(this.d.fetchTimeoutSeconds?.()), this.abort.signal);
+    if (this.stopped) return;
+    let records: QueueRecord[] = [];
+    if (r.code === 3 && notFound(r.stderr)) {
+      // an older child: no queue
+    } else if (r.code !== 0 || r.timedOut || r.overflow) {
+      const why = r.timedOut ? "timed out" : r.overflow ? "too large" : r.error ? r.error.message : r.stderr || `exit ${String(r.code)}`;
+      this.setError(w.child, `fetch_failed: ${strip(why)}`);
+      this.failed(w, a.value);
+      return;
+    } else {
+      records = parseQueue(r.stdout.toString("utf8"), (line) => this.d.trace?.({ event: "remote_queue_line_ignored", child: w.child, line: strip(line).slice(0, 80) }));
+    }
+    let applied = 0;
+    let committed = 0; // the seq this run applied: a refresh may have replaced `w`, so the receipt never reads `w.lastSeq`
+    for (const step of queuePlan(w.lastSeq, records, label)) {
+      if (this.stopped || step.seq <= w.lastSeq) continue;
+      if (step.kind === "refused") {
+        this.applyRefused(w, step.seq, step.slug);
+        this.lastKinds.set(w.child, "refused");
+      } else {
+        const fetchFile = step.queued ? remotePath(w, ["notices", `${step.seq}-${step.kind}.md`].join(w.platform === "win32" ? "\\" : "/")) : remotePath(w, FILES[step.kind]);
+        if (!(await this.notice(w, { type: "notice", child: w.child, seq: step.seq, kind: step.kind, sha256: step.sha256, bytes: step.bytes, value: a.value }, fetchFile))) break; // order holds: the run stops at its failing seq
+        this.lastKinds.set(w.child, step.kind);
+      }
+      applied++;
+      committed = step.seq;
+    }
+    if (applied > 0) {
+      this.failCounts.delete(w.child);
+      const a0 = this.acks.get(w.child);
+      if (a0) a0.misses = 0;
+      this.d.flush?.(); // the parent has the message before the child is told it was delivered
+      if (!this.stopped && this.lastKinds.get(w.child) !== "closed") await this.writeAck(w, committed);
+    } else this.d.flush?.();
   }
 
   private setError(child: string, message: string): void {
@@ -790,20 +989,21 @@ export class RemoteWatcher {
     });
   }
 
-  private async notice(w: Watched, a: Extract<Action, { type: "notice" }>): Promise<void> {
-    const file = FILES[a.kind];
-    const remote = remotePath(w, file);
+  /** One notice, fetched from `fetchFile` (a per-seq queue copy or the kind's file). True when it was applied. */
+  private async notice(w: Watched, a: Extract<Action, { type: "notice" }>, fetchFile: string): Promise<boolean> {
+    const remote = remotePath(w, FILES[a.kind]); // the contract line names the handoff dir's own file
+    const value = a.value;
     const timeout = fetchTimeoutMs(this.d.fetchTimeoutSeconds?.());
     let buf: Buffer | null = null;
     if (!(a.kind === "closed" && a.sha256 === "-")) {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const r = await this.hc(["file", "read", "--on", w.machine, remote], timeout, this.abort.signal);
-        if (this.stopped) return;
+        const r = await this.hc(["file", "read", "--on", w.machine, fetchFile], timeout, this.abort.signal);
+        if (this.stopped) return false;
         if (r.code !== 0 || r.timedOut || r.overflow) {
           const why = r.timedOut ? "timed out" : r.overflow ? "too large" : r.error ? r.error.message : r.stderr || `exit ${String(r.code)}`;
           this.setError(w.child, `fetch_failed: ${strip(why)}`);
-          fail(this.state, w.child, a.value);
-          return;
+          this.failed(w, value);
+          return false;
         }
         if (r.stdout.length === a.bytes && crypto.createHash("sha256").update(r.stdout).digest("hex") === a.sha256) {
           buf = r.stdout;
@@ -813,8 +1013,8 @@ export class RemoteWatcher {
       if (!buf) {
         this.setError(w.child, "hash mismatch, not mirrored"); // the label stays pending: the same value triggers again
         this.d.notify?.(`remote notice from ${w.label}@${w.machine}: hash mismatch, not mirrored`, "warning");
-        fail(this.state, w.child, a.value);
-        return;
+        this.failed(w, value);
+        return false;
       }
     }
     let wake: { kind: string; path: string } | null = null;
@@ -857,8 +1057,8 @@ export class RemoteWatcher {
     });
     if (!wake) {
       this.setError(w.child, problem);
-      fail(this.state, w.child, a.value);
-      return;
+      this.failed(w, value);
+      return false;
     }
     commit(this.state, w.child, a.seq);
     // the local `hc attach` terminal of the session ends with it (best effort; `--rm` removes it once it exits)
@@ -875,8 +1075,9 @@ export class RemoteWatcher {
     // a result names the close command (the address form); the path part is cut first so the line survives the 300-character cut of `foreman_wait`
     const text = done.kind === "result" ? `${done.path.slice(0, Math.max(0, 300 - CLOSE_LINE(w).length)).trimEnd()}${CLOSE_LINE(w)}` : done.kind === "plan" || done.kind === "ask" ? `${done.path.slice(0, Math.max(0, 300 - ATTACH_LINE(w).length)).trimEnd()}${ATTACH_LINE(w)}` : done.path;
     this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${text ? ` ${text}` : ""}`, "info");
-    this.d.wake(w.label, done.kind, text);
+    this.d.wake(w.label, done.kind, text, w.machine);
     if (a.kind === "result" || a.kind === "update" || a.kind === "closed") await this.fetchReports(w);
+    return true;
   }
 
   /** The remote session's report copy (`reports.jsonl` in the remote handoff dir, the same dir as the notice files) is written to the session's mirror dir, then goes to `importReports`. Best effort: absent, unreadable or failing changes nothing. */

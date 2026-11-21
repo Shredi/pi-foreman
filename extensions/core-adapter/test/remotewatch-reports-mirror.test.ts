@@ -32,6 +32,7 @@ function rig(importReports: (data: Buffer) => void | Promise<void>, mirrorOf?: (
     const res = (over: Partial<HcResult>): HcResult => ({ code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, ...over });
     if (args[0] === "get") return res({ stdout: Buffer.from(JSON.stringify({ address: "alpha/t7", labels: {}, state: "live", status: { app: "pi", state: "working" } })) });
     const f = files.get(args[4]);
+    if (!f && args[4].endsWith("/notices.jsonl")) return res({ code: 3, stderr: JSON.stringify({ error: { hint: "check the path", kind: "not_found", message: "no file" } }) }); // an older child: no queue file
     return f ? res({ stdout: f }) : res({ code: 4, stderr: "no such file" });
   };
   let onLine: (l: string) => void = () => undefined;
