@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
-import { checkTrivial, cleanTreeStatus, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
+import { checkTrivial, checkoutBaseline, cleanTreeStatus, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -489,6 +489,8 @@ interface Session {
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
+  /** The checkout fingerprint at the session's first start (trivial.ts checkoutBaseline; persisted; a fork keeps its parent's; only a brand-new startup or new session takes one, a resume without a stored one has none); null: none, the no-change rule needs a clean status. */
+  baseline: string | null;
   /** The findings of the last normal-review FAIL, for the next re-review task (persisted; cleared by a PASS, replaced by the next FAIL). */
   lastFailFindings: string | null;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
@@ -1186,6 +1188,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewFailOpen: false,
       hs: new HighStakes(),
       hsReminded: null,
+      baseline: null,
       lastFailFindings: null,
       ledgerRev: 0,
       hsSkipped: new Set(),
@@ -1420,6 +1423,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pause: s.pauseSaved,
       ...(s.hold ? { hold: s.hold } : {}),
       hsReminded: s.hsReminded,
+      baseline: s.baseline,
       lastFailFindings: s.lastFailFindings,
       ledgerRev: s.ledgerRev,
     });
@@ -1607,7 +1611,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const dir = hsDirOf(ctx, input, marked[0]);
     const top = await rootOf(dir);
     const root = top ?? realDir(dir);
-    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top) }); // an unresolved checkout reads every entry
+    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top), root });
     if (r) return refused(r);
     // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
     const key = await repoKeyOf(root);
@@ -1876,6 +1880,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
+    s.baseline = e.baseline ?? null; // a fork keeps its parent's fingerprint too: the parent's unreviewed work is still in the checkout
     if (reason !== "fork" && e.hold) (s.hold = e.hold), s.live?.setHold(true, e.hold.note); // a hold survives the reload; the entry is written below
     if (reason !== "fork") s.lastFailFindings = e.lastFailFindings ?? null;
     if (reason !== "fork") s.ledgerRev = e.ledgerRev ?? 0;
@@ -2224,6 +2229,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (hidesDeclaredTools(s.isChild) && get(s.config.config, "retro.report") === false && pi.getActiveTools().includes(REPORT_TOOL)) pi.setActiveTools(pi.getActiveTools().filter((n) => n !== REPORT_TOOL)); // retro.report: false = the tool is not offered (a child keeps a declared tool; execute refuses there)
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
+    if (!s.isChild && (event.reason === "startup" || event.reason === "new") && (!latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]))) s.baseline = await checkoutBaseline(ctx.cwd, editModeOfSession(s).scratchDir, platform); // a brand-new session only; a reload or resume keeps the stored one, a fork its parent's (without one: none)
     restoreCeremonyState(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
     if (!s.isChild) {
@@ -4785,7 +4791,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const { given, r } = launchItemsFor(e);
           if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
           if (given && "items" in given) givenItems.set(e, given.items);
-          if (!r) continue;
+          if (!r || occasions.get(e) === "high-stakes") continue; // a high-stakes review marks no items: the items it names are never used
           if ("unknown" in r) {
             s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
@@ -6184,8 +6190,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
     if (!rejected && s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0) { // a launched builder (failed or not) is work even when the tree stays clean
-      const porcelain = await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform);
-      if (noChange(s.steps, s.tally.files.length, porcelain)) {
+      if (await noChangeNow(s, ctx)) {
         s.trace?.emit({ event: "ceremony_gate", reason: "no_change", tier: s.ceremony.tier });
         ctx.ui.notify("pi-foreman: finished without a change: no builder or reviewer required", "info");
         return undefined;
@@ -6223,12 +6228,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   }
 
+  /** The no-change rule's tree check: a clean status, or the checkout equal to its fingerprint at session start. */
+  async function noChangeNow(s: Session, ctx: ExtensionContext): Promise<boolean> {
+    const scratch = editModeOfSession(s).scratchDir;
+    const porcelain = await cleanTreeStatus(ctx.cwd, scratch, platform);
+    const same = porcelain !== "" && s.baseline !== null && (await checkoutBaseline(ctx.cwd, scratch, platform)) === s.baseline;
+    return noChange(s.steps, s.tally.files.length, porcelain, same);
+  }
+
   /**
    * The finish with every other step done and a high-stakes review still due: held once per reason set with the reminder (not a refusal: it is not counted),
    * then let go with an owner notice. A session that changed nothing is never held.
    */
   async function hsReminderHold<E>(s: Session, ctx: ExtensionContext, entries: E[], remind: string, reasons: string[]) {
-    if (s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await cleanTreeStatus(ctx.cwd, editModeOfSession(s).scratchDir, platform))) return undefined;
+    if (s.steps.builder === 0 && s.work.builders === 0 && s.tally.files.length === 0 && await noChangeNow(s, ctx)) return undefined;
     const key = reasons.join(",");
     if (s.hsReminded?.join(",") !== key) {
       s.hsReminded = reasons;

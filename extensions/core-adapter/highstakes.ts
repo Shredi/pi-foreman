@@ -450,6 +450,8 @@ export interface HsLaunchInput {
   running: boolean;
   /** The session's review gate. */
   gate: { last: Verdict | "none" | null; revised: boolean };
+  /** The launch's checkout (a non-git directory keys as itself): only a FAIL that ran there holds the launch; absent: any uncleared FAIL does. */
+  root?: string;
 }
 
 /** The refusal of a `resume` of a `[high-stakes]` run. */
@@ -465,7 +467,7 @@ export function launchRefusal(i: HsLaunchInput): { reason: HsLaunchReason; text:
   if (i.resume) return resumeRefusal();
   if (i.running || used(i.state)) return refuse("high_stakes_done", "the high-stakes passes of this session are used up (one ran and passed, two ran, or one is still running).");
   if (!(i.gate.last === "pass" && !i.gate.revised)) return refuse("high_stakes_early", "no normal reviewer PASS stands (none yet, or work was revised after it); pass the normal reviewer first, then launch it.");
-  if (uncleared(i.state)) return refuse("high_stakes_early", "the last high-stakes review of this session FAILED and no normal reviewer PASS that got its findings cleared it; revise or answer the findings, pass the normal reviewer, then launch it.");
+  if (uncleared(i.state) && (i.root === undefined || lastRun(i.state)?.cwd === i.root)) return refuse("high_stakes_early", "the last high-stakes review of this session FAILED and no normal reviewer PASS that got its findings cleared it; revise or answer the findings, pass the normal reviewer, then launch it.");
   return null;
 }
 
