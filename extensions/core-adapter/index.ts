@@ -3264,7 +3264,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     void compareRunEnd(entry, os.homedir(), readonlyGit, deps.readonlyDeadlineMs)
       .then((r) => {
         const lines = traceLines(r);
-        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
+        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ...(r.cause ? { cause: r.cause } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
         if (r.outcome === "unchanged") return;
         let idle = true;
         try {
@@ -5016,6 +5016,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // R30 item 8: traced only once the guards let the child's bash call through
     if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
+    // D155: a capped timeout is told to the child at this call's result (structured result of bashtimeout.ts, no command text read)
+    if (!res && bashTimeout?.action === "capped" && bashTimeout.requested !== null) {
+      if (cappedCalls.size >= 200) cappedCalls.delete(cappedCalls.keys().next().value as string);
+      cappedCalls.set(event.toolCallId, `pi-foreman: timeout ${bashTimeout.requested} s was capped to ${bashTimeout.timeout} s (child bash cap, docs/safety.md)`);
+    }
     // The launching session reads the open command to tell a test run from an unknown command (opencommand.ts).
     if (!res && ms?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) {
       const command = (event.input as { command?: unknown }).command;
@@ -5561,6 +5566,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const bashRulingSnaps = new Map<string, Map<string, number>>();
   /** ask_user_question calls whose text read like jargon: the hint is appended to the result (ownertext.ts). */
   const questionHints = new Map<string, string>();
+  /** Child bash calls whose `timeout` was capped (bounded): the line appended to that call's result. */
+  const cappedCalls = new Map<string, string>();
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
@@ -5908,10 +5915,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.readNotices.delete(event.toolCallId);
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
+    const capNote = cappedCalls.get(event.toolCallId);
+    cappedCalls.delete(event.toolCallId);
     // D27: a project-file edit through the foreman's own tools is work, at every tier.
     const projectChanged = !!owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform });
     if (owner && projectChanged) (owner.work.edits++), clearHold(owner, "edit");
-    const withNote = () => (readNote || qHint || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
+    const withNote = () => (readNote || qHint || capNote || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(capNote ? [{ type: "text" as const, text: capNote }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
     if (owner && projectChanged && owner.hs.hasRuns()) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
