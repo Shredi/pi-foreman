@@ -1420,7 +1420,7 @@ export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platfor
       const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
-        inner[0] = { ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs };
+        inner[0] = { ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) };
       }
       out.push(...inner);
     }
@@ -1484,7 +1484,10 @@ const tooDeepHit = (text: string): FloorHit => judgeHit("delete-unknown-target",
 /** Hangs the stdin texts of `outer` on the segments parsed from what it unwrapped (the parser leaves the property off a clone). */
 function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
   if (!outer.heredocs?.length) return;
-  for (const x of inner) if (!x.heredocs?.length) Object.defineProperty(x, "heredocs", { value: outer.heredocs, enumerable: false, configurable: true });
+  for (const x of inner) {
+    if (!x.heredocs?.length) Object.defineProperty(x, "heredocs", { value: outer.heredocs, enumerable: false, configurable: true });
+    if (outer.dynamicCode) Object.defineProperty(x, "dynamicCode", { value: true, enumerable: false, configurable: true });
+  }
 }
 
 /** How many unwrappings (privilege program, multiplexer, string, body, remote) the check follows before it refuses the line unread. */

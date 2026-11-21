@@ -888,17 +888,22 @@ const CODE_FLAG: Record<string, RegExp> = { python: /^-[A-Za-z]*c(?:.+)?$/, node
 
 /** An interpreter run with code on its command line (`python3 -c`, `node -e`, `perl -e` ...): the code is not read by the gate. */
 export function inlineCode(s: ShellSegment): boolean {
+  return inlineCodeAt(s) >= 0;
+}
+
+/** The index into `argv` of the word that carries the code flag of an interpreter one-liner (`deno eval`: 0), or -1. */
+function inlineCodeAt(s: ShellSegment): number {
   const p = progOf(s);
-  if (p === "deno") return s.argv[0] === "eval";
+  if (p === "deno") return s.argv[0] === "eval" ? 0 : -1;
   const key = /^python/.test(p) ? "python" : p.replace(/[0-9.]+$/, "");
   const re = CODE_FLAG[key];
-  if (!re) return false;
-  for (const w of s.argv) {
-    if (key === "python" && (w === "-m" || !w.startsWith("-"))) return false;
-    if (/\.(?:[cm]?js|ts|mts|cts|pl|rb|php|lua)$/.test(w)) return false;
-    if (re.test(w)) return true;
+  if (!re) return -1;
+  for (const [i, w] of s.argv.entries()) {
+    if (key === "python" && (w === "-m" || !w.startsWith("-"))) return -1;
+    if (/\.(?:[cm]?js|ts|mts|cts|pl|rb|php|lua)$/.test(w)) return -1;
+    if (re.test(w)) return i;
   }
-  return false;
+  return -1;
 }
 
 /** The path words one segment writes (resolved against its cwd by the caller); `.` stands for the cwd itself. In-place and output-flag forms included. */
@@ -1269,7 +1274,12 @@ const inlineCodeHits = (c: DangerCall, e: DangerEnv): ShellSegment[] =>
   nestedSegments(c.segments ?? [], e).filter((s) => s.program !== "" && (inlineCode(s) || s.opaque === "nonliteral_script" || s.opaque === "stdin_fed" || (s.opaque === "writing_wrapper" && progOf(s) === "script") || (s.opaque === "foreign_shell" && c.tool !== "powershell")));
 
 /** A hit whose code text is in the command itself: `-c`/`-e` text, or a heredoc or here-string body fed to the interpreter. */
-const codeInCommand = (s: ShellSegment): boolean => inlineCode(s) || (s.opaque === "stdin_fed" && (s.heredocs?.length ?? 0) > 0 && ownStdinText(s));
+const codeInCommand = (s: ShellSegment): boolean => {
+  const at = inlineCodeAt(s);
+  // the flag word and the one after it hold the code (`-c CODE`, `-cCODE`, `--eval=CODE`); an expansion in either means the text is built at run time
+  if (at >= 0) return !s.dynamicArgs?.some((i) => i === at || i === at + 1);
+  return s.opaque === "stdin_fed" && (s.heredocs?.length ?? 0) > 0 && ownStdinText(s) && !s.dynamicCode;
+};
 
 export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },
