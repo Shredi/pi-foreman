@@ -31,6 +31,8 @@ export interface SetupOpts {
   noOwner?: boolean;
   /** More options of the world (e.g. a handoff dir and a parent: a session opened by another session). */
   world?: Record<string, unknown>;
+  /** Runs on the seeded checkout before the session starts (a checkout that is already dirty). */
+  before?: (project: string) => void;
 }
 
 export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
@@ -56,6 +58,7 @@ export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
   Object.assign(cfg, o.cfg);
   fs.writeFileSync(cfgFile, JSON.stringify(cfg));
   if (!o.onMain) git(w.project, "checkout", "-q", "-b", "feature");
+  o.before?.(w.project);
   const a = await w.adapter("startup");
   if (!o.noOwner) {
     await a.command("ceremony", tier);

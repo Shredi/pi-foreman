@@ -13,10 +13,12 @@
 // `builder` (the default); `required.trivial: []` restores the earlier trivial (no builder, any
 // non-explorer launch escalates). In `bounded` mode the foreman may make the change itself,
 // measured by trivialBound as before (bound.ts), so the builder step is not required there.
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Step, TrivialBound } from "./bound.ts";
 import { diffWithFacts, git, isTestPath, type DiffFact } from "./diffscan.ts";
+import { worktreeTree } from "./commentonly.ts";
 import { scratchParts } from "./editmode.ts";
 import { workflowDirs } from "./triage.ts";
 
@@ -205,6 +207,23 @@ export async function cleanTreeStatus(cwd: string, scratchDir: string, platform:
   const parts = scratchParts(scratchDir);
   if (parts && parts[0] !== ".workflow") excludes.push(parts.join("/"));
   return git(cwd, ["status", "--porcelain", "--", ":/", ...excludes.map((e) => `:(top,exclude,literal)${e}`)]);
+}
+
+/**
+ * A fingerprint of the checkout of `cwd` for the no-change rule: the work-tree content without `.workflow/` (a submodule by its recorded commit), the status text
+ * (shows a dirty submodule and the staged/unstaged split) and, for each submodule the status names, the content of its own work tree. Equal fingerprints at session
+ * start and now mean nothing changed in between, however dirty the checkout was. Null when git fails or `cwd` is no work tree.
+ */
+export async function checkoutBaseline(cwd: string, scratchDir: string, platform: string = process.platform): Promise<string | null> {
+  const status = await cleanTreeStatus(cwd, scratchDir, platform);
+  const tree = status === null ? null : await worktreeTree(cwd, true);
+  const top = tree === null ? null : (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
+  const staged = top ? await git(top, ["ls-files", "--stage", "-z"]) : null;
+  if (!top || staged === null) return null;
+  const subs = staged.split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1)).filter((p) => p !== "" && status!.includes(p));
+  const inner: string[] = [];
+  for (const p of subs) inner.push(`${p}=${(await worktreeTree(path.join(top, p))) ?? "?"}`);
+  return createHash("sha1").update([tree, status, ...inner].join("\n")).digest("hex");
 }
 
 /** The text added to the finish refusal after an escalation. */

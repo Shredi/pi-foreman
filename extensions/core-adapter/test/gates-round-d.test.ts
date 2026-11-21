@@ -8,8 +8,8 @@ import { launchRefusal } from "../highstakes.ts";
 import { takeLaunchFlags, takeSizing } from "../sizing.ts";
 import { planMcpLaunch } from "../mcplaunch.ts";
 import { filler } from "../jsontext.ts";
-import { end, hsRun, launch, settle, setup, tick, worktree } from "./_hsrig.ts";
-import type { Rig } from "./_hsrig.ts";
+import { end, git, hsRun, launch, settle, setup, tick, worktree } from "./_hsrig.ts";
+import type { Rig, World } from "./_hsrig.ts";
 
 const PASS = "Overall verdict: PASS";
 const review = async (a: Rig, cwd?: string, extra: Record<string, unknown> = {}) => {
@@ -100,9 +100,75 @@ test("13: a plan-only heavy session (plan-review PASS, approved checkpoint, plan
   const { a, w } = await setup(t, { tier: "heavy" });
   const plan = path.join(w.project, ".workflow", "plan-extra.md");
   fs.writeFileSync(plan, "# Extra plan\n");
-  await a.fire("tool_result", { toolName: "write", toolCallId: "pw1", input: { path: plan, content: "# Extra plan\n" }, details: {}, content: [{ type: "text", text: "ok" }], isError: false });
+  assert.equal((await a.call("write", { path: plan, content: "# Extra plan\n" })).block, undefined);
   await tick(100);
   assert.equal(await settle(a), "");
+  assert.ok((await w.traceEvents()).some((e) => e.event === "ceremony_gate" && e.reason === "no_change"), "the no-change rule let it finish");
+});
+
+/** A checkout that is already dirty when the session starts: a submodule with an edited file, an edited tracked file, an untracked file. */
+const dirty = (project: string) => {
+  const sub = path.join(path.dirname(project), "sub-src");
+  fs.mkdirSync(sub);
+  git(sub, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(sub, "s.txt"), "s\n");
+  git(sub, "add", "-A");
+  git(sub, "commit", "-q", "-m", "sub");
+  git(project, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "vendor/sub");
+  fs.writeFileSync(path.join(project, "t.txt"), "t\n");
+  git(project, "add", "-A");
+  git(project, "commit", "-q", "-m", "with submodule");
+  fs.writeFileSync(path.join(project, "vendor", "sub", "s.txt"), "dirty\n");
+  fs.writeFileSync(path.join(project, "t.txt"), "dirty\n");
+  fs.writeFileSync(path.join(project, "untracked.txt"), "u\n");
+};
+const planOnly = async (a: Rig, w: World) => {
+  const plan = path.join(w.project, ".workflow", "plan-extra.md");
+  fs.writeFileSync(plan, "# Extra plan\n");
+  assert.equal((await a.call("write", { path: plan, content: "# Extra plan\n" })).block, undefined);
+  await tick(100);
+};
+const noChangeTrace = async (w: World) => (await w.traceEvents()).some((e) => e.event === "ceremony_gate" && e.reason === "no_change");
+
+test("13: a checkout already dirty before the session (submodule, tracked file, untracked file) still finishes plan-only", async (t) => {
+  const { a, w } = await setup(t, { tier: "heavy", before: dirty });
+  assert.match(git(w.project, "status", "--porcelain"), /vendor\/sub/);
+  await planOnly(a, w);
+  assert.equal(await settle(a), "");
+  assert.ok(await noChangeTrace(w), "no_change trace");
+});
+
+for (const [name, change] of [
+  ["a file edited outside .workflow/", (p: string) => fs.writeFileSync(path.join(p, "t.txt"), "changed again\n")],
+  ["a new untracked file", (p: string) => fs.writeFileSync(path.join(p, "new.txt"), "n\n")],
+  ["a further edit inside the dirty submodule", (p: string) => fs.writeFileSync(path.join(p, "vendor", "sub", "s.txt"), "dirty twice\n")],
+  ["a new commit in the submodule", (p: string) => (fs.writeFileSync(path.join(p, "vendor", "sub", "s.txt"), "c\n"), git(path.join(p, "vendor", "sub"), "commit", "-q", "-a", "-m", "c"))],
+] as const) {
+  test(`13: dirty checkout and ${name} during the session: still refused`, async (t) => {
+    const { a, w } = await setup(t, { tier: "heavy", before: dirty });
+    await planOnly(a, w);
+    change(w.project);
+    assert.match(await settle(a), /requires builder, reviewer/);
+    assert.ok(!(await noChangeTrace(w)));
+  });
+}
+
+test("13: a reload keeps the first baseline (a change made before the reload still counts)", async (t) => {
+  const { a, w } = await setup(t, { tier: "heavy", before: dirty });
+  await planOnly(a, w);
+  fs.writeFileSync(path.join(w.project, "t.txt"), "changed during the session\n");
+  const b = await w.adapter("reload");
+  assert.match(await settle(b), /requires builder, reviewer/);
+  assert.ok(!(await noChangeTrace(w)));
+  void a;
+});
+
+test("13: a reload of an untouched dirty checkout still finishes", async (t) => {
+  const { a, w } = await setup(t, { tier: "heavy", before: dirty });
+  await planOnly(a, w);
+  const b = await w.adapter("reload");
+  assert.equal(await settle(b), "");
+  assert.ok(await noChangeTrace(w));
 });
 
 // ---------------------------------------------------------------- item 14
