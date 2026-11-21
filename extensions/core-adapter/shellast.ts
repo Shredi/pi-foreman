@@ -844,6 +844,34 @@ function childAssigns(script: Script, src: string, rn: Run): Map<string, [string
 }
 
 /** The variable pre-pass for a flat script: `resolveVars` values per command, and the assignments the closed grammar accepts. */
+const onlyExpanded = (text: string, name: string): boolean => [...text.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g"))].every((m) => (text[m.index! - 1] === "$" || (text.slice(m.index! - 2, m.index!) === "${" && text[m.index! + name.length] === "}")));
+
+/**
+ * True when a word of `line` names the variable `name` other than as a `$NAME` / `${NAME}` expansion, read from the parser's decoded word values (quotes and escapes removed, an
+ * expansion left as a NUL): `printf -v FOREMAN_OU'T'`, `FOREMAN_OU\T=x`, `read FOREMAN_"OUT"`, also inside a nested `sh -c '...'` string. True too when the line does not parse.
+ */
+export function namedOutsideExpansion(line: string, name: string): boolean {
+  const words: string[] = [];
+  const walk = (n: any, depth: number): void => {
+    if (!n || typeof n !== "object" || depth > 200) return;
+    if (Array.isArray(n)) return n.forEach((c) => walk(c, depth + 1));
+    if (n.type === "Assignment") words.push(String(n.name));
+    if (n.type === "Word") {
+      const lit = (p: any): string => (p.type === "Literal" || p.type === "SingleQuoted" || p.type === "AnsiCQuoted" ? String(p.value) : p.type === "DoubleQuoted" ? p.parts.map(lit).join("") : "\0");
+      words.push(n.parts ? n.parts.map(lit).join("") : String(n.value));
+    }
+    for (const v of Object.values(n)) if (v && typeof v === "object") walk(v, depth + 1);
+  };
+  try {
+    const s = parse(line) as any;
+    if (!s || s.errors?.length) return true;
+    walk(s, 0);
+  } catch {
+    return true;
+  }
+  return !words.every((t) => onlyExpanded(t.replace(/['"\\]/g, ""), name));
+}
+
 function prepare(script: Script, src: string, sc: Scope): void {
   const rn = sc.run;
   const pipes: string[][][] = [];
@@ -904,7 +932,7 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const runs = rn.trial || !(rn.env.FOREMAN_SCRATCH || rn.env.FOREMAN_OUT) ? true : runsCode(script, passNames(script, src, sc));
   // the mention rule reads the whole line, not the nested string being walked: `env FOREMAN_OUT=/x sh -c 'echo > $FOREMAN_OUT/f'` rebinds it
   const whole = rn.root ?? src;
-  const harnessConst = (name: string): boolean => !!rn.env[name] && !runs && [...whole.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g"))].every((m) => (whole[m.index! - 1] === "$" || (whole.slice(m.index! - 2, m.index!) === "${" && whole[m.index! + name.length] === "}")));
+  const harnessConst = (name: string): boolean => !!rn.env[name] && !runs && onlyExpanded(whole, name) && !namedOutsideExpansion(whole, name);
   const scratchConst = harnessConst("FOREMAN_SCRATCH");
   const outConst = harnessConst("FOREMAN_OUT");
   for (const pr of probes) {
