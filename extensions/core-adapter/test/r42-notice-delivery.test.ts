@@ -73,7 +73,7 @@ test("delivery: one custom message of its own type with no turn for the notice o
   assert.match(x.sent[0].m.content, /^Child session job has waited on its owner since .* \(approval\)\. Information only/);
   const turn = (await x.deliver(CHILD_BLOCKED_TYPE, x.sent[0].m.content)) as { systemPrompt?: string; message?: unknown } | undefined;
   assert.equal(JSON.stringify(turn ?? {}).includes("Child session job"), false, "nothing of it reaches the system prompt or a hook message");
-  x.live({});
+  x.live({ lastAnswer: { kind: "approval", at: new Date().toISOString(), outcome: "answered" } }); // D130: "answered" needs a stored answer
   x.tick();
   assert.equal(x.sent.length, 2);
   assert.equal(x.sent[1].m.customType, CHILD_BLOCKED_TYPE);

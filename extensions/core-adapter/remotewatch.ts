@@ -179,6 +179,8 @@ export interface ParsedEvent {
 }
 
 const CLOSE_LINE = (w: Watched): string => `; close with: foreman session close-remote ${w.label}@${w.machine}`;
+/** A remote child's owner dialog (a checkpoint or a question to the owner) is answered in its pane only: the file does not answer it (item 128). */
+const ATTACH_LINE = (w: Watched): string => `; an owner dialog of that session is answered in its pane only: hc attach ${w.address}`;
 const strOf = (v: unknown): v is string => typeof v === "string" && v !== "";
 const objOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 
@@ -871,7 +873,7 @@ export class RemoteWatcher {
     }
     const done = wake as { kind: string; path: string };
     // a result names the close command (the address form); the path part is cut first so the line survives the 300-character cut of `foreman_wait`
-    const text = done.kind === "result" ? `${done.path.slice(0, Math.max(0, 300 - CLOSE_LINE(w).length)).trimEnd()}${CLOSE_LINE(w)}` : done.path;
+    const text = done.kind === "result" ? `${done.path.slice(0, Math.max(0, 300 - CLOSE_LINE(w).length)).trimEnd()}${CLOSE_LINE(w)}` : done.kind === "plan" || done.kind === "ask" ? `${done.path.slice(0, Math.max(0, 300 - ATTACH_LINE(w).length)).trimEnd()}${ATTACH_LINE(w)}` : done.path;
     this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${text ? ` ${text}` : ""}`, "info");
     this.d.wake(w.label, done.kind, text);
     if (a.kind === "result" || a.kind === "update" || a.kind === "closed") await this.fetchReports(w);
