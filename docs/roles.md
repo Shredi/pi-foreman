@@ -11,7 +11,7 @@ Role ids are neutral: `foreman` (the main session: triage, plan, ledger, delegat
 change) and `reviewer` (diff review against ledger items, plan review; it loads the shipped `security-review` skill
 when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input). The foreman
 writes the heavy plan itself. `session-foreman` is not a launchable role: its mapped model is the model of sessions opened by `/foreman session open` (default: the opening session's own model; only the `model` of the mapping is used, the opened session keeps Pi's default thinking; `--model` overrides; `subagent({agent: "session-foreman"})` is refused). Role files are in `agents/`. Display names come only from config: the preset
-`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
+`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock; it starts them detached as its first step and collects them with `--wait <id>`, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
 provider in `foreman.json` (see [install](install.md)). Design record: `design/architecture.md`
 [section 4](../design/architecture.md#4-role-model).
 
