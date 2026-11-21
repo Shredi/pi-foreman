@@ -5,10 +5,9 @@ import * as fs from "node:fs";
 import * as http from "node:http";
 import * as net from "node:net";
 import * as path from "node:path";
-import { createHmac } from "node:crypto";
 import { main } from "../pages-cli.ts";
 import type { CliDeps } from "../pages-cli.ts";
-import { ensureServer, httpHealth, pageUrlFor, pagesStateDir, readServer, serverFile, startPageServer } from "../pageserver.ts";
+import { ensureServer, healthProof, httpHealth, pageUrlFor, pagesStateDir, readServer, serverFile, startPageServer } from "../pageserver.ts";
 import type { EnsureDeps, PageServer, ServerRecord } from "../pageserver.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
@@ -114,7 +113,7 @@ test("the real server's answer verifies, a replayed proof for another nonce does
   const n1 = "a".repeat(32);
   const n2 = "b".repeat(32);
   const a1 = await ask(n1);
-  assert.equal(a1.proof, createHmac("sha256", rec.healthKey).update(n1).digest("hex"));
+  assert.equal(a1.proof, healthProof(rec.healthKey, n1, { pid: a1.pid as number, port: a1.port as number, bind: a1.bind as string, version: a1.version as string, ...(typeof a1.build === "string" ? { build: a1.build } : {}) }, { address: a1.localAddress as string, port: a1.localPort as number }));
   assert.notEqual((await ask(n2)).proof, a1.proof);
   assert.ok(!JSON.stringify(a1).includes(rec.healthKey));
   // an impostor replaying the proof recorded for n1 fails against a fresh nonce

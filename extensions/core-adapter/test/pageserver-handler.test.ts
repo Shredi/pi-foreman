@@ -191,7 +191,7 @@ test("health answers a nonce with a proof of the key, never the key", () => {
   const nonce = "n".repeat(32);
   const body = JSON.parse(text(get(`/_health/${nonce}`)));
   assert.equal(get(`/_health/${nonce}`).status, 200);
-  assert.deepEqual({ ...body, proof: undefined }, { pid: 1, version: "1.0.0", port: 1, bind: "127.0.0.1", proof: undefined });
+  assert.deepEqual({ ...body, proof: undefined }, { pid: 1, version: "1.0.0", port: 1, bind: "127.0.0.1", localAddress: "", localPort: 0, proof: undefined });
   assert.ok(!JSON.stringify(body).includes("k".repeat(32)));
   assert.equal(get("/_health/short").status, 404);
   assert.equal(get("/_health/").status, 404);

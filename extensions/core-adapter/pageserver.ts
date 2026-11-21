@@ -3,7 +3,9 @@
 // lifecycle (`startPageServer`, run by `foreman pages serve`) and the client side a session uses (`ensureServer`, `registerRoot`, `pageUrlFor`).
 // The server never writes a request path or a root id anywhere (the secret is in the path); its log file holds start, bind and exit lines only.
 import * as fs from "node:fs";
+import * as dns from "node:dns/promises";
 import * as http from "node:http";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
@@ -284,7 +286,18 @@ export async function loadPagesConfig(input: { agentDir: string; pkgRoot: string
 
 /** Nonce of a health probe: 16+ random bytes as base64url (22+ chars). */
 const NONCE_RE = /^[A-Za-z0-9_-]{22,128}$/;
-const healthProof = (key: string, nonce: string): string => createHmac("sha256", key).update(nonce).digest("hex");
+/** Socket address as compared for the health proof: lower case, IPv4-mapped IPv6 as plain IPv4. */
+export const normalizeAddr = (a: string): string => {
+  const l = a.toLowerCase();
+  return l.startsWith("::ffff:") && net.isIPv4(l.slice(7)) ? l.slice(7) : l;
+};
+export interface LocalEnd {
+  address: string;
+  port: number;
+}
+/** HMAC-SHA256 over every field a decision uses, including the local socket end the server saw for the request. */
+export const healthProof = (key: string, nonce: string, h: Health, local: LocalEnd): string =>
+  createHmac("sha256", key).update(JSON.stringify([nonce, h.pid, h.port, h.bind, h.version, h.build ?? "", normalizeAddr(local.address), local.port])).digest("hex");
 
 // ---------------------------------------------------------------- request handler
 
@@ -416,7 +429,7 @@ function markdownPage(buf: Buffer, name: string): Buffer {
 }
 
 /** One request. `rawUrl` is the request target; nothing of it is logged. */
-export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHeader: string | undefined): Reply {
+export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHeader: string | undefined, local: LocalEnd = { address: "", port: 0 }): Reply {
   ctx.touch();
   if (!hostAllowed(hostHeader, ctx.hosts())) return notFound();
   if (method !== "GET" && method !== "HEAD") return reply(405, "text/plain; charset=utf-8", "method not allowed\n", { Allow: "GET, HEAD" });
@@ -426,7 +439,8 @@ export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHead
   if (raw[0] === "_health") {
     const { key, info } = ctx.health();
     if (raw.length !== 2 || !NONCE_RE.test(raw[1])) return notFound();
-    return reply(200, "application/json", JSON.stringify({ ...info, proof: healthProof(key, raw[1]) }));
+    const localAddress = normalizeAddr(local.address);
+    return reply(200, "application/json", JSON.stringify({ ...info, localAddress, localPort: local.port, proof: healthProof(key, raw[1], info, local) }));
   }
   const id = raw[0];
   if (!ROOT_ID_RE.test(id) || raw.length < 2) return notFound();
@@ -470,10 +484,18 @@ export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHead
 /** Connect address of a bind address (a wildcard bind is reached on loopback). */
 export const connectHost = (bind: string): string => (bind === "0.0.0.0" ? "127.0.0.1" : bind === "::" ? "::1" : bind);
 
-/** GET /_health/<nonce> within 1 s; the answer counts only with HMAC-SHA256(healthKey, nonce) as proof, the key itself is never sent. Null when nothing answers like the recorded pi-foreman page server. */
-export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Promise<Health | null> {
+/** GET /_health/<nonce> within 1 s; the answer counts only with a proof (HMAC-SHA256 under the healthKey over nonce, pid, port, bind, version, build and the server's local socket end) that verifies, a local end equal to the address and port connected to, and the pid recorded in server.json; the key itself is never sent. Null when nothing answers like the recorded pi-foreman page server. */
+export async function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Promise<Health | null> {
+  const name = connectHost(rec.bind);
+  let host = name;
+  if (!net.isIP(name)) {
+    try {
+      host = (await dns.lookup(name)).address;
+    } catch {
+      return null;
+    }
+  }
   return new Promise((resolve) => {
-    const host = connectHost(rec.bind);
     const nonce = randomBytes(24).toString("base64url");
     let done = false;
     const finish = (h: Health | null): void => {
@@ -482,7 +504,7 @@ export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Pr
       resolve(h);
     };
     try {
-      const req = http.get({ host, port: rec.port, path: `/_health/${nonce}`, timeout: timeoutMs, headers: { Host: `${bracket(host)}:${rec.port}` } }, (res) => {
+      const req = http.get({ host, port: rec.port, path: `/_health/${nonce}`, timeout: timeoutMs, headers: { Host: `127.0.0.1:${rec.port}` } }, (res) => {
         if (res.statusCode !== 200) {
           res.resume();
           finish(null);
@@ -497,10 +519,14 @@ export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Pr
         res.on("end", () => {
           try {
             const j = JSON.parse(text) as Record<string, unknown>;
-            const want = Buffer.from(healthProof(rec.healthKey, nonce));
+            if (!(Number.isInteger(j.pid) && (j.pid as number) > 0 && typeof j.version === "string" && j.port === rec.port && typeof j.bind === "string" && typeof j.localAddress === "string" && Number.isInteger(j.localPort) && (j.build === undefined || typeof j.build === "string"))) return finish(null);
+            const h: Health = { pid: j.pid as number, version: j.version, ...(typeof j.build === "string" ? { build: j.build } : {}), port: rec.port, bind: j.bind };
+            const local: LocalEnd = { address: j.localAddress, port: j.localPort as number };
+            const want = Buffer.from(healthProof(rec.healthKey, nonce, h, local));
             const got = Buffer.from(typeof j.proof === "string" ? j.proof : "");
             const proven = got.length === want.length && timingSafeEqual(got, want);
-            finish(proven && Number.isInteger(j.pid) && (j.pid as number) > 0 && typeof j.version === "string" && j.port === rec.port && typeof j.bind === "string" ? { pid: j.pid as number, version: j.version, ...(typeof j.build === "string" ? { build: j.build } : {}), port: rec.port, bind: j.bind } : null);
+            const here = normalizeAddr(local.address) === normalizeAddr(host) && local.port === rec.port;
+            finish(proven && here && h.pid === rec.pid ? h : null);
           } catch {
             finish(null);
           }
@@ -587,7 +613,7 @@ export async function startPageServer(deps: ServeDeps): Promise<PageServer | nul
     http.createServer((req, res) => {
       let r: Reply;
       try {
-        r = handle({ stateDir, hosts, health: () => ({ key: healthKey, info: info() }), touch: () => { lastActivity = deps.now(); } }, req.method ?? "", req.url ?? "", req.headers.host);
+        r = handle({ stateDir, hosts, health: () => ({ key: healthKey, info: info() }), touch: () => { lastActivity = deps.now(); } }, req.method ?? "", req.url ?? "", req.headers.host, { address: req.socket.localAddress ?? "", port: req.socket.localPort ?? 0 });
       } catch {
         r = notFound();
       }
