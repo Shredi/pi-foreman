@@ -10,8 +10,8 @@ import { RUNNERS, segmentEffect } from "./effects.ts";
 import type { EffectClass, EffectCtx } from "./effects.ts";
 import { wildMatch } from "./glob.ts";
 import type { ProtectedEntry } from "./permconfig.ts";
-import { pathGlobMatch } from "./rules.ts";
-import type { RuleCall, RuleEnv } from "./rules.ts";
+import { pathGlobMatch } from "./rulecall.ts";
+import type { RuleCall, RuleEnv } from "./rulecall.ts";
 import { parseShell } from "./shellast.ts";
 import type { OpaqueReason, ShellSegment } from "./shellast.ts";
 

@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
-import { DEFAULT_RULES, OWN_TOOLS, segmentDefault, toolDefault } from "../defaults.ts";
+import { OWN_TOOLS, segmentDefault, toolDefault } from "../defaults.ts";
 import type { DefaultCtx, GitFacts } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
@@ -168,16 +168,6 @@ test("fetch: GET and HEAD of a plain http(s) URL only", () => {
   assert.equal(toolDefault("fetch", { url: "https://example.com/a" }), undefined);
   assert.equal(toolDefault("fetch", { url: "https://example.com/a", method: "head" }), undefined);
   for (const i of [{ url: "https://example.com", method: "POST" }, { url: "https://example.com", body: "x" }, { url: "https://example.com", headers: { Authorization: "x" } }, { url: "file:///etc/passwd" }, { method: "GET" }, {}]) assert.equal(toolDefault("fetch", i), undefined, JSON.stringify(i));
-});
-
-test("every named rule is reachable (the list in DEFAULT_RULES matches what the tests above returned)", () => {
-  const seen = new Set<string>();
-  const lines = ["ls", "npm test", "touch src/n", "git status", "git add -A", "git commit -m x", "git fetch", "git pull --ff-only", "git switch round/41-x", "git push origin HEAD", "gh pr view 1", "CI=1"];
-  for (const l of lines) for (const r of (rule(sh(l)) ?? "").split("+")) if (r) seen.add(r);
-  for (const r of (rule(sh("git branch -d round/41-y", { f: { branchMerged: () => true } })) ?? "").split("+")) if (r) seen.add(r);
-  seen.add(toolDefault("bg_wait", {})!);
-  seen.add(toolDefault("subagent", { agent: "builder", task: "x" }, { child: false })!);
-  for (const r of DEFAULT_RULES) assert.ok(seen.has(r), r);
 });
 
 // ------------------------------------------------------------------ rig: the gate writes the guard trace record

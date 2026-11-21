@@ -4,8 +4,7 @@ import assert from "node:assert/strict";
 import { comparable, foldCase, lexUnder, normPath, sameOrUnder, slashForm } from "../pathnorm.ts";
 import type { Resolver } from "../pathnorm.ts";
 import { insideRoot } from "../floors.ts";
-import { matchRules } from "../rules.ts";
-import { parseRule } from "../rules.ts";
+import { pathGlobMatch } from "../rulecall.ts";
 
 test("slashForm: win32 spellings (drive letters, backslashes, mixed, UNC, trailing separators)", () => {
   assert.equal(slashForm("win32", "C:\\Users\\Me\\"), "C:/Users/Me");
@@ -62,21 +61,13 @@ test("floors insideRoot goes through the normaliser", () => {
   assert.ok(!insideRoot("/Repo/a", "/repo", "darwin"));
 });
 
-test("rule path patterns use the same spellings: win32 case and slashes meet, drive letters via //c:/", () => {
+test("protected path globs use the same spellings: win32 case and slashes meet, drive letters via //c:/", () => {
   const env = { cwd: "C:\\Repo", home: "C:\\Users\\Me", platform: "win32", checkout: "C:\\Repo" };
-  const rule = (t: string) => {
-    const r = parseRule(t);
-    if ("error" in r) throw new Error(r.error);
-    return r.rule;
-  };
-  const read = (p: string) => ({ tool: "read", paths: [p] });
-  const sets = (t: string) => ({ deny: [], ask: [], allow: [rule(t)] });
-  assert.equal(matchRules(sets("Read(src/**)"), read("c:\\REPO\\Src\\a.ts"), env).verdict, "allow");
-  assert.equal(matchRules(sets("Read(~/notes/*)"), read("C:\\users\\me\\NOTES\\a.md"), env).verdict, "allow");
-  assert.equal(matchRules(sets("Read(//c:/data/**)"), read("C:\\Data\\x\\y"), env).verdict, "allow");
-  assert.equal(matchRules(sets("Read(src/**)"), read("C:\\Repo2\\src\\a.ts"), env).verdict, "none");
+  assert.equal(pathGlobMatch("src/**", "c:\\REPO\\Src\\a.ts", env), true);
+  assert.equal(pathGlobMatch("~/notes/*", "C:\\users\\me\\NOTES\\a.md", env), true);
+  assert.equal(pathGlobMatch("//c:/data/**", "C:\\Data\\x\\y", env), true);
+  assert.equal(pathGlobMatch("src/**", "C:\\Repo2\\src\\a.ts", env), false);
   const posix = { cwd: "/Repo", home: "/Users/me", platform: "darwin", checkout: "/Repo" };
-  assert.equal(matchRules(sets("Read(src/**)"), read("/Repo/src/a.ts"), posix).verdict, "allow");
-  assert.equal(matchRules(sets("Read(src/**)"), read("/repo/src/a.ts"), posix).verdict, "allow", "darwin folds case like the floors (r79 revision, finding I)");
-  assert.equal(matchRules(sets("Read(src/**)"), read("/repo/src/a.ts"), { ...posix, platform: "linux" }).verdict, "none", "linux is not folded");
+  assert.equal(pathGlobMatch("src/**", "/repo/src/a.ts", posix), true, "darwin folds case like the floors (r79 revision, finding I)");
+  assert.equal(pathGlobMatch("src/**", "/repo/src/a.ts", { ...posix, platform: "linux" }), false, "linux is not folded");
 });

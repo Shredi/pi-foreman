@@ -7,7 +7,7 @@ import type { ProtectedCall, ProtectedCheckCtx } from "../classifier.ts";
 import { effectCtx } from "../effects.ts";
 import { matchProtected } from "../protected.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
-import type { RuleCall } from "../rules.ts";
+import type { RuleCall } from "../rulecall.ts";
 import { parseShell } from "../shellast.ts";
 import type { ShellSegment } from "../shellast.ts";
 
