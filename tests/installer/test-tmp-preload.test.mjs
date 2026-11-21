@@ -1,5 +1,6 @@
 // scripts/test_tmp_root_preload.mjs and tests/_isolation.py: a direct run makes a run root per process, removes it at exit, never sweeps.
 import { test, after } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -101,7 +102,6 @@ test("tests/_isolation.py makes a pf-run- root for TMPDIR and removes it at exit
   const rec = JSON.parse(r.stdout);
   assert.ok(path.basename(rec.root).startsWith("pf-run-"));
   if (process.platform !== "win32") {
-    assert.equal(fs.realpathSync(rec.tmpdir === rec.root ? path.dirname(rec.root) : rec.tmpdir), fs.realpathSync(path.dirname(rec.root)));
     assert.equal(rec.tmpdir, rec.root);
     assert.equal(path.resolve(rec.gettemp), path.resolve(rec.root));
   }
