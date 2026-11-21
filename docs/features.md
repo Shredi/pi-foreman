@@ -71,9 +71,8 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own scratch dir (`$FOREMAN_SCRATCH`, under the worktree root, else the temp dir) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
 | [permissions](#permissions) | safety |  | on | Default allow: the gate refuses only the floors (a short fixed list of dangerous commands), and for the judge-first kinds (deletes and writes whose target the gate cannot read, git config and remotes, losing local git work, terminal inject, whole-disk scans, protected targets) the judge looks first; the owner is asked when it does not clear the call. Your `permissions.json` (user, project and session layers) holds protected entries and work folders (`/foreman perms list` shows them). Old mode, profile and rule-list keys are accepted and ignored; the doctor names each one still set. | on by default | [permissions](permissions.md) |
 | [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots. | on by default | [permissions](permissions.md#owned-paths) |
-| [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
-| [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit (`gate.askTimeoutMs` has no effect). A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
-| [read-clear](#read-clear) | review |  | on | Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before. | on by default | [permissions](permissions.md#the-read-question) |
+| [auto-review](#auto-review) | safety |  | on | Before a call runs, the judge reads it when it is on the judge-first list (deletes and writes whose target the gate cannot read, writes outside the session, git config and remotes, losing local git work, remote commands and inline code, kills by process name, terminal inject, whole-disk scans, protected targets); every other call that no floor refuses runs. Unset, the judge model is the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
+| [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
 | [protected-targets](#protected-targets) | safety |  | on | `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run in a session with UI that is not a child (whatever the owner's presence) except remote writes the harness reads directly, which always ask (other remote writes are left to the judge; see docs/permissions.md#protected-targets for the exact rule), everything else asks with the reasoning (`gate.protected.check`; a protected entry's own `check` can tighten it, and its note is the judge's policy for that target). The foreman adds entries on request with `foreman_protect` behind a confirm dialog. | on by default | [permissions](permissions.md#protected-targets) |
 | [review-critic](#review-critic) | review |  | on | Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
@@ -95,7 +94,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval, always the owner's dialog answer, returns only from the session's own state entry, never from the approval store; no file from the parent approves a plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
-| [retro](#retro) | retro | toggle | on | `/retro` and `foreman retro` print the session's friction metrics and write permission-allow proposals; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it. | on by default | [retro](retro.md#switches) |
+| [retro](#retro) | retro | toggle | on | `/retro` and `foreman retro` print the session's friction metrics; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it. | on by default | [retro](retro.md#switches) |
 | [reports](#reports) | retro | toggle | on | Every role reports a fault of the harness, a rule, a prompt, a permission, routing or a skill with one `foreman_report` call at the moment it happens. The reports go to a small list in the notes of the repository (`.workflow/reports/`, never committed), each entry with a state; the foreman session manages it with `foreman_reports` and every session with `foreman reports`. `/foreman flag-ask` writes a report too. A main session without a parent gets the repeated open entries once at its first prompt (`retro.startNote`); `foreman reports migrate` moves the retired backlog over, and the reports of a remote or parent-opened session are imported when its notice arrives (`foreman reports import`). | `{"retro": {"report": true}}` | [retro](retro.md#reporting-at-the-source) |
 | [steward](#steward) | retro | toggle | off | Opt-in. `/foreman steward on` makes one main session the steward of the repository's report list: it groups the reports, starts one read-only helper on the strongest ranked model (`model: "top"`) to check each group, writes a steward report with the review-round numbers and proposes rounds, one question per round; it never starts a round without the owner's yes. A watch wakes it when enough new reports arrived or the oldest waited too long. Without a steward the main session is shown the repeated open reports at its start. | `{"steward": {"enabled": true}}` | [retro](retro.md#steward) |
 | [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
@@ -105,7 +104,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [deferred-tools](#deferred-tools) | tools |  | on | Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered. | on by default | [tools](tools.md) |
 | [skill-visibility](#skill-visibility) | tools |  | on | Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` names extra tools a child may find (the builder's `foreman_move` and `foreman_copy`); a child still declares them, since pi-subagents 0.89 aborts a child whose allowlisted tool is missing from its request. | on by default | [tools](tools.md) |
 | [ask-user-question](#ask-user-question) | ui |  | on | The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps a hook on the tool name: `tool_call` counts the dialog for `foreman_dialogs`; an answer is never filed as `ruling-<n>.md`, and the idle model reads the answer. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
-| [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors first, then self-modification rules (a dialog by rule, never classifier-cleared), your deny, ask and allow rules, and the dangerous class. Under mode auto the classifier judges a dangerous call against your whitelist sentences; an escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
+| [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: the floors first, then the self-modification rules (a dialog by rule, never judge-cleared), then the built-in allows, then the judge-first list. There are no modes and no rule lists. An escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
 | [owner-script](#owner-script) | safety |  | on | For a change the guards close to every agent (user config, global installs, protected files) the foreman proposes a script with `foreman_script`: a dialog shows its description, risk, undo, path and hash (not the script body) with approve, revise and reject, in that order. On approve the harness runs the dry run, then on request the real run, from a private copy of the approved bytes; a script that declares the undo marker line can be undone through the tool after a real run. An approved script runs with the owner's rights and no guard reads it. A fix of up to `safety.scripts.silentFixLines` changed lines reruns with a notice; a larger one needs a new dialog. Without an answer the proposal stays pending; subagent children never propose. | on by default | [safety](safety.md#owner-scripts) |
 | [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
@@ -489,7 +488,6 @@ Switch: `ceremony.orientation.enabled` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `permissions.profile` | unset | not in project/session (it picks the permissions profile (r79 item 8): user or overlay config only) |
 | `paths.hubWorkflow` | `[]` | not in project/session (it loosens: it makes dirs outside the worktree readable; user or overlay config only) |
 
 ### owned-install-reads
@@ -500,7 +498,7 @@ No config key.
 
 ### auto-review
 
-**Permission auto-review.** The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you.
+**Permission auto-review.** Before a call runs, the judge reads it when it is on the judge-first list (deletes and writes whose target the gate cannot read, writes outside the session, git config and remotes, losing local git work, remote commands and inline code, kills by process name, terminal inject, whole-disk scans, protected targets); every other call that no floor refuses runs. Unset, the judge model is the inexpensive rung of the role map, and with none the call asks you.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -509,23 +507,11 @@ No config key.
 
 ### headless-review
 
-**Child asks to the parent.** A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit (`gate.askTimeoutMs` has no effect). A headless session always denies an ask.
+**Child asks to the parent.** A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit. A headless session always denies an ask.
 
 | Key | Default | Layer |
 |---|---|---|
-| `gate.askTimeoutMs` | `900000` | tighten-only (lower only) |
 | `gate.childAsk` | `"parent"` | tighten-only (toward deny; tightest first: deny, parent) |
-
-### read-clear
-
-**The classifier model clears a line that only reads.** Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before.
-
-Switch: `gate.readClear` is true.
-
-| Key | Default | Layer |
-|---|---|---|
-| `gate.readClear` | `true` | tighten-only (only false is accepted) |
-| `gate.readonlyClear` | `true` | tighten-only (only false is accepted) |
 
 ### protected-targets
 
@@ -754,11 +740,10 @@ Switch: `sync.repos` is non-empty.
 
 ### retro
 
-**Retro report.** `/retro` and `foreman retro` print the session's friction metrics and write permission-allow proposals; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it.
+**Retro report.** `/retro` and `foreman retro` print the session's friction metrics; they create no report entries. `foreman backlog` is retired: `foreman reports` replaces it.
 
 | Key | Default | Layer |
 |---|---|---|
-| `retro.proposalMinReviews` | `5` | not in project/session (the proposal threshold comes from the user or overlay config) |
 | `retro.enabled` | `null` | any layer |
 | `retro.workspaceKey` | `null` | not in project/session (the workspace key comes from the user or overlay config) |
 
@@ -852,11 +837,10 @@ No config key.
 
 ### auto-review-overlay
 
-**Gate classifier and dialog.** The gate decides every tool call: floors first, then self-modification rules (a dialog by rule, never classifier-cleared), your deny, ask and allow rules, and the dangerous class. Under mode auto the classifier judges a dangerous call against your whitelist sentences; an escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report).
+**Gate classifier and dialog.** The gate decides every tool call: the floors first, then the self-modification rules (a dialog by rule, never judge-cleared), then the built-in allows, then the judge-first list. There are no modes and no rule lists. An escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report).
 
 | Key | Default | Layer |
 |---|---|---|
-| `gate.mode` | unset | not in project/session (user or overlay config only) |
 | `gate.reviewTimeoutMs` | `15000` | tighten-only (lower only, minimum 100) |
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.readTools` | `{}` | not in project/session (user or overlay config only) |
@@ -966,7 +950,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [waits](#waits) | `/foreman waits` |
 | [protected-targets](#protected-targets) | `/foreman perms protect add\|remove <host\|path\|command> <glob> [--note ..] [--user]` |
 | [bridge-isolation](#bridge-isolation) | `/foreman trust`, `/foreman trust bridge` |
-| [sessions](#sessions) | `/foreman session`, `foreman session`, `foreman session open --profile` |
+| [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [herdr-core](#herdr-core) | `foreman session open` |
 | [session-resume](#session-resume) | `foreman pane-resume`, `foreman setup --no-resume-hook` |
 | [session-worktree](#session-worktree) | `foreman session open` |
@@ -1045,7 +1029,6 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
 | `radar.openPrs` | the open PRs source (a GitHub search through gh) comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |
-| `retro.proposalMinReviews` | the proposal threshold comes from the user or overlay config |
 | `retro.workspaceKey` | the workspace key comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
