@@ -4824,8 +4824,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const rlf = s.ledgerByRun.get(target)?.paths[0] ?? bound;
             let text: string | null = null;
             try { text = rlf ? fs.readFileSync(rlf, "utf8") : null; } catch { text = null; }
-            // the same rule as a fresh launch, after-FAIL included; s.failItems belongs to the bound ledger only
-            const r = launchItemsOf(text, given && "items" in given ? given.items : undefined, { reReview: s.ledgerByRun.get(target)?.review?.occasion === "item", failed: rlf === bound ? s.failItems : [] });
+            // the same rule as a fresh launch, after-FAIL included (s.failItems, whatever ledger is named)
+            const r = launchItemsOf(text, given && "items" in given ? given.items : undefined, { reReview: s.ledgerByRun.get(target)?.review?.occasion === "item", failed: s.failItems });
             if ("unknown" in r) {
               s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
               return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };

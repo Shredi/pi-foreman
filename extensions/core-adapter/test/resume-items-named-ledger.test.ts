@@ -12,7 +12,7 @@ process.env.PI_OFFLINE = "1";
 const LEDGER_X = "# Ledger: x\nTier: standard\n\n- [ ] 1. first\n- [ ] 2. second\n";
 const LEDGER_Y = "# Ledger: y\nTier: standard\n\n- [ ] 5. fifth\n- [ ] 6. sixth\n";
 
-test("named ledger y, FAIL, resume: items 5 and 6 are written, the PASS record is valid and marked on ledger y", async (t) => {
+test("named ledger y, FAIL, resume: after the FAIL on 5 the resume writes [5], the PASS on 5 is marked on ledger y", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
   await a.writeLedger(LEDGER_X);
@@ -31,15 +31,16 @@ test("named ledger y, FAIL, resume: items 5 and 6 are written, the PASS record i
   const res = (await a.fire("tool_call", { toolName: "subagent", toolCallId: id, input })) as { block?: boolean; reason?: string } | undefined;
   assert.equal(res?.block, undefined, res?.reason);
   await a.fire("tool_result", { toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false });
-  assert.deepEqual(readItemsSidecar(dir), [5, 6], "the target's ledger, not the bound one");
+  assert.deepEqual(readItemsSidecar(dir), [5], "the target's ledger, narrowed to the failed item as a fresh launch does");
 
-  a.record(first.id, { verdict: "pass", items: [{ id: 5, result: "pass" }, { id: 6, result: "pass" }] });
+  a.record(first.id, { verdict: "pass", items: [{ id: 5, result: "pass" }] });
   a.endEvent({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output: "report" }] });
   await tick(400);
   const events = await w.traceEvents();
   assert.deepEqual(events.filter((e) => e.event === "review_record_invalid"), []);
   assert.ok(events.some((e) => e.event === "review_recorded"), "the PASS record is recorded");
   const y = fs.readFileSync(yFile, "utf8");
-  assert.doesNotMatch(y, /- \[ \] [56]\./, `items 5 and 6 are marked on ledger y:\n${y}`);
+  assert.doesNotMatch(y, /- \[ \] 5\./, `item 5 is marked on ledger y:\n${y}`);
+  assert.match(y, /- \[ \] 6\./, "item 6 stays open");
   assert.match(fs.readFileSync(path.join(w.project, ".workflow", "LEDGER-x.md"), "utf8"), /- \[ \] 1\./, "the bound ledger is untouched");
 });
