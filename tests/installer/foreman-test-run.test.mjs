@@ -38,6 +38,8 @@ function finish(child) {
 }
 
 const lockFile = (dir) => path.join(dir, "test-lock");
+/** The stderr of a run without its first line (the run id line every run prints). */
+const noStart = (err) => err.replace(/^foreman_test_run: run \S+ \(pid \d+, cwd [^\n]*\); stop it with: [^\n]*\n/, "");
 
 test("the lock is taken during the run, released after it, and the exit code propagates", async () => {
   const dir = tmp();
@@ -64,9 +66,9 @@ test("a second run waits with one line until the first releases", async () => {
     await firstDone;
     assert.equal(second.code, 0);
     assert.match(second.out, /second ran/);
-    const lines = second.err.trim().split("\n");
+    const lines = noStart(second.err).trim().split("\n");
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /^waiting for the test lock held by pid \d+ \(cwd .+\), started \d\d:\d\d$/);
+    assert.match(lines[0], /^waiting for the test lock held by run \S+ \(pid \d+, cwd .+\), since \d\d:\d\d: .+, queue position 1 of 1$/);
     assert.ok(!fs.existsSync(lockFile(dir)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -81,22 +83,22 @@ test("a lock of a dead pid is taken over", async () => {
     const r = await finish(run(dir, `console.log("ran")`));
     assert.equal(r.code, 0);
     assert.match(r.out, /ran/);
-    assert.equal(r.err, "");
+    assert.equal(noStart(r.err), "");
     assert.ok(!fs.existsSync(lockFile(dir)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("a lock older than the cap is taken over even when its pid lives", async () => {
+test("a live, heartbeating lock older than the cap is not taken over", async () => {
   const dir = tmp();
   try {
     const old = new Date(Date.now() - 3 * 60_000).toISOString();
     fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, started: old, cwd: "/x" }));
-    const r = await finish(run(dir, `console.log("ran")`, { FOREMAN_TEST_LOCK_MAX_MINUTES: "1" }));
-    assert.equal(r.code, 0);
-    assert.match(r.out, /ran/);
-    assert.ok(!fs.existsSync(lockFile(dir)));
+    const r = await finish(run(dir, `console.log("ran")`, { FOREMAN_TEST_LOCK_MAX_MINUTES: "1", FOREMAN_TEST_LOCK_WAIT_MINUTES: "0.02" }));
+    assert.equal(r.code, 75);
+    assert.doesNotMatch(r.out, /ran/);
+    assert.equal(JSON.parse(fs.readFileSync(lockFile(dir), "utf8")).pid, process.pid);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -241,7 +243,7 @@ test("the time limit stops the run and a grandchild that ignores SIGTERM, releas
     const parent = `require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grand)}], { stdio: "ignore" }); setInterval(() => {}, 1000)`;
     const r = await finish(runRaw(dir, ["--timeout", "3", ...execArgs(parent)]));
     assert.equal(r.code, 124);
-    assert.match(r.err, /^foreman_test_run: time limit of 3 s reached after 3\.\d s; stopped the run\n$/);
+    assert.match(noStart(r.err), /^foreman_test_run: time limit of 3 s reached after 3\.\d s; stopped the run\n$/);
     assert.ok(!fs.existsSync(lockFile(dir)));
     assert.ok(fs.existsSync(pidFile), "the grandchild started");
     assert.ok(await gone(Number(fs.readFileSync(pidFile, "utf8"))), "the grandchild is gone");
@@ -266,7 +268,7 @@ test("a limit that is not reached keeps the child exit code and prints nothing; 
   try {
     const r = await finish(runRaw(dir, ["--timeout", "60", ...execArgs("process.exit(3)")], { FOREMAN_TEST_TIMEOUT: "abc" }));
     assert.equal(r.code, 3);
-    assert.equal(r.err, "");
+    assert.equal(noStart(r.err), "");
     const e = await finish(runRaw(dir, execArgs("process.exit(5)"), { FOREMAN_TEST_TIMEOUT: "" }));
     assert.equal(e.code, 5);
   } finally {
@@ -301,7 +303,7 @@ test("a free lock prints no wait line", async () => {
   try {
     const r = await finish(runRaw(dir, ["--timeout", "30", ...execArgs("")]));
     assert.equal(r.code, 0);
-    assert.equal(r.err, "");
+    assert.equal(noStart(r.err), "");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -318,9 +320,9 @@ test("acquireLock names a live holder, repeats the line and throws LockWaitTimeo
       (e) => e instanceof LockWaitTimeout && e.holder.pid === process.pid && e.holder.cwd === "/some/where",
     );
     const lines = err.trim().split("\n");
-    assert.match(lines[0], /^waiting for the test lock held by pid \d+ \(cwd \/some\/where\), started \d\d:\d\d$/);
+    assert.match(lines[0], /^waiting for the test lock held by run unknown \(pid \d+, cwd \/some\/where\), since \d\d:\d\d: unknown, queue position 1 of 1$/);
     assert.ok(lines.length >= 2);
-    assert.match(lines[1], /^still waiting for the test lock held by pid \d+ \(cwd \/some\/where\), started \d\d:\d\d; waited [\d.]+ min$/);
+    assert.match(lines[1], /^still waiting for the test lock held by run unknown \(pid \d+, cwd \/some\/where\), since \d\d:\d\d: unknown, queue position 1 of 1; waited [\d.]+ min$/);
     assert.equal(seen[0].pid, process.pid);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -333,7 +335,7 @@ test("a lock file without a cwd prints cwd unknown", async () => {
     fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
     let err = "";
     await assert.rejects(acquireLock(lockFile(dir), { pollMs: 10, maxWaitMs: 50, stderr: { write: (s) => (err += s) } }), LockWaitTimeout);
-    assert.match(err, /^waiting for the test lock held by pid \d+ \(cwd unknown\), started \d\d:\d\d\n$/);
+    assert.match(err, /^waiting for the test lock held by run unknown \(pid \d+, cwd unknown\), since \d\d:\d\d: unknown, queue position 1 of 1\n$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -358,8 +360,8 @@ test("a live holder that outlasts FOREMAN_TEST_LOCK_WAIT_MINUTES ends the run wi
     liveLock(dir, "/held/here");
     const r = await finish(runRaw(dir, execArgs(touchMarker(dir)), { FOREMAN_TEST_LOCK_WAIT_MINUTES: "0.02" }));
     assert.equal(r.code, 75);
-    assert.match(r.err, /^waiting for the test lock held by pid \d+ \(cwd \/held\/here\), started \d\d:\d\d\n/);
-    assert.match(r.err, /foreman_test_run: gave up waiting for the test lock after [\d.]+ min; held by pid \d+ \(cwd \/held\/here\), started \d\d:\d\d\n$/);
+    assert.match(noStart(r.err), /^waiting for the test lock held by run unknown \(pid \d+, cwd \/held\/here\), since \d\d:\d\d: unknown, queue position 1 of 1\n/);
+    assert.match(r.err, /foreman_test_run: gave up waiting for the test lock after [\d.]+ min; held by run unknown \(pid \d+, cwd \/held\/here\), since \d\d:\d\d: unknown\n$/);
     assert.ok(!fs.existsSync(marker(dir)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -372,7 +374,7 @@ test("the time limit during the lock wait exits 124, names the holder and does n
     liveLock(dir, "/held/here");
     const r = await finish(runRaw(dir, ["--timeout", "1", ...execArgs(touchMarker(dir))]));
     assert.equal(r.code, 124);
-    assert.match(r.err, /time limit of 1 s reached after 1\.\d s; stopped the run; waited for the lock held by pid \d+ \(cwd \/held\/here\), started \d\d:\d\d\n$/);
+    assert.match(r.err, /time limit of 1 s reached after 1\.\d s; stopped the run; waited for the lock held by run unknown \(pid \d+, cwd \/held\/here\), since \d\d:\d\d: unknown\n$/);
     assert.ok(!fs.existsSync(marker(dir)));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -520,6 +522,269 @@ test("queue: a waiter whose ticket vanished queues again at the end", async () =
     await Promise.all([first, second]);
     assert.deepEqual(order, [2, 1]);
     assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- run ids, stop, list, holder line, heartbeat, run cap, progress-based give-up ----
+
+/** Starts the wrapper in `cwd`; collects stderr and stdout; `done` resolves with the exit code. */
+function launch(dir, cwd, args, extra = {}) {
+  const child = spawn(process.execPath, [SCRIPT, ...args], { cwd, env: env(dir, extra), stdio: ["ignore", "pipe", "pipe"] });
+  const h = { child, out: "", err: "", id: () => /foreman_test_run: run (\S+) \(pid/.exec(h.err)?.[1] };
+  child.stdout.on("data", (d) => (h.out += d));
+  child.stderr.on("data", (d) => (h.err += d));
+  h.done = new Promise((resolve) => child.on("close", (code) => resolve(code)));
+  return h;
+}
+
+const runsDir = (dir) => path.join(dir, "test-runs");
+const recordOf = (dir, id) => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(runsDir(dir), `${id}.json`), "utf8"));
+  } catch {
+    return undefined;
+  }
+};
+const waitFor = async (cond, ms = 10_000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = await cond();
+    if (v) return v;
+    assert.ok(Date.now() < end, "condition not reached in time");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
+/** A holder run that exits with `code` after `ms`, in its own cwd. */
+const holdRun = (dir, cwd, ms, code, extra) => launch(dir, cwd, execArgs(`setTimeout(() => process.exit(${code}), ${ms})`), extra);
+const controlRun = (dir, cwd, args) => finish(spawn(process.execPath, [SCRIPT, ...args], { cwd, env: env(dir), stdio: ["ignore", "pipe", "pipe"] }));
+
+test("a run prints its run id line, keeps a record while it runs and removes it on exit, also with the lock off", async () => {
+  const dir = tmp();
+  try {
+    for (const extra of [{}, { FOREMAN_TEST_LOCK: "0" }]) {
+      const h = launch(dir, dir, execArgs(`setTimeout(() => {}, 800)`), extra);
+      const id = await waitFor(() => h.id());
+      assert.match(h.err, new RegExp(`^foreman_test_run: run ${id} \\(pid ${h.child.pid}, cwd ${dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\); stop it with: node scripts/foreman_test_run\\.mjs --stop ${id}\n`));
+      const rec = await waitFor(() => recordOf(dir, id)?.state === "running" && recordOf(dir, id));
+      assert.equal(rec.pid, h.child.pid);
+      assert.equal(rec.cwd, dir);
+      assert.match(rec.command, /-e/);
+      assert.ok(!Number.isNaN(Date.parse(rec.started)));
+      assert.equal(await h.done, 0);
+      assert.equal(recordOf(dir, id), undefined);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the lock file carries the run id and the command", async () => {
+  const dir = tmp();
+  try {
+    const r = await finish(run(dir, `console.log(require("fs").readFileSync(${JSON.stringify(lockFile(dir))}, "utf8"))`));
+    const info = JSON.parse(r.out);
+    assert.match(info.id, /^[a-z0-9]+-\d+$/);
+    assert.match(info.command, /-e/);
+    assert.ok(info.command.length <= 120);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--stop of a queued run drops it (exit 130, nothing run) and the holder in another cwd finishes with its own code", async () => {
+  const dir = tmp();
+  const cwdA = tmp();
+  const cwdB = tmp();
+  try {
+    const a = holdRun(dir, cwdA, 2500, 7);
+    const aId = await waitFor(() => a.id());
+    await waitFor(() => recordOf(dir, aId)?.state === "running");
+    const b = launch(dir, cwdB, execArgs(touchMarker(dir)));
+    const bId = await waitFor(() => b.id());
+    await waitFor(() => recordOf(dir, bId)?.state === "waiting");
+    const s = await controlRun(dir, cwdB, ["--stop", bId]);
+    assert.equal(s.code, 0);
+    assert.equal(await b.done, 130);
+    assert.match(b.err, new RegExp(`foreman_test_run: run ${bId} stopped on request\n$`));
+    assert.ok(!fs.existsSync(marker(dir)));
+    assert.equal(tickets(dir).length, 0);
+    assert.equal(recordOf(dir, bId), undefined);
+    assert.equal(await a.done, 7);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--stop of a running run stops its child tree and releases the lock; a queued run in another cwd then runs", async () => {
+  const dir = tmp();
+  const cwdA = tmp();
+  const cwdB = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  try {
+    const grand = `process.on("SIGTERM", () => {}); require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+    const parent = `require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grand)}], { stdio: "ignore" }); setInterval(() => {}, 1000)`;
+    const a = launch(dir, cwdA, execArgs(parent));
+    const aId = await waitFor(() => a.id());
+    await waitFor(() => fs.existsSync(pidFile));
+    const b = launch(dir, cwdB, execArgs(`console.log("b ran")`));
+    const bId = await waitFor(() => b.id());
+    await waitFor(() => recordOf(dir, bId)?.state === "waiting");
+    const s = await controlRun(dir, cwdA, ["--stop", aId]);
+    assert.equal(s.code, 0);
+    assert.match(s.out, new RegExp(`run ${aId} stopped`));
+    assert.equal(await a.done, 130);
+    assert.match(a.err, new RegExp(`foreman_test_run: run ${aId} stopped on request\n$`));
+    assert.ok(await gone(Number(fs.readFileSync(pidFile, "utf8"))), "the grandchild is gone");
+    assert.equal(recordOf(dir, aId), undefined);
+    assert.equal(await b.done, 0);
+    assert.match(b.out, /b ran/);
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--stop of an unknown id exits 1; a record of a dead pid is cleaned", async () => {
+  const dir = tmp();
+  try {
+    const r = await controlRun(dir, dir, ["--stop", "nope-1"]);
+    assert.equal(r.code, 1);
+    assert.match(r.err, /no running run nope-1/);
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    fs.mkdirSync(runsDir(dir), { recursive: true });
+    fs.writeFileSync(path.join(runsDir(dir), "old-1.json"), JSON.stringify({ id: "old-1", pid: dead.pid, cwd: dir, command: "x", started: new Date().toISOString(), state: "running" }));
+    const d = await controlRun(dir, dir, ["--stop", "old-1"]);
+    assert.equal(d.code, 1);
+    assert.equal(recordOf(dir, "old-1"), undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--stop-cwd stops this cwd's runs only; another cwd's run stays alive and finishes", async () => {
+  const dir = tmp();
+  const cwdA = tmp();
+  const cwdB = tmp();
+  try {
+    const a = holdRun(dir, cwdA, 2500, 7);
+    const aId = await waitFor(() => a.id());
+    await waitFor(() => recordOf(dir, aId)?.state === "running");
+    const b = launch(dir, cwdB, execArgs(touchMarker(dir)));
+    const bId = await waitFor(() => b.id());
+    await waitFor(() => recordOf(dir, bId)?.state === "waiting");
+    const s = await controlRun(dir, cwdB, ["--stop-cwd"]);
+    assert.equal(s.code, 0);
+    assert.equal(await b.done, 130);
+    assert.ok(!fs.existsSync(marker(dir)));
+    assert.ok(recordOf(dir, aId), "the other cwd's run is still recorded");
+    assert.equal(await a.done, 7);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("--list prints the holder and the runs, one line each", async () => {
+  const dir = tmp();
+  try {
+    const a = holdRun(dir, dir, 1500, 0);
+    const aId = await waitFor(() => a.id());
+    await waitFor(() => recordOf(dir, aId)?.state === "running");
+    const r = await controlRun(dir, dir, ["--list"]);
+    assert.equal(r.code, 0);
+    const lines = r.out.trim().split("\n");
+    assert.match(lines[0], new RegExp(`^holder: run ${aId} \\(pid \\d+, cwd .+\\), since \\d\\d:\\d\\d: .+`));
+    assert.match(lines[1], new RegExp(`^run ${aId} \\(pid \\d+, cwd .+\\), running, since \\d\\d:\\d\\d: .+`));
+    assert.equal(await a.done, 0);
+    assert.equal((await controlRun(dir, dir, ["--list"])).out, "holder: none\n");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const writeHolder = (dir, id, extra = {}) =>
+  fs.writeFileSync(lockFile(dir), JSON.stringify({ id, pid: process.pid, started: new Date().toISOString(), cwd: "/h", command: `cmd ${id}`, ...extra }));
+
+test("the wait line names id, cwd, since, command and queue position, and is printed again at once when the holder changes", async () => {
+  const dir = tmp();
+  try {
+    writeHolder(dir, "aaa-1");
+    let err = "";
+    const p = acquireLock(lockFile(dir), { pollMs: 10, announceMs: 600_000, maxWaitMs: 2000, stderr: { write: (s) => (err += s) } });
+    await until(() => err.includes("aaa-1"));
+    assert.match(err, /^waiting for the test lock held by run aaa-1 \(pid \d+, cwd \/h\), since \d\d:\d\d: cmd aaa-1, queue position 1 of 1\n$/);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(err.split("\n").length, 2, "no repeat without a holder change");
+    writeHolder(dir, "bbb-2");
+    await until(() => err.includes("bbb-2"));
+    assert.match(err.trim().split("\n")[1], /^waiting for the test lock held by run bbb-2 .*: cmd bbb-2, queue position 1 of 1$/);
+    fs.rmSync(lockFile(dir));
+    (await p)();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a dead holder is taken over, and so is a live holder whose heartbeat is older than 60 s", async () => {
+  const dir = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    writeHolder(dir, "dead-1", { pid: dead.pid });
+    (await acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, maxWaitMs: 1000 }))();
+    writeHolder(dir, "stale-1");
+    const past = new Date(Date.now() - 61_000);
+    fs.utimesSync(lockFile(dir), past, past);
+    const release = await acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, maxWaitMs: 1000 });
+    release();
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the holder touches the lock file as a heartbeat and stops at release", async () => {
+  const dir = tmp();
+  try {
+    const release = await acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, heartbeatMs: 20, id: "hb-1", command: "c" });
+    const past = new Date(Date.now() - 30_000);
+    fs.utimesSync(lockFile(dir), past, past);
+    await until(() => Date.now() - fs.statSync(lockFile(dir)).mtimeMs < 5000);
+    assert.equal(JSON.parse(fs.readFileSync(lockFile(dir), "utf8")).id, "hb-1");
+    release();
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a live holder passing FOREMAN_TEST_LOCK_MAX_MINUTES stops its own run, releases the lock and exits 124", async () => {
+  const dir = tmp();
+  try {
+    const h = launch(dir, dir, execArgs(`setInterval(() => {}, 1000)`), { FOREMAN_TEST_LOCK_MAX_MINUTES: "0.02" });
+    const id = await waitFor(() => h.id());
+    assert.equal(await h.done, 124);
+    assert.match(h.err, new RegExp(`foreman_test_run: run ${id} passed the run cap of 0\\.02 min; stopped the run\n$`));
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the give-up timer counts from the last holder change: no progress ends the wait, a changing holder keeps it going", async () => {
+  const dir = tmp();
+  try {
+    writeHolder(dir, "a-1");
+    await assert.rejects(acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, maxWaitMs: 200 }), (e) => e instanceof LockWaitTimeout);
+    let n = 0;
+    const swap = setInterval(() => writeHolder(dir, `h-${n++}`), 250);
+    const p = acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, maxWaitMs: 400 });
+    setTimeout(() => {
+      clearInterval(swap);
+      fs.rmSync(lockFile(dir), { force: true });
+    }, 1100);
+    (await p)();
+    assert.ok(n >= 3, "the holder changed several times past maxWaitMs");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
