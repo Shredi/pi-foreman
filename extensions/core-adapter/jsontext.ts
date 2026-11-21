@@ -17,3 +17,9 @@ export function fromJsonText(value: unknown, want: JsonTextWant): unknown {
     : typeof parsed === want;
   return ok ? parsed : value;
 }
+
+/** An empty filler a model gives an optional launch field it means to leave out: `""` or `{}` (also as JSON text). `[]` is not one: `items: []` means no items. */
+export function filler(value: unknown): boolean {
+  const v = fromJsonText(value, "object");
+  return v === "" || (!!v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0);
+}

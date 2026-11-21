@@ -288,10 +288,11 @@ export function openSteps(counts: StepCounts, required: Step[], mode: ReviewGate
 
 /**
  * A session that changed nothing (ceremony nochange-finish): no builder run completed, no foreman project-file edit,
- * and a clean work tree (`git status --porcelain` empty). porcelain null = git failed or no git tree: not a no-change.
+ * and a clean work tree (`git status --porcelain` empty) or one equal to its state at session start (`sameAsStart`: trivial.ts checkoutBaseline).
+ * porcelain null = git failed or no git tree: not a no-change unless sameAsStart.
  */
-export function noChange(steps: StepCounts, foremanEdits: number, porcelain: string | null): boolean {
-  return steps.builder === 0 && foremanEdits === 0 && porcelain === "";
+export function noChange(steps: StepCounts, foremanEdits: number, porcelain: string | null, sameAsStart = false): boolean {
+  return steps.builder === 0 && foremanEdits === 0 && (porcelain === "" || sameAsStart);
 }
 
 /** Refusal hint for a re-opened reviewer step ("" otherwise). */

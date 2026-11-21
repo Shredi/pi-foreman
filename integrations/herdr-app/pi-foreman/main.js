@@ -11,6 +11,7 @@ import {
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
+import { prsStaleText, PR_STALE_WORDS } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
 const LOCAL_MS = 3000;
@@ -272,7 +273,7 @@ export default class ForemanAgents extends View {
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
           const doc = r.code === 0 ? parseRadarDoc(r.stdout, machine) : null;
-          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, strip: doc.strip ?? null, tried: Date.now() } : null;
+          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, trackedAt: doc.trackedAt, trackedN: doc.trackedN, trackedOff: doc.trackedOff, strip: doc.strip ?? null, tried: Date.now() } : null;
         } catch {
           next = null;
         }
@@ -407,6 +408,7 @@ export default class ForemanAgents extends View {
             cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "", watchdog: true })),
           ]);
           if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
+          else if (typeof r?.code === "number" && r.code !== 0) this.fail(key, "Foreman PR poll failed", openFailure({ ...r, stderr: String(r.stderr || r.stdout || "") }));
           else this.failed?.delete(key);
         } catch (e) {
           if (missingBinary(e)) this.failed?.delete(key);
@@ -759,12 +761,13 @@ export default class ForemanAgents extends View {
   // first and start open, drawing OPEN_PR_GROUP_LINES lines at most (the problem ones first) and then a "+N more" line; with more than
   // OPEN_PR_FOLD_AT PRs the others start folded. Folding by hand (`this.folded`, `this.unfolded`) lasts while Herdr is open. A group that fails to build is replaced by a plain row (its name and count), so one repository does not
   // take the section down.
-  openPrRows(t, groups, age = "") {
+  openPrRows(t, groups, age = "", stale = "") {
     if (!groups.length) return [];
     this.folded ??= new Set();
     this.unfolded ??= new Set();
     const rows = [sectionHead(t, "op-head", "Open PRs", { rule: true })
-      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
+      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))
+      .when(stale !== "", (el) => el.child(div().ml(6).text_size(10).text_color(tones(t).amber).child(stale)))];
     const info = groups.map((g) => guard(() => openPrInfo(g), { g, prs: null, failing: 0, conflicts: 0 }));
     const total = info.reduce((n, i) => n + (i.prs?.length ?? 0), 0);
     const attention = (i) => i.failing > 0 || i.conflicts > 0;
@@ -886,7 +889,8 @@ export default class ForemanAgents extends View {
     });
     return v_flex().w(300).p(10).gap(4).bg(t.popover).border(1).border_color(t.border).rounded(8).text_size(11).text_color(t.muted)
       .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Pull request badges"))
-      .children(rows);
+      .children(rows)
+      .child(div().text_color(t.dim).child(PR_STALE_WORDS));
   }
 
   render(cx) {
@@ -1020,7 +1024,8 @@ export default class ForemanAgents extends View {
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     const age = listedAt ? this.clock("open-prs-age", (n) => openPrsAge(listedAt, n), now) : "";
-    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age), []));
+    const stale = this.clock("open-prs-stale", (n) => prsStaleText([...this.radar.values()], n), now);
+    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age, stale), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)

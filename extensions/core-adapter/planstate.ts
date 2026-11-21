@@ -116,6 +116,8 @@ export interface CeremonyStateEntry {
   lastFailFindings?: string;
   /** The count of subject changes to the bound ledger (index.ts ledgerRev, bound.ts PassMark.ledger); absent: 0. */
   ledgerRev?: number;
+  /** The checkout fingerprint taken at session start (trivial.ts checkoutBaseline) for the no-change rule; absent: none. */
+  baseline?: string;
 }
 
 /** Heads whose newest code verdict is a `[pre-pr]` PASS. */
@@ -145,7 +147,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hold?: { note: string; since: string } | null; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hold?: { note: string; since: string } | null; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null; baseline?: string | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -167,6 +169,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.hold ? { hold: { note: o.hold.note, since: o.hold.since } } : {}),
     ...(o.hsReminded && o.hsReminded.length > 0 ? { hsReminded: [...o.hsReminded] } : {}),
     ...(o.ledgerRev ? { ledgerRev: o.ledgerRev } : {}),
+    ...(o.baseline ? { baseline: o.baseline } : {}),
     ...(o.lastFailFindings ? { lastFailFindings: o.lastFailFindings } : {}),
   };
 }
@@ -221,6 +224,7 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
       const r = (d.hsReminded as unknown[]).filter((x): x is string => typeof x === "string" && x !== "");
       if (r.length > 0) out.hsReminded = r;
     }
+    if (typeof d.baseline === "string" && d.baseline !== "") out.baseline = d.baseline;
     const h = d.hold as Record<string, unknown> | null | undefined;
     if (h && typeof h === "object" && typeof h.note === "string" && h.note && typeof h.since === "string") out.hold = { note: h.note.slice(0, 200), since: h.since.slice(0, 40) };
     const rev = count(d.ledgerRev);
