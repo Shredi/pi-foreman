@@ -109,7 +109,7 @@ test("sh('rm -rf /') inside a field is no longer floored; codemode code is unsca
 });
 
 test("(E) a cleanly parsed read of a config file beside key words is no config-keys hit; a write is", () => {
-  const F = "config/foreman.schema.json";
+  const F = "config/foreman.json";
   const reads = [
     `git diff -- ${F} && echo "gate: $(git rev-parse HEAD)"`,
     `for x in a b; do git diff -- ${F}; done; grep gate a`,
