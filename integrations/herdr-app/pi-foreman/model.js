@@ -251,12 +251,152 @@ export function parseRadarDoc(text, machine = null) {
   }
   matchPrs(nodes, openPrs);
   dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
-  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
+  const strip = machine ? null : parseStrip(doc.strip); // only this computer's strip is drawn
+  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}), ...(strip ? { strip } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
 export function parseRadar(text) {
   return parseRadarDoc(text)?.nodes ?? [];
+}
+
+// ---- status strip --------------------------------------------------------------------------------------------
+// `strip` of the local radar document (docs/herdr.md "Status strip"): validated here, drawn by main.js from the lines below.
+
+const STRIP_MAX_HISTORY = 60;
+const STRIP_MAX_DISKS = 8;
+const STRIP_MAX_QUOTAS = 12;
+const STRIP_MAX_REASONS = 6;
+const STRIP_LABEL = 18;
+const SPARK = "▁▂▃▄▅▆▇█";
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const tone = (v, allowed) => (typeof v === "string" && allowed.includes(v) ? v : "neutral");
+const LOAD_TONES = ["neutral", "amber", "red"];
+const QUOTA_TONES = ["neutral", "green", "amber", "red"];
+const label = (v, max = 40) => str(v).replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
+
+/** The strip of a radar document, validated: null (nothing to draw), `{stale: true}`, or
+ *  `{at, cpu, mem, level, disks, quotas}` (a part that is off is null / []). Lists are bounded, percentages clamped, an unknown tone is neutral. */
+export function parseStrip(raw) {
+  if (!isObj(raw)) return null;
+  if (raw.stale === true) return { stale: true };
+  if (raw.version !== 1) return null;
+  const pct = (v) => { const n = finite(v); return n === null ? null : clamp(n, 0, 100); };
+  const cpu = isObj(raw.cpu)
+    ? { pct: pct(raw.cpu.pct), history: listOf(raw.cpu.history).map(finite).filter((v) => v !== null).slice(-STRIP_MAX_HISTORY).map((v) => clamp(v, 0, 100)), tone: tone(raw.cpu.tone, LOAD_TONES) }
+    : null;
+  const mem = isObj(raw.mem) ? { pct: pct(raw.mem.pct), tone: tone(raw.mem.tone, LOAD_TONES) } : null;
+  const level = isObj(raw.level)
+    ? { level: label(raw.level.level, 12) || "ok", reasons: listOf(raw.level.reasons).filter((r) => typeof r === "string").map((r) => label(r, 40)).filter(Boolean).slice(0, STRIP_MAX_REASONS) }
+    : null;
+  const disks = listOf(raw.disks).filter(isObj).slice(0, STRIP_MAX_DISKS).map((d) => (d.missing === true
+    ? { label: label(d.label), missing: true }
+    : { label: label(d.label), missing: false, usedPct: pct(d.usedPct), freeGB: finite(d.freeGB) === null ? null : Math.max(0, d.freeGB), tone: tone(d.tone, LOAD_TONES) }));
+  const quotas = listOf(raw.quotas).filter(isObj).slice(0, STRIP_MAX_QUOTAS).map((q) => {
+    const used = finite(q.used);
+    const reset = typeof q.resetsAt === "string" ? Date.parse(q.resetsAt) : NaN;
+    return {
+      label: label(q.label) || label(q.key),
+      used: used === null ? null : clamp(used, 0, 2),
+      pace: finite(q.pace) === null ? null : clamp(q.pace, 0, 1),
+      resetsAt: Number.isFinite(reset) ? reset : null,
+      tone: tone(q.tone, QUOTA_TONES),
+    };
+  });
+  const at = typeof raw.at === "string" ? Date.parse(raw.at) : NaN;
+  return { at: Number.isFinite(at) ? at : null, cpu, mem, level, disks, quotas };
+}
+
+/** One glyph per value (0 to 100), `▁` lowest, `█` highest. */
+export function sparkline(values) {
+  return listOf(values).map((v) => SPARK[clamp(Math.round((clamp(num(v), 0, 100) / 100) * 7), 0, 7)]).join("");
+}
+
+/** A bar of `cells` cells filled by `pct` (0 to 100). */
+export function stripBar(pct, cells = 10) {
+  const n = clamp(Math.round((clamp(num(pct), 0, 100) / 100) * cells), 0, cells);
+  return "█".repeat(n) + "░".repeat(cells - n);
+}
+
+/** The usage bar: 15 cells filled by `used` (0 to 2, over 1 is a full bar); the pace marker `│` takes the cell at `pace` (0 to 1) when there is one. */
+export function quotaBar(used, pace = null, cells = 15) {
+  const n = clamp(Math.round(clamp(num(used), 0, 1) * cells), 0, cells);
+  const out = [...("█".repeat(n) + "░".repeat(cells - n))];
+  if (typeof pace === "number" && Number.isFinite(pace)) out[clamp(Math.floor(clamp(pace, 0, 1) * cells), 0, cells - 1)] = "│";
+  return out.join("");
+}
+
+/** "resets Thu 21:00" within 7 days of `now` (local time), else "resets 1 Dec"; "" without a reset time. */
+export function resetText(resetsAt, now) {
+  if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return "";
+  const d = new Date(resetsAt);
+  if (resetsAt - now <= 7 * 86400000) return `resets ${WEEKDAYS[d.getDay()]} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `resets ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+const pctText = (v) => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
+const fixed = (s, w) => (s.length > w ? `${s.slice(0, w - 1)}…` : s.padEnd(w));
+
+/** The dot of the load guard: amber at high, red at critical, else neutral; the reason words only when it is not ok. */
+function levelSegs(level) {
+  if (!level) return [];
+  const toneOf = level.level === "critical" ? "red" : level.level === "high" ? "amber" : "neutral";
+  const text = toneOf === "neutral" ? level.level : (level.reasons.join(", ") || level.level);
+  return [{ text: "●", tone: toneOf }, { text: ` ${text}`, tone: toneOf }];
+}
+
+/** The unfolded strip as rows `{id, segs: [{text, tone}]}`: cpu / memory / level, one row per disk and per usage row. `{stale: true}` is one line
+ *  with dashes; null draws nothing. */
+export function stripRows(strip, now = Date.now()) {
+  if (!isObj(strip)) return [];
+  if (strip.stale) return [{ id: "stale", segs: [{ text: "status: no main session measuring  cpu —  mem —", tone: "neutral" }] }];
+  const rows = [];
+  const head = [];
+  const gap = () => (head.length ? head.push({ text: "   ", tone: "neutral" }) : 0);
+  if (strip.cpu) {
+    gap();
+    head.push({ text: "cpu ", tone: "neutral" });
+    if (strip.cpu.history.length) head.push({ text: `${sparkline(strip.cpu.history)} `, tone: strip.cpu.tone });
+    head.push({ text: ` ${pctText(strip.cpu.pct)}`, tone: strip.cpu.tone });
+  }
+  if (strip.mem) {
+    gap();
+    head.push({ text: "mem ", tone: "neutral" }, { text: strip.mem.pct === null ? "░░░░░░░░░░ —" : `${stripBar(strip.mem.pct)} ${pctText(strip.mem.pct)}`, tone: strip.mem.tone });
+  }
+  if (strip.level) { gap(); head.push(...levelSegs(strip.level)); }
+  if (head.length) rows.push({ id: "head", segs: head });
+  const w = Math.min(STRIP_LABEL, Math.max(0, ...strip.disks.map((d) => d.label.length), ...strip.quotas.map((q) => q.label.length)));
+  strip.disks.forEach((d, i) => {
+    const segs = [{ text: `${fixed(d.label, w)} `, tone: "neutral" }];
+    if (d.missing || d.usedPct === null) segs.push({ text: "—", tone: "neutral" });
+    else segs.push({ text: `${stripBar(d.usedPct)} ${pctText(d.usedPct)}`, tone: d.tone }, { text: d.freeGB === null ? "" : `   ${Math.round(d.freeGB)} GB free`, tone: "neutral" });
+    rows.push({ id: `disk:${i}`, segs });
+  });
+  strip.quotas.forEach((q, i) => {
+    const segs = [{ text: `${fixed(q.label, w)} `, tone: "neutral" }];
+    if (q.used === null) segs.push({ text: "—", tone: "neutral" });
+    else {
+      const reset = resetText(q.resetsAt, now);
+      segs.push({ text: `${quotaBar(q.used, q.pace)}  ${Math.round(q.used * 100)}%`, tone: q.tone }, { text: reset ? `   ${reset}` : "", tone: "neutral" });
+    }
+    rows.push({ id: `quota:${i}`, segs });
+  });
+  return rows;
+}
+
+/** The folded strip as segments of one line "cpu N%  mem N%  ● level" (only the parts that are on); [] for nothing. */
+export function stripSummary(strip) {
+  if (!isObj(strip)) return [];
+  if (strip.stale) return [{ text: "status: no main session measuring", tone: "neutral" }];
+  const segs = [];
+  const add = (text, toneName = "neutral") => segs.push({ text: segs.length ? `  ${text}` : text, tone: toneName });
+  if (strip.cpu) add(`cpu ${pctText(strip.cpu.pct)}`, strip.cpu.tone);
+  if (strip.mem) add(`mem ${pctText(strip.mem.pct)}`, strip.mem.tone);
+  if (strip.level) add(`● ${strip.level.level}`, levelSegs(strip.level)[0].tone);
+  return segs;
 }
 
 // ---- tree ----------------------------------------------------------------------------------------------------
@@ -414,7 +554,7 @@ export function radarKey(rec) {
   const strip = (n) => (isObj(n)
     ? { ...n, blockedS: age(n.blockedS), waits: listOf(n.waits).map((w) => ({ ...w, ageS: age(w?.ageS) })), tasks: listOf(n.tasks).map((t) => ({ ...t, ageS: age(t?.ageS) })), children: listOf(n.children).map(strip) }
     : n);
-  return JSON.stringify([listOf(rec.nodes).map(strip), rec.openPrs ?? null, rec.openPrsAt ?? null]);
+  return JSON.stringify([listOf(rec.nodes).map(strip), rec.openPrs ?? null, rec.openPrsAt ?? null, rec.strip ?? null]);
 }
 
 /** Status shown for an hc child terminal: the agent list wins over the terminal's own status. */

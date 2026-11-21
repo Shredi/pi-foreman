@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
+  stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
@@ -271,7 +271,7 @@ export default class ForemanAgents extends View {
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
           const doc = r.code === 0 ? parseRadarDoc(r.stdout, machine) : null;
-          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : null;
+          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, strip: doc.strip ?? null, tried: Date.now() } : null;
         } catch {
           next = null;
         }
@@ -809,6 +809,30 @@ export default class ForemanAgents extends View {
         .hover((x) => x.bg(t.hover)).on_click(more).child(`+${n - shown.length} more`))));
   }
 
+  // The status strip above the list (local radar's `strip`): one header row (chevron; the cpu / memory / level line, folded the summary) and, unfolded,
+  // one row per disk and usage row in a Collapsible. Tones: neutral is muted, the rest from the PR palette. No strip, no element.
+  statusStrip(t, now) {
+    const strip = this.radar.get("local")?.ok ? this.radar.get("local").strip : null;
+    const rows = guard(() => (strip ? stripRows(strip, now) : []), []);
+    if (rows.length === 0) return null;
+    const fid = "strip";
+    const folded = this.folded.has(fid);
+    const color = { ...tones(t), neutral: t.muted };
+    const line = (segs) => h_flex().flex_1().min_w(0).items_center().overflow_hidden().text_size(10.5).text_color(t.muted)
+      .children(segs.map((g) => div().flex_none().text_color(color[g.tone] ?? t.muted).child(g.text)));
+    const headSegs = folded ? stripSummary(strip) : rows[0].segs;
+    const body = folded ? [] : rows.slice(1);
+    const toggle = (_e, cx) => { if (this.folded.has(fid)) this.folded.delete(fid); else this.folded.add(fid); cx.notify(); };
+    const head = h_flex().id("strip-head").pl(8).pr(8).h(20).flex_none().gap(4).items_center().cursor_pointer()
+      .hover((x) => x.bg(t.hover)).on_click(toggle)
+      .child(this.foldSlot(t, fid, true, { folded }))
+      .child(line(headSegs));
+    return Collapsible.new().id("strip").flex().flex_col().flex_none().px(6).pb(4).open(body.length > 0).child(head)
+      .when(body.length > 0, (el) => el.content(v_flex().flex_none().pl(28).pr(8).gap(1)
+        .children(body.map((r) => h_flex().id(`strip-${r.id}`).flex_none().h(16).items_center().text_size(10.5).text_color(t.muted)
+          .children(r.segs.map((g) => div().flex_none().text_color(color[g.tone] ?? t.muted).child(g.text)))))));
+  }
+
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.
   openPrRowFallback(t, g) {
     const n = Array.isArray(g?.prs) ? g.prs.length : 0;
@@ -997,6 +1021,8 @@ export default class ForemanAgents extends View {
     if (this.hotCard !== null && !this.seenChips.has(this.hotCard)) this.hotCard = null;
     const body = [title];
     if (list.length === 0) body.push(empty);
+    const strip = this.prGuard(() => this.statusStrip(t, now), null);
+    if (strip) body.push(strip);
     body.push(scroller, footer);
     const view = v_flex().min_h(0).size_full().text_size(13).bg(t.chrome).border_t(1).border_color(t.border).children(body);
     this.renderOpen = false; // the render reached its end
