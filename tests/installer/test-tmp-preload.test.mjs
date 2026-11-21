@@ -6,10 +6,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PRELOAD = path.join(ROOT, "scripts", "test_tmp_root_preload.mjs");
+const PRELOAD = pathToFileURL(path.join(ROOT, "scripts", "test_tmp_root_preload.mjs")).href;
 const DAY = 24 * 60 * 60 * 1000;
 
 const MADE = [];
