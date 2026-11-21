@@ -664,7 +664,20 @@ async function main(rawArgv, env = process.env) {
       fs.mkdirSync(runsDir, { recursive: true });
       const tmp = path.join(runsDir, `.${id}.tmp`);
       fs.writeFileSync(tmp, JSON.stringify(record));
-      fs.renameSync(tmp, recordFile);
+      // On Windows the rename fails (EPERM/EBUSY) while a reader has the target open: retry, then write in place.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          fs.renameSync(tmp, recordFile);
+          break;
+        } catch (e) {
+          if (attempt >= 5) {
+            fs.writeFileSync(recordFile, JSON.stringify(record));
+            fs.rmSync(tmp, { force: true });
+            break;
+          }
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        }
+      }
     } catch {}
   };
   writeRecord();

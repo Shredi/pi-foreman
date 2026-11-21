@@ -688,15 +688,16 @@ test("--stop-cwd stops this cwd's runs only; another cwd's run stays alive and f
 test("--list prints the holder and the runs, one line each", async () => {
   const dir = tmp();
   try {
-    const a = holdRun(dir, dir, 1500, 0);
+    const a = holdRun(dir, dir, 60_000, 0);
     const aId = await waitFor(() => a.id());
-    await waitFor(() => recordOf(dir, aId)?.state === "running");
+    await waitFor(() => recordOf(dir, aId)?.state === "running", 30_000);
     const r = await controlRun(dir, dir, ["--list"]);
     assert.equal(r.code, 0);
     const lines = r.out.trim().split("\n");
     assert.match(lines[0], new RegExp(`^holder: run ${aId} \\(pid \\d+, cwd .+\\), since \\d\\d:\\d\\d: .+`));
     assert.match(lines[1], new RegExp(`^run ${aId} \\(pid \\d+, cwd .+\\), running, since \\d\\d:\\d\\d: .+`));
-    assert.equal(await a.done, 0);
+    assert.equal((await controlRun(dir, dir, ["--stop", aId])).code, 0);
+    assert.equal(await a.done, 130);
     assert.equal((await controlRun(dir, dir, ["--list"])).out, "holder: none\n");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -943,7 +944,7 @@ test("a live lock without an id is not taken over for its file age (no heartbeat
   }
 });
 
-test("SIGTERM while waiting removes the record and the ticket; a stop file is removed when the run ends", async () => {
+test("SIGTERM while waiting removes the record and the ticket", { skip: process.platform === "win32" && "SIGTERM is TerminateProcess on Windows, no handler runs" }, async () => {
   const dir = tmp();
   try {
     writeHolder(dir, "busy-1");
@@ -955,7 +956,15 @@ test("SIGTERM while waiting removes the record and the ticket; a stop file is re
     assert.equal(recordOf(dir, id), undefined);
     assert.deepEqual(fs.readdirSync(runsDir(dir)), []);
     assert.deepEqual(tickets(dir), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
+test("a stop file is removed when the run ends", async () => {
+  const dir = tmp();
+  try {
+    writeHolder(dir, "busy-1");
     const s = launch(dir, dir, execArgs(""));
     const sid = await waitFor(() => s.id());
     await waitFor(() => recordOf(dir, sid)?.state === "waiting");
