@@ -40,17 +40,17 @@ test("the legend content is built only once the pointer rests on the ?", () => {
   const mod = view();
   let root = mod.render({});
   assert.equal(card(root).contentEl.kids.length, 0, "empty before hover");
-  assert.ok(!textOf(card(root)).includes("Pull request dots"));
+  assert.ok(!textOf(card(root)).includes("Pull request badges"));
   card(root).props.trigger.props.on_hover(true, { notify() {} });
   root = mod.render({});
   const text = textOf(card(root).contentEl);
-  assert.ok(text.includes("Pull request dots"));
+  assert.ok(text.includes("Pull request badges"));
   for (const e of PR_LEGEND) assert.ok(text.includes(e.words), `${e.key}: ${e.words}`);
   const rows = card(root).contentEl.kids.filter((k) => k?.kind === "h_flex");
   assert.equal(rows.length, PR_LEGEND.length, "one row per entry");
   rows.forEach((row, i) => {
     const ready = PR_LEGEND[i].key.startsWith("pr-ready");
-    assert.ok(els(row).some((e) => (ready ? hasText(e, "✓") : e.props?.size === 6)), `row ${PR_LEGEND[i].key} has its dot`);
+    assert.ok(els(row).some((e) => e.props?.font_semibold && e.props.text_size === 10 && hasText(e, "PR #12") && (!ready || hasText(e, "✓ "))), `row ${PR_LEGEND[i].key} has its badge`);
     assert.ok(hasText(els(row).find((e) => hasText(e, PR_LEGEND[i].words)) ?? {}, PR_LEGEND[i].words));
     if (PR_LEGEND[i].key !== "pr-conflict") assert.equal(prStateText(PR_LEGEND[i].sample), PR_LEGEND[i].words);
   });

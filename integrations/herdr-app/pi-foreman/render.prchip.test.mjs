@@ -38,7 +38,7 @@ const walk = (el, out = []) => {
 };
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
-const chipTexts = (el) => cards(el).flatMap((c) => texts(c.props.trigger)).filter((s) => s.startsWith("⎇"));
+const chipTexts = (el) => cards(el).flatMap((c) => texts(c.props.trigger)).filter((s) => s.startsWith("PR #"));
 
 const tree = (rootDots, kidDots) => treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5", dots: rootDots }, [sess("k", "kid", { hcTerminal: "t9", dots: kidDots })]));
 
@@ -46,7 +46,7 @@ test("a top-level and a child row carry their PR as a line below the row, no chi
   const out = render(tree([dot(16, "ok")], [dot(21, "fail")]));
   const rows = walk(out).filter((e) => /^(row:|agent:t5$)/.test(String(e.props?.id ?? "")));
   assert.equal(rows.filter((r) => cards(r).length > 0).length, 0, "no session row holds a chip");
-  assert.deepEqual(chipTexts(out).sort(), ["⎇ #16", "⎇ #21"]);
+  assert.deepEqual(chipTexts(out).sort(), ["PR #16", "PR #21"]);
   assert.equal(cards(out).length, 2, "one line each, no chip anywhere else");
   assert.ok(!texts(out).some((s) => /\d+ PRs?\b/.test(s)), "no summary line");
 });
@@ -55,14 +55,14 @@ test("several PRs: no chip on the title row, one line per PR below it (see rende
   const three = [dot(1, "ok"), dot(2, "fail"), dot(3, "ok")];
   const out = render(tree(three, three));
   assert.equal(cards(out).length, 6, "three lines on each of the two rows");
-  assert.deepEqual(chipTexts(out).slice(0, 3), ["⎇ #2", "⎇ #3", "⎇ #1"]);
+  assert.deepEqual(chipTexts(out).slice(0, 3), ["PR #2", "PR #3", "PR #1"]);
   assert.ok(!texts(out).some((s) => /\+\d/.test(s)), "no +k text");
   assert.deepEqual(chipPrs([{ number: 1, checks: ["ok"] }, { number: 2, checks: ["fail"] }, { number: 3, checks: ["ok"] }]).more.map((p) => p.number), [3, 1]);
 });
 
 test("two PRs stay two chips", () => {
   const out = render(tree([dot(1, "ok"), dot(2, "fail")], []));
-  assert.deepEqual(chipTexts(out), ["⎇ #2", "⎇ #1"]);
+  assert.deepEqual(chipTexts(out), ["PR #2", "PR #1"]);
 });
 
 test("the hover card names the dot's state and the PR number", () => {
