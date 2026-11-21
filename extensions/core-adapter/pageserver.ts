@@ -253,13 +253,14 @@ function lastRootTouch(stateDir: string): number {
 
 export const isLoopbackBind = (bind: string): boolean => ["127.0.0.1", "::1", "localhost"].includes(bind);
 
-/** `<base>/<id>/<relpath>`. Without `baseUrl` the base is the verified local end the health check connected to (IPv6 in brackets); only a loopback address qualifies, any other gives null (file link). A record without a verified end qualifies only as the IPv4 literal bind 127.0.0.1. Null too when `baseUrl` is set and the server listens on another port than configured (links use the base as written). */
+/** `<base>/<id>/<relpath>`. Without `baseUrl` the base is the verified local end the health check connected to (IPv6 in brackets); only a loopback bind with a loopback verified end qualifies, any other gives null (file link). A record without a verified end qualifies only as the IPv4 literal bind 127.0.0.1. Null too when `baseUrl` is set and the server listens on another port than configured (links use the base as written). */
 export function servedUrl(rec: ServerRecord, cfg: { baseUrl: string }, id: string, relpath: string): string | null {
   let base: string;
   if (cfg.baseUrl) {
     if (rec.port !== rec.configPort) return null;
     base = cfg.baseUrl.replace(/\/+$/, "");
   } else {
+    if (!isLoopbackBind(rec.bind)) return null;
     const end = verifiedOf.get(rec) ?? (rec.bind === "127.0.0.1" ? { address: "127.0.0.1", port: rec.port } : null);
     if (!end) return null;
     const a = normalizeAddr(end.address);
