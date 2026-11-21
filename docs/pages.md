@@ -42,7 +42,7 @@ Under a clickable link the dialog's dim line still shows the file link. An agent
 
 The server reads only the defaults, overlay and user layers (one server per machine, no project layer), at start and again every 60 seconds. It exits when `enabled` is false or when `port` or `bind` differ from the values it started with; the next link starts a new one. A changed `baseUrl` applies without a restart. Without Python, with a `defaults`-only result or with any config error (for example an unreadable user `foreman.json`) the server does not start, so a user's `enabled: false` is never ignored.
 
-If another program holds the port, the server takes a free port (the port of its last run when that is free, so links survive a restart) and links use it. When `baseUrl` is set and the server had to take another port, no served links are made until the port is free: the links stay file links, and `foreman pages status` and `/foreman doctor` say why. A non-loopback `bind` with an empty `baseUrl` gives file links too (the loopback address would not reach the server), and `/foreman doctor` says so. A `baseUrl` with a loopback bind is allowed, for a proxy or VPN forwarder in front.
+If another program holds the port, the server takes a free port (the port of its last run when that is free, so links survive a restart) and links use it. When `baseUrl` is set and the server had to take another port, no served links are made until the port is free: the links stay file links, and `foreman pages status` and `/foreman doctor` say why. A non-loopback `bind` with an empty `baseUrl` gives file links too, and `/foreman doctor` says so. A specific LAN address is not reachable on loopback. A wildcard bind (`0.0.0.0`, `::`) is, but the server does not hold the loopback address exclusively: another local process can bind that port on `127.0.0.1` or `::1` later and would receive the links. A `baseUrl` with a loopback bind is allowed, for a proxy or VPN forwarder in front.
 
 ## Restarts after an update
 
@@ -100,10 +100,11 @@ When the server is off (`enabled: false`), cannot start, the config call fails, 
 ## Limits
 
 - With no Pi session and no herdr-app running for 12 hours the server stops; old links then do not open until something starts it again.
+- A served link is tied to the port, not to one server run. After the server stops (12-hour idle exit, `foreman pages stop`, reboot), and for up to 60 seconds through the session's ensure cache, an old link clicked while another local process holds the port sends that process the root id (ids live 7 days). This needs a hostile local process; on WSL a Windows-side process can play that role. Changing this is an owner trade-off left for later.
 - A page folder is registered when its link is first made; a link from before a rotation or a 7-day drop shows "not found".
 - The page server is not a general web server: no directory index, no uploads, no other methods.
 
 Known limits, left for later:
 
 - A bind to a scoped IPv6 address (`fe80::1%en0`) fails closed: the health check cannot verify it, so links stay file links.
-- With bind `0.0.0.0`, a program squatting the same port on loopback makes `ensure` find no healthy server and start a second one on a free port; the first server keeps running until its idle check ends it as an orphan.
+- With bind `0.0.0.0`, a program squatting the same port on loopback makes `ensure` find no healthy server and start a second one on a free port; the first server keeps running until its 60-second config recheck ends it as an orphan.
