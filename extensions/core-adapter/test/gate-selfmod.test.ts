@@ -87,3 +87,12 @@ test("the ask never carries a model: the result is a plain ask record (the gate 
   const r = g("write", { path: ".pi/settings.json", content: "x" });
   assert.deepEqual(Object.keys(r as object).sort(), ["ask", "cause", "reason", "rule"]); // r79 item 5: the record carries its cause
 });
+
+test("child: the selfmod-state-read refusal names the earlier-findings block of a re-review task (D128); no other rule says it", () => {
+  const stateFile = path.join(agent, "pi-foreman", "state", "live", "o.json");
+  const r = g("read", { path: stateFile }, { child: true, role: "reviewer" });
+  assert.equal(ruleOf(r), "block:selfmod-state-read");
+  assert.match((r as { reason: string }).reason, /report this line to the foreman and continue with what you can\. On a re-review, the earlier findings are in your task under \[pi-foreman earlier findings\]; ask the foreman for any other report\./);
+  const w = g("write", { path: ".pi/settings.json", content: "x" }, { child: true, role: "reviewer" });
+  assert.doesNotMatch((w as { reason: string }).reason, /earlier findings/);
+});

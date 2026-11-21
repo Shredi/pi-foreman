@@ -30,6 +30,12 @@ export interface ReviewRecord {
   work?: number;
   /** The review's occasion when the verdict was recorded (`pre-pr` or `item`); absent in a record from before it: such a record is not a `[pre-pr]` PASS (prready.ts). */
   occasion?: "item" | "pre-pr";
+  /** The reviewed content: tree id of the work tree without `.workflow/` when it was the same at launch and at the verdict (a tree that changed while the reviewer ran is never recorded). A commit with exactly this tree gets an alias record (`via`); absent in a record from before it. */
+  tree?: string;
+  /** `same_tree`: an alias of a PASS for a later commit whose tree equals the reviewed `tree` (index.ts coverHead); it is no review round. */
+  via?: "same_tree";
+  /** When the record was appended (ms); absent in a record from before it. The same-tree alias reads it against the high-stakes FAILs of the session. */
+  at?: number;
 }
 
 export const MAX_REVIEWS = 50;
@@ -246,6 +252,16 @@ export async function reviewedHeadVia(
   }
 }
 
+/**
+ * The reviewed content of a run: `end` (work-tree id without `.workflow/` at the verdict) when the launch snapshot of the same checkout
+ * (`start`, taken the same way) equals it, else undefined: a tree that changed while the reviewer ran never counts.
+ */
+export function reviewedTree(start: ReadonlyMap<string, string | null> | undefined, cwd: string, end: string | null): string | undefined {
+  if (!start || !end) return undefined;
+  const at = startEntryOf(start, cwd);
+  return at && at.exact && at.head === end ? end : undefined;
+}
+
 /** Map set that drops the oldest entries past `max` (launch heads whose run end never arrives). */
 export function capSet<K, V>(m: Map<K, V>, k: K, v: V, max = MAX_REVIEWS): void {
   m.delete(k);
@@ -257,6 +273,7 @@ export function capSet<K, V>(m: Map<K, V>, k: K, v: V, max = MAX_REVIEWS): void 
 }
 
 export function appendReview(list: ReviewRecord[], rec: ReviewRecord): void {
+  if (rec.at === undefined) rec.at = Date.now();
   list.push(rec);
   if (list.length > MAX_REVIEWS) list.splice(0, list.length - MAX_REVIEWS);
 }
@@ -303,6 +320,9 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(sig ? { sig } : {}),
       ...(typeof r.work === "number" && Number.isInteger(r.work) && r.work >= 0 ? { work: r.work } : {}),
       ...(r.occasion === "item" || r.occasion === "pre-pr" ? { occasion: r.occasion } : {}),
+      ...(typeof r.tree === "string" && /^[0-9a-f]{40,64}$/.test(r.tree) ? { tree: r.tree } : {}),
+      ...(r.via === "same_tree" ? { via: "same_tree" as const } : {}),
+      ...(typeof r.at === "number" && Number.isFinite(r.at) ? { at: r.at } : {}),
     });
   }
   return out.slice(-MAX_REVIEWS);
@@ -315,6 +335,12 @@ export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 
 /** Arguments of a package PR tool that name the branch the pull request opens from (B-M7). */
 export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch", "head_branch"];
+
+/** The refs a PR tool call names (`owner:branch` reads as `branch`), else `HEAD`. */
+export function prBranchRefs(input: Record<string, unknown>): string[] {
+  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
+  return named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+}
 
 /**
  * The reviewed-head test for one branch argument: null when accepted, else the refusal with the shas it names.
@@ -340,8 +366,7 @@ async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]
  * not resolve in the workspace refuses (head_unknown).
  */
 export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}, headless: string | null = null): Promise<{ reason: PrRefusal; message: string } | null> {
-  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
-  const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+  const refs = prBranchRefs(input);
   for (const ref of refs) {
     const f = await headRefusal(cwd, ref, reviewed);
     if (!f) continue;
@@ -373,14 +398,13 @@ export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn:
 
 /**
  * The high-stakes test of the PR gate (highstakes.ts prRefusal), run after the head test passed: `scope` is the checkout the pull request comes from
- * (a sibling `pr_create {cwd}`), null for every checkout of the session; `heads` are the commits the call opens from.
+ * (a sibling `pr_create {cwd}`), null for the session's own checkout; `heads` are the commits the call opens from.
  */
 export type HighStakesGate = (scope: string | null, heads: readonly string[]) => Promise<{ reason: string; message: string } | null>;
 
 /** The commits the branch arguments of a PR tool call name (workspace HEAD without one), unresolvable ones left out. */
 async function prHeads(cwd: string, input: Record<string, unknown>): Promise<string[]> {
-  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
-  const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+  const refs = prBranchRefs(input);
   const out: string[] = [];
   for (const ref of refs) {
     const sha = await commitOf(cwd, ref);
@@ -400,7 +424,7 @@ async function siblingRefusal(session: string, dir: string, records: readonly Re
   if (heads.length === 0) return refuse("cwd_unreviewed", `no reviewer PASS is recorded for the checkout ${top}. Run a reviewer with cwd ${top} on its head, then retry pr_create {cwd}`);
   const cur = await commitOf(top, "HEAD");
   if (!cur || !heads.includes(cur)) return refuse("cwd_stale", `the recorded reviewer PASS for ${top} is for another commit than its HEAD (PASS ${heads[heads.length - 1]}, HEAD ${cur ?? "unreadable"}). Run a reviewer with cwd ${top} on the current head, then retry pr_create {cwd}`);
-  return (await prToolRefusal(top, heads, input)) ?? (hs ? hs(top, [cur]) : null);
+  return (await prToolRefusal(top, heads, input)) ?? (hs ? hs(top, [...new Set([cur, ...(await prHeads(top, input))])]) : null);
 }
 
 /** One line for the review panel block when the PR's checks failed ("" otherwise). */

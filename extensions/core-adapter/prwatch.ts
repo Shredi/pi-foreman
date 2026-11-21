@@ -896,6 +896,8 @@ export interface PrWatchesDeps {
   retrack?(key: PrKey): void | Promise<void>;
   /** The heads with a reviewer PASS in this session (code reviews of any checkout; reviews.ts passHeads); absent: the watch does not judge reviews. */
   reviewedHeads?(): readonly string[];
+  /** Called with the watched head at a tick when it is not among the reviewed heads, before it is judged: a same-tree commit of a reviewed content gets its alias record (index.ts coverHead). Absent: nothing. */
+  cover?(head: string): void | Promise<void>;
   /** Whether a head with no review record at all is reported (ceremony.reviewBeforePr); absent: yes. Read on every use. */
   reviewGate?(): boolean;
   /** The review facts of the PR's host head (prready.ts reviewFacts over the session's records); absent: no readiness rule, today's report lines and no draft handling. */
@@ -1285,6 +1287,13 @@ export class PrWatches {
       r = this.deps.storeEntry ? await this.deps.storeEntry(w.key) : { kind: "down" };
     } catch {
       r = { kind: "down" };
+    }
+    if (this.deps.cover && r.kind === "entry" && r.snap.head && this.passedSet() && !this.passedSet()!.has(r.snap.head)) {
+      try {
+        await this.deps.cover(r.snap.head);
+      } catch {
+        // a failing cover leaves the head as it was
+      }
     }
     w.busy = false;
     await this.settle(w, r);
