@@ -70,6 +70,8 @@ Keys outside safety that the project and session layers cannot loosen either
     tools.prGithubHosts              ignored (it names the hosts the PR tracker polls: user or overlay config only)
     tools.prReadyLabel               ignored (a project file must not make the harness write to the PR host: user or overlay config only)
     tools.prSources / prWake         ignored (prSources runs programs, prWake decides what wakes the session: user or overlay config only)
+    pages.server.enabled             only false is accepted (true starts a listener)
+    pages.server.port / bind / baseUrl   ignored (the listener's port, its bind address and the base URL of served links: user or overlay config only)
     tools.prPhases                   ignored (it makes the harness add a label to the PR host: user or overlay config only)
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
@@ -243,6 +245,9 @@ IGNORED_KEYS = [
     (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),
+    (("pages", "server", "port"), "the page server's port comes from the user or overlay config"),
+    (("pages", "server", "bind"), "the page server's bind address comes from the user or overlay config"),
+    (("pages", "server", "baseUrl"), "the base URL of served page links comes from the user or overlay config"),
     (("sidebar", "strip"), "the status strip (its usage sources run programs) comes from the user or overlay config"),
     (("radar", "openPrs"), "the open PRs source (a GitHub search through gh) comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
@@ -320,6 +325,7 @@ LAYER_TIGHTEN = [
     (("ceremony", "required", "*"), "union"),
     (("ceremony", "planReview", "*"), "true_only"),
     (("roles", "*", "timeoutMinutes"), "lower_only"),
+    (("pages", "server", "enabled"), "false_only"),
     (("intercom", "allowRemote"), "false_only"),
     (("intercom", "allowOpenPane"), "false_only"),
     (("wait", "ci"), "false_only"),

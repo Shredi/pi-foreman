@@ -65,10 +65,16 @@ export interface ShellSegment {
   opaque: OpaqueReason | null;
   /** Set (not enumerable) on a segment that stands for a function, select, coproc or arithmetic for, or a nested string too deep to walk: the source text of the bodies it holds. */
   bodies?: string[];
+  /** Set (not enumerable) with `bodies`: the harness constants (`FOREMAN_SCRATCH`, `FOREMAN_OUT`) the line they stand in still reads as constants; a body is parsed with only these. */
+  bodyConsts?: string[];
   /** Set (not enumerable): the texts of the here-documents and here-strings that feed stdin (`bash <<'E'` runs its body as code). */
   heredocs?: string[];
   /** Set (not enumerable) on a segment that is a stage of a `|` / `|&` pipeline: the pipeline's id (one per parse) and the stage's index; unset for any other command, and for a command inside a substitution of a stage. */
   pipeline?: { id: number; stage: number };
+  /** Set (not enumerable): the indexes into `argv` of the words that are not literal (a parameter, command or arithmetic expansion in them). */
+  dynamicArgs?: number[];
+  /** Set (true, not enumerable): one of the here-documents or here-strings in `heredocs` has an expansion in it, so the text the interpreter reads is not the text in the command. */
+  dynamicCode?: boolean;
   /** Set (true, not enumerable) on a `$( )` the walker stopped at on MAX_DEPTH with a script inside it: that script was never walked. */
   tooDeep?: boolean;
 }
@@ -138,6 +144,8 @@ interface Run {
   root?: string;
   /** Pipelines numbered so far (`ShellSegment.pipeline`). */
   pipes?: number;
+  /** The heredoc and here-string texts a shell expands (an unquoted tag with an expansion in the body, a here-string word that is not literal): `ShellSegment.dynamicCode`. */
+  dynDocs?: Set<string>;
   /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` are not resolved as constants and no trial of its own starts. */
   trial?: boolean;
 }
@@ -148,6 +156,10 @@ interface Scope {
   wrappers: string[];
   /** Indexes into `wrappers` of the pass-through wrappers (see `ShellSegment.passThrough`). */
   passAt?: number[];
+  /** Names an env-clearing wrapper (`env -i`, `env -`, `env -u NAME`, `exec -c`) took out of the environment of what it runs; `*` is every name. A nested `-c` string under it sees them empty. */
+  cleared?: string[];
+  /** The harness constants the script being walked reads as constants (set by `prepare`). */
+  consts?: string[];
   depth: number;
   /** stdin comes from a pipe, a heredoc, a here-string or `<`. */
   stdin: boolean;
@@ -315,6 +327,8 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
   Object.defineProperty(out, "passThrough", { value: [...(sc.passAt ?? [])], enumerable: false, configurable: true });
   Object.defineProperty(out, "heredocs", { value: [...(c ? c.docs : sc.docs)], enumerable: false, configurable: true });
+  const dyn = sc.run.dynDocs;
+  if (dyn && out.heredocs!.some((d) => dyn.has(d))) Object.defineProperty(out, "dynamicCode", { value: true, enumerable: false });
   if (sc.pipe) Object.defineProperty(out, "pipeline", { value: sc.pipe, enumerable: false, configurable: true });
   sc.run.out.push(out);
 }
@@ -322,7 +336,10 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
 /** Hangs the body texts on the segment just emitted (not enumerable: a segment's own keys stay as they were). */
 function withBodies(sc: Scope, bodies: string[]): void {
   const last = sc.run.out[sc.run.out.length - 1];
-  if (last && bodies.length > 0) Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
+  if (last && bodies.length > 0) {
+    Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
+    Object.defineProperty(last, "bodyConsts", { value: [...(sc.consts ?? [])], enumerable: false });
+  }
 }
 
 function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {
@@ -346,10 +363,15 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
       c.heredoc = true;
       if (stdin) {
         c.feeds = true;
-        if (r.type === "HereDoc") c.docs.push(r.body.text);
-        else if (r.target) {
+        const dyn = (c.sc.run.dynDocs ??= new Set());
+        if (r.type === "HereDoc") {
+          c.docs.push(r.body.text);
+          if (!r.delimiter?.quoted && r.body.parts?.some((p: any) => p.type !== "Literal")) dyn.add(r.body.text);
+        } else if (r.target) {
           const w = wordOf(r.target, vars);
-          c.docs.push(w.value ?? w.text.replace(/^(["'])([\s\S]*)\1$/, "$2"));
+          const text = w.value ?? w.text.replace(/^(["'])([\s\S]*)\1$/, "$2");
+          c.docs.push(text);
+          if (w.value === null) dyn.add(text);
         }
       }
       continue;
@@ -581,6 +603,7 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
   }
   const bad = rest.find((a) => a.value === null);
   seg(sc, prog, rest.map((a) => a.value ?? a.text), reason ?? bad?.reason ?? null, c, at);
+  if (bad) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "dynamicArgs", { value: rest.flatMap((a, i) => (a.value === null ? [i] : [])), enumerable: false });
   return cwd;
 }
 
@@ -623,9 +646,9 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
   const prog = p.value;
   const name = baseName(prog);
-  const wrap = (inner: W[], w: string, at = cwd, pass = false): string | null => {
+  const wrap = (inner: W[], w: string, at = cwd, pass = false, clears: string[] = []): string | null => {
     if (!inner.length) return plain(prog, name, [], c, cwd);
-    return run(inner, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, w], passAt: pass ? [...(sc.passAt ?? []), sc.wrappers.length] : sc.passAt } }, at);
+    return run(inner, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, w], passAt: pass ? [...(sc.passAt ?? []), sc.wrappers.length] : sc.passAt, cleared: clears.length ? [...(sc.cleared ?? []), ...clears] : sc.cleared } }, at);
   };
   const bad = (reason: OpaqueReason): string | null => {
     seg(sc, prog, rest.map((a) => a.value ?? a.text), reason, c, cwd);
@@ -688,6 +711,8 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const o = opts({ flags: "i0v", arg: "uC", long: ["--ignore-environment", "--null", "--debug", "--verbose"], longArg: ["--unset", "--chdir"] });
       if (typeof o === "string") return bad(o);
       let args = o.rest;
+      const clears = o.opts.filter((x) => x.name === "-u" || x.name === "--unset").map((x) => x.value ?? "");
+      if (has(o.opts, "-i", "--ignore-environment") || args[0]?.value === "-") clears.push("*");
       if (args[0]?.value === "-") args = args.slice(1);
       let at = cwd;
       const dir = val(o.opts, "-C", "--chdir");
@@ -696,7 +721,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
         if (!harmless((args[0].assign ?? asAssign(args[0]))!)) c.reason = pick(c.reason, "assignment");
         args = args.slice(1);
       }
-      wrap(args, "env", at, true);
+      wrap(args, "env", at, true, clears);
       return cwd;
     }
     case "timeout": {
@@ -746,7 +771,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const o = opts({ flags: "cl", arg: "a" });
       if (typeof o === "string" || !o.rest.length) return bad("shell_builtin");
       // a failed `exec cd` (execfail) leaves the shell where it was: the inner command's cwd is not taken over, as for `env`
-      wrap(o.rest, "exec");
+      wrap(o.rest, "exec", cwd, false, has(o.opts, "-c") ? ["*"] : []);
       return cwd;
     }
     case "stdbuf": {
@@ -844,6 +869,34 @@ function childAssigns(script: Script, src: string, rn: Run): Map<string, [string
 }
 
 /** The variable pre-pass for a flat script: `resolveVars` values per command, and the assignments the closed grammar accepts. */
+const onlyExpanded = (text: string, name: string): boolean => [...text.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g"))].every((m) => (text[m.index! - 1] === "$" || (text.slice(m.index! - 2, m.index!) === "${" && text[m.index! + name.length] === "}")));
+
+/**
+ * True when a word of `line` names the variable `name` other than as a `$NAME` / `${NAME}` expansion, read from the parser's decoded word values (quotes and escapes removed, an
+ * expansion left as a NUL): `printf -v FOREMAN_OU'T'`, `FOREMAN_OU\T=x`, `read FOREMAN_"OUT"`, also inside a nested `sh -c '...'` string. True too when the line does not parse.
+ */
+export function namedOutsideExpansion(line: string, name: string): boolean {
+  const words: string[] = [];
+  const walk = (n: any, depth: number): void => {
+    if (!n || typeof n !== "object" || depth > 200) return;
+    if (Array.isArray(n)) return n.forEach((c) => walk(c, depth + 1));
+    if (n.type === "Assignment") words.push(String(n.name));
+    if (n.type === "Word") {
+      const lit = (p: any): string => (p.type === "Literal" || p.type === "SingleQuoted" || p.type === "AnsiCQuoted" ? String(p.value) : p.type === "DoubleQuoted" || p.type === "LocaleString" ? p.parts.map(lit).join("") : "\0");
+      words.push(n.parts ? n.parts.map(lit).join("") : String(n.value));
+    }
+    for (const v of Object.values(n)) if (v && typeof v === "object") walk(v, depth + 1);
+  };
+  try {
+    const s = parse(line) as any;
+    if (!s || s.errors?.length) return true;
+    walk(s, 0);
+  } catch {
+    return true;
+  }
+  return !words.every((t) => onlyExpanded(t, name));
+}
+
 function prepare(script: Script, src: string, sc: Scope): void {
   const rn = sc.run;
   const pipes: string[][][] = [];
@@ -896,6 +949,9 @@ function prepare(script: Script, src: string, sc: Scope): void {
     }
   }
   const env = { ...rn.env };
+  // an env-clearing wrapper in front of a nested `-c` string: the inner shell sees the harness names empty
+  const gone = (name: string): boolean => !!sc.cleared && (sc.cleared.includes("*") || sc.cleared.includes(name));
+  for (const n of ["FOREMAN_SCRATCH", "FOREMAN_OUT"]) if (gone(n)) delete env[n];
   if (sc.cwd) env.PWD = sc.cwd;
   const res = resolveVars(pipes, [], env, () => false, src, rn.platform);
   const child = childAssigns(script, src, rn);
@@ -904,9 +960,10 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const runs = rn.trial || !(rn.env.FOREMAN_SCRATCH || rn.env.FOREMAN_OUT) ? true : runsCode(script, passNames(script, src, sc));
   // the mention rule reads the whole line, not the nested string being walked: `env FOREMAN_OUT=/x sh -c 'echo > $FOREMAN_OUT/f'` rebinds it
   const whole = rn.root ?? src;
-  const harnessConst = (name: string): boolean => !!rn.env[name] && !runs && [...whole.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g"))].every((m) => (whole[m.index! - 1] === "$" || (whole.slice(m.index! - 2, m.index!) === "${" && whole[m.index! + name.length] === "}")));
+  const harnessConst = (name: string): boolean => !!env[name] && !runs && onlyExpanded(whole, name) && ![whole, src, ...rn.strings].some((t) => namedOutsideExpansion(t, name));
   const scratchConst = harnessConst("FOREMAN_SCRATCH");
   const outConst = harnessConst("FOREMAN_OUT");
+  sc.consts = [...(scratchConst ? ["FOREMAN_SCRATCH"] : []), ...(outConst ? ["FOREMAN_OUT"] : [])];
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {

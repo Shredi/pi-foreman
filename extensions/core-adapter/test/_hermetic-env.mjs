@@ -61,6 +61,10 @@ if (process.platform !== "win32") {
   process.on("exit", () => fs.rmSync(appHome, { recursive: true, force: true }));
 }
 
+// No test may start the page server (pageserver.ts): the session code asks pagelinks.ts, whose seed here answers "no served URL" (file links stay).
+// Tests of served links set `pageLinks.url` themselves.
+globalThis[Symbol.for("pi-foreman.page-url-seed")] = async () => null;
+
 // The agent dir every session of a test process resolves (`piAgentDir` in env.ts, Pi's getAgentDir): an empty temp dir, so a real session
 // a test opens (createAgentSession) never writes the samplers' strip.json, pressure.json or usage lines under the real ~/.pi/agent.
 // The variable is cleared above; a test that needs its own agent dir sets it itself.
