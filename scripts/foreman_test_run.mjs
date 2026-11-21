@@ -1,5 +1,6 @@
 // Runs a test suite behind a machine-wide lock so parallel sessions queue instead of overloading the host.
 // Usage: node scripts/foreman_test_run.mjs [--timeout <s>] <node args and globs...>      -> node <leading options> --test --test-concurrency=N <globs>
+//        node scripts/foreman_test_run.mjs [--timeout <s>] --targeted <node args and globs/files...>  -> the same behind a shared slot
 //        node scripts/foreman_test_run.mjs [--timeout <s>] --exec -- <command> [args...]  -> the command, lock only (no concurrency flag)
 // Time limit: a leading `--timeout <s>` or env FOREMAN_TEST_TIMEOUT=<s> (flag wins; positive number, fractions allowed) is one deadline
 // for the lock wait plus the run, also with the lock off. When it passes, the run and its descendants are stopped (SIGTERM, after 5 s
@@ -11,6 +12,10 @@
 // the stopped run exits 130. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
 // The holder touches the lock file every 5 s (heartbeat); a lock is stale when its pid is dead or the heartbeat is older than 60 s. A live
 // holder is never taken over: it caps its own run at FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) and exits 124.
+// `--targeted <node args and globs/files...>` is a node-mode run that takes one of FOREMAN_TEST_TARGETED_SLOTS (default 2) machine-wide
+// shared slots (<lockdir>/test-slot-<k>, one queue) instead of the exclusive lock, so it never waits for or blocks a full-suite run; its
+// --test-concurrency is max(1, cores / FOREMAN_TEST_TARGETED_SHARE) (default share 4); FOREMAN_TEST_CONCURRENCY does not apply to it.
+// Same run id, record (mode targeted|suite), --stop, heartbeat/stale takeover, run cap and wait limits as the full-suite lock.
 // Leading node options (`--import ./x.mjs`, other `-x` flags) stay before `--test`; the first plain argument starts the globs.
 // Env: FOREMAN_TEST_LOCK=0 (or a truthy CI) skips the lock; FOREMAN_TEST_CONCURRENCY=N sets --test-concurrency (default
 // half the cores); FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) is the run cap of the lock holder;
@@ -43,6 +48,14 @@ export function testConcurrency({ env = process.env, cores = os.availableParalle
   const v = env.FOREMAN_TEST_CONCURRENCY;
   if (v !== undefined && /^\s*[1-9]\d*\s*$/.test(v)) return Number(v);
   return Math.max(1, Math.floor(cores / 2));
+}
+
+/** Targeted mode: {slots, concurrency}; FOREMAN_TEST_TARGETED_SLOTS (default 2) and FOREMAN_TEST_TARGETED_SHARE (default 4) when positive integers, concurrency = max(1, floor(cores / share)). */
+export function targetedSettings({ env = process.env, cores = os.availableParallelism() } = {}) {
+  const pos = (v, d) => (v !== undefined && /^\s*[1-9]\d*\s*$/.test(v) ? Number(v) : d);
+  const slots = pos(env.FOREMAN_TEST_TARGETED_SLOTS, 2);
+  const share = pos(env.FOREMAN_TEST_TARGETED_SHARE, 4);
+  return { slots, concurrency: Math.max(1, Math.floor(cores / share)) };
 }
 
 /** NODE_OPTIONS for a node-mode run: the existing value kept, then `--require=<preload>`; JSON quoting escapes `\` and `"` the way node's parser reads them. */
@@ -154,6 +167,12 @@ export function lockDisabled(env = process.env) {
   return ci !== "" && ci !== "0" && ci !== "false";
 }
 
+/** The slot files of targeted mode: <lockdir>/test-slot-<k>, k = 0..slots-1. */
+export function slotPaths(env = process.env, slots = targetedSettings({ env }).slots) {
+  const dir = path.dirname(lockPath(env));
+  return Array.from({ length: slots }, (_, k) => path.join(dir, `test-slot-${k}`));
+}
+
 export function lockPath(env = process.env) {
   if (env.FOREMAN_TEST_LOCK_DIR) return path.join(env.FOREMAN_TEST_LOCK_DIR, "test-lock");
   let agentDir = env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
@@ -263,12 +282,13 @@ function pollQueue(dir, mine, now = Date.now()) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Thrown by acquireLock when `maxWaitMs` passed while a live run held the lock; `holder` is {pid, started, cwd} or undefined. */
+/** Thrown by acquireLock when `maxWaitMs` passed while a live run held the lock; `holder` is {pid, started, cwd} or undefined; `holders` lists the holders of all slots in slot mode. */
 export class LockWaitTimeout extends Error {
-  constructor(holder, waitedMs) {
+  constructor(holder, waitedMs, holders) {
     super("timed out waiting for the test lock");
     this.name = "LockWaitTimeout";
     this.holder = holder;
+    this.holders = holders;
     this.waitedMs = waitedMs;
   }
 }
@@ -291,6 +311,11 @@ export function holderText(h) {
   return `run ${h.id ?? "unknown"} (pid ${h.pid}, cwd ${h.cwd ?? "unknown"}), since ${hhmm(h.started)}: ${h.command ?? "unknown"}`;
 }
 
+/** The wait line of a targeted run: `waiting for a targeted test slot (B of N busy), <place>; held by: <holder>; <holder>`. */
+export function slotWaitLine(holders, slots, place) {
+  return `waiting for a targeted test slot (${holders.length} of ${slots} busy), ${place}; held by: ${holders.map(holderText).join("; ")}`;
+}
+
 const minutes = (ms) => Number((ms / 60_000).toFixed(1));
 
 /**
@@ -300,18 +325,23 @@ const minutes = (ms) => Number((ms / 60_000).toFixed(1));
  * each holder waited on. After `maxWaitMs` (unbounded when unset) without progress (the counter restarts whenever the holder
  * changes), or at the absolute `deadlineAt` (epoch ms), it throws LockWaitTimeout. `shouldStop()` is checked every poll: when true
  * the ticket is dropped and LockStopped is thrown. `id` and `command` go into the lock file.
+ * Slot mode (`files` given): one queue feeds any free file; the wait line lists all holders (see `slotWaitLine`) and
+ * `onHolder` gets the holder list; `file` names the queue (`<file>.queue`) and the takeover mutex.
  */
 export async function acquireLock(
   file,
-  { pollMs = POLL_MS, stderr = process.stderr, maxWaitMs, deadlineAt, announceMs = 60_000, onHolder, shouldStop, id, command, heartbeatMs = HEARTBEAT_MS, heartbeatStaleMs = HEARTBEAT_STALE_MS } = {},
+  { files: slotFiles, pollMs = POLL_MS, stderr = process.stderr, maxWaitMs, deadlineAt, announceMs = 60_000, onHolder, shouldStop, id, command, heartbeatMs = HEARTBEAT_MS, heartbeatStaleMs = HEARTBEAT_STALE_MS } = {},
 ) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  const slotMode = slotFiles !== undefined;
+  const files = slotFiles ?? [file];
   const body = JSON.stringify({ id, pid: process.pid, started: new Date().toISOString(), cwd: process.cwd(), command, host: os.hostname() });
   let waitStart;
   let progressStart;
   let holderKey;
   let lastAnnounce = 0;
   let holder;
+  let lastHolders = [];
   const queueDir = `${file}.queue`;
   let ticket = writeTicket(queueDir);
   const dropTicket = () => removeTicket(queueDir, ticket);
@@ -325,24 +355,28 @@ export async function acquireLock(
     const q = pollQueue(queueDir, ticket);
     ticket = q.mine;
     if (q.first) {
-      try {
-        fs.writeFileSync(file, body, { flag: "wx" });
+      for (const f of files) {
+        try {
+          fs.writeFileSync(f, body, { flag: "wx" });
+        } catch (e) {
+          if (e.code !== "EEXIST") throw e;
+          continue;
+        }
         if (dropTicket()) process.removeListener("exit", dropTicket);
         const beat = setInterval(() => {
           try {
             const t = new Date();
-            fs.utimesSync(file, t, t);
+            fs.utimesSync(f, t, t);
           } catch {}
         }, heartbeatMs);
         beat.unref();
         return () => {
           clearInterval(beat);
-          if (readLock(file)?.pid === process.pid) fs.rmSync(file, { force: true });
+          if (readLock(f)?.pid === process.pid) fs.rmSync(f, { force: true });
         };
-      } catch (e) {
-        if (e.code !== "EEXIST") throw e;
       }
-      if (staleReason(file, heartbeatStaleMs)) {
+      const stale = files.filter((f) => staleReason(f, heartbeatStaleMs));
+      if (stale.length) {
         // Takeovers are serialised by a short-lived mutex: staleness is re-checked while holding it, so a live lock that
         // another waiter created after our first check is never removed. A mutex older than 10 s counts as abandoned.
         const mutex = `${file}.takeover`;
@@ -358,7 +392,7 @@ export async function acquireLock(
         }
         if (held) {
           try {
-            if (staleReason(file, heartbeatStaleMs)) fs.rmSync(file, { force: true });
+            for (const f of stale) if (staleReason(f, heartbeatStaleMs)) fs.rmSync(f, { force: true });
           } finally {
             fs.rmSync(mutex, { force: true });
           }
@@ -371,27 +405,43 @@ export async function acquireLock(
     const now = Date.now();
     waitStart ??= now;
     progressStart ??= now;
-    const info = readLock(file);
-    if (info) {
-      holder = info;
-      onHolder?.(info);
-      const key = info.id ?? `pid ${info.pid} ${info.started}`;
-      const place = `queue position ${q.position} of ${q.total}`;
-      if (key !== holderKey) {
-        if (holderKey !== undefined) progressStart = now;
-        holderKey = key;
-        stderr.write(`waiting for the test lock held by ${holderText(info)}, ${place}\n`);
-        lastAnnounce = now;
-      } else if (now - lastAnnounce >= announceMs) {
-        stderr.write(`still waiting for the test lock held by ${holderText(info)}, ${place}; waited ${minutes(now - waitStart)} min\n`);
-        lastAnnounce = now;
+    const place = `queue position ${q.position} of ${q.total}`;
+    if (slotMode) {
+      const holders = files.map((f) => readLock(f)).filter(Boolean);
+      if (holders.length) {
+        holder = holders[0];
+        onHolder?.(holders);
+        const key = holders.map((h) => h.id ?? `pid ${h.pid} ${h.started}`).join(",");
+        if (key !== holderKey || now - lastAnnounce >= announceMs) {
+          if (holderKey !== undefined && key !== holderKey) progressStart = now;
+          holderKey = key;
+          stderr.write(`${slotWaitLine(holders, files.length, place)}\n`);
+          lastAnnounce = now;
+        }
+      }
+      lastHolders = holders;
+    } else {
+      const info = readLock(file);
+      if (info) {
+        holder = info;
+        onHolder?.(info);
+        const key = info.id ?? `pid ${info.pid} ${info.started}`;
+        if (key !== holderKey) {
+          if (holderKey !== undefined) progressStart = now;
+          holderKey = key;
+          stderr.write(`waiting for the test lock held by ${holderText(info)}, ${place}\n`);
+          lastAnnounce = now;
+        } else if (now - lastAnnounce >= announceMs) {
+          stderr.write(`still waiting for the test lock held by ${holderText(info)}, ${place}; waited ${minutes(now - waitStart)} min\n`);
+          lastAnnounce = now;
+        }
       }
     }
     const left = Math.min(maxWaitMs === undefined ? Infinity : maxWaitMs - (now - progressStart), deadlineAt === undefined ? Infinity : deadlineAt - now);
     if (left <= 0) {
       dropTicket();
       process.removeListener("exit", dropTicket);
-      throw new LockWaitTimeout(holder, now - progressStart);
+      throw new LockWaitTimeout(holder, now - progressStart, slotMode ? lastHolders : undefined);
     }
     await sleep(Math.min(pollMs, left));
   }
@@ -518,6 +568,10 @@ async function control(argv, env) {
   if (argv[0] === "--list") {
     const h = readLock(lockPath(env));
     process.stdout.write(`holder: ${h ? holderText(h) : "none"}\n`);
+    slotPaths(env).forEach((f, k) => {
+      const sh = readLock(f);
+      if (sh) process.stdout.write(`slot ${k}: ${holderText(sh)}\n`);
+    });
     for (const r of liveRuns(dir)) process.stdout.write(`${runLine(r)}\n`);
     return 0;
   }
@@ -570,6 +624,13 @@ async function main(rawArgv, env = process.env) {
   const elapsedS = () => ((Date.now() - started) / 1000).toFixed(1);
   let cmd;
   let args;
+  const targeted = argv[0] === "--targeted";
+  if (targeted) argv = argv.slice(1);
+  if (targeted && !argv.length) {
+    process.stderr.write("usage: foreman_test_run.mjs [--timeout <s>] --targeted <node args and globs/files...>\n");
+    return 2;
+  }
+  const targetedCfg = targetedSettings({ env });
   if (argv[0] === "--exec") {
     const rest = argv[1] === "--" ? argv.slice(2) : argv.slice(1);
     if (!rest.length) {
@@ -579,7 +640,7 @@ async function main(rawArgv, env = process.env) {
     [cmd, ...args] = rest;
   } else {
     cmd = process.execPath;
-    args = nodeTestArgs(argv, testConcurrency({ env }));
+    args = nodeTestArgs(argv, targeted ? targetedCfg.concurrency : testConcurrency({ env }));
   }
   const id = `${started.toString(36)}-${process.pid}`;
   const runsDir = runsDirOf(env);
@@ -589,6 +650,7 @@ async function main(rawArgv, env = process.env) {
     cwd: process.cwd(),
     command: trunc(argv[0] === "--exec" ? [cmd, ...args].join(" ") : ["node", ...args].join(" ")),
     started: new Date(started).toISOString(),
+    mode: targeted ? "targeted" : "suite",
     state: lockDisabled(env) ? "running" : "waiting",
   };
   const recordFile = path.join(runsDir, `${id}.json`);
@@ -608,14 +670,15 @@ async function main(rawArgv, env = process.env) {
   const stoppedLine = `foreman_test_run: run ${id} stopped on request\n`;
   process.stderr.write(`foreman_test_run: run ${id} (pid ${process.pid}, cwd ${process.cwd()}); stop it with: node scripts/foreman_test_run.mjs --stop ${id}\n`);
   let release = () => {};
-  let holder;
+  let holder; // the holder waited on, or the list of slot holders in targeted mode
   const maxMinutes = Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) : 30;
   const limitLine = () =>
-    `foreman_test_run: time limit of ${limitS} s reached after ${elapsedS()} s; stopped the run${holder ? `; waited for the lock held by ${holderText(holder)}` : ""}\n`;
+    `foreman_test_run: time limit of ${limitS} s reached after ${elapsedS()} s; stopped the run${holder ? `; waited for the ${targeted ? "slots held by" : "lock held by"} ${[holder].flat().map(holderText).join("; ")}` : ""}\n`;
   if (!lockDisabled(env)) {
     const waitMin = Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) : 20;
     try {
-      release = await acquireLock(lockPath(env), {
+      release = await acquireLock(targeted ? path.join(path.dirname(lockPath(env)), "test-slots") : lockPath(env), {
+        files: targeted ? slotPaths(env, targetedCfg.slots) : undefined,
         maxWaitMs: waitMin * 60_000,
         deadlineAt: limitMs === undefined ? undefined : started + limitMs,
         onHolder: (h) => (holder = h),
@@ -633,7 +696,8 @@ async function main(rawArgv, env = process.env) {
         process.stderr.write(limitLine());
         return 124;
       }
-      process.stderr.write(`foreman_test_run: gave up waiting for the test lock after ${minutes(e.waitedMs)} min; held by ${e.holder ? holderText(e.holder) : "an unknown run"}\n`);
+      const heldBy = targeted ? e.holders?.map(holderText).join("; ") : e.holder && holderText(e.holder);
+      process.stderr.write(`foreman_test_run: gave up waiting for the test ${targeted ? "slot" : "lock"} after ${minutes(e.waitedMs)} min; held by ${heldBy || "an unknown run"}\n`);
       return 75;
     }
   }

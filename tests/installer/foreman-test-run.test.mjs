@@ -789,3 +789,134 @@ test("the give-up timer counts from the last holder change: no progress ends the
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---- targeted mode: shared slots ----
+
+const { targetedSettings, slotPaths } = await import(pathToFileURL(SCRIPT).href);
+const T2 = { FOREMAN_TEST_TARGETED_SLOTS: "2" };
+const slotFile = (dir, k) => path.join(dir, `test-slot-${k}`);
+
+/** A test file that passes once `release` exists. */
+function gateTest(where, release) {
+  const f = path.join(where, `gate-${Math.random().toString(36).slice(2)}.test.mjs`);
+  fs.writeFileSync(
+    f,
+    `import { test } from "node:test";\nimport * as fs from "node:fs";\ntest("gate", async () => { while (!fs.existsSync(${JSON.stringify(release)})) await new Promise((r) => setTimeout(r, 20)); });\n`,
+  );
+  return f;
+}
+const targetedRun = (dir, cwd, file, extra = {}) => launch(dir, cwd, ["--targeted", file], { ...T2, ...extra });
+
+test("targetedSettings: defaults, overrides, invalid values, at least 1 worker", () => {
+  assert.deepEqual(targetedSettings({ env: {}, cores: 16 }), { slots: 2, concurrency: 4 });
+  assert.deepEqual(targetedSettings({ env: { FOREMAN_TEST_TARGETED_SLOTS: "3", FOREMAN_TEST_TARGETED_SHARE: "2" }, cores: 16 }), { slots: 3, concurrency: 8 });
+  assert.deepEqual(targetedSettings({ env: { FOREMAN_TEST_TARGETED_SLOTS: "0", FOREMAN_TEST_TARGETED_SHARE: "x" }, cores: 16 }), { slots: 2, concurrency: 4 });
+  assert.deepEqual(targetedSettings({ env: { FOREMAN_TEST_TARGETED_SLOTS: "-1", FOREMAN_TEST_TARGETED_SHARE: "1.5" }, cores: 8 }), { slots: 2, concurrency: 2 });
+  assert.equal(targetedSettings({ env: { FOREMAN_TEST_TARGETED_SHARE: "64" }, cores: 4 }).concurrency, 1);
+  assert.equal(targetedSettings({ env: { FOREMAN_TEST_CONCURRENCY: "9" }, cores: 8 }).concurrency, 2);
+  assert.deepEqual(slotPaths({ FOREMAN_TEST_LOCK_DIR: "/x" }, 2).map((p) => path.basename(p)), ["test-slot-0", "test-slot-1"]);
+});
+
+test("targeted: two runs hold slots at once, a third waits and prints both holders, then runs when one frees", async () => {
+  const dir = tmp();
+  const cwd = tmp();
+  try {
+    const rel = [path.join(cwd, "r0"), path.join(cwd, "r1"), path.join(cwd, "r2")];
+    const a = targetedRun(dir, cwd, gateTest(cwd, rel[0]));
+    const b = targetedRun(dir, cwd, gateTest(cwd, rel[1]));
+    const aId = await waitFor(() => a.id());
+    const bId = await waitFor(() => b.id());
+    await waitFor(() => recordOf(dir, aId)?.state === "running" && recordOf(dir, bId)?.state === "running");
+    assert.equal(recordOf(dir, aId).mode, "targeted");
+    assert.ok(fs.existsSync(slotFile(dir, 0)) && fs.existsSync(slotFile(dir, 1)));
+    const c = targetedRun(dir, cwd, gateTest(cwd, rel[2]));
+    const cId = await waitFor(() => c.id());
+    await waitFor(() => /waiting for a targeted test slot/.test(c.err));
+    assert.match(c.err, /waiting for a targeted test slot \(2 of 2 busy\), queue position 1 of 1; held by: run \S+ \(pid \d+, cwd [^)]*\), since \d\d:\d\d: [^;]*; run /);
+    assert.ok(c.err.includes(`run ${aId} `) && c.err.includes(`run ${bId} `));
+    assert.equal(recordOf(dir, cId).state, "waiting");
+    fs.writeFileSync(rel[0], "");
+    assert.equal(await a.done, 0);
+    await waitFor(() => recordOf(dir, cId)?.state === "running");
+    fs.writeFileSync(rel[1], "");
+    fs.writeFileSync(rel[2], "");
+    assert.equal(await b.done, 0);
+    assert.equal(await c.done, 0);
+    assert.ok(!fs.existsSync(slotFile(dir, 0)) && !fs.existsSync(slotFile(dir, 1)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("targeted: a full-suite lock holder does not block a targeted run, and a targeted run does not block the suite", async () => {
+  const dir = tmp();
+  const cwd = tmp();
+  try {
+    const hold = holdRun(dir, cwd, 2500, 7);
+    const hId = await waitFor(() => hold.id());
+    await waitFor(() => recordOf(dir, hId)?.state === "running");
+    const rel = path.join(cwd, "rel");
+    const t = targetedRun(dir, cwd, gateTest(cwd, rel));
+    const tId = await waitFor(() => t.id());
+    await waitFor(() => recordOf(dir, tId)?.state === "running");
+    assert.ok(!/waiting/.test(t.err));
+    const suite = launch(dir, cwd, execArgs("process.exit(0)"));
+    await waitFor(() => /waiting for the test lock/.test(suite.err));
+    assert.ok(!/targeted/.test(suite.err));
+    fs.writeFileSync(rel, "");
+    assert.equal(await t.done, 0);
+    assert.equal(await hold.done, 7);
+    assert.equal(await suite.done, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("targeted: a dead-pid slot holder is taken over", async () => {
+  const dir = tmp();
+  const cwd = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    for (const k of [0, 1]) fs.writeFileSync(slotFile(dir, k), JSON.stringify({ id: `dead-${k}`, pid: dead.pid, started: new Date().toISOString(), cwd: "/x", command: "c" }));
+    const rel = path.join(cwd, "rel");
+    fs.writeFileSync(rel, "");
+    const t = targetedRun(dir, cwd, gateTest(cwd, rel));
+    assert.equal(await t.done, 0);
+    assert.ok(!/waiting for a targeted/.test(t.err));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("targeted: --stop of a queued targeted run exits 130 and leaves the slot holders alive; --list shows the slots", async () => {
+  const dir = tmp();
+  const cwd = tmp();
+  try {
+    const rel = path.join(cwd, "rel");
+    const a = targetedRun(dir, cwd, gateTest(cwd, rel));
+    const b = targetedRun(dir, cwd, gateTest(cwd, rel));
+    const aId = await waitFor(() => a.id());
+    const bId = await waitFor(() => b.id());
+    await waitFor(() => recordOf(dir, aId)?.state === "running" && recordOf(dir, bId)?.state === "running");
+    const c = targetedRun(dir, cwd, gateTest(cwd, rel));
+    const cId = await waitFor(() => c.id());
+    await waitFor(() => recordOf(dir, cId)?.state === "waiting");
+    const l = await controlRun(dir, cwd, ["--list"]);
+    assert.match(l.out, /slot 0: run \S+/);
+    assert.match(l.out, /slot 1: run \S+/);
+    const s = await controlRun(dir, cwd, ["--stop", cId]);
+    assert.equal(s.code, 0);
+    assert.equal(await c.done, 130);
+    assert.equal(recordOf(dir, aId)?.state, "running");
+    assert.equal(recordOf(dir, bId)?.state, "running");
+    fs.writeFileSync(rel, "");
+    assert.equal(await a.done, 0);
+    assert.equal(await b.done, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
