@@ -1,6 +1,17 @@
 # pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|rounds|reports|pane-resume|features|knowledge [args]` for PowerShell. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = @(if ($args.Count -gt 1) { $args[1..($args.Count - 1)] })
+if (-not (Get-Command node -CommandType Application -ErrorAction SilentlyContinue)) {
+    # a GUI app's PATH has no node: the Node of the last Pi session (nodepath.ts) joins PATH
+    $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $HOME '.pi/agent' }
+    $rec = Join-Path $agentDir 'pi-foreman/state/node-path'
+    $nbin = if (Test-Path -LiteralPath $rec) { (Get-Content -LiteralPath $rec -TotalCount 1) } else { $null }
+    if ($nbin) {
+        $ndir = Split-Path -Parent $nbin
+        # only a folder that holds node(.exe) joins PATH (Pi may have run from a binary not named node)
+        if ($ndir -and ((Test-Path -LiteralPath (Join-Path $ndir 'node.exe') -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $ndir 'node') -PathType Leaf))) { $env:PATH = $ndir + [IO.Path]::PathSeparator + $env:PATH }
+    }
+}
 if ($sub -eq 'setup') {
     & node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" 2>$null
     if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('foreman setup needs Node >= 22.19'); exit 1 }
