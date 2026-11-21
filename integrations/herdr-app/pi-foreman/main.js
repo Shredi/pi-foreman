@@ -810,7 +810,7 @@ export default class ForemanAgents extends View {
   }
 
   // The status strip above the list (local radar's `strip`): one header row (chevron; the cpu / memory / level line, folded the summary) and, unfolded,
-  // one row per disk and usage row in a Collapsible. Tones: neutral is muted, the rest from the PR palette. No strip, no element.
+  // one row per disk and usage row in a Collapsible. Tones: a neutral measured value (`value`) is the PR green, other neutral text is muted, the rest from the PR palette. No strip, no element.
   statusStrip(t, now) {
     const strip = this.radar.get("local")?.ok ? this.radar.get("local").strip : null;
     const rows = guard(() => (strip ? stripRows(strip, now) : []), []);
@@ -820,7 +820,7 @@ export default class ForemanAgents extends View {
     const color = { ...tones(t), neutral: t.muted };
     // Text parts never shrink or clip (flex_none, no wrap); bars are boxes: a dim track, a fill in the tone, and for usage a thin pace marker.
     const part = (g, barW) => {
-      const ink = color[g.tone] ?? t.muted;
+      const ink = g.value && g.tone === "neutral" ? color.green : color[g.tone] ?? t.muted;
       if (g.bar) {
         const track = div().relative().h(6).rounded(3).bg(t.dim + "44")
           .when(barW, (el) => el.flex_none().w(barW)).when(!barW, (el) => el.flex_1().min_w(24).max_w(120))

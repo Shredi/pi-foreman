@@ -90,3 +90,39 @@ test("strip: text parts are separate non-shrinking elements, bars are boxes, the
   assert.ok(qt.props.flex_1 && qt.props.min_w === 24, "the usage bar takes the remaining width");
   assert.match(texts(q).join("|"), /160%/);
 });
+
+test("strip: traffic lights, a calm value draws green, dashes, a missing disk and the stale line stay dim", () => {
+  const doc = { ...strip, level: { level: "ok", reasons: [] }, disks: [{ label: "/", usedPct: 78, freeGB: 52, tone: "neutral" }, { label: "/gone", missing: true, usedPct: null, freeGB: null, tone: "neutral" }],
+    quotas: [{ key: "a", label: "Week", used: 0.3, pace: 0.5, resetsAt: null, tone: "neutral" }, { key: "b", label: "Five", used: null, pace: null, resetsAt: null, tone: "neutral" }] };
+  const all = walk(view(doc).render({}));
+  const byId = (id) => all.find((e) => idOf(e) === id);
+  const green = (e) => {
+    const els = walk(e);
+    return {
+      ink: els.find((x) => (x.kids ?? []).some((k) => typeof k === "string" && /%/.test(k)))?.props.text_color,
+      bar: els.find((x) => x.props?.h === 6 && x.props?.bg)?.kids[0]?.props.bg,
+      spark: els.find((x) => x.props?.items_end)?.kids[0]?.props.bg,
+    };
+  };
+  const head = byId("strip-line");
+  const cpu = green(head.kids[0]);
+  const mem = green(head.kids[1]);
+  const disk = green(byId("strip-disk:0"));
+  const quota = green(byId("strip-quota:0"));
+  const dim = byId("strip-disk:1").props.text_color;
+  assert.ok(cpu.ink && cpu.ink !== dim, "cpu percent is not the muted grey");
+  assert.equal(cpu.spark, cpu.ink, "the sparkline has the percent's colour");
+  assert.equal(mem.bar, mem.ink);
+  assert.equal(disk.bar, disk.ink);
+  assert.equal(quota.bar, quota.ink);
+  assert.equal(mem.ink, cpu.ink, "one green for all");
+  const levelEls = walk(head.kids[2]).filter((e) => (e.kids ?? []).some((k) => typeof k === "string"));
+  assert.ok(levelEls.length === 2 && levelEls.every((e) => e.props.text_color === cpu.ink), "the level dot and word at ok are green");
+  for (const id of ["strip-disk:1", "strip-quota:1"]) {
+    const dash = walk(byId(id)).filter((e) => (e.kids ?? []).includes("—"));
+    assert.equal(dash.length, 1);
+    assert.equal(dash[0].props.text_color, dim, `${id}: the dash stays dim`);
+  }
+  const stale = walk(view({ stale: true }).render({})).find((e) => (e.kids ?? []).some((k) => typeof k === "string" && /no main session/.test(k)));
+  assert.equal(stale.props.text_color, dim, "the stale line stays dim");
+});

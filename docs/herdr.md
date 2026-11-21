@@ -548,7 +548,7 @@ an agent dir, one holds a lease (`strip.lease`) and measures; the others stand b
   session config, so a project can neither start a script nor shorten the interval.
 - **CPU and memory.** CPU is the busy share of all cores between two measurements (the first has no value). Memory used is
   `1 - available/total`, where available is the load guard's own number when its sample is fresh, else the operating system's free memory.
-  Grey while the load guard is calm, amber past `resources.maxLoadPerCore`, red past twice that; memory and disks turn amber below
+  Green while the load guard is calm (traffic-light colours: the herdr-app strip draws a calm cpu, memory, disk, level and usage value green; dashes, a missing disk, the stale line and the labels stay grey), amber past `resources.maxLoadPerCore`, red past twice that; memory and disks turn amber below
   `resources.minFreeMemMB` / `minFreeDiskGB` and red below half of it.
 - **Disks.** The free space comes from the system's free-space call for each path (on Windows a bare drive letter such as `C:`
   is read as `C:\`; on btrfs the figure is what the system reports). A path that does not exist shows a dash, never an error.

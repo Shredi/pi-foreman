@@ -349,10 +349,10 @@ function levelSegs(level) {
   if (!level) return [];
   const toneOf = level.level === "critical" ? "red" : level.level === "high" ? "amber" : "neutral";
   const text = toneOf === "neutral" ? level.level : (level.reasons.join(", ") || level.level);
-  return [{ text: "●", tone: toneOf }, { text: ` ${text}`, tone: toneOf }];
+  return [{ text: "●", tone: toneOf, value: true }, { text: ` ${text}`, tone: toneOf, value: true }];
 }
 
-/** The unfolded strip as rows `{id, segs}`: cpu / memory / level, one row per disk and per usage row. A seg is `{text, tone}`; a bar seg has
+/** The unfolded strip as rows `{id, segs}`: cpu / memory / level, one row per disk and per usage row. A seg is `{text, tone}` (`value: true` on the measured parts: a calm one draws green, a neutral label, dash or reset text stays dim); a bar seg has
  *  `bar: {frac, marker}` (fill share and pace marker position, 0 to 1 or null) and no text, a sparkline seg `spark: [heights in px]`.
  *  The head row's segs carry `group` ("cpu", "mem", "level") so the drawing can wrap whole groups. `{stale: true}` is one line with dashes; null draws nothing. */
 export function stripRows(strip, now = Date.now()) {
@@ -363,12 +363,12 @@ export function stripRows(strip, now = Date.now()) {
   const grp = (group, segs) => head.push(...segs.map((g) => ({ ...g, group })));
   if (strip.cpu) {
     grp("cpu", [{ text: "cpu ", tone: "neutral" },
-      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history) }] : []),
-      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone }]);
+      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history), value: true }] : []),
+      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone, value: true }]);
   }
   if (strip.mem) {
-    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null } },
-      { text: pctText(strip.mem.pct), tone: strip.mem.tone }]);
+    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null }, value: true },
+      { text: pctText(strip.mem.pct), tone: strip.mem.tone, value: true }]);
   }
   if (strip.level) grp("level", levelSegs(strip.level));
   if (head.length) rows.push({ id: "head", segs: head });
@@ -376,7 +376,7 @@ export function stripRows(strip, now = Date.now()) {
   strip.disks.forEach((d, i) => {
     const segs = [{ text: `${fixed(d.label, w)} `, tone: "neutral" }];
     if (d.missing || d.usedPct === null) segs.push({ text: "—", tone: "neutral" });
-    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null } }, { text: pctText(d.usedPct), tone: d.tone }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
+    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null }, value: true }, { text: pctText(d.usedPct), tone: d.tone, value: true }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
     rows.push({ id: `disk:${i}`, segs });
   });
   strip.quotas.forEach((q, i) => {
@@ -384,7 +384,7 @@ export function stripRows(strip, now = Date.now()) {
     if (q.used === null) segs.push({ text: "—", tone: "neutral" });
     else {
       const reset = resetText(q.resetsAt, now);
-      segs.push({ text: "", tone: q.tone, bar: { frac: fillFraction(q.used, 1), marker: markerFraction(q.pace) } }, { text: `${Math.round(q.used * 100)}%`, tone: q.tone }, ...(reset ? [{ text: reset, tone: "neutral" }] : []));
+      segs.push({ text: "", tone: q.tone, bar: { frac: fillFraction(q.used, 1), marker: markerFraction(q.pace) }, value: true }, { text: `${Math.round(q.used * 100)}%`, tone: q.tone, value: true }, ...(reset ? [{ text: reset, tone: "neutral" }] : []));
     }
     rows.push({ id: `quota:${i}`, segs });
   });
@@ -396,10 +396,10 @@ export function stripSummary(strip) {
   if (!isObj(strip)) return [];
   if (strip.stale) return [{ text: "status: no main session measuring", tone: "neutral" }];
   const segs = [];
-  const add = (text, toneName = "neutral") => segs.push({ text: segs.length ? `  ${text}` : text, tone: toneName });
-  if (strip.cpu) add(`cpu ${pctText(strip.cpu.pct)}`, strip.cpu.tone);
-  if (strip.mem) add(`mem ${pctText(strip.mem.pct)}`, strip.mem.tone);
-  if (strip.level) add(`● ${strip.level.level}`, levelSegs(strip.level)[0].tone);
+  const add = (text, toneName = "neutral", value = false) => segs.push({ text: segs.length ? `  ${text}` : text, tone: toneName, ...(value ? { value } : {}) });
+  if (strip.cpu) add(`cpu ${pctText(strip.cpu.pct)}`, strip.cpu.tone, true);
+  if (strip.mem) add(`mem ${pctText(strip.mem.pct)}`, strip.mem.tone, true);
+  if (strip.level) add(`● ${strip.level.level}`, levelSegs(strip.level)[0].tone, true);
   return segs;
 }
 
