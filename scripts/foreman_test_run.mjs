@@ -10,7 +10,7 @@
 // Every run prints one stderr line with its run id and keeps a record <lockdir>/test-runs/<id>.json (removed on exit). `--stop <id>` writes
 // <id>.stop, which the run polls (waiting or running): a queued run leaves the queue, a running run's tree is stopped and the lock released;
 // the stopped run exits 130. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
-// The holder touches the lock file every 5 s (heartbeat); a lock is stale when its pid is dead or the heartbeat is older than 60 s. A live
+// The holder touches the lock file every 5 s (heartbeat); a lock is stale when its pid is dead or the heartbeat is older than 60 s (a lock without an id, written by the old wrapper, instead when `started` is older than the max minutes). A live
 // holder is never taken over: it caps its own run at FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) and exits 124.
 // `--targeted <node args and globs/files...>` is a node-mode run that takes one of FOREMAN_TEST_TARGETED_SLOTS (default 2) machine-wide
 // shared slots (<lockdir>/test-slot-<k>, one queue) instead of the exclusive lock, so it never waits for or blocks a full-suite run; its
@@ -201,8 +201,8 @@ function readLock(file) {
   return undefined;
 }
 
-/** Why the lock file is stale (dead holder, heartbeat older than `heartbeatStaleMs`, unreadable for a few seconds), else undefined. A live, heartbeating holder is never stale however old. */
-function staleReason(file, heartbeatStaleMs, now = Date.now()) {
+/** Why the lock file is stale (dead holder, heartbeat older than `heartbeatStaleMs`, unreadable for a few seconds), else undefined. A live, heartbeating holder is never stale however old. A lock without an `id` (old wrapper, no heartbeat) is stale only when `started` is older than `legacyMaxMs`. */
+function staleReason(file, heartbeatStaleMs, legacyMaxMs, now = Date.now()) {
   const info = readLock(file);
   if (!info) {
     try {
@@ -212,6 +212,7 @@ function staleReason(file, heartbeatStaleMs, now = Date.now()) {
     }
   }
   if (!pidAlive(info.pid)) return "dead";
+  if (info.id === undefined) return now - info.started > legacyMaxMs ? "old" : undefined;
   try {
     if (now - fs.statSync(file).mtimeMs > heartbeatStaleMs) return "heartbeat";
   } catch {}
@@ -320,7 +321,8 @@ const minutes = (ms) => Number((ms / 60_000).toFixed(1));
 
 /**
  * Takes the lock (waiting while another live run holds it) and returns a release function; the holder touches the lock file every
- * `heartbeatMs`, and a lock whose heartbeat is older than `heartbeatStaleMs` (or whose pid is dead) is taken over. A wait line
+ * `heartbeatMs`, and a lock whose heartbeat is older than `heartbeatStaleMs` (or whose pid is dead) is taken over; a lock without an
+ * `id` (old format, no heartbeat) only when its `started` is older than `legacyMaxMs`. A wait line
  * names the holder and the queue position at the start, when the holder changes, and every `announceMs`; `onHolder(holder)` gets
  * each holder waited on. After `maxWaitMs` (unbounded when unset) without progress (the counter restarts whenever the holder
  * changes), or at the absolute `deadlineAt` (epoch ms), it throws LockWaitTimeout. `shouldStop()` is checked every poll: when true
@@ -330,7 +332,7 @@ const minutes = (ms) => Number((ms / 60_000).toFixed(1));
  */
 export async function acquireLock(
   file,
-  { files: slotFiles, pollMs = POLL_MS, stderr = process.stderr, maxWaitMs, deadlineAt, announceMs = 60_000, onHolder, shouldStop, id, command, heartbeatMs = HEARTBEAT_MS, heartbeatStaleMs = HEARTBEAT_STALE_MS } = {},
+  { files: slotFiles, pollMs = POLL_MS, stderr = process.stderr, maxWaitMs, deadlineAt, announceMs = 60_000, onHolder, shouldStop, id, command, heartbeatMs = HEARTBEAT_MS, heartbeatStaleMs = HEARTBEAT_STALE_MS, legacyMaxMs = 30 * 60_000 } = {},
 ) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const slotMode = slotFiles !== undefined;
@@ -375,7 +377,7 @@ export async function acquireLock(
           if (readLock(f)?.pid === process.pid) fs.rmSync(f, { force: true });
         };
       }
-      const stale = files.filter((f) => staleReason(f, heartbeatStaleMs));
+      const stale = files.filter((f) => staleReason(f, heartbeatStaleMs, legacyMaxMs));
       if (stale.length) {
         // Takeovers are serialised by a short-lived mutex: staleness is re-checked while holding it, so a live lock that
         // another waiter created after our first check is never removed. A mutex older than 10 s counts as abandoned.
@@ -392,7 +394,7 @@ export async function acquireLock(
         }
         if (held) {
           try {
-            for (const f of stale) if (staleReason(f, heartbeatStaleMs)) fs.rmSync(f, { force: true });
+            for (const f of stale) if (staleReason(f, heartbeatStaleMs, legacyMaxMs)) fs.rmSync(f, { force: true });
           } finally {
             fs.rmSync(mutex, { force: true });
           }
@@ -555,6 +557,7 @@ async function stopRuns(dir, recs) {
     await sleep(100);
     left = left.filter((r) => fs.existsSync(path.join(dir, `${r.id}.json`)) && pidAlive(r.pid));
   }
+  for (const r of recs) if (!left.includes(r)) fs.rmSync(path.join(dir, `${r.id}.stop`), { force: true });
   for (const r of recs) {
     if (left.includes(r)) process.stderr.write(`foreman_test_run: run ${r.id} (pid ${r.pid}) is still running ${STOP_WAIT_MS / 1000} s after the stop request\n`);
     else process.stdout.write(`foreman_test_run: run ${r.id} stopped\n`);
@@ -658,13 +661,18 @@ async function main(rawArgv, env = process.env) {
   const writeRecord = () => {
     try {
       fs.mkdirSync(runsDir, { recursive: true });
-      fs.writeFileSync(recordFile, JSON.stringify(record));
+      const tmp = path.join(runsDir, `.${id}.tmp`);
+      fs.writeFileSync(tmp, JSON.stringify(record));
+      fs.renameSync(tmp, recordFile);
     } catch {}
   };
   writeRecord();
   process.on("exit", () => {
-    fs.rmSync(recordFile, { force: true });
-    fs.rmSync(stopFile, { force: true });
+    for (const f of [recordFile, stopFile]) {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch {}
+    }
   });
   const stopRequested = () => fs.existsSync(stopFile);
   const stoppedLine = `foreman_test_run: run ${id} stopped on request\n`;
@@ -674,6 +682,9 @@ async function main(rawArgv, env = process.env) {
   const maxMinutes = Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) : 30;
   const limitLine = () =>
     `foreman_test_run: time limit of ${limitS} s reached after ${elapsedS()} s; stopped the run${holder ? `; waited for the ${targeted ? "slots held by" : "lock held by"} ${[holder].flat().map(holderText).join("; ")}` : ""}\n`;
+  // a signal while waiting ends the process; the exit handlers remove the record, the stop file and the ticket
+  const waitSignals = ["SIGINT", "SIGTERM"].map((s) => [s, () => process.exit(128 + os.constants.signals[s])]);
+  for (const [s, h] of waitSignals) process.on(s, h);
   if (!lockDisabled(env)) {
     const waitMin = Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) : 20;
     try {
@@ -683,6 +694,7 @@ async function main(rawArgv, env = process.env) {
         deadlineAt: limitMs === undefined ? undefined : started + limitMs,
         onHolder: (h) => (holder = h),
         shouldStop: stopRequested,
+        legacyMaxMs: maxMinutes * 60_000,
         id,
         command: record.command,
       });
@@ -701,6 +713,7 @@ async function main(rawArgv, env = process.env) {
       return 75;
     }
   }
+  for (const [s, h] of waitSignals) process.off(s, h);
   record.state = "running";
   writeRecord();
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "pf-spawn-count-"));

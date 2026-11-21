@@ -94,7 +94,7 @@ test("a live, heartbeating lock older than the cap is not taken over", async () 
   const dir = tmp();
   try {
     const old = new Date(Date.now() - 3 * 60_000).toISOString();
-    fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, started: old, cwd: "/x" }));
+    fs.writeFileSync(lockFile(dir), JSON.stringify({ id: "hb-live", pid: process.pid, started: old, cwd: "/x" }));
     const r = await finish(run(dir, `console.log("ran")`, { FOREMAN_TEST_LOCK_MAX_MINUTES: "1", FOREMAN_TEST_LOCK_WAIT_MINUTES: "0.02" }));
     assert.equal(r.code, 75);
     assert.doesNotMatch(r.out, /ran/);
@@ -918,5 +918,53 @@ test("targeted: --stop of a queued targeted run exits 130 and leaves the slot ho
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// ---- old-format locks, signals while waiting, stop file cleanup ----
+
+test("a live lock without an id is not taken over for its file age (no heartbeat), only when started is older than the max", async () => {
+  const dir = tmp();
+  try {
+    const idless = (started) => fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: process.pid, started, cwd: "/old" }));
+    idless(new Date().toISOString());
+    const past = new Date(Date.now() - 61_000);
+    fs.utimesSync(lockFile(dir), past, past);
+    await assert.rejects(acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, maxWaitMs: 300 }), (e) => e instanceof LockWaitTimeout);
+    assert.equal(JSON.parse(fs.readFileSync(lockFile(dir), "utf8")).cwd, "/old", "the old-format lock is still there");
+    const h = await finish(spawn(process.execPath, [SCRIPT, "--exec", "--", process.execPath, "-e", ""], { env: env(dir, { FOREMAN_TEST_LOCK_WAIT_MINUTES: "0.005" }), stdio: ["ignore", "pipe", "pipe"] }));
+    assert.equal(h.code, 75);
+    idless(new Date(Date.now() - 31 * 60_000).toISOString());
+    const release = await acquireLock(lockFile(dir), { pollMs: 10, stderr: quiet, maxWaitMs: 1000 });
+    release();
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SIGTERM while waiting removes the record and the ticket; a stop file is removed when the run ends", async () => {
+  const dir = tmp();
+  try {
+    writeHolder(dir, "busy-1");
+    const h = launch(dir, dir, execArgs(""));
+    const id = await waitFor(() => h.id());
+    await waitFor(() => h.err.includes("waiting for the test lock") && recordOf(dir, id)?.state === "waiting");
+    h.child.kill("SIGTERM");
+    assert.equal(await h.done, 143);
+    assert.equal(recordOf(dir, id), undefined);
+    assert.deepEqual(fs.readdirSync(runsDir(dir)), []);
+    assert.deepEqual(tickets(dir), []);
+
+    const s = launch(dir, dir, execArgs(""));
+    const sid = await waitFor(() => s.id());
+    await waitFor(() => recordOf(dir, sid)?.state === "waiting");
+    const stop = path.join(runsDir(dir), `${sid}.stop`);
+    fs.writeFileSync(stop, "");
+    assert.equal(await s.done, 130);
+    assert.ok(!fs.existsSync(stop));
+    assert.deepEqual(fs.readdirSync(runsDir(dir)), []);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
