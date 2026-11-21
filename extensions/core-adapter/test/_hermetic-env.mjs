@@ -59,11 +59,3 @@ if (process.platform !== "win32") {
   globalThis[Symbol.for("pi-foreman.herdr-app-home")] = { seed: appHome };
   process.on("exit", () => fs.rmSync(appHome, { recursive: true, force: true }));
 }
-
-// The Pi agent dir every session of a test process resolves (piAgentDir reads PI_CODING_AGENT_DIR, not the session's own agentDir): an empty temp
-// dir, so session_start (recordNodePath) never writes the node-path record into the real ~/.pi/agent. A test that needs one sets its own.
-{
-  const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-agent-dir-")));
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.on("exit", () => fs.rmSync(agentDir, { recursive: true, force: true }));
-}
