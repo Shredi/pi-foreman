@@ -4,6 +4,7 @@ import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { world } from "./_r46world.ts";
 import { liveDir } from "../livestate.ts";
@@ -61,7 +62,7 @@ test("a hold over missing steps tells the owner once per hold, naming them; the 
 });
 
 test("the open-dialog file accepts no hold or parent-ask kind", () => {
-  const d = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "fu-od-"));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "fu-od-"));
   try {
     const file = openDialogFile(d, "s1");
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -110,7 +111,7 @@ test("a hold set again after it ended gets its notice again, three times in a ro
 });
 
 test("questions read from the file are capped in count and size, strings whole", () => {
-  const d = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "fu-od-"));
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "fu-od-"));
   try {
     const od = new OpenDialogs(d, "s1");
     od.add(dialogOf("question", "Q", { tool: "ask_user_question" }, new Date(T0)));
