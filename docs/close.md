@@ -29,6 +29,7 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   replaces that link with a plain copy (or runs `npm ci` when the main checkout has none), so a builder's `npm ci`
   never rewrites the main checkout. The hook is global for the user: it runs for every pi-subagents worktree and is a
   no-op without the symlink and lockfile. `/foreman doctor` warns about a symlinked `node_modules` in any live worktree.
+- Notice channels: the same file (`<agent dir>/extensions/subagent/config.json`) also gets `control.notifyChannels: ["event"]` from `foreman setup` on every platform, other keys kept (`foreman setup --remove` deletes only that key). Without it pi-subagents delivers a child's attention notice twice for an async run (the native notice and a pi-intercom message); `/foreman doctor` warns when the key is not `["event"]`. A foreground run would get no attention notice with this setting; the harness starts every child in the background, so none arises.
 - Scratch: `<state>/scratch/<session>/` (an implicit private entry, no recording needed) and topic dirs
   `.workflow/scratch/<topic>/`. Files directly in `.workflow/scratch/` are never recorded and never removed.
 - Handoff dirs of `/foreman session open` are durable.
@@ -89,6 +90,8 @@ A removed entry is marked `removed: <ts>` in the manifest, so a second run of th
 `open` or `pending`) to close, waits up to `close.childWaitMs`, and prints one line per child (`closed`, `refused`,
 `timeout`, `not sent`) under the CLOSE report. This never fails the parent's close. See
 [sessions](sessions.md#closing-the-children-with-the-parent).
+
+When a local child turns `closed` (it answered the close), its kept terminal is ended and removed: `hc rm` for a finished one, `hc kill` then `hc rm` for one a shell took over after a grace period, and only when the terminal still carries the child's name (another name is left alone). Never a tab or pane close. The close flow runs this once, bounded, and `foreman session list` or `prune` retries what is left. After the terminal is gone the child's worktree and local branch are removed the safe way (never `--force`; an untracked `.workflow/` alone counts as clean; a branch that is not merged stays). An entry that `foreman session prune` closed (a crashed child that may be restarted) keeps its worktree and branch; its terminal is still removed.
 
 For a child on another machine the order is sent with `foreman session close-remote`. It is confirmed (the entry is
 `closing`) or reported as `not sent` and the entry stays as it was; a refused or failed close removes nothing on either

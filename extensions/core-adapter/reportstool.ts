@@ -1,6 +1,7 @@
 // The tools over the report store (reports.ts, docs/retro.md): `foreman_report` (every role, one call writes one row, no model call) and
 // `foreman_reports` (main sessions only: list, group, set). Descriptions are literals: nothing per request enters the tool declarations.
 import { EFFECTS, KINDS, LESSON_EVENT, SETTABLE, STATES, claimLessons, foldRows, groupKeys, readRows, recordReport, renderList, reportContext, setState, storeFor, type Lesson } from "./reports.ts";
+import { appendHandoff } from "./reportsimport.ts";
 
 export const REPORT_TOOL = "foreman_report";
 export const REPORTS_TOOL = "foreman_reports";
@@ -57,6 +58,8 @@ export interface ReportSession {
   emit?: (event: string, payload: Lesson) => void;
   /** The repository (`owner/name`) named in a lesson event; unset: none. */
   repo?: string | null;
+  /** The handoff dir of a parent-opened session (a main session: `PI_FOREMAN_HANDOFF_DIR`; a child: the binding's `handoffDir`): each recorded row is also appended to `reports.jsonl` there (reportsimport.ts). */
+  handoffDir?: string;
 }
 
 export interface ToolText {
@@ -65,6 +68,8 @@ export interface ToolText {
   decision: string;
   /** The `report` trace event of a recorded report: kind, subject, effect and id, never the text. */
   event?: { kind: string; subject: string; effect: string; id: string };
+  /** `failed` when the copy to the handoff dir failed (best effort: the row and the answer are unchanged). */
+  handoff?: "failed";
 }
 
 const done = (text: string, decision: string, isError = false): ToolText => ({ text, isError, decision });
@@ -77,7 +82,15 @@ export async function runReport(s: ReportSession, params: Record<string, unknown
     const r = recordReport({ cwd: s.cwd, role: s.role, session: s.foremanSession, runId: s.isChild ? s.launchId ?? s.id : null, source: "agent", limits: true, ...(s.expireDays !== undefined ? { expireDays: s.expireDays } : {}), ...ctx }, params as never);
     if (r.status === "invalid") return done(`${REPORT_TOOL}: ${r.error}`, "invalid", true);
     if (r.status === "limit") return done("limit reached", "limit");
-    return { ...done(`${r.status} ${r.id}`, r.status), ...(r.status === "recorded" ? { event: { kind: r.kind, subject: r.subject, effect: r.effect, id: r.id } } : {}) };
+    let handoff: "failed" | undefined;
+    if (r.status === "recorded" && r.row && s.handoffDir) {
+      try {
+        appendHandoff(s.handoffDir, r.row);
+      } catch {
+        handoff = "failed"; // the local row is stored; the parent just does not get this copy
+      }
+    }
+    return { ...done(`${r.status} ${r.id}`, r.status), ...(r.status === "recorded" ? { event: { kind: r.kind, subject: r.subject, effect: r.effect, id: r.id } } : {}), ...(handoff ? { handoff } : {}) };
   } catch (err) {
     return done(`${REPORT_TOOL}: not recorded (${/^locked/.test((err as Error).message) ? "the list is busy" : "the list is not writable"}); carry on with the task.`, "failed");
   }

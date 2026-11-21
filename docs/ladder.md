@@ -182,7 +182,7 @@ A builder launch may carry two extra top-level fields (like `reason`, per `tasks
 - `size: { files: string[], largestFileLines?: number, modules?: number }`: the files the builder will touch.
 - `risk: string[]`, from `guard, permission, parser, concurrency, security, design`.
 
-Some provider paths send these keys as JSON text (`size: '{"files": ["a.py"]}'`, `risk: '["guard"]'`). The adapter accepts a string that parses, once, to exactly the declared type (an object for `size`, an array for `risk`) and runs every check on the parsed value; the launch fields `mcp` (array), `reads` (number), `install` (`true`/`false`) and `occasion` (one of `pre-pr`, `high-stakes`, `plan-review`, `second-opinion`, a string) get the same strict treatment. Any other string is refused as before.
+Some provider paths send these keys as JSON text (`size: '{"files": ["a.py"]}'`, `risk: '["guard"]'`). The adapter accepts a string that parses, once, to exactly the declared type (an object for `size`, an array for `risk`) and runs every check on the parsed value; the launch fields `mcp` (array), `reads` (number), `install` (`true`/`false`) and `occasion` (one of `pre-pr`, `high-stakes`, `plan-review`, `second-opinion`, a string) get the same strict treatment. Any other string is refused as before. An empty filler (`''` or `{}`) given for an optional declared launch field (`size`, `risk`, `mcp`, `reads`, `install`, `occasion`, `items`) counts as absent, not refused.
 
 Malformed fields (wrong type, unknown tag, negative or non-integer number, an entry in `files` that is neither a file nor a directory) refuse the foreman's launch with `[sizing_invalid]` and a one-line fix. Other roles ignore the fields.
 

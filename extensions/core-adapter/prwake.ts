@@ -1,10 +1,10 @@
 // Wake rules for pr_watch (docs/tools.md#wake-rules): `tools.prWake` is an ordered list of rules that decide which events of a watched PR
 // wake the session. Built-in defaults come first, the last matching rule wins, an event no rule matches does not wake. A filter that cannot
-// apply to an event never matches: `authors` applies to comment events only, `checks` to `check_failed` only. PR-level events
-// (`checks_settled`, `mergeable`, `no_checks`) carry the source `github`. Merged, closed, ready to merge and watch lost are not rule events.
+// apply to an event never matches: `authors` applies to comment events only, `checks` to `check_failed` and `gate_failed` only. PR-level events
+// (`checks_settled`, `gate_settled`, `mergeable`, `no_checks`) carry the source `github`. Merged, closed, ready to merge and watch lost are not rule events.
 // A malformed rule is dropped with a message, never widened.
 
-export const WAKE_KINDS = ["issue", "review", "review_summary", "check_failed", "checks_settled", "mergeable", "no_checks"] as const;
+export const WAKE_KINDS = ["issue", "review", "review_summary", "check_failed", "checks_settled", "mergeable", "no_checks", "gate_failed", "gate_settled"] as const;
 export type WakeKind = (typeof WAKE_KINDS)[number];
 export const MAX_RULES = 64;
 const MAX_GLOB = 200;
@@ -37,7 +37,7 @@ export interface WakeEvent {
 
 export const DEFAULT_RULES: readonly WakeRule[] = [
   { source: "github", repos: null, events: null, authors: "any", checks: null, wake: true },
-  { source: "*", repos: null, events: ["issue", "review", "review_summary", "check_failed", "checks_settled"], authors: "any", checks: null, wake: true },
+  { source: "*", repos: null, events: ["issue", "review", "review_summary", "check_failed", "checks_settled", "gate_failed", "gate_settled"], authors: "any", checks: null, wake: true },
 ];
 
 /** `*` (any run of characters) and `?` (one character) over the whole text; case-insensitive. */
@@ -67,8 +67,8 @@ export function globMatch(pattern: string, text: string): boolean {
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 
 /** A non-empty list of non-empty glob strings, or an error text. */
-export function parseGlobs(v: unknown, what: string): string[] | string {
-  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_GLOBS) return `${what} must be a list of 1..${MAX_GLOBS} globs`;
+export function parseGlobs(v: unknown, what: string, max = MAX_GLOBS): string[] | string {
+  if (!Array.isArray(v) || v.length === 0 || v.length > max) return `${what} must be a list of 1..${max} globs`;
   const out: string[] = [];
   for (const g of v) {
     if (typeof g !== "string" || g.trim() === "" || g.length > MAX_GLOB || /[\p{Cc}]/u.test(g)) return `${what} has an invalid glob`;
@@ -151,7 +151,7 @@ function matches(r: WakeRule, e: WakeEvent): boolean {
     } else if (e.author === undefined || !r.authors.some((g) => globMatch(g, e.author as string))) return false;
   }
   if (r.checks) {
-    if (e.kind !== "check_failed" || e.check === undefined) return false;
+    if ((e.kind !== "check_failed" && e.kind !== "gate_failed") || e.check === undefined) return false;
     if (!r.checks.some((g) => globMatch(g, e.check as string))) return false;
   }
   return true;

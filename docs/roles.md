@@ -35,6 +35,7 @@ which relaunches it with `model: "strong"`:
   trigger is refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
   A builder launch may also carry `size` and `risk` (top-level keys of the `subagent` call, never inside `options` or `args`); the adapter reads and removes them and a large or risky
   task goes strong without a `reason` (see [ladder](ladder.md#launch-sizing)).
+- **`model: "top"`**: only an `explorer` launched by the steward session, with a `reason`, may use it (the strongest ranked model; every other use is refused `top_not_allowed`), see [ladder](ladder.md#the-keyword-top).
 - **Review FAIL**: a builder revision launched while the latest reviewer verdict is FAIL goes to the builder's
   strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
   `roles.<id>.strongOnRevision`, else `providers.<p>.strongOnRevision`, else `ladder.strongOnRevision` (default

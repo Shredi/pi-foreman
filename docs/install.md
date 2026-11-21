@@ -13,14 +13,14 @@ Install the prerequisites first, then Pi (the version range is the one setup che
 ```sh
 # macOS
 brew install node python@3.13 git
-npm install -g @earendil-works/pi-coding-agent@1.5
+npm install -g @earendil-works/pi-coding-agent@1.6
 ```
 
 ```sh
 # Linux: Debian 13 or Ubuntu 25.04 and later (their python3 is 3.13)
 sudo apt-get update && sudo apt-get install -y curl git python3
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs
-sudo npm install -g @earendil-works/pi-coding-agent@1.5
+sudo npm install -g @earendil-works/pi-coding-agent@1.6
 ```
 
 ```powershell
@@ -33,12 +33,12 @@ winget install Python.Python.3.13
 Open a new terminal, then:
 
 ```powershell
-npm install -g @earendil-works/pi-coding-agent@1.5
+npm install -g @earendil-works/pi-coding-agent@1.6
 ```
 
 On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the Pi line.
 
-Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. npm 11.9 to 11.12 cannot install pi-foreman (see [npm stops with EALLOWGIT](#npm-stops-with-eallowgit)); use npm 10, npm 11.8 or older, or npm 11.13 and later. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22.19+, Pi 1.6.x on `PATH` and Python 3.13+. npm 11.9 to 11.12 cannot install pi-foreman (see [npm stops with EALLOWGIT](#npm-stops-with-eallowgit)); use npm 10, npm 11.8 or older, or npm 11.13 and later. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -477,7 +477,7 @@ pi update git:github.com/Shredi/pi-foreman    # or: pi update --extensions
 ```
 
 After an update, reload or restart running sessions: a running session keeps the code it loaded and can call a file
-the update removed. Run `/foreman setup` again after an update that changes a role's tool list: setup writes the
+the update removed. Run `pi update`, then `/foreman setup`: setup ends by listing the running sessions whose code is older than the installed one, each with its restart command (`foreman session restart <label>` for an opened child, `/quit` then `pi --session <id>` for another session); `scripts/foreman_update_check.py` prints the same list. A session started before the update has no verdict channel for its reviewers until it is restarted: its `review_verdict` refusal names the restart. Run `/foreman setup` again after an update that changes a role's tool list: setup writes the
 reviewers' tool lists into your settings, and a reviewer without `review_verdict` in its list ends every review with no
 verdict and the reason "run /foreman setup" (`/foreman doctor` flags the drift).
 
@@ -491,11 +491,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.5.2, range 1.5.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.6.0, range 1.6.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.5.2
+npm i -g @earendil-works/pi-coding-agent@1.6.0
 /foreman setup --dry-run   # inside Pi
 /foreman setup             # inside Pi
 ```
@@ -542,6 +542,13 @@ first of `python3`, `python3.14`, `python3.13`, `python` that is Python 3.13+. N
 `pi-foreman needs Python 3.13+; found <cmd> <version>`. To pin an interpreter, set `PI_FOREMAN_PYTHON` or `python.path`
 in `foreman.json` (`null` auto-detects; the adapter tries `python.path` before `PI_FOREMAN_PYTHON`).
 
+## Node for apps that start `foreman`
+
+A GUI app (the herdr-app mod) starts commands with a short `PATH` that has no nvm or fnm Node, so `foreman prs poll` would stop with
+`needs Node >= 22.6`. Each Pi session writes the path of its own Node to `<agent dir>/pi-foreman/state/node-path` (only when it changed).
+When `node` is not on `PATH`, the Node subcommands of `bin/foreman`, `foreman.cmd` and `foreman.ps1` use that file's Node if it still exists;
+without a record, nothing changes.
+
 ## Windows
 
 `pi` is a `.cmd` shim there and Node cannot spawn `.cmd` directly, so setup reads the shim and runs Pi's JS entry with
@@ -555,7 +562,7 @@ Pi's `bash` tool and the add-on's `bg_run` run commands in Git Bash, so Git for 
 1. **Git for Windows**: `winget install Git.Git` (or the installer from git-scm.com). Keep the default location (`C:\Program Files\Git`); setup also finds `bash.exe` on `PATH`, but never the WSL launcher in `C:\Windows\System32`.
 2. **Node 22.19 or newer**: `winget install OpenJS.NodeJS.LTS`. Check with `node --version`.
 3. **Python 3.13 or newer** with the py launcher: `winget install Python.Python.3.13`. Check with `py -3 --version`.
-4. **Open a new terminal**, so `PATH` has all three, then **Pi**: `npm i -g @earendil-works/pi-coding-agent@1.5.2` (the pinned version is in `packages.lock.json`). Check with `pi --version`.
+4. **Open a new terminal**, so `PATH` has all three, then **Pi**: `npm i -g @earendil-works/pi-coding-agent@1.6.0` (the pinned version is in `packages.lock.json`). Check with `pi --version`.
 5. **The package**: `pi install git:github.com/Shredi/pi-foreman`.
 6. **Setup**: `/foreman setup --dry-run` in Pi, read it, then `/foreman setup` (or `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs` before Pi has loaded the package; `<agentDir>` is `%USERPROFILE%\.pi\agent` unless `PI_CODING_AGENT_DIR` is set).
 
@@ -584,6 +591,14 @@ claude setup-token                                                 # then export
 
 `/foreman doctor` fails if the folder holds host config and reports whether a login is present
 (never its value).
+
+**Renewing the login on a remote machine.** A child that runs on another machine with `claude-bridge` uses that machine's own isolated folder, and its OAuth login expires there. When a request of the provider `claude-bridge` fails with an authorization error, pi-foreman prints one notice that names the folder. Renew the login on that machine:
+
+```sh
+CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude auth login
+```
+
+`<agent dir>/pi-foreman/claude-config` is the isolated folder `/foreman doctor` shows for that machine; run the command there (for example through `hc exec --on <machine>` or in a terminal on it), not on the parent's machine.
 
 ## Checks inside Pi
 

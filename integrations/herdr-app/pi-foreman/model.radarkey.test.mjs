@@ -20,3 +20,12 @@ test("radarKey sees a changed state, PR list, PR time and the off state", () => 
   assert.equal(radarKey({ ok: false }), "off");
   assert.equal(radarKey(null), "off");
 });
+
+test("radarKey changes when the strip changes and not when it does not", () => {
+  const strip = (pct) => ({ at: 1, cpu: { pct, history: [pct], tone: "neutral" }, mem: null, level: null, disks: [], quotas: [] });
+  const base = radarKey(rec());
+  assert.notEqual(radarKey(rec({}, { strip: strip(10) })), base);
+  assert.equal(radarKey(rec({}, { strip: strip(10) })), radarKey(rec({}, { strip: strip(10) })));
+  assert.notEqual(radarKey(rec({}, { strip: strip(10) })), radarKey(rec({}, { strip: strip(11) })));
+  assert.notEqual(radarKey(rec({}, { strip: { stale: true } })), base);
+});

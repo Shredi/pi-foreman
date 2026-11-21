@@ -16,6 +16,7 @@ Environment:
   FAKE_REMOTE_AGENT           the "remote" agent dir; FAKE_SCRIPTS the scripts dir holding foreman_session.py;
   FAKE_REMOTE_PATH, FAKE_CLI, FAKE_SSH_PROTOCOL (the remote's
   REMOTE_PROTOCOL) and FAKE_REMOTE_HC_DOWN (the remote's `server status` fails) configure the remote side of `exec`
+  FAKE_REMOTE_VERBS           JSON list: the remote's probe reports these verbs (an older remote)
   FAKE_HC_EVENTS_FOLLOW       seconds `events` keeps following events.jsonl (default: print what is there and exit)
   FAKE_HC_FAIL                any non-empty value: every call exits 3 with `boom` on stderr
   FAKE_HC_RUN_EXIT            an integer: `run` makes a terminal that already finished (state finished, reason exited,
@@ -30,8 +31,9 @@ Subcommands:
       --json prints the real reply {code, ms, signal, stderr, stdout, timed_out, truncated}: stdout and stderr base64,
       code the verb's exit code. A `pi-intercom ...` ARGV (no `session`) runs as a subprocess, stdin
       passed through, code its exit code. A failure of hc itself prints {"error": {"hint", "kind", "message"}} on stderr (exit 1).
-  run [--on M] [--name N] [--label K=V]... [flags] -- ARGV...   prints {address, agent, cwd, name, parent, state, turn};
+  run [--on M] [--parent T] [--name N] [--label K=V]... [flags] -- ARGV...   prints {address, agent, cwd, name, parent, state, turn};
       the address is `tN` (`M/tN` with --on)
+  ls [--json]                   prints {terminals: [...]} of the live (not finished) terminals
   get T [--json]                prints the terminal record
   read T [--json] [--lines N]   prints {complete, how, text}: the terminal's text (FAKE_HC_RUN_TEXT for a terminal made in the
                                 run-exit mode, else empty; the real hc returns the screen plus N lines of history)
@@ -202,6 +204,8 @@ def run_verb(verb, data):
     import foreman_session as fsn
     if os.environ.get("FAKE_CLI"):
         fsn.intercom_cli = lambda: Path(os.environ["FAKE_CLI"])
+    if os.environ.get("FAKE_REMOTE_VERBS"):  # the verbs an older remote probes as knowing (JSON list)
+        fsn.REMOTE_VERBS = json.loads(os.environ["FAKE_REMOTE_VERBS"])
     if os.environ.get("FAKE_SSH_PROTOCOL"):
         fsn.REMOTE_PROTOCOL = int(os.environ["FAKE_SSH_PROTOCOL"])
     sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8")
@@ -219,7 +223,10 @@ def cmd_run(args):
     machine = opt(head, "--on")
     sd = state_dir()
     terminals = load_terminals(sd)
-    address = f"t{len(terminals) + 1}"
+    counter = sd / "counter"  # addresses are never reused, as in the real hc
+    number = max(int(counter.read_text("utf-8")) if counter.exists() else 0, len(terminals)) + 1
+    counter.write_text(str(number), "utf-8")
+    address = f"t{number}"
     if machine:
         address = f"{machine}/{address}"
     name = opt(head, "--name") or address
@@ -228,13 +235,14 @@ def cmd_run(args):
         if a == "--label" and i + 1 < len(head) and "=" in head[i + 1]:
             k, v = head[i + 1].split("=", 1)
             labels[k] = v
-    terminals[address] = {"address": address, "name": name, "machine": machine, "argv": argv,
+    parent = opt(head, "--parent")
+    terminals[address] = {"address": address, "name": name, "machine": machine, "argv": argv, "parent": parent, "head": head,
                           "labels": labels, "state": "live", "status": {"app": "pi", "state": "working"}}
     if os.environ.get("FAKE_HC_RUN_EXIT"):
         terminals[address].update(state="finished", reason="exited", exit_code=int(os.environ["FAKE_HC_RUN_EXIT"]),
                                   text=os.environ.get("FAKE_HC_RUN_TEXT", ""))
     save_terminals(sd, terminals)
-    emit({"address": address, "agent": None, "cwd": opt(head, "--cwd"), "name": name, "parent": None,
+    emit({"address": address, "agent": None, "cwd": opt(head, "--cwd"), "name": name, "parent": parent,
           "state": "working", "turn": 0})
 
 
@@ -247,6 +255,11 @@ def find(terminals, address):
 def cmd_get(args):
     terminals = load_terminals(state_dir())
     emit(find(terminals, args[0]))
+
+
+def cmd_ls(args):
+    terminals = load_terminals(state_dir())
+    emit({"terminals": [t for t in terminals.values() if t.get("state") != "finished"]})
 
 
 def cmd_read(args):
@@ -341,7 +354,7 @@ def cmd_rm(args):
     save_terminals(sd, terminals)
 
 
-COMMANDS = {"machine": cmd_machine, "server": cmd_server, "exec": cmd_exec, "run": cmd_run, "get": cmd_get,
+COMMANDS = {"machine": cmd_machine, "server": cmd_server, "exec": cmd_exec, "run": cmd_run, "get": cmd_get, "ls": cmd_ls,
             "read": cmd_read, "label": cmd_label, "events": cmd_events, "wait": cmd_wait, "file": cmd_file, "kill": cmd_kill, "rm": cmd_rm}
 
 

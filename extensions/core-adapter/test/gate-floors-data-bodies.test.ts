@@ -39,8 +39,11 @@ const T = [
   "echo \"${HOME}/sudo reboot\" | wc -c",
 ];
 
-test("trigger words in interpreter heredocs, inline code and quoted arguments of data programs run, for the foreman and a child", () => {
-  for (const l of T) for (const child of [false, true]) assert.equal(verdict(l, child), "run", `${child ? "child" : "foreman"}: ${JSON.stringify(l)}`);
+// per line of T: an interpreter fed on stdin or given inline code is judge-first, the rest runs
+const IC = "danger-inline-code";
+const EXPECT = [IC, IC, IC, IC, IC, IC, "run", IC, "run", IC, "run", "run"];
+test("trigger words in interpreter heredocs, inline code and quoted arguments of data programs fire no floor (inline code is judge-first), for the foreman and a child", () => {
+  for (const [i, l] of T.entries()) for (const child of [false, true]) assert.equal(verdict(l, child), EXPECT[i], `${child ? "child" : "foreman"}: ${JSON.stringify(l)}`);
 });
 
 test("a publish word in a later statement of an unparsed line is no publish; the package program at a command position still is", () => {
@@ -55,9 +58,10 @@ test("child: $FOREMAN_SCRATCH resolves beside a pass-through wrapper; a runner o
     "cd $FOREMAN_SCRATCH && sed -i s/a/b/ f.txt && env -u A true",
     "cd $FOREMAN_SCRATCH && sed -i s/a/b/ f.txt; nohup ls",
     "S=$FOREMAN_SCRATCH; cat > $S/f <<E\nhello rm -rf x\nE\ncp $S/f $S/g",
-    "S=$FOREMAN_SCRATCH; python3 - <<E\nprint('sudo rm -rf /')\nE\ncp $S/f $S/g",
   ];
   for (const l of ok) assert.equal(verdict(l, true), "run", l);
+  // an interpreter fed on stdin is judge-first (danger-inline-code), not a child-write-outside
+  assert.equal(verdict("S=$FOREMAN_SCRATCH; python3 - <<E\nprint('sudo rm -rf /')\nE\ncp $S/f $S/g", true), "danger-inline-code");
   assert.equal(verdict("cd /etc && sed -i s/a/b/ f.txt && env -u A true", true), "child-write-outside");
   assert.notEqual(verdict("cd $FOREMAN_SCRATCH && sed -i s/a/b/ f.txt; env sh -c 'cd /etc; sed -i s/a/b/ f'", true), "run");
 });

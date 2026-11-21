@@ -72,8 +72,8 @@ test("features addons shows the registry with installed state from both settings
   fs.writeFileSync(path.join(env.cwd, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-quiver"] }));
   const rows = JSON.parse(cli(env, ["addons", "--json"]).stdout);
   assert.deepEqual(rows.map((r) => [r.id, r.installed.map((i) => i.scope)]), [["polish", ["global"]], ["quiver", ["project"]], ["memory", []]]);
-  assert.equal(rows[1].spec, "npm:pi-quiver@6.14.2");
-  assert.match(cli(env, ["addons"]).out, /polish +npm:pi-polish@0\.1\.2 +installed \(npm:pi-polish@0\.1\.2, global\)/);
+  assert.equal(rows[1].spec, "npm:pi-quiver@6.15.2");
+  assert.match(cli(env, ["addons"]).out, /polish +npm:pi-polish@0\.1\.13 +installed \(npm:pi-polish@0\.1\.2, global\)/);
 });
 
 test("features profile, enable and disable run the whole setup with the matching flags", () => {

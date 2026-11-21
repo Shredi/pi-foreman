@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { get, type Json } from "./config.ts";
-import { fromJsonText } from "./jsontext.ts";
+import { filler, fromJsonText } from "./jsontext.ts";
 import { locateRepo } from "./gitdrift.ts";
 import { splitLevel } from "./launchmodel.ts";
 import { hasStrongRung, ranksAbove, launchEntries } from "./ladder.ts";
@@ -66,8 +66,8 @@ function count(v: unknown): boolean {
 }
 
 function parseOne(sizeRaw: unknown, riskRaw: unknown): { declared: Declared; error?: string } {
-  const size = fromJsonText(sizeRaw, "object");
-  const risk = fromJsonText(riskRaw, "array");
+  const size = filler(sizeRaw) ? undefined : fromJsonText(sizeRaw, "object");
+  const risk = filler(riskRaw) ? undefined : fromJsonText(riskRaw, "array");
   const declared: Declared = { size: null, risk: null };
   if (size !== undefined) {
     if (!isObj(size)) return { declared, error: "size is not an object" };
@@ -136,7 +136,7 @@ export function liftSizing(input: Json): { from: ("options" | "args")[]; left: b
       let moved = false;
       for (const f of LIFTED_KEYS) {
         if (box[f] === undefined) continue;
-        if (e[f] === undefined) e[f] = box[f];
+        if (e[f] === undefined || filler(e[f])) e[f] = box[f];
         delete box[f];
         moved = true;
         if (!from.includes(key)) from.push(key);
@@ -212,11 +212,11 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
     const out: { reads?: number; install?: boolean } = {};
     const reads = fromJsonText(e.reads, "number");
     const install = fromJsonText(e.install, "boolean");
-    if (e.reads !== undefined) {
+    if (e.reads !== undefined && !filler(e.reads)) {
       if (typeof reads === "number" && Number.isInteger(reads) && reads >= 1) out.reads = reads;
       else bad("reads is not a positive integer");
     }
-    if (e.install !== undefined) {
+    if (e.install !== undefined && !filler(e.install)) {
       if (typeof install === "boolean") out.install = install;
       else bad("install is not true or false");
     }
@@ -243,7 +243,7 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
   }
   if (group) {
     // top-level fields of a group call apply to no entry
-    dropped ||= input.reads !== undefined || input.install !== undefined;
+    dropped ||= (input.reads !== undefined && !filler(input.reads)) || (input.install !== undefined && !filler(input.install));
     if (dropped) notes.push("pi-foreman: reads and install are carried in the launch binding, which a group launch does not get; this group launch keeps the config read limits and its children's npm install asks. Launch the role as a single subagent({agent, task, ...}) call to set them.");
   }
   // `occasion` (a reviewer entry's review kind): each entry's own; a group call's top level names no entry
@@ -251,14 +251,14 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
     occasionError ??= `pi-foreman: launch refused [review_occasion_unknown]: ${what}. Fix: ${fix}`;
   };
   const values = LAUNCH_OCCASIONS.join(" | ");
-  if (group && input.occasion !== undefined) unknownKind("occasion is set on the call of a tasks or chain launch", `set occasion: ${values} on each reviewer entry.`);
+  if (group && input.occasion !== undefined && !filler(input.occasion)) unknownKind("occasion is set on the call of a tasks or chain launch", `set occasion: ${values} on each reviewer entry.`);
   for (const e of list) {
-    if (e.occasion === undefined) continue;
+    if (e.occasion === undefined || filler(e.occasion)) continue;
     const v = fromJsonText(e.occasion, "string");
     if (!isLaunchOccasion(v)) unknownKind(`occasion ${JSON.stringify(e.occasion)} is not a review kind`, `occasion: ${values}.`);
     else if (typeof e.agent === "string") occasions.set(e, v);
   }
-  for (const e of list) if (e.items !== undefined && typeof e.agent === "string") items.set(e, fromJsonText(e.items, "array"));
+  for (const e of list) if (e.items !== undefined && !filler(e.items) && typeof e.agent === "string") items.set(e, fromJsonText(e.items, "array"));
   for (const e of list) {
     delete e.reads;
     delete e.install;

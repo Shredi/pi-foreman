@@ -72,7 +72,13 @@ const prExtras = (p) => ({
   ...(typeof p.head === "string" && p.head ? { head: p.head } : {}), ...(typeof p.mergeState === "string" && p.mergeState ? { mergeState: p.mergeState } : {}),
   // the required checks a passed PR still waits on (the tracker's list, set without `unsettled`); anything else is dropped
   ...(waitingNames(p.waiting).length ? { waiting: waitingNames(p.waiting) } : {}),
+  // the tracker's phases (tools.prPhases): the gate state, a gated repository (merge state blocked counts as ready), a repository with rules
+  ...(gateOf(p.gate) ? { gate: gateOf(p.gate) } : {}), ...(p.gated === true ? { gated: true } : {}), ...(p.ruled === true ? { ruled: true } : {}),
 });
+
+const GATE_STATES = ["waiting", "running", "failed", "passed"];
+// The gate info of a feed entry: a known state and at most 10 waiting names; anything else is dropped.
+const gateOf = (g) => (isObj(g) && GATE_STATES.includes(g.state) ? { state: g.state, ...(waitingNames(g.waiting).length ? { waiting: waitingNames(g.waiting) } : {}) } : null);
 
 // Names of the checks a PR waits on: non-empty strings, at most 10, each cut to 120 characters.
 const waitingNames = (v) => (Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim()).slice(0, 10).map((s) => s.trim().slice(0, 120)) : []);
@@ -134,7 +140,7 @@ function normNode(raw, depth, budget) {
   return {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
-    hcTerminal: str(raw.hcTerminal), attach: str(raw.attach), regOpen: raw.regOpen === true, pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
+    hcTerminal: str(raw.hcTerminal), attach: str(raw.attach), regOpen: raw.regOpen === true, restartable: raw.restartable === true, child: str(raw.child), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
     repo: nameOf(raw.repo), branch: str(raw.branch),
@@ -150,7 +156,8 @@ export function jobOf(c) {
   const key = typeof raw === "string" ? raw.toLowerCase() : "";
   const state = CHECK[STATE_ALIAS[key] ?? key];
   if (!state) return null;
-  return { name: isObj(c) ? str(c.n) || str(c.name) || str(c.label) : "", state };
+  // `phase` (the tracker's tools.prPhases): 2 is a gate check, "ignore" a check that does not count; absent: phase 1
+  return { name: isObj(c) ? str(c.n) || str(c.name) || str(c.label) : "", state, ...(isObj(c) && (c.phase === 2 || c.phase === "ignore") ? { phase: c.phase } : {}) };
 }
 
 function normOpenPrs(raw) {
@@ -159,8 +166,9 @@ function normOpenPrs(raw) {
   for (const p of raw.slice(0, 300)) {
     if (!isObj(p) || int(p.number) === null) continue;
     const jobs = (Array.isArray(p.checks) ? p.checks : Array.isArray(p.jobs) ? p.jobs : []).map(jobOf).filter(Boolean);
+    // `checks` holds the phase-1 states only: the dot, pill and counts read them
     out.push({
-      number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
+      number: p.number, checks: jobs.filter((j) => !j.phase).map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
       state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p), ...(p.tracked === true ? { tracked: true } : {}),
       ...(p.hiddenRepo === true ? { hiddenRepo: true } : {}),
     });
@@ -237,7 +245,7 @@ export function dropClosedPrs(nodes, feed, at, now, depth = 0) {
 }
 
 /** `{nodes, openPrs}` from the text of `foreman radar --json`, or null when the text is not a radar document. */
-export function parseRadarDoc(text) {
+export function parseRadarDoc(text, machine = null) {
   let doc;
   try { doc = JSON.parse(text); } catch { return null; }
   if (!isObj(doc) || !Array.isArray(doc.roots)) return null;
@@ -245,14 +253,172 @@ export function parseRadarDoc(text) {
   const nodes = doc.roots.map((r) => normNode(r, 0, budget)).filter(Boolean);
   const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
   const openPrs = normOpenPrs(doc.openPrs);
+  if (machine) { // a remote machine's own tree: its nodes are that machine's local sessions (no Restart from here)
+    const mark = (n) => { n.remoteTree = true; n.children.forEach(mark); };
+    nodes.forEach(mark);
+  }
   matchPrs(nodes, openPrs);
   dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
-  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
+  const trackedAt = typeof doc.trackedAt === "string" ? Date.parse(doc.trackedAt) : NaN;
+  const trackedN = Number.isInteger(doc.trackedN) && doc.trackedN > 0 ? doc.trackedN : 0;
+  const strip = machine ? null : parseStrip(doc.strip); // only this computer's strip is drawn
+  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}), ...(trackedN ? { trackedN } : {}), ...(doc.trackedOff === true ? { trackedOff: true } : {}), ...(Number.isFinite(trackedAt) ? { trackedAt } : {}), ...(strip ? { strip } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
 export function parseRadar(text) {
   return parseRadarDoc(text)?.nodes ?? [];
+}
+
+// ---- status strip --------------------------------------------------------------------------------------------
+// `strip` of the local radar document (docs/herdr.md "Status strip"): validated here, drawn by main.js from the lines below.
+
+const STRIP_MAX_HISTORY = 60;
+const STRIP_MAX_DISKS = 8;
+const STRIP_MAX_QUOTAS = 12;
+const STRIP_MAX_REASONS = 6;
+const STRIP_LABEL = 18;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const tone = (v, allowed) => (typeof v === "string" && allowed.includes(v) ? v : "neutral");
+const LOAD_TONES = ["neutral", "amber", "red"];
+const QUOTA_TONES = ["neutral", "green", "amber", "red"];
+const label = (v, max = 40) => str(v).replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
+
+const STRIP_DISK_LABEL = 200;
+const diskLabel = (v) => cutMiddle(label(v, Infinity), STRIP_DISK_LABEL); // a path keeps its real end
+
+/** The strip of a radar document, validated: null (nothing to draw), `{stale: true}`, or
+ *  `{at, cpu, mem, level, disks, quotas}` (a part that is off is null / []). Lists are bounded, percentages clamped, an unknown tone is neutral. */
+export function parseStrip(raw) {
+  if (!isObj(raw)) return null;
+  if (raw.stale === true) return { stale: true };
+  if (raw.version !== 1) return null;
+  const pct = (v) => { const n = finite(v); return n === null ? null : clamp(n, 0, 100); };
+  const cpu = isObj(raw.cpu)
+    ? { pct: pct(raw.cpu.pct), history: listOf(raw.cpu.history).map(finite).filter((v) => v !== null).slice(-STRIP_MAX_HISTORY).map((v) => clamp(v, 0, 100)), tone: tone(raw.cpu.tone, LOAD_TONES) }
+    : null;
+  const mem = isObj(raw.mem) ? { pct: pct(raw.mem.pct), tone: tone(raw.mem.tone, LOAD_TONES) } : null;
+  const level = isObj(raw.level)
+    ? { level: label(raw.level.level, 12) || "ok", reasons: listOf(raw.level.reasons).filter((r) => typeof r === "string").map((r) => label(r, 40)).filter(Boolean).slice(0, STRIP_MAX_REASONS) }
+    : null;
+  const disks = listOf(raw.disks).filter(isObj).slice(0, STRIP_MAX_DISKS).map((d) => (d.missing === true
+    ? { label: diskLabel(d.label), missing: true }
+    : { label: diskLabel(d.label), missing: false, usedPct: pct(d.usedPct), freeGB: finite(d.freeGB) === null ? null : Math.max(0, d.freeGB), tone: tone(d.tone, LOAD_TONES) }));
+  const quotas = listOf(raw.quotas).filter(isObj).slice(0, STRIP_MAX_QUOTAS).map((q) => {
+    const used = finite(q.used);
+    const reset = typeof q.resetsAt === "string" ? Date.parse(q.resetsAt) : NaN;
+    return {
+      label: label(q.label) || label(q.key),
+      used: used === null ? null : clamp(used, 0, 2),
+      pace: finite(q.pace) === null ? null : clamp(q.pace, 0, 1),
+      resetsAt: Number.isFinite(reset) ? reset : null,
+      tone: tone(q.tone, QUOTA_TONES),
+    };
+  });
+  const at = typeof raw.at === "string" ? Date.parse(raw.at) : NaN;
+  return { at: Number.isFinite(at) ? at : null, cpu, mem, level, disks, quotas };
+}
+
+/** Height in px (1 to `max`) of one sparkline bar per value (0 to 100), oldest first; at most the last `count` values. A flat or zero history keeps 1 px bars. */
+export function sparkHeights(values, max = 12, count = 16) {
+  return listOf(values).slice(-count).map((v) => clamp(Math.round((clamp(num(v), 0, 100) / 100) * max), 1, max));
+}
+
+/** The filled share (0 to 1) of a bar for `pct` (0 to 100), or of a usage bar for `used` (0 to 2 as a fraction; over 1 fills the track). */
+export function fillFraction(value, scale = 100) {
+  return clamp(num(value) / scale, 0, 1);
+}
+
+/** The position (0 to 1) of the pace marker on a usage track; null without a pace. */
+export function markerFraction(pace) {
+  return typeof pace === "number" && Number.isFinite(pace) ? clamp(pace, 0, 1) : null;
+}
+
+/** "resets Thu 21:00" within 7 days of `now` (local time), else "resets 1 Dec"; "" without a reset time. */
+export function resetText(resetsAt, now) {
+  if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return "";
+  const d = new Date(resetsAt);
+  if (resetsAt - now <= 7 * 86400000) return `resets ${WEEKDAYS[d.getDay()]} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `resets ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+/** `{value: true}` only for a measured number, so a dash stays grey. */
+const valueOf = (v) => (v === null || v === undefined ? {} : { value: true });
+const pctText = (v) => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
+/** `s` cut to `w` chars with "…" in the middle, the larger share kept at the end (the end of a path names it); shorter text stays. */
+export const cutMiddle = (s, w) => {
+  if (s.length <= w) return s;
+  const tail = Math.ceil((w - 1) * 0.6);
+  return `${s.slice(0, w - 1 - tail)}…${s.slice(s.length - tail)}`;
+};
+const fixed = (s, w) => cutMiddle(s, w).padEnd(w);
+
+/** The dot of the load guard: amber at high, red at critical, else neutral; the reason words only when it is not ok. */
+function levelSegs(level) {
+  if (!level) return [];
+  const toneOf = level.level === "critical" ? "red" : level.level === "high" ? "amber" : "neutral";
+  const text = toneOf === "neutral" ? level.level : (level.reasons.join(", ") || level.level);
+  return [{ text: "●", tone: toneOf, value: true }, { text: ` ${text}`, tone: toneOf, value: true }];
+}
+
+/** The unfolded strip as rows `{id, segs}`: cpu / memory / level, one row per disk and per usage row. A seg is `{text, tone}` (`value: true` on the measured parts: a calm one draws green, a neutral label, dash or reset text stays dim); a bar seg has
+ *  `bar: {frac, marker}` (fill share and pace marker position, 0 to 1 or null) and no text, a sparkline seg `spark: [heights in px]`.
+ *  The head row's segs carry `group` ("cpu", "mem", "level") so the drawing can wrap whole groups. `{stale: true}` is one line with dashes; null draws nothing. */
+export function stripRows(strip, now = Date.now()) {
+  if (!isObj(strip)) return [];
+  if (strip.stale) return [{ id: "stale", segs: [{ text: "status: no main session measuring  cpu —  mem —", tone: "neutral" }] }];
+  const rows = [];
+  const head = [];
+  const grp = (group, segs) => head.push(...segs.map((g) => ({ ...g, group })));
+  if (strip.cpu) {
+    grp("cpu", [{ text: "cpu ", tone: "neutral" },
+      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history), ...valueOf(strip.cpu.pct) }] : []),
+      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone, ...valueOf(strip.cpu.pct) }]);
+  }
+  if (strip.mem) {
+    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null }, ...valueOf(strip.mem.pct) },
+      { text: pctText(strip.mem.pct), tone: strip.mem.tone, ...valueOf(strip.mem.pct) }]);
+  }
+  if (strip.level) grp("level", levelSegs(strip.level));
+  if (head.length) rows.push({ id: "head", segs: head });
+  const w = Math.min(STRIP_LABEL, Math.max(0, ...strip.disks.map((d) => d.label.length), ...strip.quotas.map((q) => q.label.length)));
+  strip.disks.forEach((d, i) => {
+    const segs = [{ text: `${fixed(d.label, w)} `, tone: "neutral" }];
+    if (d.missing || d.usedPct === null) segs.push({ text: "—", tone: "neutral" });
+    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null }, value: true }, { text: pctText(d.usedPct), tone: d.tone, ...valueOf(d.usedPct) }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
+    rows.push({ id: `disk:${i}`, segs });
+  });
+  strip.quotas.forEach((q, i) => {
+    const segs = [{ text: `${fixed(q.label, w)} `, tone: "neutral" }];
+    if (q.used === null) segs.push({ text: "—", tone: "neutral" });
+    else {
+      const reset = resetText(q.resetsAt, now);
+      segs.push({ text: "", tone: q.tone, bar: { frac: fillFraction(q.used, 1), marker: markerFraction(q.pace) }, value: true }, { text: `${Math.round(q.used * 100)}%`, tone: q.tone, value: true }, ...(reset ? [{ text: reset, tone: "neutral" }] : []));
+    }
+    rows.push({ id: `quota:${i}`, segs });
+  });
+  return rows;
+}
+
+/** The folded strip as segments of one line "cpu N%  mem N%  ● level" (only the parts that are on); [] for nothing. */
+export function stripSummary(strip) {
+  if (!isObj(strip)) return [];
+  if (strip.stale) return [{ text: "status: no main session measuring", tone: "neutral" }];
+  const segs = [];
+  const add = (group, label, text, toneName, value) => {
+    const lead = segs.length ? "  " : "";
+    segs.push({ text: `${lead}${label}`, tone: "neutral", group }, { text, tone: toneName, group, ...(value ? { value: true } : {}) });
+  };
+  if (strip.cpu) add("cpu", "cpu ", pctText(strip.cpu.pct), strip.cpu.tone, valueOf(strip.cpu.pct).value);
+  if (strip.mem) add("mem", "mem ", pctText(strip.mem.pct), strip.mem.tone, valueOf(strip.mem.pct).value);
+  if (strip.level) {
+    const toneOf = levelSegs(strip.level)[0].tone;
+    segs.push({ text: segs.length ? "  ●" : "●", tone: toneOf, group: "level", value: true }, { text: ` ${strip.level.level}`, tone: toneOf, group: "level", value: true });
+  }
+  return segs;
 }
 
 // ---- tree ----------------------------------------------------------------------------------------------------
@@ -410,7 +576,7 @@ export function radarKey(rec) {
   const strip = (n) => (isObj(n)
     ? { ...n, blockedS: age(n.blockedS), waits: listOf(n.waits).map((w) => ({ ...w, ageS: age(w?.ageS) })), tasks: listOf(n.tasks).map((t) => ({ ...t, ageS: age(t?.ageS) })), children: listOf(n.children).map(strip) }
     : n);
-  return JSON.stringify([listOf(rec.nodes).map(strip), rec.openPrs ?? null, rec.openPrsAt ?? null]);
+  return JSON.stringify([listOf(rec.nodes).map(strip), rec.openPrs ?? null, rec.openPrsAt ?? null, rec.strip ?? null]);
 }
 
 /** Status shown for an hc child terminal: the agent list wins over the terminal's own status. */
@@ -480,6 +646,9 @@ export function totalCost(node) {
  *  A lost or stale one (heartbeat long silent) with a live hc terminal (`liveHc`, set by the render) or an open registry entry
  *  (`regOpen`) is only late, not over. */
 export const isEnded = (n) => n.state === "closed" || n.state === "finished" || ((n.state === "lost" || n.state === "stale") && !n.liveHc && !n.regOpen);
+/** The child id that `foreman session restart` takes for an ended node radar flagged `restartable` (radar decides; never a node of a remote machine's own tree, `remoteTree`; the mod only
+ *  checks the node is drawn as ended), else "". A lost remote node with a live terminal or an open entry is not ended. */
+export const restartChild = (n) => (isObj(n) && n.restartable === true && !n.remoteTree && n.child && isEnded(n) ? n.child : "");
 
 export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;
@@ -550,6 +719,11 @@ export function prStateText(pr) {
   if (p.state === "required") return "checks passed, waiting on required checks";
   if (p.state === "waiting") return `${base.fill === "green" ? "CI passing" : "no CI checks"}, ${p.merge === "behind" ? "branch behind" : "merge blocked"}`;
   return d.fill === "red" ? (d.pulse ? "CI failing, still running" : "CI failing") : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
+}
+
+/** The gate state of a PR in words (`gate waiting|running|failed|passed`, from the tracker's `gate`); "" without a gate. The text only: the dot and pill never read it. */
+export function prGateText(pr) {
+  return isObj(pr?.gate) && GATE_STATES.includes(pr.gate.state) ? `gate ${pr.gate.state}` : "";
 }
 
 const LEGEND_HEAD = "1111111111111111111111111111111111111111";
@@ -859,7 +1033,7 @@ const gap = (v) => v === undefined || v === null || v === "";
 // Plain fields a later copy fills in where the first entry has none
 const FILL = ["url", "repo", "headRepo", "title", "bodyText", "branch", "baseRef", "state", "mergeable", "head", "mergeState"];
 // The check block: taken as one, never mixed
-const BLOCK = ["checks", "jobs", "unsettled", "waiting"];
+const BLOCK = ["checks", "jobs", "unsettled", "waiting", "gate", "gated", "ruled"];
 
 // The first entry, with the gaps of `later` filled in and its check block replaced when it has no jobs and `later` has some. A new object.
 function mergeEntry(first, later) {
@@ -941,6 +1115,18 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
     add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p), idOf(null, p));
   });
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
+}
+
+/** The tracked PR state is stale after 3 min. `trackedAt` is stamped when a poll run starts and the next run starts 30 s after one ends, so a
+ *  run of a minute or more is normal and a mark at three plain poll rounds (90 s) would be false. */
+export const PRS_STALE_MS = 180_000;
+/** The words the legend gives the "stale" mark on the Open PRs header. */
+export const PR_STALE_WORDS = "stale: the tracked PR poll has not run for 3 min, so the PR states may be old";
+
+/** "stale" when a radar record has tracked PRs (`trackedN`) and its tracked state time (`trackedAt`, ms) is missing or older than PRS_STALE_MS at `now` (ms); else "" (also while the tracker is `off`).
+ *  `recs` is the list of radar records; one stale record is enough. */
+export function prsStaleText(recs, now) {
+  return Number.isFinite(now) && listOf(recs).some((r) => isObj(r) && r.ok && !r.trackedOff && r.trackedN > 0 && !(Number.isFinite(r.trackedAt) && now - r.trackedAt <= PRS_STALE_MS)) ? "stale" : "";
 }
 
 /** "updated 12m ago" ("updated <1m ago" under a minute) for the Open PRs header from the `openPrsAt` time (ms) and now (ms); "" when the time is unknown. */
@@ -1044,7 +1230,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, r
         if (child) kids.push(child);
       });
     }
-    if (closed && kids.length === 0) return null;
+    if (closed && kids.length === 0 && !restartChild(n)) return null; // a restartable ended child keeps its row
     const children = sortItems(kids);
     const isTop = root && top;
     const total = isTop ? totalCost(n) : num(n.cost);
@@ -1054,6 +1240,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, r
       sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
       urgent: urgentStatus([closed ? "idle" : status, ...children.map((c) => c.urgent)]), children,
       prs, summary: prSummary(prs), ...splitPrs(prs), recs: root ? listOf(recs) : recsOf ? listOf(recsOf(n)) : [],
+      ...(closed && restartChild(n) ? { restart: restartChild(n) } : {}),
     };
   };
   return build(node, nodeStatus(node, hcStatus, recs), rootId || node.key || node.name || "root", 0, true);
@@ -1142,8 +1329,9 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       if (isObj(r.node)) {
         item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], recsOf, remoteOf, skip, skipKeys, extra: below, top: false, id });
         const ended = isEnded(r.node);
-        if (ended && item.children.length === 0) return []; // an ended child with nothing live below leaves the tree
+        if (ended && item.children.length === 0 && !restartChild(r.node)) return []; // an ended child with nothing live below leaves the tree
         if (ended) item.dim = true; // one that keeps live descendants stays, dimmed
+        if (ended && restartChild(r.node)) item.restart = restartChild(r.node); // so does a restartable one: its row carries the Restart action
         item.status = ended ? "idle" : status;
         item.urgent = urgentStatus([status, ...item.children.map((c) => c.urgent)]);
       } else {
@@ -1298,7 +1486,9 @@ function pillOf(pr, d) {
   const settled = d.fill === "green" || (d.fill === "dim" && mine?.noChecks === true);
   if (!settled) return { state: null };
   if (flagged || (rev && (!mine || mine.state === "unreviewed"))) return { state: "unreviewed" };
-  if (pr?.mergeable === "MERGEABLE" && !["blocked", "behind", "dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
+  // a gated repository (tools.prPhases gate or merge label): the host blocks the merge until the gate and reviews are in, so blocked is ready
+  const stops = pr?.gated === true ? ["behind", "dirty", "unknown", "draft"] : ["blocked", "behind", "dirty", "unknown", "draft"];
+  if (pr?.mergeable === "MERGEABLE" && !stops.includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
   if (waitingOf(pr).length && d.fill === "green" && ms !== "behind") return { state: "required" };
   if (ms === "blocked" || ms === "behind") return { state: "waiting", merge: ms };
   return { state: null };
@@ -1337,6 +1527,7 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
       baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
       ...(pr.head || twin.head ? { head: pr.head || twin.head } : {}), ...(pr.mergeState || twin.mergeState ? { mergeState: pr.mergeState || twin.mergeState } : {}),
       ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks, ...(twin.unsettled ? { unsettled: true } : {}), ...(twin.waiting && !pr.waiting ? { waiting: twin.waiting } : {}) } : {}),
+      ...(twin.gate && !pr.gate ? { gate: twin.gate } : {}), ...(twin.gated && !pr.gated ? { gated: true } : {}), ...(twin.ruled && !pr.ruled ? { ruled: true } : {}),
       ...(pr.unsettled ? { unsettled: true } : {}),
     };
   });
@@ -1353,9 +1544,10 @@ export function prCardKey(pr) {
   if (!isObj(pr)) return "";
   const body = str(pr.bodyText);
   const rev = isObj(pr.review) ? `${str(pr.review.state)}@${str(pr.review.head)}${pr.review.noChecks ? "!" : ""}` : "";
-  const jobs = (listOf(pr.jobs).length ? pr.jobs : listOf(pr.checks)).map(jobOf).filter(Boolean).map((j) => `${j.name}:${j.state}`).join(",");
+  const jobs = (listOf(pr.jobs).length ? pr.jobs : listOf(pr.checks)).map(jobOf).filter(Boolean).map((j) => `${j.name}:${j.state}${j.phase ? `:${j.phase}` : ""}`).join(",");
+  const gate = isObj(pr.gate) ? `${str(pr.gate.state)}:${listOf(pr.gate.waiting).join(",")}` : "";
   return [pr.number, str(pr.title), body.length, body.slice(0, 40), str(pr.baseRef), str(pr.mergeable), str(pr.mergeState), str(pr.head), str(pr.state),
-    pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(",")].join("|");
+    pr.unreviewed === true ? 1 : 0, pr.unsettled === true ? 1 : 0, rev, jobs, waitingOf(pr).join(","), gate, pr.gated === true ? 1 : 0].join("|");
 }
 
 /** Width in px of the number cell of a PR line: 52 for numbers up to 4 digits, 7 more for each further digit of the widest number in `prs`. */
@@ -1372,18 +1564,23 @@ export function prCard(pr) {
   const dotOnly = jobs.length > 0 && listOf(pr?.jobs).length > 0 && !str(pr?.title) && jobs.every((j) => !j.name);
   const dot = prDotState(pr);
   const status = !dotOnly ? "" : dot.fill === "red" ? (dot.pulse ? "checks failed, still running" : "checks failed") : dot.pulse ? "checks running" : dot.fill === "green" ? "checks passed" : "";
-  const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state }));
+  const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state, phase: j.phase }));
   const group = (key, label, state) => {
-    const names = named.filter((j) => j.state === state).map((j) => j.name);
+    const names = named.filter((j) => !j.phase && j.state === state).map((j) => j.name);
     return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
   };
   const waitNames = pillOf(pr, baseDot(pr)).state === "required" ? waitingOf(pr) : [];
   const waitGroup = { key: "waiting", label: "waiting", count: waitNames.length, names: waitNames.slice(0, CARD_CAP), more: Math.max(0, waitNames.length - CARD_CAP) };
-  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), waitGroup, group("passed", "passed", "ok")];
+  const phased = (key, label, phase) => {
+    const names = named.filter((j) => j.phase === phase).map((j) => (j.state === "fail" ? `${j.name} (failed)` : j.state === "pending" ? `${j.name} (running)` : j.name));
+    return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
+  };
+  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), waitGroup, group("passed", "passed", "ok"), phased("gate", "Gate", 2), phased("ignored", "Not counted", "ignore")];
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
-    state: prTooltip(pr),
+    state: prTooltip(pr) + (prGateText(pr) ? ` · ${prGateText(pr)}` : ""),
+    ...(prGateText(pr) ? { gate: { text: prGateText(pr), tone: pr.gate.state === "failed" ? "red" : pr.gate.state === "passed" ? "green" : "amber" } } : {}),
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[3].count },

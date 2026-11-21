@@ -176,6 +176,8 @@ interface W {
   value: string | null;
   reason: OpaqueReason | null;
   assign?: Assign;
+  /** A word with an expansion in it: the literal text after the last expansion, when it holds a path separator (`$V/bin/pip` is `/bin/pip`). */
+  tail?: string;
 }
 
 interface Opt {
@@ -203,16 +205,31 @@ function wordOf(w: Word, vars?: Map<string, string | undefined>): W {
   const note = (r: OpaqueReason): void => {
     if (!reason || (RANK[r] ?? 9) < (RANK[reason] ?? 9)) reason = r;
   };
+  // the literal text after the last expansion, unquoted as `out` is: `$V/bin/r"m"` has the tail `/bin/rm` (a computed command word still names its program by it)
+  let tail = "";
+  let expanded = false;
+  // a glob, a substitution or another computed part: the word names no program by its tail (`$(npm root -g)/git` stays a computed command word)
+  let computed = false;
+  const brk = (r: OpaqueReason, comp = false): void => {
+    note(r);
+    tail = "";
+    expanded = true;
+    if (comp) computed = true;
+  };
   const ref = (name: string): void => {
     const v = vars?.get(name);
-    if (v === undefined) note("unresolved_var");
-    else out += v;
+    if (v === undefined) brk("unresolved_var");
+    else {
+      out += v;
+      tail += v;
+    }
   };
   const part = (p: any): void => {
     switch (p.type) {
       case "Literal":
       case "SingleQuoted":
         out += p.value;
+        tail += p.value;
         return;
       case "DoubleQuoted":
         for (const c of p.parts) part(c);
@@ -222,24 +239,24 @@ function wordOf(w: Word, vars?: Map<string, string | undefined>): W {
         return;
       case "ParameterExpansion":
         if (!p.operation && !p.prefix && !p.index) ref(p.parameter);
-        else note("unresolved_var");
+        else brk("unresolved_var");
         return;
       case "Glob":
       case "ExtendedGlob":
       case "BraceExpansion":
-        note("glob_target");
+        brk("glob_target", true);
         return;
       case "ProcessSubstitution":
-        note("process_substitution");
+        brk("process_substitution", true);
         return;
       default:
-        note("unresolved_var");
+        brk("unresolved_var", true);
     }
   };
   if (w.text.startsWith("~")) note("unresolved_var"); // bash expands an unquoted tilde
   if (w.parts) for (const p of w.parts) part(p);
   else out = w.value;
-  return { text: w.text, value: reason ? null : out, reason };
+  return { text: w.text, value: reason ? null : out, reason, ...(reason && expanded && !computed && /[\\/]/.test(tail) ? { tail } : {}) };
 }
 
 function asAssign(w: W): Assign | undefined {
@@ -584,6 +601,11 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   const p = words[0];
   const rest = words.slice(1);
   if (p.value === null) {
+    // `$V/bin/pip`: the program is named by the literal basename after the expansion; the name goes through the same lookup a literal program does, so the segment is not opaque for its program word
+    const leaf = p.tail?.split(/[\\/]/).pop();
+    if (leaf) {
+      return run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
+    }
     seg(sc, p.text, rest.map((a) => a.value ?? a.text), p.reason ?? "unresolved_var", c, cwd);
     return cwd;
   }

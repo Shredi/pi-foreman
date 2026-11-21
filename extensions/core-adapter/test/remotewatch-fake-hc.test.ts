@@ -59,7 +59,7 @@ test("child `remote notice plan` on the fake hc while the watcher follows the ev
       else process.env[k] = v;
     }
   }
-  assert.deepEqual(wakes, [`child demo: plan ${path.join(mirror, "plan.md")}`]);
+  assert.deepEqual(wakes, [`child demo: plan ${path.join(mirror, "plan.md")}; an owner dialog of that session is answered in its pane only: hc attach alpha/t1`]); // item 128
   assert.equal(fs.readFileSync(path.join(mirror, "plan.md"), "utf8"), "# Plan\n1. do it \u6f22\n");
   const e = readRegistry(agent).sessions[0];
   assert.equal(e.noticeSeq, 1);

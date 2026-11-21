@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PressureSampler } from "../pressure.ts";
+import { StripSampler, stripLeasePath, stripPath } from "../strip.ts";
 import { defaultSpawner } from "../spawn.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
@@ -91,4 +92,33 @@ test("stop while a sample child is in flight: the state dir stays unchanged afte
   await new Promise((r) => setTimeout(r, 1000));
   assert.equal(listing(), before);
   assert.deepEqual(fs.readdirSync(state).filter((n) => n.endsWith(".tmp")), []);
+});
+
+test("StripSampler.stop clears the timer and drops the lease; later ticks write nothing", async (t) => {
+  const dir = mkTestTmp("pf-strip-stop-");
+  t.after(() => rmTestTmp(dir));
+  const cleared: unknown[] = [];
+  const s = new StripSampler({
+    agentDir: dir,
+    diskPath: () => dir,
+    workspace: () => dir,
+    cwd: () => dir,
+    sessionId: () => "s",
+    config: () => ({}),
+    env: {},
+    platform: process.platform,
+    trace: () => assert.fail("nothing to trace"),
+    timers: { set: () => 7, clear: (h) => void cleared.push(h) },
+  });
+  s.start();
+  s.tick();
+  assert.equal(fs.existsSync(stripPath(dir)), true);
+  assert.equal(fs.existsSync(stripLeasePath(dir)), true);
+  await s.stop();
+  assert.equal(fs.existsSync(stripLeasePath(dir)), false);
+  assert.ok(cleared.includes(7));
+  fs.rmSync(stripPath(dir));
+  s.tick();
+  assert.equal(fs.existsSync(stripPath(dir)), false);
+  assert.equal(fs.existsSync(stripLeasePath(dir)), false);
 });

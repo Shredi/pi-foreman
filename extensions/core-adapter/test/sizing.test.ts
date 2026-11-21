@@ -73,7 +73,6 @@ test("takeSizing: every malformed case names [sizing_invalid] and still strips",
   const bad: Record<string, unknown>[] = [
     { size: "big" },
     { size: [] },
-    { size: {} },
     { size: { files: "a.ts" } },
     { size: { files: [1] } },
     { size: { files: ["a"], largestFileLines: -1 } },

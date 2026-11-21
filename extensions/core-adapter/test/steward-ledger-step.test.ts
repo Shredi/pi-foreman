@@ -13,3 +13,9 @@ test("step 1 tells the steward to add the standing item when every item of a bou
 test("step 1 has no ledger_bound_elsewhere branch", () => {
   assert.ok(!INSTRUCTION.includes("ledger_bound_elsewhere"));
 });
+
+test("step 1 says a bound existing file with all items closed is checked and gets the standing item, and states when the spawn gate refuses", () => {
+  assert.match(INSTRUCTION, /binds it\. If that file's items are all closed, check it as above[^.]*add the standing item \(`foreman_ledger` action `add`\)/);
+  assert.match(INSTRUCTION, /refuses a closed ledger that nobody has touched since this session started/);
+  assert.ok(!INSTRUCTION.includes("still refuses"));
+});

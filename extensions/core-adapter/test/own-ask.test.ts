@@ -176,13 +176,14 @@ test("the own ask.md: its blocked source, flag and answers (one world)", async (
     assert.equal(await held(r), true);
   });
 
-  await t.test("a wake that brings no answer file leaves the mark on", async () => {
+  await t.test("a wake that brings no answer file leaves the mark on; a plain message from the parent closes it (D125)", async () => {
     await r.reset();
     r.ask(at(0));
     await r.wrote(askFile);
     await r.message(WAKE_MESSAGE_TYPE);
-    await r.message();
     assert.equal(await r.closed(), 0);
+    await r.message();
+    assert.equal(await r.closed(), 1);
   });
 
   await t.test("a plan ruling, its brief copy or a steer after ask.md leaves the ask open", async () => {

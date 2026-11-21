@@ -10,6 +10,7 @@ import path from "node:path";
 import { isTrackedKey, resolveGithubHosts, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
+import type { GateInfo } from "./prphases.ts";
 import type { Bucket, CommentEntry, ExpectFacts, ExpectState, Mergeable, Run, SourceStatus, StoreRead, WatchSnapshot } from "./prwatch.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
@@ -224,7 +225,7 @@ function readCached(file: string): unknown {
 
 const BUCKETS = new Set(["pending", "failed", "passed", "missing"]);
 
-function parseSnap(v: unknown): StoredSnap | null {
+export function parseSnap(v: unknown): StoredSnap | null {
   if (!isObj(v) || (v.state !== "open" && v.state !== "merged" && v.state !== "closed") || !Array.isArray(v.runs)) return null;
   const runs: Run[] = [];
   for (const r of v.runs) {
@@ -232,6 +233,7 @@ function parseSnap(v: unknown): StoredSnap | null {
     const run: Run = { id: typeof r.id === "string" ? r.id : "", name: r.name, bucket: (BUCKETS.has(r.bucket as string) ? r.bucket : "pending") as Bucket, url: typeof r.url === "string" ? r.url : "" };
     if (typeof r.source === "string" && r.source) run.source = r.source;
     if (typeof r.gates === "boolean") run.gates = r.gates;
+    if (r.phase === 2 || r.phase === "ignore") run.phase = r.phase;
     if (r.noAnswer === true) run.noAnswer = true;
     if (r.expected === true) run.expected = true;
     runs.push(run);
@@ -241,7 +243,10 @@ function parseSnap(v: unknown): StoredSnap | null {
   const mergeable: Mergeable = v.mergeable === "mergeable" || v.mergeable === "conflicting" ? v.mergeable : "unknown";
   const str = (x: unknown): string => (typeof x === "string" ? x : "");
   const required = Array.isArray(v.required) ? v.required.filter((n): n is string => typeof n === "string") : v.required === null ? null : undefined;
-  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.learn === "merge-time" || v.learn === "pre-merge" ? { learn: v.learn } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
+  const g = isObj(v.gate) && (v.gate.state === "waiting" || v.gate.state === "running" || v.gate.state === "failed" || v.gate.state === "passed") ? v.gate : null;
+  const waiting = g && Array.isArray(g.waiting) ? g.waiting.filter((n): n is string => typeof n === "string").slice(0, 10) : [];
+  const gate: GateInfo | null = g ? { state: g.state as GateInfo["state"], ...(waiting.length ? { waiting } : {}) } : null;
+  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.learn === "merge-time" || v.learn === "pre-merge" ? { learn: v.learn } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}), ...(gate ? { gate } : {}), ...(v.gated === true ? { gated: true as const } : {}), ...(v.ruled === true ? { ruled: true as const } : {}), ...(typeof v.rulesKey === "string" && v.rulesKey && v.rulesKey.length <= 64 ? { rulesKey: v.rulesKey } : {}) };
 }
 
 /** The per-source state of a state entry (`sources.<name>`), invalid entries dropped; undefined when none is left. */

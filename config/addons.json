@@ -4,17 +4,18 @@
     {
       "id": "polish",
       "package": "pi-polish",
-      "version": "0.1.2",
+      "version": "0.1.13",
       "default": true,
-      "purpose": "Compact Claude Code-style tool output in the terminal (renderers only; it registers no tools).",
+      "purpose": "Compact Claude Code-style tool output in the terminal (renderers plus file-tool prompt guidelines; it registers no tools).",
       "clashes": [
-        "It ships a second extension (`chrome`) that you may filter out in the package entry of `settings.json`."
+        "It ships a second extension (`chrome`) that you may filter out in the package entry of `settings.json`.",
+        "Since 0.1.13 it adds guidelines for `read`, `edit` and `write` to the system prompt: use those tools instead of `cat`, `sed -i`, `perl -pi`, python or node scripts, shell redirection, heredocs and `tee`. A pi-foreman prompt that suggests a shell write for a file runs against that guideline."
       ]
     },
     {
       "id": "quiver",
       "package": "pi-quiver",
-      "version": "6.14.2",
+      "version": "6.15.2",
       "default": true,
       "purpose": "Web fetch (`fetch`) and document conversion (`doc_to_md`) tools, plus opt-in session naming, header, fast mode and a provider stall watchdog.",
       "clashes": [

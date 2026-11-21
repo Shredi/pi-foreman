@@ -1,8 +1,21 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs). reports takes list|show|set|expire|migrate (old backlog import).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs). reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 # native Windows path under MSYS (node and python get `C:/...`, not `/c/...`): pwd -W, then cygpath -m, then pwd
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && { pwd -W 2>/dev/null || cygpath -m "$(pwd)" 2>/dev/null || pwd; })
 sub="${1:-}"
+# a GUI app's PATH has no nvm node: the Node of the last Pi session (extensions/core-adapter/nodepath.ts) joins PATH for the Node subcommands
+case "$sub" in setup|dialogs|prs|rounds|reports|pane-resume|features|knowledge)
+    if ! command -v node >/dev/null 2>&1; then
+        nrec="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/node-path"
+        nbin=""
+        [ -f "$nrec" ] && IFS= read -r nbin < "$nrec" 2>/dev/null
+        # only a folder that holds an executable `node` joins PATH (Pi may have run from a binary not named node)
+        if [ -n "$nbin" ]; then
+            ndir=$(dirname -- "$nbin")
+            if [ -f "$ndir/node" ] && [ -x "$ndir/node" ]; then PATH="$ndir:$PATH"; export PATH; fi
+        fi
+    fi ;;
+esac
 if [ "$sub" = "setup" ]; then
     shift
     if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)' 2>/dev/null; then

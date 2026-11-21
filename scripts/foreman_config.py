@@ -72,8 +72,10 @@ Keys outside safety that the project and session layers cannot loosen either
     tools.prSources / prWake         ignored (prSources runs programs, prWake decides what wakes the session: user or overlay config only)
     pages.server.enabled             only false is accepted (true starts a listener)
     pages.server.port / bind / baseUrl   ignored (the listener's port, its bind address and the base URL of served links: user or overlay config only)
+    tools.prPhases                   ignored (it makes the harness add a label to the PR host: user or overlay config only)
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
+    sidebar.strip                    ignored (the usage sources run programs, the interval is the user's: L1/L3/L2 only)
     childMaxThinking                 lower only (off < ... < max)
     ladder.* (but strongOnRevision, equalOnStrongRisk), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.modelDataFrom        ignored (it decides the reserve setup writes: L1/L3/L2 only)
@@ -239,12 +241,14 @@ IGNORED_KEYS = [
     (("tools", "prReadyLabel"), "the label the harness writes to the PR host comes from the user or overlay config"),
     (("tools", "prSources"), "PR sources run programs: user or overlay config only"),
     (("tools", "prWake"), "the wake rules for PR watches come from the user or overlay config"),
+    (("tools", "prPhases"), "the PR phase rules (and the merge label the harness writes to the PR host) come from the user or overlay config"),
     (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),
     (("pages", "server", "port"), "the page server's port comes from the user or overlay config"),
     (("pages", "server", "bind"), "the page server's bind address comes from the user or overlay config"),
     (("pages", "server", "baseUrl"), "the base URL of served page links comes from the user or overlay config"),
+    (("sidebar", "strip"), "the status strip (its usage sources run programs) comes from the user or overlay config"),
     (("radar", "openPrs"), "the open PRs source (a GitHub search through gh) comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
     (("retro", "proposalMinReviews"), "the proposal threshold comes from the user or overlay config"),

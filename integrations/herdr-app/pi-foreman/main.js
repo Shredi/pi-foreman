@@ -7,10 +7,11 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prGateText, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
+  stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
+import { prsStaleText, PR_STALE_WORDS } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
 const LOCAL_MS = 3000;
@@ -35,6 +36,7 @@ const T_HC_REMOTE = 15000;
 const T_ATTACH = 15000;
 const T_PAGES = 5000; // `foreman pages ensure` at start
 const T_OPEN = 10000;
+const T_RESTART = 120000; // a remote restart probes and starts on the other machine
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
 const AGENT_GLYPH = "🤖"; // the mark of an agent row, an emoji like the ⏳ / ⚙ of the status lines
@@ -279,8 +281,8 @@ export default class ForemanAgents extends View {
             this.execT(radarBinary(this.foremanProp, machine), ["radar", "--json"], { on: machine }, T_RADAR),
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
-          const doc = r.code === 0 ? parseRadarDoc(r.stdout) : null;
-          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : null;
+          const doc = r.code === 0 ? parseRadarDoc(r.stdout, machine) : null;
+          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, trackedAt: doc.trackedAt, trackedN: doc.trackedN, trackedOff: doc.trackedOff, strip: doc.strip ?? null, tried: Date.now() } : null;
         } catch {
           next = null;
         }
@@ -415,6 +417,7 @@ export default class ForemanAgents extends View {
             cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "", watchdog: true })),
           ]);
           if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
+          else if (typeof r?.code === "number" && r.code !== 0) this.fail(key, "Foreman PR poll failed", openFailure({ ...r, stderr: String(r.stderr || r.stdout || "") }));
           else this.failed?.delete(key);
         } catch (e) {
           if (missingBinary(e)) this.failed?.delete(key);
@@ -480,6 +483,18 @@ export default class ForemanAgents extends View {
     });
   }
 
+  // The Restart action of an ended child row radar flagged `restartable`: `foreman session restart <child id>` (a new kept terminal; no
+  // tab or pane is closed). The card joins the new terminal by its address once the registry holds it.
+  restartChild(child, cx) {
+    const bin = radarBinary(this.foremanProp, null);
+    cx.spawn(async () => {
+      try {
+        const r = await this.execT(bin, ["session", "restart", child], {}, T_RESTART);
+        if (r && typeof r.code === "number" && r.code !== 0) guard(() => notify({ title: "Could not restart the session", body: String(r.stderr || r.stdout || "").trim().split("\n")[0].slice(0, 200) || `exit ${r.code}`, level: "error" }));
+      } catch (e) { guard(() => notify({ title: "Could not restart the session", body: why(e), level: "error" })); }
+    });
+  }
+
   openUrl(url, cx) {
     if (!isSafeHttpsUrl(url)) return;
     const p = guard(() => window().platform, "");
@@ -512,7 +527,8 @@ export default class ForemanAgents extends View {
       .child(h_flex().flex_none().w(30).gap(2).items_center()
         .child(st.conflict ? conflictMark(t) : div().flex_none().size(11))
         .child(prDot(t, st)))
-      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)));
+      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
+      .when(Boolean(prGateText(pr)), (el) => el.child(div().flex_none().text_color(pr.gate.state === "failed" ? t.blocked : t.dim).child(prGateText(pr))));
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the line tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
     const onMove = (e, cx) => guard(() => {
@@ -549,7 +565,7 @@ export default class ForemanAgents extends View {
   // `maxH` bounds the card to the room on its side of the chip; what does not fit is clipped (gpui-kit style.rs:95 max_h, gpui `overflow_hidden`).
   cardView(t, c, maxH = 0) {
     const color = tones(t);
-    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green };
+    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green, gate: color.amber, ignored: t.dim }; // Gate: amber, Not counted: grey
     const shell = v_flex().w(300).p(10).gap(7).bg(t.popover).border(1).border_color(t.border).rounded(8)
       .text_size(11).text_color(t.muted)
       .when(maxH > 0, (el) => el.max_h(maxH).overflow_hidden());
@@ -565,7 +581,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(c.status), (el) => el.child(div().text_color(t.foreground).child(c.status)))
       .when(Boolean(c.note), (el) => el.child(div().text_color(t.dim).child(c.note)))
       .when(c.groups.length === 0 && !c.status && !c.note, (el) => el.child(div().text_color(t.dim).child("no job data")));
-    const state = div().text_color(t.foreground).child(c.state);
+    const state = div().text_color(c.gate?.tone === "red" ? color.red : t.foreground).child(c.state); // a failed gate colours the line red
     return shell.child(title).child(state).when(Boolean(c.excerpt), (el) => el.child(excerpt))
       .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs);
   }
@@ -684,6 +700,8 @@ export default class ForemanAgents extends View {
       .when(open !== null, (el) => el.cursor_pointer().on_click(open))
       .child(open !== null ? name.cursor_pointer().on_click((e, cx) => { cx.stop_propagation?.(); return open(e, cx); }) : name)
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
+      .when(Boolean(item.restart), (el) => el.child(div().id(`restart:${item.id}`).flex_none().cursor_pointer().text_size(10.5).text_color(t.working).child(this.pressing(`restart:${item.id}`) ? "Restart …" : "Restart")
+        .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(`restart:${item.id}`, cx); this.restartChild(item.restart, cx); })))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))
@@ -755,12 +773,13 @@ export default class ForemanAgents extends View {
   // first and start open, drawing OPEN_PR_GROUP_LINES lines at most (the problem ones first) and then a "+N more" line; with more than
   // OPEN_PR_FOLD_AT PRs the others start folded. Folding by hand (`this.folded`, `this.unfolded`) lasts while Herdr is open. A group that fails to build is replaced by a plain row (its name and count), so one repository does not
   // take the section down.
-  openPrRows(t, groups, age = "") {
+  openPrRows(t, groups, age = "", stale = "") {
     if (!groups.length) return [];
     this.folded ??= new Set();
     this.unfolded ??= new Set();
     const rows = [sectionHead(t, "op-head", "Open PRs", { rule: true })
-      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
+      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))
+      .when(stale !== "", (el) => el.child(div().ml(6).text_size(10).text_color(tones(t).amber).child(stale)))];
     const info = groups.map((g) => guard(() => openPrInfo(g), { g, prs: null, failing: 0, conflicts: 0 }));
     const total = info.reduce((n, i) => n + (i.prs?.length ?? 0), 0);
     const attention = (i) => i.failing > 0 || i.conflicts > 0;
@@ -804,6 +823,50 @@ export default class ForemanAgents extends View {
         .hover((x) => x.bg(t.hover)).on_click(more).child(`+${n - shown.length} more`))));
   }
 
+  // The status strip above the list (local radar's `strip`): one header row (chevron; the cpu / memory / level line, folded the summary) and, unfolded,
+  // one row per disk and usage row in a Collapsible. Tones: a neutral measured value (`value`) is the PR green, other neutral text is muted, the rest from the PR palette. No strip, no element.
+  statusStrip(t, now) {
+    const strip = this.radar.get("local")?.ok ? this.radar.get("local").strip : null;
+    const rows = guard(() => (strip ? stripRows(strip, now) : []), []);
+    if (rows.length === 0) return null;
+    const fid = "strip";
+    const folded = this.folded.has(fid);
+    const color = { ...tones(t), neutral: t.muted };
+    // Text parts never shrink or clip (flex_none, no wrap); bars are boxes: a dim track, a fill in the tone, and for usage a thin pace marker.
+    const part = (g, barW) => {
+      const ink = g.value && g.tone === "neutral" ? color.green : color[g.tone] ?? t.muted;
+      if (g.bar) {
+        const track = div().relative().h(6).rounded(3).bg(t.dim + "44")
+          .when(barW, (el) => el.flex_none().w(barW)).when(!barW, (el) => el.flex_1().min_w(24).max_w(120))
+          .child(div().absolute().top(0).left(0).h(6).w(`${Math.round(g.bar.frac * 100)}%`).rounded(3).bg(ink));
+        return g.bar.marker === null ? track : track.child(div().absolute().top(-2).left(`${Math.round(g.bar.marker * 100)}%`).w(2).h(10).bg(t.foreground));
+      }
+      if (g.spark) return h_flex().flex_none().h(12).gap(1).items_end().children(g.spark.map((px) => div().flex_none().w(2).h(px).bg(ink)));
+      return div().flex_none().whitespace_nowrap().text_color(ink).child(g.text);
+    };
+    // The head line wraps whole groups (cpu, mem, level) onto the next line when the sidebar is too narrow.
+    const line = (segs) => {
+      const items = [];
+      for (const g of segs) {
+        const last = items.at(-1);
+        if (g.group !== undefined && last?.group === g.group) last.segs.push(g); else items.push({ group: g.group, segs: [g] });
+      }
+      return h_flex().id("strip-line").flex_1().min_w(0).flex_wrap().items_center().gap_x(8).gap_y(1).text_size(10.5).text_color(t.muted)
+        .children(items.map((it) => h_flex().flex_none().gap(2).items_center().children(it.segs.map((g) => part(g, 48)))));
+    };
+    const headSegs = folded ? stripSummary(strip) : rows[0].segs;
+    const body = folded ? [] : rows.slice(1);
+    const toggle = (_e, cx) => { if (this.folded.has(fid)) this.folded.delete(fid); else this.folded.add(fid); cx.notify(); };
+    const head = h_flex().id("strip-head").pl(8).pr(8).min_h(20).flex_none().gap(4).items_center().cursor_pointer()
+      .hover((x) => x.bg(t.hover)).on_click(toggle)
+      .child(this.foldSlot(t, fid, true, { folded }))
+      .child(line(headSegs));
+    return Collapsible.new().id("strip").flex().flex_col().flex_none().px(6).pb(4).open(body.length > 0).child(head)
+      .when(body.length > 0, (el) => el.content(v_flex().flex_none().pl(28).pr(8).gap(1)
+        .children(body.map((r) => h_flex().id(`strip-${r.id}`).flex_none().min_h(16).gap(6).items_center().text_size(10.5).text_color(t.muted)
+          .children(r.segs.map((g) => part(g)))))));
+  }
+
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.
   openPrRowFallback(t, g) {
     const n = Array.isArray(g?.prs) ? g.prs.length : 0;
@@ -838,7 +901,8 @@ export default class ForemanAgents extends View {
     });
     return v_flex().w(300).p(10).gap(4).bg(t.popover).border(1).border_color(t.border).rounded(8).text_size(11).text_color(t.muted)
       .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Pull request dots"))
-      .children(rows);
+      .children(rows)
+      .child(div().text_color(t.dim).child(PR_STALE_WORDS));
   }
 
   render(cx) {
@@ -972,7 +1036,8 @@ export default class ForemanAgents extends View {
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     const age = listedAt ? this.clock("open-prs-age", (n) => openPrsAge(listedAt, n), now) : "";
-    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age), []));
+    const stale = this.clock("open-prs-stale", (n) => prsStaleText([...this.radar.values()], n), now);
+    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age, stale), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
@@ -992,6 +1057,8 @@ export default class ForemanAgents extends View {
     if (this.hotCard !== null && !this.seenChips.has(this.hotCard)) this.hotCard = null;
     const body = [title];
     if (list.length === 0) body.push(empty);
+    const strip = this.prGuard(() => this.statusStrip(t, now), null);
+    if (strip) body.push(strip);
     body.push(scroller, footer);
     const view = v_flex().min_h(0).size_full().text_size(13).bg(t.chrome).border_t(1).border_color(t.border).children(body);
     this.renderOpen = false; // the render reached its end

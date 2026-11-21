@@ -234,7 +234,7 @@ test("watcher: a plan label is fetched, checked, mirrored and wakes the wait wit
   const e = r.reg();
   const mirror = path.join(r.dir, "m", CHILD, "plan.md");
   assert.equal(fs.readFileSync(mirror, "utf8"), "the plan\n");
-  assert.deepEqual(r.wakes, [`child demo: plan ${mirror}`]);
+  assert.deepEqual(r.wakes, [`child demo: plan ${mirror}; an owner dialog of that session is answered in its pane only: hc attach alpha/t7`]); // item 128: the wake names the attach
   assert.equal(e.noticeSeq, 1);
   assert.equal(e.lastError, null);
   assert.equal(e.status, "open");
@@ -249,7 +249,7 @@ test("watcher: open → ask → open → closing → closed, the ask cleared by 
   r.put("ask.md", "which?\n");
   await r.send(ev(label(1, "ask", "which?\n")));
   assert.deepEqual((r.reg().ask as { seq: number }).seq, 1);
-  assert.match(r.wakes[0], /^child demo: ask .*ask\.md$/);
+  assert.match(r.wakes[0], /^child demo: ask .*ask\.md; an owner dialog of that session is answered in its pane only: hc attach alpha\/t7$/); // item 128
   r.put("result.md", "done\n");
   await r.send(ev(label(2, "update", "done\n")));
   assert.equal(r.reg().ask, undefined);

@@ -21,7 +21,7 @@ ROLE_PAIRS = [
     # D28: finish refusals are counted per unchanged state, not per user prompt
     ("After two refusals per user prompt the finish goes through,", "After two refusals of the same unchanged state (missing steps and work) the finish goes through,"),
     ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),
-    ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
+    ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "commit exactly the reviewed files, push, then open the PR; a commit that adds or changes anything after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
     ("a `reviewer` (or `senior-reviewer`) PASS.", "a `reviewer` PASS."),
     ("the finalizer drafts it at heavy tier, you draft it otherwise.", "you draft it in the scratch dir at every tier."),
     ("Skip explorer, planner, reviewer and finalizer:", "Skip explorer and reviewer:"),

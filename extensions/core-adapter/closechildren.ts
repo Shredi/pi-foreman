@@ -5,6 +5,8 @@ import { closeText, readRegistry, writeRegistry } from "./session.ts";
 import type { RunRemote, SessionEntry } from "./session.ts";
 
 export const CHILD_POLL_MS = 1_000;
+/** The most the close flow waits for the reap of a closed local child's kept terminal; the list pass retries what is left. */
+export const REAP_WAIT_MS = 5_000;
 
 const isRemote = (s: SessionEntry): boolean => typeof s.machine === "string";
 const who = (s: SessionEntry): string => (isRemote(s) ? `${s.label}@${String(s.machine)}` : s.label);
@@ -53,7 +55,11 @@ export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
     const sent = open.filter((s) => outcome.get(s.child) === "sent");
     if (sent.length > 0) {
       const reg = readRegistry(d.agentDir);
-      for (const e of reg.sessions) if (outcome.get(e.child) === "sent" && e.status !== "closed" && !isRemote(e)) e.status = "closing"; // close-remote marked the remote ones
+      for (const e of reg.sessions) {
+        if (outcome.get(e.child) !== "sent" || isRemote(e)) continue; // close-remote marked the remote ones
+        if (e.status !== "closed") e.status = "closing";
+        e.worktreePending = true; // the list pass removes the worktree of this child only (D120), until it went
+      }
       writeRegistry(d.agentDir, reg);
     }
     let waited = 0;
@@ -75,6 +81,15 @@ export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
       const step = Math.min(CHILD_POLL_MS, d.waitMs - waited);
       await d.sleep(step);
       waited += step;
+    }
+    if (d.runRemote && open.some((s) => !isRemote(s) && outcome.get(s.child) === "closed")) {
+      // a local child turned `closed`: end and remove its kept terminal (never a tab or pane close); bounded, never blocks the close
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        d.runRemote(["reap"]).catch(() => undefined),
+        new Promise((r) => { timer = setTimeout(r, REAP_WAIT_MS); timer.unref?.(); }),
+      ]);
+      if (timer) clearTimeout(timer);
     }
     return [...skipped, ...open.map((s) => {
       const o = outcome.get(s.child) as Outcome;

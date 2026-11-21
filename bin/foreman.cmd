@@ -1,7 +1,10 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|migrate (old backlog import).
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 setlocal
 set "PF_HERE=%~dp0"
+rem a GUI app's PATH has no node: the Node of the last Pi session (nodepath.ts) joins PATH
+where node >nul 2>nul
+if errorlevel 1 call :nodefallback
 if /i "%~1"=="setup" goto setup
 if /i "%~1"=="dialogs" goto dialogs
 if /i "%~1"=="prs" goto prs
@@ -177,3 +180,14 @@ set "PF_RC=%ERRORLEVEL%"
 rem update-check keeps its exit code; the knowledge nudge goes to stderr so --json stays clean (best effort)
 if "%PF_SCRIPT%"=="foreman_update_check.py" node "%PF_HERE%..\scripts\foreman_knowledge.mjs" nudge 1>&2 2>nul
 exit /b %PF_RC%
+
+:nodefallback
+set "PF_NREC=%PI_CODING_AGENT_DIR%"
+if not defined PF_NREC set "PF_NREC=%USERPROFILE%\.pi\agent"
+set "PF_NREC=%PF_NREC%\pi-foreman\state\node-path"
+if not exist "%PF_NREC%" exit /b 0
+set "PF_NBIN="
+set /p PF_NBIN=<"%PF_NREC%"
+if not defined PF_NBIN exit /b 0
+for %%i in ("%PF_NBIN%") do if exist "%%~dpinode.exe" set "PATH=%%~dpi;%PATH%"
+exit /b 0

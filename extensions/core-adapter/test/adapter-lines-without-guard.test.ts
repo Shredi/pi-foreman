@@ -42,14 +42,13 @@ async function rig(t: T, kind: "main" | "child", extra: { config?: Record<string
 }
 
 for (const kind of ["main", "child"] as const) {
-  test(`${kind}: sh -c "$X" and python3 -c naming git run with no judge call (C: not judge-first); no dialog, no guard text anywhere`, { skip: posixOnly }, async (t: T) => {
+  test(`${kind}: sh -c "$X" and python3 -c naming git are judge-first (danger-inline-code): the judge is asked once per line, no guard text anywhere`, { skip: posixOnly }, async (t: T) => {
     const r = await rig(t, kind);
+    let asked = 0;
     for (const command of ['sh -c "$X"', "python3 -c \"import subprocess; subprocess.run(['git','status'])\""]) {
-      const res = await r.c.call("bash", { command });
-      assert.ok(!res?.block, `${command}: ${JSON.stringify(res)}`);
-      assert.equal(r.classifier(), 0, `${command}: no judge call`);
+      await r.c.call("bash", { command });
+      assert.equal(r.classifier(), ++asked, `${command}: one judge call`);
     }
-    assert.equal(r.dialogs(), 0);
     assert.doesNotMatch(JSON.stringify(r.c.trace()), GUARD);
   });
 

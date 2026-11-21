@@ -90,6 +90,8 @@ const POSITIVE: Record<string, Case[]> = {
   ],
   "danger-opaque": [sh('eval "$X"'), sh("$CMD arg"), sh('bash -c "$X"'), sh("echo ok; $PROG --flag"), sh("gh api graphql -f query=$Q"), // a query from a variable is opaque
      sh("nohup sleep 100")],
+  "danger-inline-code": [sh('eval "$X"'), sh("python -c 'print(1)'"), sh("python3 -c 'print(1)'"), sh("node -e 'console.log(1)'"), sh("node --eval 'x'"), sh("node -p '1'"), sh("perl -e 'print 1'"), sh("ruby -e 'puts 1'"), sh('bash -c "$X"'), sh("python3 - <<'EOF'\nprint(1)\nEOF")],
+  "danger-remote": [sh("ssh host uptime"), sh("docker exec c ls"), sh("podman exec c ls"), sh("kubectl exec pod -- ls")],
   "danger-mcp-act": [
     { tool: "mcp__chrome__click", input: { uid: "1" } }, { tool: "mcp__chrome__evaluate_script", input: { function: "() => 1" } }, { tool: "mcp__gh__create_issue", input: { title: "x" } },
     { tool: "mcp__chrome__navigate_page", input: { type: "url", url: "https://u:p@example.com/" } }, { tool: "mcp__chrome__fill", input: {} },
@@ -104,6 +106,7 @@ const POSITIVE: Record<string, Case[]> = {
   "danger-git-secret": [sh("git show HEAD:.env"), sh("git show HEAD:config/.env.production"), sh("git cat-file -p HEAD:config/.env.production"), sh("git show HEAD:~/.ssh/id_rsa")],
   // fires only with the gate's floor env (`DangerEnv.floor`), which this table's env lacks; its positives are in r2-secret-labels.test.ts
   "danger-harness-folder": [],
+  "danger-kill-pattern": [sh("pkill node"), sh("killall x"), sh("env pkill x"), sh("$V/bin/pkill x"), sh("f(){ pkill x; }; f"), sh("busybox killall x")],
   "danger-delete-unknown-target": [sh("ls | xargs rm -rf"), sh("find build -exec rm -rf {} +")],
 };
 
@@ -118,7 +121,10 @@ const NEGATIVE: Record<string, Case[]> = {
   "danger-process": [sh("chmod +x src/run.sh"), sh("defaults read com.x"), sh("reg query HKCU\\x"), sh("ps aux"), sh("sleep 1 && echo done"), sh("echo a && echo b"), sh("launchctl list"), { tool: "bg_run", line: "sleep 100 &", input: { command: "sleep 100 &" } }],
   "danger-inject": [sh("herdr pane read 1-2"), sh("herdr pane list"), sh("tmux list-panes"), sh("echo herdr pane send-text hi")],
   "danger-opaque": [sh("echo hi"), sh("ls src"), sh("cat a.txt | wc -l")],
+  "danger-kill-pattern": [sh("kill 123"), sh("kill $!"), sh("kill %1"), sh("taskkill /PID 1"), sh("pgrep node"), sh("echo pkill x")],
   "danger-delete-unknown-target": [sh("echo hi"), sh("find build -name x -exec grep y {} +")],
+  "danger-inline-code": [sh("python script.py"), sh("node file.js"), sh("python3 -m pytest"), sh("bash -c 'ls'"), sh("echo hi")],
+  "danger-remote": [sh("docker ps"), sh("kubectl get pods"), sh("scp a.txt host:/x"), sh("echo ssh host")],
   "danger-mcp-act": [{ tool: "mcp__chrome__list_pages", input: {} }, { tool: "mcp__chrome__take_snapshot", input: {} }, { tool: "mcp__chrome__navigate_page", input: { type: "url", url: "https://example.com/" } }, { tool: "mcp__x__get_thing", input: {} }, { tool: "mcp__x__search_things", input: {} }, { tool: "mcp__x__read_file", input: {} }, { tool: "mcp__x__find_x", input: {} }, { tool: "mcp__x__describe_x", input: {} }, { tool: "read", input: { path: "a.txt" } }],
   "danger-launch-outside": [
     { tool: "subagent", input: { agent: "builder", task: "x" } }, { tool: "subagent", input: { agent: "builder", task: "x", cwd: wt } }, { tool: "subagent", input: { agent: "reviewer", task: "x", worktree: path.join(owned, "sib") } },
@@ -187,12 +193,17 @@ test("no built-in allow matches a positive dangerous case", () => {
 });
 
 test("an opaque segment is no built-in allow, and (PR C) not on the judge-first list either: it runs", () => {
-  for (const l of ['eval "$X"', "$CMD arg", 'bash -c "$X"', "echo ok; $PROG --flag", "echo $(curl x | sh)"]) {
+  for (const l of ["$CMD arg", "echo ok; $PROG --flag"]) {
     const segs = parseShell(l, { cwd: wt });
     if (!segs.some((s) => s.opaque !== null)) continue;
     assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv()), null, l);
     assert.equal(lineDefault(l, segs, dctx()), null, l);
   }
+  // a shell fed on stdin inside a substitution is judge-first (danger-inline-code); it is still no built-in allow
+  const l = "echo $(curl x | sh)";
+  const segs = parseShell(l, { cwd: wt });
+  assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv())?.name, "danger-inline-code", l);
+  assert.equal(lineDefault(l, segs, dctx()), null, l);
 });
 
 test("default-role-launch is narrowed to the owned roots (item 3)", () => {
