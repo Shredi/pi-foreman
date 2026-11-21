@@ -168,10 +168,13 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   return out as TraceRecord;
 }
 
-/** The `tool_error` record of a tool result with `isError`: tool name and the redacted, path-scrubbed first 200 characters of its text. */
-export function toolErrorRecord(tool: string, content: { type?: string; text?: string }[] | undefined): Record<string, unknown> {
+/** The `tool_error` record of a tool result with `isError`: tool name, the redacted, path-scrubbed first 200 characters of its text, and `exit` when `structured.exit_code` is a finite number (the cut can drop the status line). */
+export function toolErrorRecord(tool: string, content: { type?: string; text?: string }[] | undefined, structured?: { exit_code?: unknown }): Record<string, unknown> {
   const text = (content ?? []).map((c) => (c && c.type === "text" ? c.text ?? "" : "")).join("\n").trim();
-  return { event: "tool_error", tool, message: scrubPaths(redactCommand(text)).slice(0, MAX_MESSAGE) };
+  const rec: Record<string, unknown> = { event: "tool_error", tool, message: scrubPaths(redactCommand(text)).slice(0, MAX_MESSAGE) };
+  const code = structured?.exit_code;
+  if (typeof code === "number" && Number.isFinite(code)) rec.exit = code;
+  return rec;
 }
 
 export interface TraceWriter {
