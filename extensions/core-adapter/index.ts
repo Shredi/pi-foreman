@@ -233,7 +233,7 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overr
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
+import { samePath, selfFinish, spawnDetached, verifiedMergeFor, worktreeRoot as containingWorktree } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -258,6 +258,7 @@ import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyS
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
+import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
 import { climbNotesOf, rungNote } from "./launchreceipt.ts";
 import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
@@ -315,6 +316,9 @@ function releaseLedgerHold(toolCallId: string): void {
 
 /** Session entry type: one small record per review launch or launch that named a ledger (run id, paths, cited, and for a review its launch, items and occasion), so the route survives a reload (D31). */
 const LEDGER_ROUTE_ENTRY = "pi-foreman-ledger-route";
+
+/** Session entry type: the session folder (sessionfolder.ts, D118) the session made at its first builder launch, so a reload or resume reuses it. */
+const SESSION_FOLDER_ENTRY = "pi-foreman-session-folder";
 
 /** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). A review launch also carries its launch id, the ids its verdict tool accepts and its occasion (the record dir is derived from the launch id, never stored). */
 interface LedgerRoute {
@@ -468,6 +472,12 @@ interface Session {
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
   ceremonyRestored: boolean;
+  /** Foreman only: the session folder made at the first builder launch from a primary checkout (D118), else null. */
+  sessionFolder: SessionFolder | null;
+  /** Foreman only: a builder already ran in the session's own (primary) checkout, so no session folder is made later (persisted with the folder entry). */
+  primaryWork: boolean;
+  /** Foreman only: the launch line named why no session folder is made. */
+  primaryNoted: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -1180,6 +1190,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
+      sessionFolder: null,
+      primaryWork: false,
+      primaryNoted: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1863,6 +1876,76 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
+  /** session_start: the session folder of the latest entry of the branch (a fork is another session and makes its own). */
+  function restoreSessionFolder(s: Session, ctx: ExtensionContext, reason: string): void {
+    if (s.isChild || reason === "fork") return;
+    const entries = (ctx.sessionManager.getBranch?.() ?? []) as { type?: unknown; customType?: unknown; data?: { v?: unknown; path?: unknown; branch?: unknown; primary?: unknown } }[];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (!e || e.type !== "custom" || e.customType !== SESSION_FOLDER_ENTRY) continue;
+      if (e.data?.v === 1 && e.data.primary === true) s.primaryWork = true;
+      if (e.data?.v === 1 && typeof e.data.path === "string" && typeof e.data.branch === "string") s.sessionFolder = { path: e.data.path, branch: e.data.branch };
+      return;
+    }
+  }
+
+  /**
+   * D118: the folder a launch entry without `cwd` runs in. A foreman session at standard or heavy tier in a primary checkout makes its own linked worktree at
+   * the first builder launch and every later entry without `cwd` gets it; an explicit `cwd` (also `workdir`, `worktree`) is left alone. Returns the launch line,
+   * "" when nothing changed, or a refusal.
+   */
+  async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string; primary?: true } | { refuse: string }> {
+    // only an interactive TUI session gets a folder; print, json and rpc sessions (bench, scripts, CI) run in their checkout
+    if (s.isChild || !(ctx.mode === "tui" && ctx.hasUI) || actionOf(input) !== null) return { line: "" };
+    const isDir = (v: unknown): boolean => (typeof v === "string" && v !== "") || v === true;
+    // `machine` (a remote launch) is an explicit choice too: a local path means nothing there
+    const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree) || isDir(x.machine));
+    const entries = launchEntries(input).filter((e) => typeof e.agent === "string");
+    const bare = entries.filter((e) => !explicit(e));
+    // A builder that works in the session's own primary checkout (no `cwd`, or an explicit `cwd` inside it) is the work a later folder would split; the caller
+    // sets the mark once the launch is accepted.
+    let primary: true | undefined;
+    if (!s.sessionFolder && !s.primaryWork && entries.some((e) => e.agent === "builder")) {
+      const top = await primaryCheckout(s.cwd);
+      if (top) {
+        const inTop = (e: Record<string, unknown>): boolean => {
+          const c = [e, input].map((x) => x.cwd).find((v) => typeof v === "string" && v !== "") as string | undefined;
+          if (c === undefined) return s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy" && !explicit(e);
+          // selffinish's native real paths: git's forward-slash long-name top matches a Windows 8.3 short or backslash spelling
+          return containingWorktree(path.resolve(s.cwd, c), [{ path: top, branch: null }]) !== null;
+        };
+        if (entries.some((e) => e.agent === "builder" && inTop(e))) primary = true;
+      }
+    }
+    if (bare.length === 0) return { line: "", ...(primary ? { primary } : {}) };
+    if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") return { line: "", ...(primary ? { primary } : {}) };
+    if (!s.sessionFolder && s.primaryWork) {
+      if (s.primaryNoted) return { line: "" };
+      s.primaryNoted = true;
+      return { line: "pi-foreman: no session folder was made: a builder already worked in this session's own checkout, so launches stay there." };
+    }
+    if (!s.sessionFolder && !bare.some((e) => e.agent === "builder")) return { line: "", ...(primary ? { primary } : {}) };
+    if (!s.sessionFolder && !(await primaryCheckout(s.cwd))) return { line: "" };
+    const r = await ensureSessionFolder({ cwd: s.cwd, sessionId: s.id, sessionName: pi.getSessionName?.(), worktreeDir: get(s.config.config, "close.worktreeDir"), branchPrefix: get(s.config.config, "sessions.worktree.branchPrefix"), recorded: s.sessionFolder });
+    if ("reason" in r) {
+      s.trace?.emit({ event: "launch_refused", reason: "session_folder", tier: s.ceremony.tier, ...launchDeny(input) });
+      return { refuse: `pi-foreman: launch refused [session_folder]: ${r.reason}` };
+    }
+    if (r.created) {
+      s.sessionFolder = r.folder;
+      try {
+        pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, path: r.folder.path, branch: r.folder.branch });
+      } catch {
+        // the session file is not writable now: the folder stays in memory
+      }
+      const o = manifestOwner({ id: s.id, isChild: false }, process.env);
+      await recordEntries([{ kind: "worktree", path: r.folder.path, branch: r.folder.branch }], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000), (k, why) => s.trace?.emit({ event: "manifest_record_failed", kind: k.kind, error: why }));
+      s.trace?.emit({ event: "session_folder", path: r.folder.path, branch: r.folder.branch, base: r.base });
+    }
+    for (const e of bare) e.cwd = r.folder.path;
+    return { line: folderLine(r), ...(primary ? { primary } : {}) };
+  }
+
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
@@ -2233,6 +2316,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     initDeferred(s, ctx);
     if (!s.isChild && (event.reason === "startup" || event.reason === "new") && (!latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]))) s.baseline = await checkoutBaseline(ctx.cwd, editModeOfSession(s).scratchDir, platform); // a brand-new session only; a reload or resume keeps the stored one, a fork its parent's (without one: none)
     restoreCeremonyState(s, ctx, event.reason);
+    restoreSessionFolder(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
     if (!s.isChild) {
       try {
@@ -4062,6 +4146,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let folderNote = "";
+      let primaryBuilder = false;
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
@@ -4114,6 +4200,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return c;
       };
       if (event.toolName === "subagent") {
+        const folder = await sessionFolderFor(s, ctx, input);
+        if ("refuse" in folder) return { block: true, reason: folder.refuse };
+        folderNote = folder.line;
+        primaryBuilder = folder.primary === true;
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
         // The owner-approval request of a deferred launch leaves every call here, before the copy: pi-subagents and a relaunch never carry it.
@@ -4746,6 +4836,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         await noteReadonlyStart(s, event.toolCallId, input, ctx.cwd);
       }
       // Kept for the tool result only once the launch passed every check.
+      if (primaryBuilder && !s.sessionFolder && !s.primaryWork) {
+        s.primaryWork = true;
+        try {
+          pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
+        } catch {
+          // the session file is not writable now: the decision stays in memory
+        }
+      }
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
       const reviewOccasions = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o);
       if (reviewOccasions.length > 0) capSet(launchOccasions, event.toolCallId, reviewOccasions);
@@ -4760,7 +4858,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
       }
-      if (notices.length + budgetNotes.length + mcpNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes]);
+      if (notices.length + budgetNotes.length + mcpNotes.length > 0 || folderNote) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes, ...(folderNote ? [folderNote] : [])]);
       if (event.toolName === "subagent" && !s.isChild && subagentAgents(input).includes("builder")) {
         const applied = s.critique.onBuilder();
         if (applied) s.trace?.emit(applied);

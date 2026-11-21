@@ -10,7 +10,7 @@ const COUNTS = /\(no builder run, new commit, changed file in the checkout, or l
 test("after a PASS: a ledger note and a script run without a checkout change are refused; a changed tracked file is allowed", async (t) => {
   const { a, w } = await setup(t);
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [ ] 1. one\n");
-  await build(a);
+  await build(a, {}, w.project);
   await tick(300);
   const again = async () => (await launch(a, "reviewer", "review the branch again")).blocked;
   assert.match((await again()) ?? "", /the last review passed/);

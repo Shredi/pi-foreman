@@ -21,7 +21,7 @@ async function reviewerTask(t: Parameters<typeof r11Rig>[0], ledgerWrite: boolea
   git(a.project, "add", "-A");
   git(a.project, "commit", "-q", "-m", "base");
   const first = git(a.project, "rev-parse", "HEAD");
-  await a.launch({ agent: "builder", task: "build it" });
+  await a.launch({ agent: "builder", task: "build it", cwd: a.project });
   fs.writeFileSync(hub, HUB("seq uint64, msg []byte"));
   git(a.project, "commit", "-q", "-am", "change");
   const second = git(a.project, "rev-parse", "HEAD");
@@ -32,7 +32,7 @@ async function reviewerTask(t: Parameters<typeof r11Rig>[0], ledgerWrite: boolea
   }
   // an uncommitted change on top: the diff against the recorded base shows it
   fs.writeFileSync(hub, HUB("seq uint64, ack bool, msg []byte"));
-  await a.launch({ agent: "builder", task: "build more" });
+  await a.launch({ agent: "builder", task: "build more", cwd: a.project });
   const reviewer = { agent: "reviewer", task: "review items 1" };
   await a.launch(reviewer);
   return { task: reviewer.task, first: first.slice(0, 12), second: second.slice(0, 12) };

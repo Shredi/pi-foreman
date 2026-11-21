@@ -258,15 +258,17 @@ test("item 6: a FAIL: the PR gate and the finish gate hold, a normal reviewer wa
 
 test("item 6: a second FAIL is handled like the first; the normal PASS after its revision opens the gate; a third pass is refused", async (t) => {
   const { w, a } = await setup(t);
-  await built(w, a);
+  work(w); // D118: an explicit cwd keeps the builder in the session checkout (no session folder)
+  await builder(a, { ...TAGGED, cwd: w.project });
+  await normal(a, "PASS");
   await hsPass(a, "FAIL", "1. FAIL one");
   work(w, "src/a/fix1.ts", 2);
-  await builder(a);
+  await builder(a, { cwd: w.project });
   await normal(a, "PASS");
   await hsPass(a, "FAIL", "1. FAIL two");
   assert.match(await pr(a), /high_stakes_failed/);
   work(w, "src/a/fix2.ts", 2);
-  await builder(a);
+  await builder(a, { cwd: w.project });
   await normal(a, "PASS");
   assert.equal(await pr(a), "");
   assert.doesNotMatch(await settle(a), /high-stakes/);
