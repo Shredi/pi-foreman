@@ -14,7 +14,7 @@ One small background server per machine serves the pages the harness writes, so 
 
 ## URL shape and secrets
 
-A link is `<base>/<id>/<path>`: `<base>` is `pages.server.baseUrl` when set, else `http://127.0.0.1:<port>`; `<id>` is a random 128-bit secret (26 lowercase base32 characters, `[a-z2-7]`), one per registered folder or brief; `<path>` is the file below it (a brief: its file name). The secret in the path keeps relative links between the files of one folder working. A request without a known secret, a wrong method (only GET and HEAD), a path with `..`, `.`, a leading dot, `\`, `:` or NUL, a `Host` header that is not this machine (`127.0.0.1`, `localhost`, `[::1]`, the bind address or the `baseUrl` host; this closes DNS rebinding) all get "not found".
+A link is `<base>/<id>/<path>`: `<base>` is `pages.server.baseUrl` when set, else `http://<address>:<port>` of the local end the health check connected to and verified (`127.0.0.1` for the default bind, `[::1]` for bind `::1`, and for `localhost` whichever address it resolves to; IPv6 in brackets). A verified address that is not loopback, without a `baseUrl`, gives a file link; `<id>` is a random 128-bit secret (26 lowercase base32 characters, `[a-z2-7]`), one per registered folder or brief; `<path>` is the file below it (a brief: its file name). The secret in the path keeps relative links between the files of one folder working. A request without a known secret, a wrong method (only GET and HEAD), a path with `..`, `.`, a leading dot, `\`, `:` or NUL, a `Host` header that is not this machine (`127.0.0.1`, `localhost`, `[::1]`, the bind address or the `baseUrl` host; this closes DNS rebinding) all get "not found".
 
 Every answer carries `Content-Security-Policy: sandbox allow-scripts allow-popups` (the page runs with an opaque origin: no browser storage, no read of another page), `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`.
 
@@ -102,3 +102,8 @@ When the server is off (`enabled: false`), cannot start, the config call fails, 
 - With no Pi session and no herdr-app running for 12 hours the server stops; old links then do not open until something starts it again.
 - A page folder is registered when its link is first made; a link from before a rotation or a 7-day drop shows "not found".
 - The page server is not a general web server: no directory index, no uploads, no other methods.
+
+Known limits, left for later:
+
+- A bind to a scoped IPv6 address (`fe80::1%en0`) fails closed: the health check cannot verify it, so links stay file links.
+- With bind `0.0.0.0`, a program squatting the same port on loopback makes `ensure` find no healthy server and start a second one on a free port; the first server keeps running until its idle check ends it as an orphan.

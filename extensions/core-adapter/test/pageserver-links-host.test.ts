@@ -12,7 +12,7 @@ test("servedUrl: non-loopback bind and empty baseUrl gives a file link", () => {
   assert.equal(servedUrl(rec("100.64.0.5"), { baseUrl: "" }, id, "plan.html"), null);
   assert.equal(servedUrl(rec("100.64.0.5"), { baseUrl: "http://h.example:47317/" }, id, "plan.html"), `http://h.example:47317/${id}/plan.html`);
   assert.equal(servedUrl(rec("127.0.0.1"), { baseUrl: "" }, id, "plan.html"), `http://127.0.0.1:47317/${id}/plan.html`);
-  assert.equal(servedUrl(rec("::1"), { baseUrl: "" }, id, "plan.html"), `http://127.0.0.1:47317/${id}/plan.html`);
+  assert.equal(servedUrl(rec("::1"), { baseUrl: "" }, id, "plan.html"), null); // no verified end: only the IPv4 literal bind has a fallback; the old 127.0.0.1 link for ::1 was wrong
 });
 
 test("Host: bracketed hosts accept only [ipv6] with an optional :digits", () => {

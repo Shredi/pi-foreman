@@ -82,6 +82,18 @@ export interface Health {
   bind: string;
 }
 
+/** The signed local socket end of each answer `httpHealth` accepted (it equalled the address and port connected to); kept beside the answer so the answer's shape stays as it is. */
+const verifiedEnds = new WeakMap<Health, LocalEnd>();
+
+const verifiedOf = new WeakMap<ServerRecord, LocalEnd>();
+/** The record `ensureServer` returns, tied to the local end its health check verified; links are built on that end. */
+const withEnd = (rec: ServerRecord, h: Health): ServerRecord => {
+  const r = { ...rec };
+  const end = verifiedEnds.get(h);
+  if (end) verifiedOf.set(r, end);
+  return r;
+};
+
 export type CfgResult = { ok: true; cfg: PagesCfg; why?: undefined } | { ok: false; why: string; cfg?: undefined };
 
 export interface PagesCfg {
@@ -241,11 +253,19 @@ function lastRootTouch(stateDir: string): number {
 
 export const isLoopbackBind = (bind: string): boolean => ["127.0.0.1", "::1", "localhost"].includes(bind);
 
-/** `<base>/<id>/<relpath>`; null when `baseUrl` is set and the server listens on another port than configured (links use the base as written), or when the bind is not loopback and `baseUrl` is empty (127.0.0.1 would not reach the server). */
+/** `<base>/<id>/<relpath>`. Without `baseUrl` the base is the verified local end the health check connected to (IPv6 in brackets); only a loopback address qualifies, any other gives null (file link). A record without a verified end qualifies only as the IPv4 literal bind 127.0.0.1. Null too when `baseUrl` is set and the server listens on another port than configured (links use the base as written). */
 export function servedUrl(rec: ServerRecord, cfg: { baseUrl: string }, id: string, relpath: string): string | null {
-  if (!cfg.baseUrl && !isLoopbackBind(rec.bind)) return null;
-  const base = cfg.baseUrl ? cfg.baseUrl.replace(/\/+$/, "") : `http://127.0.0.1:${rec.port}`;
-  if (cfg.baseUrl && rec.port !== rec.configPort) return null;
+  let base: string;
+  if (cfg.baseUrl) {
+    if (rec.port !== rec.configPort) return null;
+    base = cfg.baseUrl.replace(/\/+$/, "");
+  } else {
+    const end = verifiedOf.get(rec) ?? (rec.bind === "127.0.0.1" ? { address: "127.0.0.1", port: rec.port } : null);
+    if (!end) return null;
+    const a = normalizeAddr(end.address);
+    if (!(net.isIPv4(a) ? a.startsWith("127.") : a === "::1")) return null;
+    base = `http://${bracket(a)}:${end.port}`;
+  }
   return `${base}/${id}/${relpath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
@@ -526,7 +546,9 @@ export async function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_M
             const got = Buffer.from(typeof j.proof === "string" ? j.proof : "");
             const proven = got.length === want.length && timingSafeEqual(got, want);
             const here = normalizeAddr(local.address) === normalizeAddr(host) && local.port === rec.port;
-            finish(proven && here && h.pid === rec.pid ? h : null);
+            if (!(proven && here && h.pid === rec.pid)) return finish(null);
+            verifiedEnds.set(h, { address: normalizeAddr(local.address), port: local.port });
+            finish(h);
           } catch {
             finish(null);
           }
@@ -749,7 +771,7 @@ async function doEnsure(deps: EnsureDeps): Promise<ServerRecord | null> {
     const h = await deps.health(old);
     // Build rule: replace a healthy server only when its build differs and this install's files are newer than the server's start, so an older install never displaces a newer server.
     const replace = h && (deps.build !== undefined ? h.build !== deps.build && (deps.identityMtime?.() ?? 0) > old.startedAt : compareVersions(h.version, deps.version) < 0);
-    if (h && !replace) return old;
+    if (h && !replace) return withEnd(old, h);
     if (h && h.pid !== process.pid) {
       // a healthy server of another, older build: its health answer proves the pid; end it, wait until it stops answering
       deps.kill(h.pid);
@@ -761,8 +783,9 @@ async function doEnsure(deps: EnsureDeps): Promise<ServerRecord | null> {
   const t0 = Date.now();
   const fresh = async (): Promise<ServerRecord | null> => {
     const r = readServer(stateDir);
-    if (r && (!old || r.healthKey !== old.healthKey) && (await deps.health(r))) return r;
-    return null;
+    if (!r || (old && r.healthKey === old.healthKey)) return null;
+    const h = await deps.health(r);
+    return h ? withEnd(r, h) : null;
   };
   let token = takeLock(lock, deps.now(), LOCK_STALE_MS);
   if (!token) {
