@@ -15,6 +15,9 @@ const INCOMPLETE: RecSpec = { verdict: "incomplete", reason: "checks left: 3, 4"
 const PASS: RecSpec = { verdict: "pass" };
 const hsOf = (w: World) => (w.ceremonyEntries().at(-1)?.data as { highStakes?: { runs?: { verdict: string; head: string | null; cwd: string }[]; incomplete?: { runId: string; head: string | null; model?: string }; runIds?: { id: string; from?: string }[] } } | undefined)?.highStakes;
 
+/** The checkout the incomplete run was launched in: a bare launch runs in the session folder (D118), not in the project. */
+const runCheckout = (w: World): string => (hsOf(w)?.incomplete as { cwd?: string } | undefined)?.cwd ?? w.project;
+
 async function standing(t: Parameters<typeof setup>[0], world?: Record<string, unknown>) {
   const r = await setup(t, { onMain: true, ...(world ? { world } : {}) });
   r.w.state.answer = "allow once";
@@ -94,14 +97,14 @@ test("a run incomplete in a checkout that is not the session's resumes there: it
 test("a resume is refused when the head moved, the tree changed, the run had a verdict, or a high-stakes run is still running", async (t) => {
   const moved = await standing(t);
   const m = await incompleteRun(moved.a, moved.w);
-  commitIn(moved.w.project, "src/a/z.ts");
+  commitIn(runCheckout(moved.w), "src/a/z.ts");
   const mr = await resume(moved.a, m);
   assert.match(mr.blocked ?? "", /\[high_stakes_resume\].*head moved/);
   assert.equal(hsOf(moved.w)?.incomplete, undefined, "a head change ends the incomplete run");
 
   const tree = await standing(t, { realSnapshot: true });
   const tr = await incompleteRun(tree.a, tree.w);
-  fs.writeFileSync(`${tree.w.project}/src-dirty.txt`, "dirty\n");
+  fs.writeFileSync(`${runCheckout(tree.w)}/src-dirty.txt`, "dirty\n");
   const trr = await resume(tree.a, tr);
   assert.match(trr.blocked ?? "", /\[high_stakes_resume\].*work tree changed/);
 
