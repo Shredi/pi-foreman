@@ -276,7 +276,7 @@ test("lines with and without a conflict or an unreviewed head share one structur
     assert.equal(marks.props.w, 11, `#${n} conflict slot has a fixed width`);
     assert.equal(marks.props.flex_none, true);
     assert.equal(marks.kids.length, 1, `#${n}: the conflict slot only`);
-    assert.equal(marks.kids[0].props.size === 11 || marks.kids[0].kids?.[0] === "!", true, `#${n}: the slot has the mark's width`);
+    assert.equal(marks.kids[0].props.size, 11, `#${n}: the slot has the mark's width`);
     assert.deepEqual(texts(title), [`Change ${n}`], `#${n}: the title is the third element`);
   }
   assert.deepEqual(texts(kidsOf(2)[1]), ["!"]);
