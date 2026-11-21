@@ -35,7 +35,7 @@ class TestSessionTree(ReplayCase):
     def test_child_plan_and_result_wake_the_parent_and_a_higher_tier_dry_run_opens(self):
         config = {"wait": {"batchWindowSeconds": 0}, "sync": {"runRetro": False},
                   "providers": {"foreman-fake": {"ranks": RANKS}}}
-        rig = self.rig("sesstree", load_fixture("session_tree"), config=config, permissions="baseline", intercom=True)
+        rig = self.rig("sesstree", load_fixture("session_tree"), config=config, intercom=True)
         handoff = rig.root / "handoff"
         handoff.mkdir()
         (handoff / "parent").write_text("parent-x\n", "utf-8")

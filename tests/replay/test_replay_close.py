@@ -25,7 +25,7 @@ CLOSE_KEYS = ("event", "role", "toolFamily", "guard", "decision", "model", "tier
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestRemoteClose(ReplayCase):
     def test_foreman_close_writes_result_and_exits(self):
-        rig = self.rig("close", load_fixture("close"), config={"sync": {"runRetro": False}}, permissions="baseline")
+        rig = self.rig("close", load_fixture("close"), config={"sync": {"runRetro": False}})
         pi = rig.start()
         sid = pi.session_id()
         pi.prompt("[[replay:c1]] hello", timeout=60)
@@ -85,7 +85,7 @@ class TestRemoteClose(ReplayCase):
         """Review S1: the idle case (no extension message_end; pi-intercom's wake prompt only)."""
         script = load_fixture("close")
         script["foreman"]["p1"] = [{"text": "Parent ready."}]
-        rig = self.rig("icclose", script, config={"sync": {"runRetro": False}}, permissions="baseline", intercom=True)
+        rig = self.rig("icclose", script, config={"sync": {"runRetro": False}}, intercom=True)
         a = rig.start(env={"PI_FOREMAN_PARENT_INTERCOM": "parent-x"})
         sid = a.session_id()
         a.prompt("[[replay:c1]] hello", timeout=90)

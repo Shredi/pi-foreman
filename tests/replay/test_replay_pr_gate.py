@@ -1,4 +1,4 @@
-"""Replay: review before PR (ledger items 10-12, 17) on the fake provider, permissions="baseline".
+"""Replay: review before PR (ledger items 10-12, 17) on the fake provider.
 
 One foreman session walks the gate: a shell `gh pr create` is not refused for a missing or stale
 review (the PR watch reports an unreviewed head instead); a `git push -o merge_request.create` on
@@ -49,7 +49,7 @@ def last(res):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestPrGate(ReplayCase):
     def pr_rig(self, name):
-        rig = self.rig(name, load_fixture("pr_gate"), permissions="baseline")
+        rig = self.rig(name, load_fixture("pr_gate"))
         commit(rig.project, "chore: init")
         bindir, marker = fake_gh(rig)
         env = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""), "FOREMAN_FAKE_PR_TOOL": PR_TOOL}

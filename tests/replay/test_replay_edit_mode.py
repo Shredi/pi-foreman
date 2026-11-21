@@ -35,7 +35,7 @@ def events(foreman, name):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestEditMode(ReplayCase):
     def run_matrix(self, mode, scratch="notes", setup=None):
-        rig = self.rig("edit-" + mode, script(scratch), permissions="baseline",
+        rig = self.rig("edit-" + mode, script(scratch),
                        config={"ceremony": {"foremanEdits": mode, "scratchDir": scratch}})
         (rig.project / "src").mkdir()
         (rig.project / "src" / "a.txt").write_text("alpha\n", "utf-8")
