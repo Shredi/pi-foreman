@@ -59,3 +59,12 @@ if (process.platform !== "win32") {
   globalThis[Symbol.for("pi-foreman.herdr-app-home")] = { seed: appHome };
   process.on("exit", () => fs.rmSync(appHome, { recursive: true, force: true }));
 }
+
+// The agent dir every session of a test process resolves (`piAgentDir` in env.ts, Pi's getAgentDir): an empty temp dir, so a real session
+// a test opens (createAgentSession) never writes the samplers' strip.json, pressure.json or usage lines under the real ~/.pi/agent.
+// The variable is cleared above; a test that needs its own agent dir sets it itself.
+{
+  const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-agent-dir-")));
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  process.on("exit", () => fs.rmSync(agentDir, { recursive: true, force: true }));
+}

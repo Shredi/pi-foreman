@@ -245,6 +245,20 @@ export function worktreeDoctor(agentDir: string, cwd: string, platform: string):
   return out;
 }
 
+/** Doctor line when pi-subagents' `control.notifyChannels` (`<agentDir>/extensions/subagent/config.json`) is not `["event"]`: a child's attention notice then also arrives as a pi-intercom message and starts a second turn. */
+export function noticeChannelsDoctor(agentDir: string): string[] {
+  const file = path.join(agentDir, "extensions", "subagent", "config.json");
+  let channels: unknown;
+  try {
+    const control = (JSON.parse(fs.readFileSync(file, "utf8")) as { control?: { notifyChannels?: unknown } }).control;
+    channels = control && typeof control === "object" ? control.notifyChannels : undefined;
+  } catch {
+    channels = undefined;
+  }
+  if (Array.isArray(channels) && channels.length === 1 && channels[0] === "event") return [];
+  return [`WARN control.notifyChannels is not ["event"] in ${file}: a child's attention notice arrives twice (native and as an intercom message) — fix: run /foreman setup`];
+}
+
 /** The models.json entry that declares a prompt-cache lifetime for a built-in model (docs/cache.md). */
 export function promptCacheSnippet(provider: string | undefined, modelId: string | undefined, shortSeconds: number): string {
   return JSON.stringify({ providers: { [provider ?? "<provider>"]: { modelOverrides: { [modelId ?? "<modelId>"]: { promptCache: { short: shortSeconds } } } } } });

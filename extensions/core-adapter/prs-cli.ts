@@ -15,6 +15,8 @@ import { resolveGithubHosts } from "./prhost.ts";
 import type { GithubHosts } from "./prhost.ts";
 import { expectStep, holdPass, oneLine, pollWatchBatch, settleMsOf, settledOf, waitingOf } from "./prwatch.ts";
 import type { CommentEntry, RunOp, SourceStatus, WatchPoll } from "./prwatch.ts";
+import { parsePhases, phaseOf, phasesStep } from "./prphases.ts";
+import type { PhaseRule } from "./prphases.ts";
 import { inScope, noAnswerRun, parsePrSources, runSource, sourceComments, sourceRuns } from "./prsources.ts";
 import type { PrContext, SourceCfg, SourceResult } from "./prsources.ts";
 import { openTrace } from "./trace.ts";
@@ -22,7 +24,7 @@ import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import { ENDED_KEEP_MS, STATE_LOCK_STALE_MS, readTracked, storeKey, trackedCommentsFile, trackedStateFile, usableLine, withTrackedLock, writeTracked } from "./prstore.ts";
-import type { BaselineEntry, CommentsDoc, StateDoc, StateEntry, StateMeta, TrackedPr } from "./prstore.ts";
+import type { BaselineEntry, CommentsDoc, StateDoc, StateEntry, StateMeta, StoredSnap, TrackedPr } from "./prstore.ts";
 import { dropLock, ownsLock, takeLock, writeAtomic } from "./statefile.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
@@ -66,7 +68,7 @@ export interface PollDeps {
   loadConfig(python: string | null): Promise<MergedConfig>;
   /** The RunOp over safe_ops.py with config `{prHost:"gh"}`; `pr_comments` gets the top-level `repoless`. */
   runOp(python: string): RunOp;
-  refresh(config: OpenPrsConfig, hosts?: GithubHosts): Promise<RefreshResult>;
+  refresh(config: OpenPrsConfig, hosts?: GithubHosts, phases?: readonly PhaseRule[]): Promise<RefreshResult>;
   /** tools.prGithubHosts of the loaded config; absent: github.com only. */
   githubHosts?(config: Json): GithubHosts;
   deadlineMs?: number;
@@ -81,6 +83,8 @@ interface SourceEnv {
   /** tools.prSettleSeconds in ms (the PR watch's key and default): how long a pass without a required-check set is held. */
   settleMs: number;
   cfgs: SourceCfg[];
+  /** tools.prPhases (prphases.ts): the gate and not-counted checks per repository. */
+  phases: PhaseRule[];
   /** radar.openPrs.hideRepos: entries of these repositories are marked `hiddenRepo`. */
   hide: string[];
   run: NonNullable<PollDeps["runSource"]>;
@@ -190,12 +194,14 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
     if ("error" in hosts) res.error = hosts.error;
     else if (!py.ok) res.error = `no Python >= 3.13 found (${py.rejected.join("; ") || "none tried"}). ${NO_PYTHON_FIX}`;
     if (oc.hideError) res.error ??= oc.hideError;
+    const phases = parsePhases(get(config.config, "tools.prPhases"));
+    if (phases.errors.length > 0) res.error ??= phases.errors[0];
     if (!("error" in hosts) && py.ok) {
       try {
         const ps = parsePrSources(get(config.config, "tools.prSources"));
         if (ps.errors.length > 0) res.error ??= ps.errors[0];
         const settle = get(config.config, "tools.prSettleSeconds");
-        const sx: SourceEnv = { settleMs: settleMsOf(settle), cfgs: ps.sources, hide: oc.hideRepos, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
+        const sx: SourceEnv = { settleMs: settleMsOf(settle), cfgs: ps.sources, phases: phases.rules, hide: oc.hideRepos, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
         if (!deps.runSource) sx.cfgs = [];
         await trackedStep(deps, py.info.executable, res, hosts.hosts, sx);
       } catch (err) {
@@ -203,7 +209,7 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
       }
     }
     try {
-      const refreshed = await deps.refresh(oc, hosts);
+      const refreshed = await deps.refresh(oc, hosts, phases.rules);
       res.searched = refreshed === "refreshed";
       if (refreshed === "off") {
         const dropped = clearOpenPrs(openPrsFile(deps.agentDir), deps.now());
@@ -338,26 +344,30 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const drop = new Set<string>();
   const now = deps.now();
   const newComments: CommentsDoc["prs"] = { ...cprs };
+  // the host's required list as polled: the phase sort (prphases.ts) takes the gate and not-counted names out of the stored one, and sorts again after the source merge
+  const rawRequired = new Map<string, string[] | null | undefined>();
   pick.forEach((p, i) => {
     const k = storeKey(p.repo, p.number, p.host);
     const rk = rowKey(p.host ?? "github.com", p.repo, String(p.number));
     const r = polls[i];
     const prev = prs[k];
     if ("snap" in r) {
-      const { comments: fetched, ...snap } = r.snap;
+      const { comments: fetched, ...polled } = r.snap;
+      const snap: StoredSnap = polled.state === "open" ? { ...polled, ...phasesStep(sx.phases, p.repo, polled.runs, polled.required) } : polled;
       if (snap.state !== "open") {
         prs[k] = { repo: p.repo, number: p.number, snap, okAt: rows.get(rk)?.startedAt ?? now, endedAt: prev?.endedAt ?? now, at: now };
         delete newComments[k];
         drop.add(k);
         return;
       }
+      rawRequired.set(k, polled.required);
       const row = rows.get(rk);
       const meta = row ? metaOf(row.row) : prev?.meta;
       const s = settledOf(snap.runs, snap.required);
       const hold = s.result === "pass" && sx.settleMs > 0 && !snap.required?.length ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
       const held = hold?.held ?? false;
       // a PR whose only missing runs are required names is decided again after the baseline step (expectSteps: merge-time, pre-merge or not learnable)
-      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && (!s.settled || held);
+      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed" && x.phase === undefined) && (!s.settled || held);
       prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), at: now };
       if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(0, MAX_COMMENTS).map(cap) };
     } else if ("error" in r && r.error === DEADLINE) {
@@ -370,8 +380,8 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   });
   res.tracked = items.length;
   const commentsBefore = JSON.stringify(comments.prs); // sourceStep edits shared comment objects in place
-  await sourceStep(deps, sx, pick, polls, state.prs, prs, newComments, deadline);
-  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now(), sx.settleMs);
+  await sourceStep(deps, sx, pick, polls, state.prs, prs, newComments, deadline, (k, repo, snap) => ({ ...snap, ...phasesStep(sx.phases, repo, snap.runs, rawRequired.get(k)) }));
+  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now(), sx.settleMs, sx.phases);
 
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
   markHidden(prs, sx.hide);
@@ -398,7 +408,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
  * `newComments` (`sources`). PRs whose oldest source answer is oldest go first (never-run first); a source not started before the deadline is skipped
  * and keeps its previous `at`. A PR without a successful poll is left alone, previous `sources` included. `before`: the entries as of the last run.
  */
-async function sourceStep(deps: PollDeps, sx: SourceEnv, pick: TrackedPr[], polls: WatchPoll[], before: Record<string, StateEntry>, prs: Record<string, StateEntry>, newComments: CommentsDoc["prs"], deadline: number): Promise<void> {
+async function sourceStep(deps: PollDeps, sx: SourceEnv, pick: TrackedPr[], polls: WatchPoll[], before: Record<string, StateEntry>, prs: Record<string, StateEntry>, newComments: CommentsDoc["prs"], deadline: number, reclass: (k: string, repo: string, snap: StoredSnap) => StoredSnap): Promise<void> {
   if (sx.cfgs.length === 0) {
     // no source configured: nothing of an earlier run stays
     for (const [k, e] of Object.entries(prs)) if (e.sources) delete e.sources;
@@ -464,7 +474,7 @@ async function sourceStep(deps: PollDeps, sx: SourceEnv, pick: TrackedPr[], poll
       } else if (cfg.gates) runs.push(noAnswerRun(cfg));
       sources[cfg.name] = { head: job.snapHead, gates: cfg.gates, ok, ...(ok ? {} : { error: got?.r?.error ?? DEADLINE }), at: got?.at ?? 0 };
     }
-    entry.snap = { ...entry.snap, runs };
+    entry.snap = reclass(job.k, job.p.repo, { ...entry.snap, runs });
     if (Object.keys(sources).length > 0) entry.sources = sources;
     else delete entry.sources;
     const c = newComments[job.k] ?? { updatedAt: "", comments: [] };
@@ -528,7 +538,7 @@ function flagBaselines(pick: TrackedPr[], prs: Record<string, StateEntry>, basel
  * A row without a `baseline` field is "not asked or not available" (an older answer, a host without the field, the fallback path): a known empty baseline.
  * An asked answer that failed carries `{error}`: unknown, asked again on the next poll, and the age of the stored one is not refreshed.
  */
-function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number, settleMs: number): void {
+function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number, settleMs: number, phases: readonly PhaseRule[]): void {
   // hosts whose flagged row came back without the field: the host does not have it (or the batch took the fallback path), so every other entry of that host with no stored
   // baseline counts as a known empty baseline in this poll too, not as unknown; a host that has the field answers every flagged row with it
   const none = new Set<string>();
@@ -552,10 +562,12 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     const rk = rowKey(host, p.repo, String(p.number));
     const row = rows.get(rk)?.row;
     const stored = row && typeof row.baseRef === "string" ? baselines[baseKey(host, p.repo, row.baseRef)] : undefined;
+    // the gate and not-counted names are not expected checks of the next head (the stored baseline stays as the host gave it)
+    const phaseOne = (ns: string[]): string[] => (phases.length > 0 ? ns.filter((n) => phaseOf(phases, p.repo, { name: n }) === 1) : ns);
     let baseline: { names: string[] } | null;
     if (!row) baseline = { names: [] };
-    else if (isObj(row.baseline) && !Array.isArray(row.baseline.names)) baseline = stored ? { names: stored.names } : null;
-    else if (stored) baseline = { names: stored.names };
+    else if (isObj(row.baseline) && !Array.isArray(row.baseline.names)) baseline = stored ? { names: phaseOne(stored.names) } : null;
+    else if (stored) baseline = { names: phaseOne(stored.names) };
     else baseline = flagged.has(rk) || none.has(host) ? { names: [] } : null;
     const old = before[k];
     const head = e.snap.head;
@@ -563,11 +575,11 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     const { state, facts } = expectStep(old?.exp, { head, runs: e.snap.runs, required: e.snap.required, cut: e.snap.cut === true, draft: e.meta?.draft === true, ...(old?.snap && old.snap.head !== head ? { prevRuns: old.snap.runs } : {}), upgrade, baseline }, now);
     e.exp = state;
     const { expect: _drop, learn: _old, ...rest } = e.snap;
-    const open = settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed");
+    const open = settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed" && x.phase === undefined);
     // every gating run passed and only required names have no run: merge-time (the base's recent merged PRs ran none of the missing names before their merge), pre-merge (one of them did)
     // or not learnable (no complete answer); a source run merged in is counted, a failure is none of these (it is immediate)
     const waiting = waitingOf(e.snap.runs, e.snap.required);
-    const ran = waiting.length > 0 && facts && !facts.unknown ? stored?.learn?.ran : undefined;
+    const ran = waiting.length > 0 && facts && !facts.unknown && stored?.learn ? stored.learn.ran : undefined;
     const mergeTime = ran ? (e.snap.required ?? []).filter((n) => !ran.includes(n)) : [];
     if (ran && waiting.every((n) => mergeTime.includes(n))) {
       // case 1: the merge-time names do not veto; the pass stands at once and the names ride along
@@ -612,7 +624,7 @@ export function realDeps(env: NodeJS.ProcessEnv = process.env): PollDeps {
     loadConfig: (python) => loadMergedConfig({ python, pkgRoot: PKG_ROOT, agentDir, projectDir: agentDir, trusted: false, spawner }),
     runOp: (python) => (op, args) =>
       runSafeOp({ python, script: path.join(PKG_ROOT, "scripts", "safe_ops.py"), op, args, cwd: agentDir, config: { prHost: "gh" }, env: penv, spawner, timeoutMs: OP_TIMEOUT_MS, repoless: true }),
-    refresh: (config, hosts) => refreshOpenPrs({ file: openPrsFile(agentDir), config, gh: realGh(agentDir, env), ...(hosts ? { hosts } : {}) }),
+    refresh: (config, hosts, phases) => refreshOpenPrs({ file: openPrsFile(agentDir), config, gh: realGh(agentDir, env), ...(hosts ? { hosts } : {}), ...(phases ? { phases } : {}) }),
     githubHosts: resolveGithubHosts,
     runSource: (cfg, ctx) => runSource(cfg, ctx, { stateDir: path.join(agentDir, "pi-foreman", "state"), env, platform: process.platform }),
     trace: (config) => {

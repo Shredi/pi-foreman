@@ -26,7 +26,7 @@ function setupCheckout() {
   for (const f of ["setup.mjs", "packages.lock.json", "package.json", "package-lock.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(checkout, f));
   for (const d of ["scripts", "setup", "config"]) fs.cpSync(path.join(ROOT, d), path.join(checkout, d), { recursive: true });
   fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
-  for (const f of ["profiles.mjs", "bridgelogin.mjs"]) fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", f), path.join(checkout, "extensions", "core-adapter", f));
+  for (const f of ["profiles.mjs", "bridgelogin.mjs", "harnessid.mjs"]) fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", f), path.join(checkout, "extensions", "core-adapter", f));
   fs.mkdirSync(path.join(checkout, ".git"));
   const bin = path.join(base, "bin");
   fs.mkdirSync(bin);

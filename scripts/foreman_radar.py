@@ -205,7 +205,54 @@ def config_open_prs(adir):
         return False
 
 
+def config_strip(adir):
+    """True unless sidebar.strip.enabled is false in the merged config (on by default); False on any failure."""
+    try:
+        import foreman_config
+        v = (((foreman_config.load_config(agent_dir=str(adir))["config"].get("sidebar") or {}).get("strip")) or {}).get("enabled")
+        return v is not False
+    except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
+        return False
+
+
+STRIP_SECONDS = 10
+
+
+def read_strip(adir, now):
+    """The status strip (state/strip.json, written by extensions/core-adapter/strip.ts) without its forecast samples,
+    or {"stale": true} when the file is missing, unusable or older than 3 x its sampleSeconds."""
+    d = read_json(Path(adir) / "pi-foreman" / "state" / "strip.json")
+    if not isinstance(d, dict) or d.get("version") != 1:
+        return {"stale": True}
+    secs = d.get("sampleSeconds")
+    secs = secs if isinstance(secs, (int, float)) and not isinstance(secs, bool) and secs >= 5 else STRIP_SECONDS
+    try:
+        at = datetime.datetime.strptime(str(d.get("at")), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc).timestamp()
+    except ValueError:
+        return {"stale": True}
+    if now - at > 3 * secs:
+        return {"stale": True}
+    return {k: v for k, v in d.items() if k != "samples"}
+
+
 OPEN_PR_STATES = ("fail", "run", "ok", "none")
+GATE_STATES = ("waiting", "running", "failed", "passed")
+
+
+def _phase_fields(src):
+    """The tracker's `tools.prPhases` result of a snap or search entry (gate state, gated, ruled), passed through as written: nothing is classified here."""
+    out = {}
+    g = src.get("gate")
+    if isinstance(g, dict) and g.get("state") in GATE_STATES:
+        out["gate"] = {"state": g["state"]}
+        w = g.get("waiting")
+        if isinstance(w, list) and w and all(isinstance(n, str) for n in w):
+            out["gate"]["waiting"] = [n[:120] for n in w[:10]]
+    for key in ("gated", "ruled"):
+        if src.get(key) is True:
+            out[key] = True
+    return out
+
 RADAR_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?$")  # pr_ops.py HOST_RE
 
 
@@ -230,9 +277,11 @@ def read_open_prs(adir):
         for c in (p.get("checks") if isinstance(p.get("checks"), list) else [])[:20]:
             if isinstance(c, dict) and c.get("state") in OPEN_PR_STATES and isinstance(c.get("n"), str) and isinstance(c.get("label"), str):
                 checks.append({"n": c["n"][:120], "state": c["state"], "label": c["label"][:20]})
+                if c.get("phase") in (2, "ignore") and not isinstance(c.get("phase"), bool):
+                    checks[-1]["phase"] = c["phase"]
         state = p.get("state") if p.get("state") in ("open", "draft") else "open"
         out.append({"repo": repo[:140], "number": num_, "title": title[:200], "url": p["url"], "state": state,
-                    "author": author[:60], "checks": checks})
+                    "author": author[:60], "checks": checks, **_phase_fields(p)})
         host = p.get("host")
         if isinstance(host, str) and RADAR_HOST_RE.match(host.lower()):
             out[-1]["host"] = host.lower()
@@ -285,8 +334,11 @@ def _tracked_entries(adir):
         for r in (snap.get("runs") if isinstance(snap.get("runs"), list) else [])[:20]:
             if isinstance(r, dict) and isinstance(r.get("name"), str):
                 checks.append({"n": r["name"][:120], "state": TRACKED_BUCKET.get(r.get("bucket"), "run"), "label": r["name"][:20]})
+                if r.get("phase") in (2, "ignore") and not isinstance(r.get("phase"), bool):
+                    checks[-1]["phase"] = r["phase"]
         ent = {"repo": repo[:140], "number": number, "title": title[:200], "url": url,
                "state": "draft" if meta.get("draft") is True else "open", "author": "", "checks": checks}
+        ent.update(_phase_fields(snap))
         if e.get("unsettled") is True:  # the poll holds a pass until the PR watch's settle rule is met: the display shows pending
             ent["unsettled"] = True
         waiting = e.get("waiting")
@@ -344,7 +396,7 @@ def tracked_meta(adir):
 
 
 def read_pr_feed(adir, now):
-    """(entries, search fetched-at stamp or None), or None when neither source has anything.
+    """(entries, search fetched-at stamp or None, (trackedAt, trackedN, trackedOff)), or None when neither source has anything.
     All search entries are listed; a tracked entry replaces its search twin while display-fresh (okAt within 15 min) or when its time (okAt, else the
     state `at` of an entry without `error`) is not older than the search file's fetchedAt, keeping the twin's author and bodyText. A tracked entry without a twin is listed whatever its age, with `tracked: true`. Sorted by repo (case-insensitive), number."""
     search = read_open_prs(adir)
@@ -1263,7 +1315,7 @@ def to_json_node(n, now, symbols):
     return out
 
 
-def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=None):
+def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=None, strip=None):
     stamp = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     doc = {"v": 1, "now": stamp, "symbols": sym_name, "recentRunSeconds": recent,
            "roots": [to_json_node(r, now, symbols) for r in roots]}
@@ -1275,14 +1327,16 @@ def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=
             doc["trackedAt"], doc["trackedN"], off = open_prs[2]
             if off:
                 doc["trackedOff"] = True
+    if strip is not None:
+        doc["strip"] = strip
     return doc
 
 
-def json_line(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=None):
-    return json.dumps(json_doc(roots, now, sym_name, symbols, recent, open_prs), separators=(",", ":"))
+def json_line(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=None, strip=None):
+    return json.dumps(json_doc(roots, now, sym_name, symbols, recent, open_prs, strip), separators=(",", ":"))
 
 
-def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS, closed=None, open_prs=False):
+def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS, closed=None, open_prs=False, strip=False):
     """One JSON line per refresh, flushed; quiet exit 0 on a closed pipe or Ctrl-C. No TTY handling."""
     cache = UsageCache()
     tick = 0
@@ -1290,7 +1344,7 @@ def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None,
         while max_ticks is None or tick < max_ticks:
             now = time.time()
             print(json_line(snapshot(adir, now, since_h, cache, done_ttl, closed=closed), now, sym_name, symbols, recent,
-                            read_pr_feed(adir, now) if open_prs else None))
+                            read_pr_feed(adir, now) if open_prs else None, read_strip(adir, now) if strip else None))
             sys.stdout.flush()
             tick += 1
             if max_ticks is None or tick < max_ticks:
@@ -1386,12 +1440,13 @@ def main(argv=None):
     if a.follow or a.json:
         recent = config_recent_runs(adir)
         with_prs = config_open_prs(adir)
+        with_strip = config_strip(adir)
     if a.follow:
-        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent, provably_closed, with_prs)
+        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent, provably_closed, with_prs, with_strip)
     if a.json:
         now = time.time()
         print(json_line(snapshot(adir, now, a.since, None, ttl, closed=provably_closed), now, sym_name, symbols, recent,
-                        read_pr_feed(adir, now) if with_prs else None))
+                        read_pr_feed(adir, now) if with_prs else None, read_strip(adir, now) if with_strip else None))
         return 0
     if a.once or not sys.stdout.isatty():
         now = time.time()

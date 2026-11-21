@@ -197,7 +197,7 @@ export function parseJudgeVerdict(text: string): ParsedJudge {
 }
 
 export class Classifier {
-  /** `tool\0cwd\0role\0kind\0payload` -> a clear this session. */
+  /** `tool\0cwd\0role\0kind\0payload\0ownerMessage` -> a clear this session. */
   private readonly cleared = new Set<string>();
   private noticed = false;
   /** The protected-target check's own cache. */
@@ -216,7 +216,7 @@ export class Classifier {
     const now = ctx.now ?? Date.now;
     const t0 = now();
     let model = "";
-    const key = [call.tool, call.cwd, call.role, call.kind, call.payload].join("\0");
+    const key = [call.tool, call.cwd, call.role, call.kind, call.payload, call.ownerMessage ?? ""].join("\0");
     const done = (r: JudgeResult, cached = false): JudgeResult => {
       try {
         ctx.trace?.({ decision: r.clear ? "allow" : "escalate", entry: "judge", cached, latencyMs: r.latencyMs, reasoning: JUDGE_REASONING });

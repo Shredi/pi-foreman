@@ -508,6 +508,64 @@ The dots row shows items from a program you run yourself, for example a deployme
 The items fill the dots row in this order (see Dots). Overlay authors: see
 [overlays](overlays.md#external-sidebar-status).
 
+## Status strip
+
+The herdr-app Agents view can show a small strip above the session list: how busy the computer is and how much of a usage
+limit is spent.
+
+```
+ cpu [spark] 42%   mem [bar] 71%   ● ok
+ disk /            [bar] 78%   52 GB free
+ Claude week       [bar|marker] 41%   resets Thu 21:00
+```
+
+The spark line, the bars and the pace marker are drawn as small boxes, not as text characters; `[bar]` stands for a bar.
+
+A timer in the main Pi session measures every `sidebar.strip.sampleSeconds` (10 s) and writes
+`<agent dir>/pi-foreman/state/strip.json`; `foreman radar --json` passes it on as the top-level `strip` field (without the
+forecast samples). It shows the computer where Pi runs: for a Windows host with Pi inside WSL, point the `local` entry of the
+mod's `foreman` prop at a command that runs foreman inside WSL, and CPU and memory are those of the WSL machine. Without a
+main session the strip is `{"stale": true}` and shows dashes. Child sessions never measure. When several main sessions share
+an agent dir, one holds a lease (`strip.lease`) and measures; the others stand by and take over when it stops renewing it.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sidebar.strip.enabled` | `true` | `false` starts no sampler and drops `strip` from the radar output |
+| `sidebar.strip.cpu` | `true` | CPU % with sparkline |
+| `sidebar.strip.memory` | `true` | memory used % |
+| `sidebar.strip.level` | `true` | the load guard's dot (reason shown at high or critical) |
+| `sidebar.strip.disks` | `null` | paths whose disk is shown; `null` = the workspace of the measuring session (it can change when another session takes over), `[]` = none |
+| `sidebar.strip.sampleSeconds` | `10` | seconds between measurements (at least 5) |
+| `sidebar.strip.sparkline` | `12` | CPU values kept for the sparkline |
+| `sidebar.strip.quotas.claude` | `true` | built-in Claude week and 5-hour rows |
+| `sidebar.strip.quotas.sources` | `{}` | usage scripts by name, each `{ "command": "...", "seconds": 300 }` (see [overlays](overlays.md#usage-sources)) |
+| `sidebar.strip.quotas.hide` | `[]` | row keys (`<source>:<id>`, built-in `claude:7d`, `claude:5h`) to hide |
+| `sidebar.strip.quotas.order` | `[]` | row keys shown first, in this order |
+
+```json
+{ "sidebar": { "strip": { "disks": ["/", "/data", "C:", "D:"], "quotas": { "hide": ["claude:5h"] } } } }
+```
+
+- **Where it may be set.** User config or an overlay only; the whole `sidebar.strip` block is ignored in the project and
+  session config, so a project can neither start a script nor shorten the interval.
+- **CPU and memory.** CPU is the busy share of all cores between two measurements (the first has no value). Memory used is
+  `1 - available/total`, where available is the load guard's own number when its sample is fresh, else the operating system's free memory.
+  Green while the load guard is calm (traffic-light colours: the herdr-app strip draws a calm cpu, memory, disk, level and usage value green; dashes, a missing disk, the stale line and the labels stay grey), amber past `resources.maxLoadPerCore`, red past twice that; memory and disks turn amber below
+  `resources.minFreeMemMB` / `minFreeDiskGB` and red below half of it.
+- **Disks.** The free space comes from the system's free-space call for each path (on Windows a bare drive letter such as `C:`
+  is read as `C:\`; on btrfs the figure is what the system reports). A path that does not exist shows a dash, never an error.
+- **Usage rows.** The fill is the share used; the marker `│` is the share of the period that has passed. Green up to 10
+  points ahead of that pace, amber further ahead, red when the recent rate would use the limit up before the reset (from
+  the row's own samples over the last seventh of the period) or at 100 % and beyond. A row without a reset has no marker.
+  A value whose reset has passed, a failed script and a value above 200 % show a dash.
+- **Claude rows.** Claude replies carry the subscription windows as `anthropic-ratelimit-unified-<window>-utilization` and
+  `-reset` headers. Every session notes them (at most every 30 s) in `strip-claude.json`; a row stays hidden until a
+  value has arrived on this computer. Only windows the reply reports appear (no per-model weekly row), and a window needs
+  both headers. Sessions share the file only when they share the agent dir. If the bridge changes the headers the rows show dashes.
+- **JSON.** `version`, `at`, `sampleSeconds`, then the parts that are on: `cpu` `{pct?, history, tone}`, `mem`
+  `{pct, usedMB, totalMB, tone}`, `level` `{level, reasons}`, `disks` `[{label, usedPct, freeGB, tone}` or `{label, missing: true}]`,
+  `quotas` `[{key, label, used, pace?, resetsAt?, tone}]` (`used: null` = dash; tone `neutral`, `green`, `amber` or `red`).
+
 ## Bundled add-on: background tasks
 
 `pi-background-tasks` ships with pi-foreman (exact pin in `package.json`, loaded from its `pi.extensions` list right after the core adapter), so there is nothing to install. It runs shell commands in the background with status, logs and kill (`bg_run`). When pi-foreman's extension loads it sets `PI_BG_FEATURES=process` and `PI_BG_DISABLE_UPDATE_CHECK=1` for the add-on, each only when you have not set it yourself; set `PI_BG_FEATURES` in your shell profile to change the features. On Windows it also sets `PI_BG_SHELL=bash` and `PI_BG_SHELL_PATH=<Git Bash>` unless you set either yourself, so `bg_run` runs under Git Bash instead of `cmd.exe`. The add-on reads these variables once when it loads, so the shell-policy section of its prompt guidance is fixed for the process. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
@@ -641,7 +699,7 @@ of the machine, the herdr core or the terminal. `hc keep` restores the terminal 
   Pi crash with the shell still the same program is not restarted: the note is cleared and the hand-resume line printed); the session was active within 14 days and its folder exists; and no other run holds the
   session's lock. Otherwise it keeps the note (a kept note is not decided again at every prompt: only in a new shell, or after the note changed, for example when Pi ran again in this shell) or clears it and, where you can resume by hand, prints `pi --session <id>` (the session id; for a session in a custom session dir, which is never restarted, the session file path).
 - **Restart.** A 5 s countdown (Enter starts now, any other key cancels and deletes the note), then `pi --session <file>` in the note's folder with the
-  session's permission profile, plan phase and `PI_BG_*` variables again. The session comes back with its history, identity (an opened child keeps its parent
+  session's plan phase and `PI_BG_*` variables again. The session comes back with its history, identity (an opened child keeps its parent
   link) and ceremony state. It gets one message (appended, never system text, no turn) with the time of the last sign of life; waits are lost.
 - **Limits.** One herdr core, one note per terminal. A lone Pi crash is not restarted, and neither is Pi ending on a signal in a shell that stays; the next prompt of that shell clears the note and prints the hand-resume line.
   Herdr TUI panes (`HERDR_PANE_ID`) are not covered. A custom session dir (not `<agent dir>/sessions`) clears the note and prints the hand-resume line.
@@ -749,6 +807,7 @@ is shown under that session; fork PRs match through `headRepo` (the head reposit
 - CI running: checks run or are not settled (amber, pulsing);
 - merge blocked or behind: the checks are settled and passed, but the merge state is blocked or behind (amber and still; the tooltip reads "CI passing, merge blocked" or "CI passing, branch behind"; the summary and the sort count it as pending; a PR with no checks confirmed for the head and a blocked or behind merge gets the same still amber dot, and its tooltip reads "no CI checks, merge blocked" or "no CI checks, branch behind");
 - checks passed, waiting on required checks: the checks are settled and all passed, the tracker names the required checks still to come (`waiting`, with no `unsettled`), and the merge state is not behind: a still amber ring (no fill, never pulses; the tooltip reads "checks passed, waiting on required checks", and the hover card lists the names under "waiting"). A ready PR keeps its check mark and a behind PR keeps "branch behind", so this state replaces only the merge-blocked dot and the plain green dot;
+- phases (`tools.prPhases`, see [tools](tools.md#phases)): the dot, the pill and the counts read the checks of phase 1 only; the gate checks and the checks that are not counted never colour them. A repository with gate checks or a merge label is gated: there the merge state `blocked` counts as ready (the check mark, as `behind`, `dirty` and `unknown` do not), because the host holds the merge until the gate and the reviews are in. A gated head with no phase-1 run gets no ready mark. The gate state shows as text: the hover card's state line and, on an Open PRs line, a token after the title read `gate waiting`, `gate running`, `gate failed` (red) or `gate passed`. The hover card adds two groups: **Gate** (amber) and **Not counted** (grey), each name with its state. Both the tracked PRs and the search-feed PRs are classified (the tracker and `openprs.ts` write `phase` per check, `gate`, `gated` and `ruled`; the radar and the mod only pass them on). A PR from the search feed has no required-check list, so it never shows `gate waiting`. After a `tools.prPhases` edit one poll may still show the old classification.
 - CI red: a check failed, on a draft or work-in-progress PR too (red; it pulses while a job still runs or the checks are not settled, and stands still once all finished; the tooltip says "CI failing, still running" or "CI failing"; counted as failing);
 - green but not reviewed: the checks are green and the session's fact is missing for the host's head or says not reviewed;
 - ready to merge: checks settled green (or no checks confirmed for a PR the session opened), mergeable, merge state not blocked, behind, in conflict or unknown, and the session's fact is `ok` on the host's head; a green check mark, bold, in the chip's box (it never pulses). A PR without a session fact is judged on host facts alone and gets the same check mark with no review claim.
@@ -790,7 +849,7 @@ logged in or rate limited, the last file stays and carries `error` and `errorAt`
 |---|---|
 | `open-prs.json` (`hiddenRepo` per entry) | `refreshOpenPrs` (a Pi session or `foreman prs poll`) the poll's re-mark of `hiddenRepo` (rewrites only when a mark changed) and the poll's clear (search or feature off: `openPrs: []`, once), each under `open-prs.json.lock` |
 | `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt, host?}]}` (at most 200 lines; `host` is written on every new line, `github.com` included; older lines may have none and mean `github.com`) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
-| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt`, `hiddenRepo`, `unsettled`, `waiting` per PR; `trackedAt`; `off`; `hostlessDroppedAt`) | the poll only |
+| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt`, `hiddenRepo`, `unsettled`, `waiting` per PR; the snap's `gate`, `gated`, `ruled` and the runs' `phase`; `trackedAt`; `off`; `hostlessDroppedAt`) | the poll only |
 | `tracked-prs-comments.json` | the poll only |
 
 The stored snap also carries the host's review decision as the optional field `reviewDecision` (`approved`, `changes_requested` or `review_required`; left out when the host gives none, and an entry without it still reads). The files stay version 1. Only the session's [ready label](tools.md#ready-label) reads the field; the radar feed, the pill and the child's blocked line do not.

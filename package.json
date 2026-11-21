@@ -47,7 +47,7 @@
     "@juicesharp/rpiv-ask-user-question": "git+https://github.com/Shredi/rpiv-ask-user-question.git#62ad77de8ba3b7dc1b407bfab7be4fac8a69fa41",
     "pi-background-tasks": "2.6.10",
     "pi-intercom": "git+https://github.com/Shredi/pi-intercom.git#5f184cce7e2811a130dc44ebac745db7562a1543",
-    "pi-subagents": "0.89.0",
+    "pi-subagents": "0.89.1",
     "unbash": "6.0.4"
   },
   "peerDependencies": {
@@ -55,8 +55,8 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "1.5.2",
-    "@earendil-works/pi-tui": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.6.0",
+    "@earendil-works/pi-tui": "1.6.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.9.0"
   },

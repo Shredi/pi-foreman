@@ -355,6 +355,26 @@ function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<stri
   });
 }
 
+/** The tree of `commit` in `cwd` without `.workflow/` (the same removal `worktreeTree(cwd, true)` makes), via a temporary index; null on any failure (also a commit that does not resolve). */
+export async function commitTreeNoWorkflow(cwd: string, commit: string): Promise<string | null> {
+  if (!/^[0-9a-f]{40,64}$/i.test(commit)) return null;
+  const top = ((await git(cwd, ["rev-parse", "--show-toplevel"])) ?? "").trim();
+  if (!top) return null;
+  let dir: string | null = null;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-snap-"));
+    const env = { ...process.env, GIT_INDEX_FILE: path.join(dir, "index") };
+    if ((await git(top, ["read-tree", `${commit}^{tree}`], env)) === null) return null;
+    if ((await git(top, ["rm", "-r", "--cached", "-q", "--ignore-unmatch", "--", ".workflow"], env)) === null) return null;
+    const tree = (await git(top, ["write-tree"], env))?.trim() ?? "";
+    return /^[0-9a-f]{40,64}$/.test(tree) ? tree : null;
+  } catch {
+    return null;
+  } finally {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** The working tree of `cwd` as a git tree (index + non-ignored worktree files) via a temporary index; null on any failure. `skipWorkflow`: the tree leaves out `.workflow/` (ledger, notes, scratch), as `treeChangedSince` does. */
 export async function worktreeTree(cwd: string, skipWorkflow = false): Promise<string | null> {
   // one call, two lines: the toplevel, then the index path (relative to `cwd`, resolved below)

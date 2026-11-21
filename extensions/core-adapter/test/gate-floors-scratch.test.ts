@@ -35,9 +35,9 @@ test("config-keys: a scratch copy of the schema or config is not a live config f
 });
 
 test("config-keys: live config files still fire", () => {
-  assert.equal(floor(`sed -i 's/"gate"/"gate2"/' /w/repo/config/foreman.schema.json`), "floor-config-keys");
+  assert.equal(floor(`sed -i 's/"gate"/"gate2"/' /w/repo/config/foreman.local.json`), "floor-config-keys");
   assert.equal(floor(`echo '{"gate":{}}' > /h/me/.pi/agent/foreman.json`), "floor-config-keys");
-  assert.equal(pathFloors({ path: "/w/repo/config/foreman.schema.json", content: '{"gate":{}}' }, env, "write")?.rule, "floor-config-keys");
+  assert.equal(pathFloors({ path: "/w/repo/config/foreman.local.json", content: '{"gate":{}}' }, env, "write")?.rule, "floor-config-keys");
   assert.equal(floor(`sed -i 's/"gate"/"gate2"/' /var/folders/zz/T/other/pi-foreman-scratch/s/r/../../../../../../../../w/repo/config/foreman.json`), "floor-config-keys");
 });
 

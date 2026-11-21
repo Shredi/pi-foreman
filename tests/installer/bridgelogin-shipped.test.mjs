@@ -20,5 +20,6 @@ test("npm pack lists every relative .mjs module setup.mjs imports statically", (
   const imports = [...source.matchAll(/^(?:import|\}) .*?from\s+"(\.\/[^"]+\.mjs)";?\s*$/gm)].map((m) => m[1].slice(2));
   assert.ok(imports.includes("extensions/core-adapter/profiles.mjs"), "the parse finds the profiles.mjs import");
   assert.ok(imports.includes("extensions/core-adapter/bridgelogin.mjs"), "the parse finds the bridgelogin.mjs import");
+  assert.ok(imports.includes("extensions/core-adapter/harnessid.mjs"), "the parse finds the harnessid.mjs import");
   for (const rel of imports) assert.ok(packed.has(rel), `${rel} is in the packed file list`);
 });

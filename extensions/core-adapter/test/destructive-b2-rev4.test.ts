@@ -30,7 +30,7 @@ test("a shell with -c under xargs reads the heredoc or here-string as its script
   refused("xargs -0 sh -c <<< 'rm -rf ~'");
   refused("xargs -I{} bash -c {} <<'E'\nrm -rf $X\nE");
   refused("xargs sh -c <<'E'\nfind $X -delete\nE");
-  runs("xargs bash <<'E'\nrm -rf $X\nE");
+  for (const child of [false, true]) assert.equal(run("xargs bash <<'E'\nrm -rf $X\nE", child), "danger-inline-code:judge", `${child ? "child" : "foreman"}: xargs bash heredoc`);
 });
 
 test("ssh options -B and -P step over their value", () => {

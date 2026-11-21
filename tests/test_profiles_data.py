@@ -22,7 +22,7 @@ RELAXATIONS = {"workflow-scripts", "remote-intercom", "git-tools"}
 SAFETY_FLOOR = ["safety.permissions", "safety.git", "safety.ops", "safety.requiredChildExtensions",
                 "safety.preconditionOps", "ceremony.foremanEdits", "ceremony.required", "ceremony.reviewBeforePr",
                 "ceremony.reviewGate", "ceremony.requireTriage", "bridge", "python", "presence.command",
-                "sidebar.statusCommand", "tools.prHost", "roles.*.mcp", "roles.*.file", "paths.hubWorkflow"]
+                "sidebar.statusCommand", "sidebar.strip", "tools.prHost", "roles.*.mcp", "roles.*.file", "paths.hubWorkflow"]
 SAMPLE_USER = {"providers": {"sample": {"cache": {"ttlSeconds": 300, "billing": "token"}}}}
 
 
@@ -193,8 +193,8 @@ class ProfilesData(unittest.TestCase):
         entries = self.addons["addons"]
         self.assertEqual([a["id"] for a in entries], ["polish", "quiver", "memory"])
         self.assertEqual({a["id"]: (a["package"], a["version"]) for a in entries},
-                         {"polish": ("pi-polish", "0.1.2"),
-                          "quiver": ("pi-quiver", "6.14.2"), "memory": ("pi-memory", "0.4.2")})
+                         {"polish": ("pi-polish", "0.1.13"),
+                          "quiver": ("pi-quiver", "6.15.2"), "memory": ("pi-memory", "0.4.2")})
         for a in entries:
             self.assertNotIn("recommended", a)
             self.assertIs(a["default"], True)
