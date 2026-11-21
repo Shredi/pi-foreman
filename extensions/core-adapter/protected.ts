@@ -2,7 +2,7 @@
 // `matchProtected` finds the entries a call touches and the effect class of what it would do (every local segment, and for `ssh <host> <cmd>` the
 // remote command too); `acceptProtected` decides whether a model's verdict on the call may stand. Everything fails closed: anything not modelled
 // here (an opaque segment, a command-running ssh option, an unparsable remote command) is `opaque` and never allows. Reuses effects.ts classes,
-// shellast.ts segments and rules.ts path globs; not related to the `Protected` type of floors.ts.
+// shellast.ts segments and rulecall.ts path globs; not related to the `Protected` type of floors.ts.
 import * as path from "node:path";
 import { toChain } from "./defaults.ts";
 import type { ProtectedCause } from "./classifier.ts";
