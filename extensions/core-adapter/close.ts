@@ -200,7 +200,7 @@ export interface CloseDeps {
   /** Retro numbers for a stub ("" when the sync output already carries them). */
   retro: () => Promise<string>;
   /** Send `text` to `to` over intercom; a returned promise settles when the send is done (or given up). */
-  reply: (to: string, text: string) => void | Promise<unknown>;
+  reply: (to: string, text: string, opts?: OutboxOpts) => void | Promise<unknown>;
   /** A remote child's answer to its remote parent: `remote notice closed [--close ready|open]` or `refused --reason=<arg>`. */
   remoteReply?: (kind: "closed" | "refused", arg?: string) => void | Promise<unknown>;
   notify: (text: string, level: "info" | "warning" | "error") => void;
@@ -308,7 +308,7 @@ export function childLabel(handoff: string): string {
  * The merge notice of one session: `(n)` for a merged PR says so once per PR number, in the pane and (unless the parent is remote)
  * to the intercom parent. A session with no handoff dir (a main session) says nothing. It never starts a close.
  */
-export function mergeNotifier(d: { handoff: string | undefined; parent: string | undefined; remote: boolean; notify: (text: string) => void; reply: (to: string, text: string) => unknown; trace: (rec: Record<string, unknown>) => void }): (n: number) => void {
+export function mergeNotifier(d: { handoff: string | undefined; parent: string | undefined; remote: boolean; notify: (text: string) => void; reply: (to: string, text: string, opts?: OutboxOpts) => unknown; trace: (rec: Record<string, unknown>) => void }): (n: number) => void {
   const seen = new Set<number>();
   return (n) => {
     const handoff = d.handoff?.trim();
@@ -324,7 +324,7 @@ export function mergeNotifier(d: { handoff: string | undefined; parent: string |
     }
     if (d.remote || !d.parent) return;
     try {
-      void Promise.resolve(d.reply(d.parent, text)).catch(() => undefined); // best effort, as the ack
+      void Promise.resolve(d.reply(d.parent, text, { noWake: true })).catch(() => undefined); // best effort, as the ack
     } catch {
       // best effort
     }
@@ -604,7 +604,7 @@ export class CloseFlow {
     }
     if (req.replyTo) {
       try {
-        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${shown}${report ? ` ${report.closeLine}` : ""}`);
+        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${shown}${report ? ` ${report.closeLine}` : ""}`, { noWake: true }); // the parent reads it at its next turn; a foreman_wait resolves from the registry (childblocked.ts)
       } catch {
         // the ack is best effort; the close itself is done
       }
@@ -683,6 +683,11 @@ export interface CloseSession {
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
 let outboxSeq = 0;
 
+/** Outbox request options. `noWake`: the message is delivered without starting a turn in an idle receiver (an older pi-intercom drops the field and wakes it). */
+export interface OutboxOpts {
+  noWake?: boolean;
+}
+
 /** An outbox result: pi-intercom's `status` (sent|failed|blocked|rejected) with its `code` and `detail` when it sent them. */
 export interface OutboxOutcome {
   status: string;
@@ -694,7 +699,7 @@ export interface OutboxOutcome {
  * Emit one pi-intercom outbox request; resolves with the outbox result (status, code, detail), or status "timeout"
  * after `waitMs` (also when no result event arrives). Never rejects.
  */
-export function outboxSendDetailed(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS): Promise<OutboxOutcome> {
+export function outboxSendDetailed(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS, opts: OutboxOpts = {}): Promise<OutboxOutcome> {
   if (!events) return Promise.resolve({ status: "no-events" });
   const requestId = `pi-foreman-${kind}-${Date.now()}-${++outboxSeq}`;
   return new Promise((resolve) => {
@@ -711,7 +716,7 @@ export function outboxSendDetailed(events: Bus, to: string, message: string, kin
         const d = data as { requestId?: unknown; status?: unknown; code?: unknown; detail?: unknown } | null;
         if (d && d.requestId === requestId) done({ status: typeof d.status === "string" ? d.status : "unknown", ...(typeof d.code === "string" ? { code: d.code } : {}), ...(typeof d.detail === "string" ? { detail: d.detail } : {}) });
       });
-      events.emit(INTERCOM_OUTBOX_EVENT, { version: 1, requestId, extensionId: "pi-foreman", extensionName: "pi-foreman", to, message });
+      events.emit(INTERCOM_OUTBOX_EVENT, { version: 1, requestId, extensionId: "pi-foreman", extensionName: "pi-foreman", to, message, ...(opts.noWake ? { noWake: true } : {}) });
     } catch {
       done({ status: "failed" });
     }
@@ -719,8 +724,8 @@ export function outboxSendDetailed(events: Bus, to: string, message: string, kin
 }
 
 /** `outboxSendDetailed`, reduced to the status. */
-export async function outboxSend(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS): Promise<string> {
-  return (await outboxSendDetailed(events, to, message, kind, waitMs)).status;
+export async function outboxSend(events: Bus, to: string, message: string, kind: string, waitMs = OUTBOX_WAIT_MS, opts: OutboxOpts = {}): Promise<string> {
+  return (await outboxSendDetailed(events, to, message, kind, waitMs, opts)).status;
 }
 
 /** Wire the intercom trigger and the sequence events; returns the `/foreman close` handler. */
@@ -757,7 +762,7 @@ export function registerClose(
       pushNotice: s.pushNotice ? () => s.pushNotice!(holder.ctx) : undefined,
       closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,
       retro: () => (get(s.config(), "sync.runRetro") === false ? s.retro(holder.ctx) : Promise.resolve("")),
-      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      reply: (to, text, opts) => outboxSend(pi.events, to, text, "close", undefined, opts),
       remoteReply: s.remoteReply,
       notify: (text, level) => {
         try {

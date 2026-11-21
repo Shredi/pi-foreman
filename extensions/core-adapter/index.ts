@@ -1013,7 +1013,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       get parent() { return parentIntercomId(process.env); },
       remote: process.env[REMOTE_PARENT_ENV] === "1",
       notify: (text) => s.prCtx?.ui.notify(text, "info"),
-      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      reply: (to, text, opts) => outboxSend(pi.events, to, text, "close", undefined, opts),
       trace: (r) => s.trace?.emit(r),
     });
     const s: Session = {
@@ -2403,6 +2403,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         seconds: () => noticeSeconds(get(s.config.config, "sessions.blockedNoticeSeconds")),
         carry: s.carry,
         contact: (child) => (watch as RemoteWatcher | null)?.lastContact(child),
+        childClosed: (label, notePath) => void waits.childNotice(s.id, label, "closed", notePath),
         send: (text, wake) => {
           let idle = true;
           try {

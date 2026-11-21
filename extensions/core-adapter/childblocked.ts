@@ -110,6 +110,8 @@ export interface ChildBlockedDeps {
   contact?: (child: string) => number | undefined;
   /** `wake`: a turn is started on an idle parent (queued as a follow-up during a run). The notice and the quiet note both send false: shown, appended, read at the next turn. */
   send: (text: string, wake: boolean) => void;
+  /** A local child's registry entry turned closed since the last pass (a quiet `foreman:closed` never reaches `parseInbound` in an idle parent): resolves a child wait on `label`; `notePath` is the entry's result path or "". */
+  childClosed?: (label: string, notePath: string) => void;
   trace?: (rec: Record<string, unknown>) => void;
   now?: () => number;
   timer?: (fn: () => void, ms: number) => Cancel;
@@ -131,6 +133,8 @@ export class ChildBlocked {
   private sent = new Map<string, Sent>();
   /** The checkpoint answers already reported or seeded: key `${label}\n${at}` -> child. */
   private answered = new Map<string, string>();
+  /** The local children the last pass saw open: child id -> true. A child that left this set as `closed` gets one `childClosed` call (saved, so a reload keeps it). */
+  private seenOpen = new Set<string>();
   /** The first start of this session's watcher, kept in the state file so a reload does not move it. */
   private startedMs: number;
   private cancel: Cancel | null = null;
@@ -165,7 +169,7 @@ export class ChildBlocked {
       const now = (this.d.now ?? Date.now)();
       const opener = this.d.opener();
       const mine = openChildren(this.d.agentDir, opener);
-      let dirty = false;
+      let dirty = this.closedPass(mine);
       this.remind(mine, secs, now);
       this.remindRemote(mine, secs, now);
       for (const e of mine) {
@@ -229,6 +233,27 @@ export class ChildBlocked {
     } catch {
       // a pass never breaks the session
     }
+  }
+
+  /** The first pass that sees a local child's entry turned closed resolves the wait on it; an entry whose `last.kind` is already `closed` (parseInbound read the line) says nothing. True when the seen set changed. */
+  private closedPass(mine: SessionEntry[]): boolean {
+    const open = new Set(mine.filter((e) => typeof e.machine !== "string").map((e) => e.child));
+    const gone = [...this.seenOpen].filter((c) => !open.has(c));
+    const grew = [...open].some((c) => !this.seenOpen.has(c));
+    if (gone.length === 0 && !grew) return false;
+    const reg = gone.length > 0 ? readRegistry(this.d.agentDir).sessions : [];
+    this.seenOpen = open;
+    for (const child of gone) {
+      const e = reg.find((x) => x.child === child);
+      if (!e || e.status !== "closed" || e.last?.kind === "closed") continue;
+      this.d.trace?.({ event: "child_closed_noticed", label: cleanLabel(e.label) });
+      try {
+        this.d.childClosed?.(e.label, typeof e.result === "string" ? e.result : "");
+      } catch {
+        // a wait never breaks the pass
+      }
+    }
+    return true;
   }
 
   /** The question records: one for a child that closed or whose handoff dir holds an answer newer than the record goes; one older than `secs` is reminded once. */
@@ -313,7 +338,8 @@ export class ChildBlocked {
   /** True when a state file with a start time was read. */
   private load(): boolean {
     try {
-      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { startedMs?: unknown; sent?: Record<string, Partial<Sent> & { ask?: true }>; answered?: Record<string, unknown> };
+      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { startedMs?: unknown; sent?: Record<string, Partial<Sent> & { ask?: true }>; answered?: Record<string, unknown>; open?: unknown };
+      if (Array.isArray(j.open)) for (const c of j.open) if (typeof c === "string") this.seenOpen.add(c);
       for (const [k, c] of Object.entries(j.answered ?? {})) if (typeof c === "string") this.answered.set(k, c);
       // an `ask: true` record of an older state file is dropped: it is no owner episode
       for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since, ...(r.plan === true ? { plan: true as const } : {}), ...(r.hold === true ? { hold: true as const } : {}) });
@@ -333,7 +359,7 @@ export class ChildBlocked {
     const tmp = `${file}.${process.pid}.tmp`;
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, startedMs: this.startedMs, sent: Object.fromEntries(this.sent), answered: Object.fromEntries(this.answered) })}\n`, "utf8");
+      fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, startedMs: this.startedMs, sent: Object.fromEntries(this.sent), answered: Object.fromEntries(this.answered), open: [...this.seenOpen] })}\n`, "utf8");
       fs.renameSync(tmp, file);
     } catch {
       try {
