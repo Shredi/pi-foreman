@@ -60,3 +60,33 @@ test("strip: stale draws the one line, a missing strip draws nothing", () => {
   assert.match(texts(view({ stale: true }).render({})).join(""), /status: no main session measuring/);
   assert.equal(walk(view(undefined).render({})).some((e) => idOf(e) === "strip"), false);
 });
+
+test("strip: text parts are separate non-shrinking elements, bars are boxes, the head line wraps", () => {
+  const doc = { ...strip, quotas: [{ key: "q", label: "Week", used: 1.6, pace: 0.5, resetsAt: "2026-11-26T20:00:00Z", tone: "red" }] };
+  const root = view(doc).render({});
+  const all = walk(root);
+  const line = all.find((e) => idOf(e) === "strip-line");
+  assert.ok(line.props.flex_wrap, "the head line wraps whole groups");
+  const groups = line.kids;
+  assert.equal(groups.length, 3, "cpu, mem and level are groups");
+  for (const g of groups) assert.ok(g.props.flex_none);
+  const textEls = (el) => walk(el).filter((e) => (e.kids ?? []).some((k) => typeof k === "string"));
+  for (const e of [...textEls(line), ...textEls(all.find((x) => idOf(x) === "strip-disk:0")), ...textEls(all.find((x) => idOf(x) === "strip-quota:0"))]) {
+    assert.ok(e.props.flex_none, `text ${JSON.stringify(e.kids)} does not shrink`);
+  }
+  const mem = groups[1];
+  const track = mem.kids.find((k) => k.props.bg);
+  assert.ok(track.props.bg && track.props.h === 6, "the track is a box");
+  assert.equal(track.kids[0].props.w, "71%", "the fill is a box of the used share");
+  assert.equal(texts(mem).join(""), "mem 71%");
+  const spark = groups[0].kids.find((k) => k.kids.length === 2 && typeof k.kids[0] !== "string");
+  assert.deepEqual(spark.kids.map((k) => k.props.h), [1, 11]);
+  assert.equal(walk(root).some((e) => texts(e).some((s) => /[█░▁▂▃▄▅▆▇]/.test(s))), false, "no block glyphs");
+  const q = all.find((x) => idOf(x) === "strip-quota:0");
+  const qt = q.kids.find((k) => k.props.bg);
+  assert.equal(qt.kids[0].props.w, "100%", "an overrun fills the track");
+  assert.equal(qt.kids[1].props.w, 2, "the pace marker is 2 px wide");
+  assert.equal(qt.kids[1].props.left, "50%");
+  assert.ok(qt.props.flex_1 && qt.props.min_w === 24, "the usage bar takes the remaining width");
+  assert.match(texts(q).join("|"), /160%/);
+});

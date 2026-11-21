@@ -268,7 +268,6 @@ const STRIP_MAX_DISKS = 8;
 const STRIP_MAX_QUOTAS = 12;
 const STRIP_MAX_REASONS = 6;
 const STRIP_LABEL = 18;
-const SPARK = "▁▂▃▄▅▆▇█";
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -277,6 +276,9 @@ const tone = (v, allowed) => (typeof v === "string" && allowed.includes(v) ? v :
 const LOAD_TONES = ["neutral", "amber", "red"];
 const QUOTA_TONES = ["neutral", "green", "amber", "red"];
 const label = (v, max = 40) => str(v).replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
+
+const STRIP_DISK_LABEL = 200;
+const diskLabel = (v) => cutMiddle(label(v, Infinity), STRIP_DISK_LABEL); // a path keeps its real end
 
 /** The strip of a radar document, validated: null (nothing to draw), `{stale: true}`, or
  *  `{at, cpu, mem, level, disks, quotas}` (a part that is off is null / []). Lists are bounded, percentages clamped, an unknown tone is neutral. */
@@ -293,8 +295,8 @@ export function parseStrip(raw) {
     ? { level: label(raw.level.level, 12) || "ok", reasons: listOf(raw.level.reasons).filter((r) => typeof r === "string").map((r) => label(r, 40)).filter(Boolean).slice(0, STRIP_MAX_REASONS) }
     : null;
   const disks = listOf(raw.disks).filter(isObj).slice(0, STRIP_MAX_DISKS).map((d) => (d.missing === true
-    ? { label: label(d.label), missing: true }
-    : { label: label(d.label), missing: false, usedPct: pct(d.usedPct), freeGB: finite(d.freeGB) === null ? null : Math.max(0, d.freeGB), tone: tone(d.tone, LOAD_TONES) }));
+    ? { label: diskLabel(d.label), missing: true }
+    : { label: diskLabel(d.label), missing: false, usedPct: pct(d.usedPct), freeGB: finite(d.freeGB) === null ? null : Math.max(0, d.freeGB), tone: tone(d.tone, LOAD_TONES) }));
   const quotas = listOf(raw.quotas).filter(isObj).slice(0, STRIP_MAX_QUOTAS).map((q) => {
     const used = finite(q.used);
     const reset = typeof q.resetsAt === "string" ? Date.parse(q.resetsAt) : NaN;
@@ -310,23 +312,19 @@ export function parseStrip(raw) {
   return { at: Number.isFinite(at) ? at : null, cpu, mem, level, disks, quotas };
 }
 
-/** One glyph per value (0 to 100), `▁` lowest, `█` highest. */
-export function sparkline(values) {
-  return listOf(values).map((v) => SPARK[clamp(Math.round((clamp(num(v), 0, 100) / 100) * 7), 0, 7)]).join("");
+/** Height in px (1 to `max`) of one sparkline bar per value (0 to 100), oldest first; at most the last `count` values. A flat or zero history keeps 1 px bars. */
+export function sparkHeights(values, max = 12, count = 16) {
+  return listOf(values).slice(-count).map((v) => clamp(Math.round((clamp(num(v), 0, 100) / 100) * max), 1, max));
 }
 
-/** A bar of `cells` cells filled by `pct` (0 to 100). */
-export function stripBar(pct, cells = 10) {
-  const n = clamp(Math.round((clamp(num(pct), 0, 100) / 100) * cells), 0, cells);
-  return "█".repeat(n) + "░".repeat(cells - n);
+/** The filled share (0 to 1) of a bar for `pct` (0 to 100), or of a usage bar for `used` (0 to 2 as a fraction; over 1 fills the track). */
+export function fillFraction(value, scale = 100) {
+  return clamp(num(value) / scale, 0, 1);
 }
 
-/** The usage bar: 15 cells filled by `used` (0 to 2, over 1 is a full bar); the pace marker `│` takes the cell at `pace` (0 to 1) when there is one. */
-export function quotaBar(used, pace = null, cells = 15) {
-  const n = clamp(Math.round(clamp(num(used), 0, 1) * cells), 0, cells);
-  const out = [...("█".repeat(n) + "░".repeat(cells - n))];
-  if (typeof pace === "number" && Number.isFinite(pace)) out[clamp(Math.floor(clamp(pace, 0, 1) * cells), 0, cells - 1)] = "│";
-  return out.join("");
+/** The position (0 to 1) of the pace marker on a usage track; null without a pace. */
+export function markerFraction(pace) {
+  return typeof pace === "number" && Number.isFinite(pace) ? clamp(pace, 0, 1) : null;
 }
 
 /** "resets Thu 21:00" within 7 days of `now` (local time), else "resets 1 Dec"; "" without a reset time. */
@@ -338,11 +336,13 @@ export function resetText(resetsAt, now) {
 }
 
 const pctText = (v) => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
-const fixed = (s, w) => {
-  if (s.length <= w) return s.padEnd(w);
-  const tail = Math.floor((w - 1) / 2);
+/** `s` cut to `w` chars with "…" in the middle, the larger share kept at the end (the end of a path names it); shorter text stays. */
+export const cutMiddle = (s, w) => {
+  if (s.length <= w) return s;
+  const tail = Math.ceil((w - 1) * 0.6);
   return `${s.slice(0, w - 1 - tail)}…${s.slice(s.length - tail)}`;
 };
+const fixed = (s, w) => cutMiddle(s, w).padEnd(w);
 
 /** The dot of the load guard: amber at high, red at critical, else neutral; the reason words only when it is not ok. */
 function levelSegs(level) {
@@ -352,31 +352,31 @@ function levelSegs(level) {
   return [{ text: "●", tone: toneOf }, { text: ` ${text}`, tone: toneOf }];
 }
 
-/** The unfolded strip as rows `{id, segs: [{text, tone}]}`: cpu / memory / level, one row per disk and per usage row. `{stale: true}` is one line
- *  with dashes; null draws nothing. */
+/** The unfolded strip as rows `{id, segs}`: cpu / memory / level, one row per disk and per usage row. A seg is `{text, tone}`; a bar seg has
+ *  `bar: {frac, marker}` (fill share and pace marker position, 0 to 1 or null) and no text, a sparkline seg `spark: [heights in px]`.
+ *  The head row's segs carry `group` ("cpu", "mem", "level") so the drawing can wrap whole groups. `{stale: true}` is one line with dashes; null draws nothing. */
 export function stripRows(strip, now = Date.now()) {
   if (!isObj(strip)) return [];
   if (strip.stale) return [{ id: "stale", segs: [{ text: "status: no main session measuring  cpu —  mem —", tone: "neutral" }] }];
   const rows = [];
   const head = [];
-  const gap = () => (head.length ? head.push({ text: "   ", tone: "neutral" }) : 0);
+  const grp = (group, segs) => head.push(...segs.map((g) => ({ ...g, group })));
   if (strip.cpu) {
-    gap();
-    head.push({ text: "cpu ", tone: "neutral" });
-    if (strip.cpu.history.length) head.push({ text: `${sparkline(strip.cpu.history)} `, tone: strip.cpu.tone });
-    head.push({ text: ` ${pctText(strip.cpu.pct)}`, tone: strip.cpu.tone });
+    grp("cpu", [{ text: "cpu ", tone: "neutral" },
+      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history) }] : []),
+      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone }]);
   }
   if (strip.mem) {
-    gap();
-    head.push({ text: "mem ", tone: "neutral" }, { text: strip.mem.pct === null ? "░░░░░░░░░░ —" : `${stripBar(strip.mem.pct)} ${pctText(strip.mem.pct)}`, tone: strip.mem.tone });
+    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null } },
+      { text: pctText(strip.mem.pct), tone: strip.mem.tone }]);
   }
-  if (strip.level) { gap(); head.push(...levelSegs(strip.level)); }
+  if (strip.level) grp("level", levelSegs(strip.level));
   if (head.length) rows.push({ id: "head", segs: head });
   const w = Math.min(STRIP_LABEL, Math.max(0, ...strip.disks.map((d) => d.label.length), ...strip.quotas.map((q) => q.label.length)));
   strip.disks.forEach((d, i) => {
     const segs = [{ text: `${fixed(d.label, w)} `, tone: "neutral" }];
     if (d.missing || d.usedPct === null) segs.push({ text: "—", tone: "neutral" });
-    else segs.push({ text: `${stripBar(d.usedPct)} ${pctText(d.usedPct)}`, tone: d.tone }, { text: d.freeGB === null ? "" : `   ${Math.round(d.freeGB)} GB free`, tone: "neutral" });
+    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null } }, { text: pctText(d.usedPct), tone: d.tone }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
     rows.push({ id: `disk:${i}`, segs });
   });
   strip.quotas.forEach((q, i) => {
@@ -384,7 +384,7 @@ export function stripRows(strip, now = Date.now()) {
     if (q.used === null) segs.push({ text: "—", tone: "neutral" });
     else {
       const reset = resetText(q.resetsAt, now);
-      segs.push({ text: `${quotaBar(q.used, q.pace)}  ${Math.round(q.used * 100)}%`, tone: q.tone }, { text: reset ? `   ${reset}` : "", tone: "neutral" });
+      segs.push({ text: "", tone: q.tone, bar: { frac: fillFraction(q.used, 1), marker: markerFraction(q.pace) } }, { text: `${Math.round(q.used * 100)}%`, tone: q.tone }, ...(reset ? [{ text: reset, tone: "neutral" }] : []));
     }
     rows.push({ id: `quota:${i}`, segs });
   });

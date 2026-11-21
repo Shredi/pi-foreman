@@ -818,19 +818,39 @@ export default class ForemanAgents extends View {
     const fid = "strip";
     const folded = this.folded.has(fid);
     const color = { ...tones(t), neutral: t.muted };
-    const line = (segs) => h_flex().flex_1().min_w(0).items_center().overflow_hidden().text_size(10.5).text_color(t.muted)
-      .children(segs.map((g) => div().flex_none().text_color(color[g.tone] ?? t.muted).child(g.text)));
+    // Text parts never shrink or clip (flex_none, no wrap); bars are boxes: a dim track, a fill in the tone, and for usage a thin pace marker.
+    const part = (g, barW) => {
+      const ink = color[g.tone] ?? t.muted;
+      if (g.bar) {
+        const track = div().relative().h(6).rounded(3).bg(t.dim + "44")
+          .when(barW, (el) => el.flex_none().w(barW)).when(!barW, (el) => el.flex_1().min_w(24).max_w(120))
+          .child(div().absolute().top(0).left(0).h(6).w(`${Math.round(g.bar.frac * 100)}%`).rounded(3).bg(ink));
+        return g.bar.marker === null ? track : track.child(div().absolute().top(-2).left(`${Math.round(g.bar.marker * 100)}%`).w(2).h(10).bg(t.foreground));
+      }
+      if (g.spark) return h_flex().flex_none().h(12).gap(1).items_end().children(g.spark.map((px) => div().flex_none().w(2).h(px).bg(ink)));
+      return div().flex_none().whitespace_nowrap().text_color(ink).child(g.text);
+    };
+    // The head line wraps whole groups (cpu, mem, level) onto the next line when the sidebar is too narrow.
+    const line = (segs) => {
+      const items = [];
+      for (const g of segs) {
+        const last = items.at(-1);
+        if (g.group !== undefined && last?.group === g.group) last.segs.push(g); else items.push({ group: g.group, segs: [g] });
+      }
+      return h_flex().id("strip-line").flex_1().min_w(0).flex_wrap().items_center().gap_x(8).gap_y(1).text_size(10.5).text_color(t.muted)
+        .children(items.map((it) => h_flex().flex_none().gap(2).items_center().children(it.segs.map((g) => part(g, 48)))));
+    };
     const headSegs = folded ? stripSummary(strip) : rows[0].segs;
     const body = folded ? [] : rows.slice(1);
     const toggle = (_e, cx) => { if (this.folded.has(fid)) this.folded.delete(fid); else this.folded.add(fid); cx.notify(); };
-    const head = h_flex().id("strip-head").pl(8).pr(8).h(20).flex_none().gap(4).items_center().cursor_pointer()
+    const head = h_flex().id("strip-head").pl(8).pr(8).min_h(20).flex_none().gap(4).items_center().cursor_pointer()
       .hover((x) => x.bg(t.hover)).on_click(toggle)
       .child(this.foldSlot(t, fid, true, { folded }))
       .child(line(headSegs));
     return Collapsible.new().id("strip").flex().flex_col().flex_none().px(6).pb(4).open(body.length > 0).child(head)
       .when(body.length > 0, (el) => el.content(v_flex().flex_none().pl(28).pr(8).gap(1)
-        .children(body.map((r) => h_flex().id(`strip-${r.id}`).flex_none().h(16).items_center().text_size(10.5).text_color(t.muted)
-          .children(r.segs.map((g) => div().flex_none().text_color(color[g.tone] ?? t.muted).child(g.text)))))));
+        .children(body.map((r) => h_flex().id(`strip-${r.id}`).flex_none().min_h(16).gap(6).items_center().text_size(10.5).text_color(t.muted)
+          .children(r.segs.map((g) => part(g)))))));
   }
 
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.

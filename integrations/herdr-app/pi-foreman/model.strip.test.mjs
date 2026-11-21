@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseStrip, parseRadarDoc, sparkline, stripBar, quotaBar, resetText, stripRows, stripSummary } from "./model.js";
+import { parseStrip, parseRadarDoc, sparkHeights, fillFraction, markerFraction, cutMiddle, resetText, stripRows, stripSummary } from "./model.js";
 
 const doc = (strip, extra = {}) => JSON.stringify({ v: 1, roots: [], ...(strip === undefined ? {} : { strip }), ...extra });
 const full = () => ({
@@ -53,36 +53,41 @@ test("parseStrip: a missing cpu pct stays null and parts that are off stay off",
   assert.match(text(stripRows(s)[0].segs), /cpu .*—/);
 });
 
-test("sparkline glyphs run from the lowest to the highest block", () => {
-  assert.equal(sparkline([0, 100]), "▁█");
-  assert.equal(sparkline([0, 14, 29, 43, 57, 71, 86, 100]), "▁▂▃▄▅▆▇█");
-  assert.equal(sparkline([-9, 900, "x"]), "▁█▁");
-  assert.equal(sparkline(null), "");
+test("sparkHeights: one px height per value, 1 to 12, oldest left, flat and empty histories", () => {
+  assert.deepEqual(sparkHeights([0, 50, 100]), [1, 6, 12]);
+  assert.deepEqual(sparkHeights([-9, 900, "x"]), [1, 12, 1]);
+  assert.deepEqual(sparkHeights([0, 0, 0]), [1, 1, 1], "a flat zero history keeps visible bars");
+  assert.deepEqual(sparkHeights([50, 50, 50]), [6, 6, 6]);
+  assert.deepEqual(sparkHeights([]), []);
+  assert.deepEqual(sparkHeights(null), []);
+  assert.deepEqual(sparkHeights(Array.from({ length: 40 }, (_, i) => i)).length, 16, "only the newest 16");
+  assert.deepEqual(sparkHeights([10, 100], 20), [2, 20]);
 });
 
-test("stripBar: 10 cells, rounded, clamped", () => {
-  assert.equal(stripBar(0), "░░░░░░░░░░");
-  assert.equal(stripBar(71), "███████░░░");
-  assert.equal(stripBar(100), "██████████");
-  assert.equal(stripBar(250), "██████████");
-  assert.equal(stripBar(-1), "░░░░░░░░░░");
+test("fillFraction: share of the track, clamped at overrun", () => {
+  assert.equal(fillFraction(0), 0);
+  assert.equal(fillFraction(71), 0.71);
+  assert.equal(fillFraction(250), 1);
+  assert.equal(fillFraction(-1), 0);
+  assert.equal(fillFraction(0.4, 1), 0.4);
+  assert.equal(fillFraction(1.6, 1), 1);
 });
 
-test("quotaBar: 15 cells, the pace marker takes the cell at pace", () => {
-  assert.equal([...quotaBar(0.4, 0.5)].length, 15);
-  assert.equal(quotaBar(0, 0), "│░░░░░░░░░░░░░░");
-  assert.equal(quotaBar(0.4, 0.5), "██████░│░░░░░░░");
-  assert.equal(quotaBar(0.4, 1), "██████░░░░░░░░│");
-  assert.equal(quotaBar(0.4), "██████░░░░░░░░░", "no pace, no marker");
-  assert.equal(quotaBar(0.4, null), "██████░░░░░░░░░");
+test("markerFraction: pace position on the track, null without pace", () => {
+  assert.equal(markerFraction(0.5), 0.5);
+  assert.equal(markerFraction(0), 0);
+  assert.equal(markerFraction(3), 1);
+  assert.equal(markerFraction(null), null);
+  assert.equal(markerFraction(undefined), null);
 });
 
-test("quotaBar: an overrun is a full bar", () => {
-  assert.equal(quotaBar(1.6), "███████████████");
+test("quota overrun: full fill, red, real percent text, marker at pace", () => {
   const rows = stripRows(parseStrip({ version: 1, quotas: [{ label: "Week", used: 1.6, pace: 0.5, tone: "red" }] }));
-  assert.match(text(rows[0].segs), /160%/);
-  assert.equal(rows[0].segs[1].tone, "red");
-  assert.ok(rows[0].segs[1].text.startsWith("███████"));
+  const bar = rows[0].segs.find((g) => g.bar);
+  assert.deepEqual(bar.bar, { frac: 1, marker: 0.5 });
+  assert.equal(bar.tone, "red");
+  const pct = rows[0].segs.find((g) => g.text === "160%");
+  assert.equal(pct.tone, "red");
 });
 
 test("resetText: weekday and time within 7 days, else day and month", () => {
@@ -97,14 +102,17 @@ test("stripRows: head line, disk rows with dashes, quota rows with dash rows", (
   const now = new Date(2026, 10, 20, 12, 0).getTime();
   const rows = stripRows(parseStrip(full()), now);
   assert.deepEqual(rows.map((r) => r.id), ["head", "disk:0", "disk:1", "quota:0", "quota:1"]);
-  const head = text(rows[0].segs);
-  assert.match(head, /cpu ▁▅█ +42%/);
-  assert.match(head, /mem ███████░░░ 71%/);
-  assert.match(head, /● ok/);
-  assert.equal(rows[0].segs.find((s) => s.text.includes("71%")).tone, "amber");
-  assert.match(text(rows[1].segs), /^\/ +████████░░ 78% +52 GB free$/);
+  const head = rows[0].segs;
+  assert.equal(text(head), "cpu 42%mem 71%● ok");
+  assert.deepEqual(head.find((g) => g.spark).spark, [1, 6, 12]);
+  assert.deepEqual(head.find((g) => g.bar).bar, { frac: 0.71, marker: null });
+  assert.equal(head.find((g) => g.text === "71%").tone, "amber");
+  assert.deepEqual(head.map((g) => g.group), ["cpu", "cpu", "cpu", "mem", "mem", "mem", "level", "level"]);
+  assert.match(text(rows[1].segs), /^\/ +78%52 GB free$/);
+  assert.equal(rows[1].segs.find((g) => g.bar).bar.frac, 0.78);
   assert.match(text(rows[2].segs), /^D: +—$/);
-  assert.match(text(rows[3].segs), /^Claude week +██████░│░░░░░░░ +41% +resets /);
+  assert.match(text(rows[3].segs), /^Claude week +41%resets /);
+  assert.deepEqual(rows[3].segs.find((g) => g.bar).bar, { frac: 0.41, marker: 0.52 });
   assert.match(text(rows[4].segs), /^team +—$/);
 });
 
@@ -160,4 +168,22 @@ test("stripRows: a long disk label is cut in the middle, a short one stays", () 
   const fits = stripRows({ ...full(), disks: [{ label: "/Volumes/data", usedPct: 1, freeGB: 1, tone: "neutral" }], quotas: [] });
   assert.ok(fits.find((r) => r.id === "disk:0").segs[0].text.startsWith("/Volumes/data"));
   assert.ok(!fits.find((r) => r.id === "disk:0").segs[0].text.includes("…"));
+});
+
+test("a long disk path keeps its real end through parse and the middle cut", () => {
+  const path = "/Users/marc/Documents/git/pi-foreman.worktrees/status-strip";
+  const s = parseStrip({ version: 1, disks: [{ label: path, usedPct: 87, freeGB: 119, tone: "neutral" }] });
+  assert.equal(s.disks[0].label, path, "parse does not cut a path from its start");
+  const label = stripRows(s).find((r) => r.id === "disk:0").segs[0].text.trim();
+  assert.ok(label.endsWith("-strip"), label);
+  assert.ok(label.endsWith("tatus-strip"), label);
+  assert.equal(label.length, 18);
+  assert.equal(label.split("…").length, 2);
+  const huge = parseStrip({ version: 1, disks: [{ label: `/start/${"x".repeat(400)}/real-end`, usedPct: 1, freeGB: 1 }] }).disks[0].label;
+  assert.ok(huge.length <= 200 && huge.endsWith("/real-end") && huge.startsWith("/start"));
+});
+
+test("cutMiddle: short text stays, long text keeps both ends", () => {
+  assert.equal(cutMiddle("abc", 18), "abc");
+  assert.equal(cutMiddle("abcdefghijklmnopqrstuvwxyz", 10), "abc…uvwxyz");
 });
