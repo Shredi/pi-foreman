@@ -246,7 +246,8 @@ class Rig:
                if not k.upper().startswith(("PI_", "FOREMAN_", "HERDR_", "HC_")) and k.upper() not in ("TMPDIR", "TEMP", "TMP")}
         env.update({"PI_CODING_AGENT_DIR": str(self.agent), "FOREMAN_FAKE_SCRIPT": str(self.script),
                     "TMPDIR": str(self.tmp), "TEMP": str(self.tmp), "TMP": str(self.tmp),
-                    "PI_FOREMAN_PRESSURE_FIXTURE": str(self.ok_host)})
+                    "PI_FOREMAN_PRESSURE_FIXTURE": str(self.ok_host),
+                    "FOREMAN_FAKE_CWD": str(self.project)})
         env.update(extra or {})
         return env
 

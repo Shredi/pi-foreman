@@ -16,6 +16,9 @@
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
 // assert the four token kinds. A step's own "usage" object overrides single numbers (ladder replay).
 //
+// FOREMAN_FAKE_CWD=<dir> (the driver sets it to the rig's project) adds `cwd: <dir>` to a scripted builder `subagent` launch (also inside
+// `tasks`, `chain` and `parallel`) that names no cwd, workdir, worktree or machine: the rig's project is a fresh primary checkout without a commit, where a launch without cwd would be
+// refused for want of a session folder (D118). An empty value turns it off.
 // FOREMAN_FAKE_CALLS=<file> appends "<provider>/<model> <tag>" per provider call (tests assert a
 // request never reached the provider).
 // FOREMAN_FAKE_SECTIONS=<file> appends "<tag> <step> <section names>" per foreman-model call: the
@@ -62,6 +65,19 @@ interface Step {
   tools?: { name: string; arguments: Record<string, unknown> }[];
 }
 type Script = Record<string, Record<string, Step[]>>;
+
+/** `args` with `cwd` added to every builder launch entry that names no cwd, workdir, worktree or machine. */
+function withBuilderCwd(args: Record<string, unknown>, cwd: string): Record<string, unknown> {
+  const entry = (e: unknown): unknown => {
+    if (!e || typeof e !== "object") return e;
+    const o = e as Record<string, unknown>;
+    const out: Record<string, unknown> = { ...o };
+    for (const k of ["tasks", "chain", "parallel"]) if (Array.isArray(o[k])) out[k] = (o[k] as unknown[]).map(entry);
+    if (o.agent === "builder" && !["cwd", "workdir", "worktree", "machine"].some((k) => k in o)) out.cwd = cwd;
+    return out;
+  };
+  return entry(args) as Record<string, unknown>;
+}
 
 function loadScript(): Script {
   const file = process.env.FOREMAN_FAKE_SCRIPT;
@@ -263,6 +279,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
       stream.push({ type: "text_end", contentIndex: i, content: step.text, partial: output });
     }
     for (const t of step.tools ?? []) {
+      if (process.env.FOREMAN_FAKE_CWD && t.name === "subagent") t.arguments = withBuilderCwd(t.arguments, process.env.FOREMAN_FAKE_CWD);
       const call = { type: "toolCall" as const, id: `fake-${process.pid}-${++counter}`, name: t.name, arguments: t.arguments as never };
       output.content.push(call);
       const i = output.content.length - 1;

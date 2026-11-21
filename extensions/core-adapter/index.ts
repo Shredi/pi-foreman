@@ -228,7 +228,7 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overr
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
+import { samePath, selfFinish, spawnDetached, verifiedMergeFor, worktreeRoot as containingWorktree } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -1846,12 +1846,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.sessionFolder && !s.primaryWork && entries.some((e) => e.agent === "builder")) {
       const top = await primaryCheckout(s.cwd);
       if (top) {
-        const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
         const inTop = (e: Record<string, unknown>): boolean => {
           const c = [e, input].map((x) => x.cwd).find((v) => typeof v === "string" && v !== "") as string | undefined;
           if (c === undefined) return s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy" && !explicit(e);
-          const rel = path.relative(real(top), real(path.resolve(s.cwd, c)));
-          return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+          // selffinish's native real paths: git's forward-slash long-name top matches a Windows 8.3 short or backslash spelling
+          return containingWorktree(path.resolve(s.cwd, c), [{ path: top, branch: null }]) !== null;
         };
         if (entries.some((e) => e.agent === "builder" && inTop(e))) primary = true;
       }

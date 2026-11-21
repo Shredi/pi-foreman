@@ -77,7 +77,9 @@ test("D118: the first builder launch without cwd at standard gets a new worktree
   const first = await builder(a);
   assert.equal(first.blocked, null, String(first.blocked));
   const cwd = String(first.input.cwd);
-  assert.equal(cwd, path.join(w.project + ".worktrees", slug));
+  const real = (p: string): string => fs.realpathSync.native(p);
+  assert.equal(real(cwd), path.join(real(path.dirname(cwd)), slug), "the folder is <project>.worktrees/<slug>");
+  assert.equal(real(path.dirname(cwd)), real(w.project) + ".worktrees");
   assert.ok(fs.existsSync(path.join(cwd, ".git")), "the worktree exists");
   assert.equal(git(cwd, "rev-parse", "HEAD"), originTip, "the base is the fetched origin/main, not the stale local main");
   assert.equal(git(cwd, "symbolic-ref", "--short", "HEAD"), `round/${slug}`);
@@ -141,7 +143,7 @@ test("D118: a session in a linked worktree is untouched", async (t) => {
 
 test("primaryCheckout: the top of a primary checkout, null outside git", async (t) => {
   const { w } = await setup(t);
-  assert.equal(await primaryCheckout(path.join(w.project, "sub", "..")), fs.realpathSync(w.project));
+  assert.equal(await primaryCheckout(path.join(w.project, "sub", "..")), fs.realpathSync.native(w.project));
   assert.equal(await primaryCheckout(path.join(w.project, "..", "..")), null);
 });
 
@@ -299,4 +301,13 @@ test("D118: a trivial builder that escalates in the same call and runs in the pr
   const next = await builder(a);
   assert.equal(next.input.cwd, undefined, "no folder after work in the primary");
   assert.equal(worktrees(w.project).length, 1);
+});
+
+test("D118: a repository without a commit refuses the launch with git's own error and names close.worktreeDir and the explicit cwd", async (t) => {
+  const { w, a } = await setup(t, { origin: "none" });
+  fs.rmSync(path.join(w.project, ".git"), { recursive: true });
+  git(w.project, "init", "-q", "-b", "main");
+  const r = await builder(a);
+  assert.match(r.blocked ?? "", /launch refused \[session_folder\]: git worktree add .* failed \(branch round\/s-.*, base HEAD\): .*invalid reference: HEAD/s);
+  assert.match(r.blocked ?? "", /`close\.worktreeDir`.*explicit `cwd`.*foreman_session_open/s);
 });

@@ -117,7 +117,7 @@ class TestPressure(ReplayCase):
         set_host(rig, "ok")
         wake, recs = wake_and_settle(pi, 90)
         pi.close()
-        original = {"agent": "builder", "task": "[[replay:cr]] map the repo"}
+        original = {"agent": "builder", "task": "[[replay:cr]] map the repo", "cwd": "<path>"}  # the rig adds the project as cwd (FOREMAN_FAKE_CWD)
         self.assertIn("pressure: ok, relaunch with: " + json.dumps(original, separators=(",", ":")), wake)
         # the foreman relaunched with those arguments; nothing launched by itself before
         relaunch = tool_results(recs)

@@ -28,17 +28,18 @@ export type FolderResult =
 interface Out {
   code: number;
   out: string;
+  err: string;
 }
 
 function git(cwd: string, args: string[], timeout: number = GIT_TIMEOUT_MS): Promise<Out> {
   return new Promise((resolve) => {
     try {
-      execFile("git", args, { cwd, encoding: "utf8", timeout, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout) => {
+      execFile("git", args, { cwd, encoding: "utf8", timeout, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (err, stdout, stderr) => {
         const code = err ? (typeof (err as { code?: unknown }).code === "number" ? ((err as { code: number }).code) : 1) : 0;
-        resolve({ code, out: String(stdout ?? "").trim() });
+        resolve({ code, out: String(stdout ?? "").trim(), err: String(stderr ?? "").trim() || (err ? err.message : "") });
       });
     } catch {
-      resolve({ code: 1, out: "" });
+      resolve({ code: 1, out: "", err: "" });
     }
   });
 }
@@ -50,8 +51,9 @@ export async function primaryCheckout(cwd: string): Promise<string | null> {
   const dirs = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"]);
   const [gitDir, common] = dirs.out.split("\n");
   if (dirs.code !== 0 || !gitDir || !common) return null;
-  const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
-  return real(gitDir) === real(common) ? top.out : null;
+  const real = (p: string): string => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+  // git prints the top with forward slashes (and the long name on Windows); the native real path is what the other adapter path compares use
+  return real(gitDir) === real(common) ? real(top.out) : null;
 }
 
 /** The slug of the session folder: the session name lowercased, runs outside `[a-z0-9-]` as `-`, at most 40 characters; `s-<first 8 of the id>` when empty or reserved. */
@@ -62,7 +64,7 @@ export function folderSlug(name: string | undefined, id: string): string {
   return `s-${clean(id).slice(0, 8) || "session"}`;
 }
 
-const route = " Pass an explicit `cwd` in the launch to run in the checkout you name, or open a session folder yourself with `foreman_session_open` (`worktree: true`).";
+const route = " Point `close.worktreeDir` (user or overlay config) at a folder that can be written, pass an explicit `cwd` in the launch to run in the checkout you name, or open a session folder yourself with `foreman_session_open` (`worktree: true`).";
 const refuse = (reason: string): FolderResult => ({ ok: false, reason: reason + route });
 
 /** The base of the new branch: `[ref, staleNote]`, or an error text. */
@@ -123,9 +125,13 @@ export async function ensureSessionFolder(i: { cwd: string; sessionId: string; s
     if (!picked) return refuse(`every session folder name from ${slug} to ${slug}-9 is taken (path or branch) under ${root.spelled}.`);
     const base = await baseOf(main);
     if ("error" in base) return refuse(`the session folder cannot be made: ${base.error}.`);
-    fs.mkdirSync(root.spelled, { recursive: true });
+    try {
+      fs.mkdirSync(root.spelled, { recursive: true });
+    } catch (err) {
+      return refuse(`the session folder cannot be made: the worktree root ${root.spelled} cannot be created (${(err as Error).message}).`);
+    }
     const add = await git(main, ["worktree", "add", "--no-track", picked.path, "-b", picked.branch, base.base], FETCH_TIMEOUT_MS);
-    if (add.code !== 0) return refuse(`git worktree add ${picked.path} failed (branch ${picked.branch}, base ${base.base}).`);
+    if (add.code !== 0) return refuse(`git worktree add ${picked.path} failed (branch ${picked.branch}, base ${base.base}): ${add.err || `exit code ${add.code}`}.`);
     // local commits of the primary checkout that the base (origin/<default>) lacks
     const aheadOut = base.base === "HEAD" ? null : await git(main, ["rev-list", "--count", `${base.base}..HEAD`]);
     const ahead = aheadOut && aheadOut.code === 0 ? Number(aheadOut.out) || 0 : 0;
