@@ -200,6 +200,8 @@ import { installHerdrMeta } from "./herdrmeta.ts";
 import { installBgRecords } from "./bgrecords.ts";
 import { RemoteWatcher } from "./remotewatch.ts";
 import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds, openChildren } from "./childblocked.ts";
+import { REMOTE_NOTICE_TYPE, RemoteNoticeBatch } from "./remotenotice.ts";
+import { RECEIPT_ENTRY, RECEIPT_STATUS_KEY, REMOTE_RECEIPT_TYPE, ReceiptWatch } from "./remotereceipt.ts";
 import { IntercomCarry, addresses, deliveredSendTo, isQuestion, parentIdsOf, senderOf } from "./intercomcarry.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
@@ -663,10 +665,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   }) as never);
   let remoteWatch: RemoteWatcher | null = null; // hc events watcher of the remote children (remotewatch.ts), a foreman session only
+  let receiptWatch: ReceiptWatch | null = null; // the delivery receipt of a remote child's reports (remotereceipt.ts), a remote child only
   let childBlocked: ChildBlocked | null = null; // the parent's notice that a child session waits on the owner (childblocked.ts), a foreman session only
   pi.on("session_shutdown", async () => {
     remoteWatch?.stop();
     remoteWatch = null;
+    receiptWatch?.stop();
+    receiptWatch = null;
     childBlocked?.stop();
     childBlocked = null;
     core.release();
@@ -2275,11 +2280,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     remoteWatch?.stop();
     remoteWatch = null;
     if (!s.isChild) {
+      // a notice no armed wait took becomes one message per catch-up run: a turn when idle, a follow-up when busy (as CHILD_BLOCKED_TYPE below)
+      const remoteBatch = new RemoteNoticeBatch();
       remoteWatch = new RemoteWatcher({
         agentDir: s.agentDir,
         opener: () => openerIntercomId(process.env, s.agentDir, s.id),
         fetchTimeoutSeconds: () => get(s.config.config, "sessions.remote.fetchTimeoutSeconds"),
-        wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
+        wake: (label, kind, text, machine) => {
+          if (!waits.childNotice(s.id, label, kind, text)) remoteBatch.add(label, kind, text, machine);
+        },
+        flush: () => {
+          const content = remoteBatch.flush();
+          if (!content) return;
+          let idle = true;
+          try {
+            idle = ctx.isIdle();
+          } catch {
+            // a stale context: treat as idle
+          }
+          pi.sendMessage({ customType: REMOTE_NOTICE_TYPE, content, display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+        },
         notify: (msg, level) => ctx.ui.notify(msg, level),
         trace: (rec) => s.trace?.emit(rec),
         importReports: get(s.config.config, "retro.report") === false ? undefined : async (data) => {
@@ -2292,6 +2312,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
       });
       remoteWatch.start();
+    }
+    receiptWatch?.stop();
+    receiptWatch = null;
+    if (process.env[REMOTE_PARENT_ENV] === "1" && process.env[HANDOFF_DIR_ENV]?.trim()) {
+      // a remote child: footer status and `nextTurn` notes from `notices.jsonl` and `notice-ack.json` of its handoff dir; no turn of its own
+      receiptWatch = new ReceiptWatch({
+        handoff: () => process.env[HANDOFF_DIR_ENV]?.trim() || undefined,
+        setStatus: (text) => ctx.ui.setStatus(RECEIPT_STATUS_KEY, text),
+        note: (text) => pi.sendMessage({ customType: REMOTE_RECEIPT_TYPE, content: text, display: true }, { deliverAs: "nextTurn" }),
+        persist: (noted) => pi.appendEntry(RECEIPT_ENTRY, noted),
+      });
+      receiptWatch.restore(ctx.sessionManager.getBranch?.() ?? []);
+      receiptWatch.start();
     }
     childBlocked?.stop();
     childBlocked = null;
