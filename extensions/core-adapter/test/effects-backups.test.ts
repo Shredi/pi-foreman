@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { classify, effectCtx, editorBackupCommand } from "../effects.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const base = fs.mkdtempSync(path.join(os.tmpdir(), "pf-backups-"));
+const base = trackedTmp("pf-backups-");
 fs.mkdirSync(path.join(base, ".git"));
 fs.mkdirSync(path.join(base, "build"));
 const c = effectCtx(base);

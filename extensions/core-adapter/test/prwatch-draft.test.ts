@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { baselineOf, prDelta, prMessage } from "../prwatch.ts";
 import type { Bucket, Run, WatchSnapshot } from "../prwatch.ts";
 import { clearStoreCache, readStoreEntry, storeKey, trackedStateFile } from "../prstore.ts";
 import type { PrKey } from "../prhost.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const NOW = 10_000_000;
@@ -64,7 +64,7 @@ test("draft: marked ready for review on the same head, the ready lines come once
 
 test("draft: the tracker's draft flag reaches the watch snap; an absent one is not draft", () => {
   const meta = { url: "u", title: "t", headRefName: "b", headRepo: "acme/app" };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-draft-"));
+  const dir = trackedTmp("pf-draft-");
   fs.mkdirSync(path.dirname(trackedStateFile(dir)), { recursive: true });
   const write = (entryMeta: Record<string, unknown> | undefined) => {
     fs.writeFileSync(trackedStateFile(dir), JSON.stringify({ v: 1, trackedAt: NOW - 1000, prs: { [storeKey("acme/app", 7)]: { repo: "acme/app", number: 7, at: NOW, okAt: NOW - 1000, snap: { state: "open", mergeable: "mergeable", head: SHA, base: "main", updatedAt: "t1", runs: [] }, ...(entryMeta ? { meta: entryMeta } : {}) } } }));

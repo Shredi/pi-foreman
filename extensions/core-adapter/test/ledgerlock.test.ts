@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,8 +6,12 @@ import path from "node:path";
 import { LedgerGate } from "../ledgerlock.ts";
 import { writeHint } from "../hints.ts";
 
+const made: string[] = [];
+after(() => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
+
 function ledger(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ledgerlock-"));
+  made.push(dir);
   const f = path.join(dir, "LEDGER-x.md");
   fs.writeFileSync(f, "# Ledger\n\n- [ ] 1. one\n- [ ] 2. two\n");
   return f;

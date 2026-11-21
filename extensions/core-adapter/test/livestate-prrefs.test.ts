@@ -1,15 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { LiveState, liveDir } from "../livestate.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { PrKey } from "../prhost.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const readLive = (waits: unknown[]) => {
-  const agent = fs.mkdtempSync(path.join(os.tmpdir(), "rdl-"));
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "rdl-"));
+  const agent = trackedTmp("rdl-");
+  const cwd = trackedTmp("rdl-");
   const l = LiveState.start({ agentDir: agent, sessionId: "s1", cwd, mode: "rpc", env: {} }, () => [], undefined, () => waits as never);
   assert.ok(l);
   l.flush();

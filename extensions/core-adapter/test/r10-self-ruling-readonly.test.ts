@@ -15,9 +15,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
+import { trackedTmp } from "./_tmpbase.ts";
+
+const mk = trackedTmp;
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r10sr-")));
+  const root = fs.realpathSync.native(mk("pf-r10sr-"));
   const hand = path.join(root, ".workflow", "handoffs");
   const H = path.join(hand, "up");
   const S = path.join(root, "scratch");

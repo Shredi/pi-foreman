@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -123,7 +124,9 @@ class BuildWorldTest(unittest.TestCase):
     def test_pi_foreman_python_reaches_pi_through_python_path(self):
         with mock.patch.dict(os.environ, {"PI_FOREMAN_PYTHON": "/usr/local/bin/python3.13"}):
             cfg = ws.foreman_config(row())
-            env = ws.pi_env(mock.Mock(work=tempfile.gettempdir(), fake_script=None), Path("/agent"), None)
+            work = tempfile.mkdtemp(prefix="pf-waiter-")
+            self.addCleanup(shutil.rmtree, work, True)
+            env = ws.pi_env(mock.Mock(work=work, fake_script=None), Path("/agent"), None)
         self.assertEqual(cfg["python"], {"path": "/usr/local/bin/python3.13"})
         self.assertNotIn("PI_FOREMAN_PYTHON", env)  # the scrub stays intact
         with mock.patch.dict(os.environ, {}, clear=False):

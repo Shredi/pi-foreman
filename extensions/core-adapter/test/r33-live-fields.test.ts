@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { readOwnAddonTasks, readAddonTasks } from "../bg.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 import { writeStampAtomic } from "../sidebarlive.ts";
 import { spinnerFrame, symbolSet } from "../symbols.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r33l-"));
+const tmp = () => trackedTmp("r33l-");
 const run = { launchId: "l", role: "b", rung: null, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
 
 test("four glyph sets (unknown -> unicode) with the new keys and the spinner frames", () => {

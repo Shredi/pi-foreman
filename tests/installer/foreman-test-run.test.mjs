@@ -1,5 +1,5 @@
 // scripts/foreman_test_run.mjs: the machine-wide test lock and the --test-concurrency cap.
-import { test } from "node:test";
+import { test, after } from "node:test";
 import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -10,10 +10,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "foreman_test_run.mjs");
-const { testConcurrency, nodeTestArgs, acquireLock, LockWaitTimeout, killTree } = await import(pathToFileURL(SCRIPT).href);
+const { testConcurrency, nodeTestArgs, acquireLock, LockWaitTimeout, killTree, targetedSettings, slotPaths } = await import(pathToFileURL(SCRIPT).href);
+
+const MADE = [];
+after(() => {
+  for (const d of MADE) fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+});
 
 function tmp() {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-test-run-")));
+  const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-test-run-")));
+  MADE.push(d);
+  return d;
 }
 
 function env(dir, extra = {}) {
@@ -793,7 +800,6 @@ test("the give-up timer counts from the last holder change: no progress ends the
 
 // ---- targeted mode: shared slots ----
 
-const { targetedSettings, slotPaths } = await import(pathToFileURL(SCRIPT).href);
 const T2 = { FOREMAN_TEST_TARGETED_SLOTS: "2" };
 const slotFile = (dir, k) => path.join(dir, `test-slot-${k}`);
 
@@ -993,4 +999,160 @@ test("the lock's started is the moment it was taken, not when the wait began", a
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Run temp root: the command's TMPDIR points into a pf-run-* dir the run removes at its end. These runs use their own temp base and HOME,
+// so neither the sweep nor the root touches the real temp dir.
+function rootEnv(dir, extra = {}) {
+  const b = tmp();
+  const home = tmp();
+  const e = env(dir, { TMPDIR: b, TMP: b, TEMP: b, HOME: home, USERPROFILE: home, ...extra });
+  delete e.FOREMAN_TEST_TMP_ROOT;
+  delete e.PI_FOREMAN_TEST_TMP;
+  return { e, bases: [b, path.join(home, ".cache", "pi-foreman-tests")] };
+}
+const runRoots = (bases) => bases.flatMap((b) => (fs.existsSync(b) ? fs.readdirSync(b).filter((n) => n.startsWith("pf-run-")).map((n) => path.join(b, n)) : []));
+const spawnExec = (e, code, extraArgs = []) => finish(spawn(process.execPath, [SCRIPT, ...extraArgs, "--exec", "--", process.execPath, "-e", code], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+const SHOW_ROOT = `console.log(JSON.stringify({ tmp: process.env.TMPDIR, root: process.env.FOREMAN_TEST_TMP_ROOT, exists: require("fs").existsSync(process.env.FOREMAN_TEST_TMP_ROOT), os: require("os").tmpdir() }))`;
+
+test("a run's command sees TMPDIR inside a pf-run- root, which is gone after the run", { skip: process.platform === "win32" }, async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir);
+  const r = await spawnExec(e, SHOW_ROOT);
+  assert.equal(r.code, 0);
+  const seen = JSON.parse(r.out);
+  assert.equal(seen.tmp, seen.root);
+  assert.equal(seen.os, seen.root);
+  assert.ok(path.basename(seen.root).startsWith("pf-run-"));
+  assert.ok(bases.includes(path.dirname(seen.root)));
+  assert.equal(seen.exists, true);
+  assert.ok(!fs.existsSync(seen.root));
+  assert.deepEqual(runRoots(bases), []);
+  assert.doesNotMatch(r.err, /temp entries left/);
+});
+
+test("node mode puts the spawn-count dir inside the run root", { skip: process.platform === "win32" }, async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir);
+  const file = path.join(dir, "t.test.mjs");
+  fs.writeFileSync(file, `import { test } from "node:test"; test("x", () => { console.log("SC=" + process.env.FOREMAN_SPAWN_COUNT_DIR); });`);
+  const r = await finish(spawn(process.execPath, [SCRIPT, file], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  assert.equal(r.code, 0, r.err);
+  const sc = /SC=(\S+)/.exec(r.out)?.[1];
+  assert.ok(sc && path.basename(path.dirname(sc)).startsWith("pf-run-") && bases.includes(path.dirname(path.dirname(sc))), sc);
+  assert.deepEqual(runRoots(bases), []);
+});
+
+test("entries a test left in the run root are named on stderr (a warning, exit code kept) and removed", async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir);
+  const mk = (n) => `require("fs").mkdirSync(require("path").join(process.env.FOREMAN_TEST_TMP_ROOT, ${JSON.stringify(n)}))`;
+  const r = await spawnExec(e, `${mk("pf-leak-a")}; ${mk("pf-leak-b")}; process.exit(0)`);
+  assert.equal(r.code, 0);
+  assert.match(r.err, /test-run: 2 temp entries left by this run: pf-leak-a, pf-leak-b\n/);
+  assert.deepEqual(runRoots(bases), []);
+});
+
+test("the end warning names at most five leftovers", async () => {
+  const dir = tmp();
+  const { e } = rootEnv(dir);
+  const code = `for (let i = 0; i < 7; i++) require("fs").mkdirSync(require("path").join(process.env.FOREMAN_TEST_TMP_ROOT, "pf-l" + i))`;
+  const r = await spawnExec(e, code);
+  assert.match(r.err, /test-run: 7 temp entries left by this run: pf-l0, pf-l1, pf-l2, pf-l3, pf-l4\n/);
+});
+
+test("a nested run reuses the outer root and does not remove it", { skip: process.platform === "win32" }, async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir, { FOREMAN_TEST_LOCK: "0" });
+  const inner = `const r = require("child_process").spawnSync(process.execPath, [${JSON.stringify(SCRIPT)}, "--exec", "--", process.execPath, "-e", ${JSON.stringify(SHOW_ROOT)}], { encoding: "utf8" });
+    const inn = JSON.parse(r.stdout);
+    console.log(JSON.stringify({ outer: process.env.FOREMAN_TEST_TMP_ROOT, inner: inn.root, stillThere: require("fs").existsSync(process.env.FOREMAN_TEST_TMP_ROOT), err: r.stderr }))`;
+  const r = await spawnExec(e, inner);
+  assert.equal(r.code, 0, r.err);
+  const seen = JSON.parse(r.out);
+  assert.equal(seen.inner, seen.outer);
+  assert.equal(seen.stillThere, true);
+  assert.doesNotMatch(seen.err, /temp entries left/);
+  assert.deepEqual(runRoots(bases), []);
+});
+
+test("--stop of a running run removes its root", async () => {
+  const dir = tmp();
+  const cwd = tmp();
+  const { e, bases } = rootEnv(dir);
+  const up = path.join(dir, "up");
+  const child = spawn(process.execPath, [SCRIPT, ...execArgs(`require("fs").writeFileSync(${JSON.stringify(up)}, process.env.FOREMAN_TEST_TMP_ROOT); setTimeout(() => {}, 60000)`)], { cwd, env: e, stdio: ["ignore", "pipe", "pipe"] });
+  let err = "";
+  child.stderr.on("data", (d) => (err += d));
+  const done = new Promise((resolve) => child.on("close", (code) => resolve(code)));
+  const root = await waitFor(() => fs.existsSync(up) && fs.readFileSync(up, "utf8"));
+  assert.ok(fs.existsSync(root));
+  const id = /foreman_test_run: run (\S+) \(pid/.exec(err)[1];
+  const s = await finish(spawn(process.execPath, [SCRIPT, "--stop", id], { cwd, env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  assert.equal(s.code, 0);
+  assert.equal(await done, 130);
+  assert.ok(!fs.existsSync(root));
+  assert.deepEqual(runRoots(bases), []);
+});
+
+test("a run that gives up waiting for the lock (75) leaves no root behind", async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir, { FOREMAN_TEST_LOCK_WAIT_MINUTES: "0.02" });
+  liveLock(dir, "/held/here");
+  const r = await spawnExec(e, touchMarker(dir));
+  assert.equal(r.code, 75);
+  assert.ok(!fs.existsSync(marker(dir)));
+  assert.deepEqual(runRoots(bases), []);
+});
+
+test("the start sweep removes old pf- entries in the temp base and leaves fresh and non-pf ones", async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir);
+  const [b] = bases;
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  for (const n of ["pf-old-sweep", "keep-old"]) {
+    fs.mkdirSync(path.join(b, n));
+    fs.utimesSync(path.join(b, n), old, old);
+  }
+  fs.mkdirSync(path.join(b, "pf-fresh-sweep"));
+  const r = await spawnExec(e, "");
+  assert.equal(r.code, 0);
+  assert.deepEqual(fs.readdirSync(b).sort(), ["keep-old", "pf-fresh-sweep"]);
+});
+
+test("a detached run's command sees TMPDIR inside a pf-run- root, removed by the worker after the run; --wait and --history sweep nothing", { skip: process.platform === "win32" }, async () => {
+  const dir = tmp();
+  const { e, bases } = rootEnv(dir);
+  delete e.CI;
+  const [b] = bases;
+  const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const mkOld = (n) => {
+    fs.mkdirSync(path.join(b, n));
+    fs.utimesSync(path.join(b, n), old, old);
+  };
+  // the control calls leave an old pf- entry alone
+  mkOld("pf-old-control");
+  for (const args of [["--wait", "nope", "--max", "1"], ["--history"]]) {
+    await finish(spawn(process.execPath, [SCRIPT, ...args], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  }
+  assert.ok(fs.existsSync(path.join(b, "pf-old-control")));
+  // the launcher returns at once and leaves no root; the worker makes one for the command
+  const code = `setTimeout(() => { console.log("SEEN=" + JSON.stringify({ tmp: process.env.TMPDIR, root: process.env.FOREMAN_TEST_TMP_ROOT, exists: require("fs").existsSync(process.env.FOREMAN_TEST_TMP_ROOT) })); }, 1500)`;
+  const launch = await spawnExec({ ...e, FOREMAN_TEST_DETACH: "1" }, code);
+  assert.equal(launch.code, 0, launch.err);
+  assert.deepEqual(runRoots(bases), []);
+  const id = /run ([a-z0-9-]+) detached/.exec(launch.out)[1];
+  const w = await finish(spawn(process.execPath, [SCRIPT, "--wait", id, "--max", "30"], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  assert.equal(w.code, 0, w.out + w.err);
+  const seen = JSON.parse(/SEEN=(.*)/.exec(w.out)[1]);
+  assert.equal(seen.tmp, seen.root);
+  assert.ok(path.basename(seen.root).startsWith("pf-run-"));
+  assert.ok(bases.includes(path.dirname(seen.root)));
+  assert.equal(seen.exists, true);
+  // the done file is written before the root is removed: poll briefly
+  for (let i = 0; i < 100 && fs.existsSync(seen.root); i++) await new Promise((res) => setTimeout(res, 100));
+  assert.ok(!fs.existsSync(seen.root));
+  assert.deepEqual(runRoots(bases), []);
+  // the worker's start swept the old entry (a run mode), proving the sweep ran in the worker and not in the control calls
+  assert.ok(!fs.existsSync(path.join(b, "pf-old-control")));
 });

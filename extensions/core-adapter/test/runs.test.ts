@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { ChildRuns, UsageTail, ageText, rungOf } from "../runs.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const line = (launchId: string, input: number, output: number, total: number) => JSON.stringify({ role: "builder", launchId, input, cacheRead: 0, cacheWrite: 0, output, cost: { total } });
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "runs-"));
+const tmp = () => trackedTmp("runs-");
 
 test("usage tail skips a tool-usage line: no row for its launch id", () => {
   const d = tmp();

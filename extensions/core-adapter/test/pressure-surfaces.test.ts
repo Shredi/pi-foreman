@@ -2,15 +2,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { LiveState, liveDir } from "../livestate.ts";
 import { pressureDoctorLine, pressureStatusLine } from "../pressure.ts";
 import type { PressureState } from "../pressure.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const read = (d: string, id: string) => JSON.parse(fs.readFileSync(path.join(liveDir(d), `${id}.json`), "utf8"));
 const start = (pressure: () => { level: string; reasons: string[] } | null) => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "ls-pr-"));
+  const d = trackedTmp("ls-pr-");
   const l = LiveState.start({ agentDir: d, sessionId: "p", cwd: "/w", mode: "rpc", env: {} }, () => [], undefined, undefined, pressure)!;
   return { d, l };
 };

@@ -7,9 +7,10 @@ import { CloseFlow, closePrompt, INTERCOM_WAKE_TEXT } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 import { closeChildren } from "../closechildren.ts";
 import { applyInbound, parseInbound, readRegistry, registryFile, writeRegistry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function fresh(sessions: Record<string, unknown>[]): string {
-  const agentDir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-children-")));
+  const agentDir = fs.realpathSync.native(trackedTmp("pf-close-children-"));
   fs.mkdirSync(path.dirname(registryFile(agentDir)), { recursive: true });
   fs.writeFileSync(registryFile(agentDir), JSON.stringify({ version: 1, sessions }));
   return agentDir;

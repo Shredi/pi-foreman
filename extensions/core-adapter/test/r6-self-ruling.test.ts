@@ -2,13 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-selfrul-")));
+  const root = fs.realpathSync.native(trackedTmp("pf-selfrul-"));
   const mk = (name: string, parent: string, child: string) => {
     const d = path.join(root, "handoffs", name);
     fs.mkdirSync(d, { recursive: true });

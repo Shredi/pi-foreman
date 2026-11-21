@@ -6,13 +6,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
@@ -23,7 +23,7 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 test("R1: ledger bound via the adapter is what `ledger status` sees from a shell", { skip }, async () => {
   const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "TMPDIR"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pf-r1-"));
+  const root = trackedTmp("pf-r1-");
   const agentDir = path.join(root, "agent");
   const project = path.join(root, "project");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });

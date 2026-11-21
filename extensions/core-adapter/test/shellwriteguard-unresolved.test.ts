@@ -12,11 +12,12 @@ import { defaultSpawner } from "../spawn.ts";
 import { shPath } from "./_shpath.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "../shellwriteguard.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const pyRes = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
 const py = pyRes.ok ? pyRes.info.executable : null;
-const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-swg-unres-")));
+const base = fs.realpathSync(trackedTmp("pf-swg-unres-"));
 const ws = path.join(base, "ws");
 const handoff = path.join(base, "agent", "handoffs", "h1");
 fs.mkdirSync(path.join(ws, ".workflow"), { recursive: true });

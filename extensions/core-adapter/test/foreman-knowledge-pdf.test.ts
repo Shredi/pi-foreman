@@ -8,9 +8,12 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { compareSource, hashText } from "../../../scripts/foreman_knowledge.mjs";
+import { trackedTmp } from "./_tmpbase.ts";
+
+const mk = trackedTmp;
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "foreman_knowledge.mjs");
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pf-knowledge-pdf-"));
+const tmp = () => mk("pf-knowledge-pdf-");
 // Not valid UTF-8: the bytes must reach the hash untouched, so a decoded-text hash would differ.
 const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n%"), Buffer.from([0xe2, 0xe3, 0xcf, 0xd3, 0xff, 0xfe, 0x80, 0xc3, 0x28]), Buffer.from("\n%%EOF\n")]);
 const rawSha = (bytes: Buffer) => crypto.createHash("sha256").update(bytes).digest("hex");

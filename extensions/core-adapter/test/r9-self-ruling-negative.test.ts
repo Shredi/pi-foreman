@@ -4,13 +4,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { selfRulingRefusal } from "../ruling.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-neg-")));
+  const root = fs.realpathSync.native(trackedTmp("pf-neg-"));
   const hand = path.join(root, ".workflow", "handoffs");
   const H = path.join(hand, "up");
   fs.mkdirSync(H, { recursive: true });

@@ -3,15 +3,13 @@
 // `last.at`, which `close-remote --force` reads to see that the child answered after the attempt.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { applyRemoteNotice, parseRemoteNotice } from "../remotesession.ts";
 import type { Registry, SessionEntry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 const origin = { machine: "alpha", sessionId: CHILD };
-const mirror = fs.mkdtempSync(path.join(os.tmpdir(), "pf-attempt-"));
+const mirror = trackedTmp("pf-attempt-");
 
 function entry(over: Partial<SessionEntry> = {}): SessionEntry {
   return { label: "demo", child: CHILD, parent: "sess-1", status: "open", handoff: mirror, machine: "alpha", originMachine: "Alpha", remoteHandoff: "/h/x", handoffName: "x", mirror, remote: { platform: "linux" }, closeTriedAt: 1_700_000_000, closeExpiredAt: 1_700_000_100, ...over } as SessionEntry;

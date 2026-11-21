@@ -4,8 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BridgeIsolation, isolationDir, isolationDoctor, isolationOn, keychainService, projectClaudeRisks } from "../bridgeiso.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-iso-"));
+const mk = trackedTmp;
+
+const tmp = (): string => mk("pf-iso-");
 
 test("auto follows the provider; booleans win", () => {
   assert.equal(isolationOn("auto", "claude-bridge"), true);

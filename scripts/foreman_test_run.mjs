@@ -22,6 +22,10 @@
 // Env: FOREMAN_TEST_LOCK=0 (or a truthy CI) skips the lock; FOREMAN_TEST_CONCURRENCY=N sets --test-concurrency (default
 // half the cores); FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) is the run cap of the lock holder;
 // FOREMAN_TEST_LOCK_DIR overrides the lock directory (default <agentDir>/pi-foreman/state, else the temp dir).
+// Run temp root: a run sweeps old `pf-*` leftovers (top level of the temp dir and ~/.cache/pi-foreman-tests, own files, older than a day), makes
+// <tmpdir>/pf-run-XXXXXX and points the command's TMPDIR/TMP/TEMP (POSIX; PI_FOREMAN_TEST_TMP and FOREMAN_TEST_TMP_ROOT everywhere) at it. The root is
+// removed on every exit (also stop, lock give-up and signals); entries a test left in it are named on stderr (a warning, not a failure). A run that finds
+// FOREMAN_TEST_TMP_ROOT set (nested) reuses that root and removes nothing. The lock and the run records never live in the root.
 // History: every wrapped run appends one JSON line {id, mode, kind (exec|node), detached, command, cwd, tree, enqueued, acquired (null when the lock
 // was never taken), ended, exit} to <lockdir>/test-history/history.jsonl (over 2 MB it is renamed to a unique history-<time>-<pid>.jsonl, the newest two
 // archives are kept; history errors never change the exit code). `tree` is a sha1 of HEAD, the diff against HEAD and the untracked files (size, mtime),
@@ -44,6 +48,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutSessionEnv } from "./session_env.mjs";
+import { createRunRoot, leftovers, removeRunRoot, sweepBases, sweepStale } from "./test_tmp_root.mjs";
 
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
 // (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process, and the CJS preload
@@ -954,7 +959,7 @@ async function main(rawArgv, env = process.env) {
   }
   const id = detachedRun && RUN_ID.test(env.FOREMAN_TEST_RUN_ID ?? "") ? env.FOREMAN_TEST_RUN_ID : `${started.toString(36)}-${process.pid}`;
   // the started command must not see this run's detach settings (a nested wrapper run gets its own id)
-  const runEnv = { ...env };
+  let runEnv = { ...env };
   for (const k of ["FOREMAN_TEST_RUN_ID", "FOREMAN_TEST_DETACHED", "FOREMAN_TEST_DETACH"]) delete runEnv[k];
   const runsDir = runsDirOf(env);
   const historyDir = historyDirOf(env);
@@ -991,9 +996,26 @@ async function main(rawArgv, env = process.env) {
     } catch {}
   };
   writeRecord();
+  // The run root is made after the lock path above resolved against the real temp dir; only the child's env carries it.
+  let runRoot;
+  if (!env.FOREMAN_TEST_TMP_ROOT) {
+    try {
+      sweepStale({ bases: sweepBases() });
+      const made = createRunRoot();
+      runRoot = made.root;
+      runEnv = { ...runEnv, ...made.env };
+    } catch (e) {
+      process.stderr.write(`foreman_test_run: no run temp root (${e.message})\n`);
+    }
+  }
   let acquiredAt = lockDisabled(env) ? started : undefined; // epoch ms the lock was taken; with the lock off the enqueue time
   process.on("exit", (exitCode) => {
     const ended = Date.now();
+    if (runRoot) {
+      const left = leftovers(runRoot);
+      if (left.length) process.stderr.write(`test-run: ${left.length} temp entries left by this run: ${left.slice(0, 5).join(", ")}\n`);
+      removeRunRoot(runRoot);
+    }
     try {
       fs.mkdirSync(historyDir, { recursive: true });
       const doneFile = path.join(historyDir, `${id}.done.json`);
@@ -1063,7 +1085,7 @@ async function main(rawArgv, env = process.env) {
   acquiredAt ??= Date.now();
   record.state = "running";
   writeRecord();
-  const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(os.tmpdir(), "pf-spawn-count-"));
+  const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(runRoot ?? os.tmpdir(), "pf-spawn-count-"));
   const code = await new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
     const forward = (sig) => () => child.kill(sig);

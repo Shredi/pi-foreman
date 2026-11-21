@@ -5,17 +5,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { RemoteWatcher } from "../remotewatch.ts";
 import { readRegistry, writeRegistry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 
 test("child `remote notice plan` on the fake hc while the watcher follows the event stream → mirrored plan.md and a wake", { skip: process.platform === "win32" ? "the test starts `python3` and names the shim `hc`; on win32 the fake is `hc.cmd` and python is `python`" : false }, async () => {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-rwatch-e2e-")));
+  const root = fs.realpathSync.native(trackedTmp("pf-rwatch-e2e-"));
   const state = path.join(root, "hcstate");
   const handoff = path.join(state, "handoff", "20261103-120000-demo");
   fs.mkdirSync(handoff, { recursive: true });

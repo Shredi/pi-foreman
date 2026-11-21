@@ -2,13 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { sanitizeTrace } from "../trace.ts";
 import { closeFrom, CloseFlow, closeReportArgs, parseCloseReport, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-")));
+const root = fs.realpathSync.native(trackedTmp("pf-close-"));
 const ws = path.join(root, "ws");
 const outside = path.join(root, "outside");
 for (const d of [path.join(ws, ".workflow"), outside]) fs.mkdirSync(d, { recursive: true });

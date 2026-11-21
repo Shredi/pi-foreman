@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { gateMigrationLines } from "../gatemigrate.ts";
 import { migrateGateConfig, dropPackageEntry } from "../../../scripts/foreman_migrate_gate.mjs";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function agent(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "pf-gate-doctor-"));
+  return trackedTmp("pf-gate-doctor-");
 }
 
 test("clean config: no lines", () => {

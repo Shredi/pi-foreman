@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { CloseFlow, closePrompt, INTERCOM_WAKE_TEXT } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 import { markOwnClosed, readRegistry, registryFile } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-own-closed-")));
+const root = fs.realpathSync.native(trackedTmp("pf-own-closed-"));
 const agentDir = path.join(root, "agent");
 const kidHandoff = path.join(root, "handoffs", "20261012-100000-kid");
 const otherHandoff = path.join(root, "handoffs", "20261012-100500-other");

@@ -8,8 +8,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { insideScratch } from "../childscratch.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const raw = fs.mkdtempSync(path.join(os.tmpdir(), "pf-both-"));
+const raw = trackedTmp("pf-both-");
 const real = fs.realpathSync.native(raw);
 const spell = (p: string): string => path.join(raw, path.relative(real, p));
 const scratch = path.join(real, "pi-foreman-scratch", "run1");

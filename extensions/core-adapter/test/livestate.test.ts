@@ -4,8 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { LiveState, intercomIdOf, labelOfHandoff, liveDir } from "../livestate.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ls-"));
+const tmp = () => trackedTmp("ls-");
 const read = (d: string, id: string) => JSON.parse(fs.readFileSync(path.join(liveDir(d), `${id}.json`), "utf8"));
 const run = { launchId: "L1", role: "builder", rung: "model" as const, model: null, state: "ask" as const, tokensIn: 5, tokensOut: 2, cost: 0.12345678, startedAt: 0, endedAt: null };
 

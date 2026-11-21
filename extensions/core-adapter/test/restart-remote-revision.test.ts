@@ -3,12 +3,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { BRIDGE_PROVIDER, bridgeAuthNotice } from "../bridgeiso.ts";
 import { closeChildren } from "../closechildren.ts";
 import { markOwnClosed, readRegistry, registryFile, writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 test("the bridge login notice with isolation off names plain `claude auth login` and no folder", () => {
   const text = bridgeAuthNotice(BRIDGE_PROVIDER, 401, null) ?? "";
@@ -17,7 +17,7 @@ test("the bridge login notice with isolation off names plain `claude auth login`
 });
 
 test("the close flow marks the local child it closed for the worktree retry, not a child it did not send to", async () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "pf-wtmark-"));
+  const dir = fs.realpathSync.native(trackedTmp("pf-wtmark-"));
   const mk = (child: string): SessionEntry => ({ label: child, child, parent: "p", handoff: "/h", status: "open", backend: "hc", hc: { address: "t7" }, briefs: 0, lastError: null, last: null }) as unknown as SessionEntry;
   const A = "0a1b2c3d-0000-4000-8000-0123456789ab";
   const B = "0a1b2c3d-0000-4000-8000-0123456789ac";
@@ -29,7 +29,7 @@ test("the close flow marks the local child it closed for the worktree retry, not
 });
 
 test("own close: the child that closes itself marks its entry worktreePending, like the close flow", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-own-pending-"));
+  const dir = trackedTmp("pf-own-pending-");
   const handoff = path.join(dir, "handoffs", "20261012-100000-kid");
   fs.mkdirSync(path.dirname(registryFile(dir)), { recursive: true });
   fs.writeFileSync(registryFile(dir), JSON.stringify({ version: 1, sessions: [

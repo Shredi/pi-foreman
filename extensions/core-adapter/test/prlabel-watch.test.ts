@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { DRAFT_FAIL_CAP, PrWatches, latestWatches, parseWatchRecord, pollWatch, pollWatchBatch } from "../prwatch.ts";
 import type { RunOp, StoreRead, Timers, WatchRecord, WatchSnapshot } from "../prwatch.ts";
@@ -14,6 +13,7 @@ import { clearStoreCache, readStoreEntry, storeKey, trackedStateFile } from "../
 import type { ReviewRecord } from "../reviews.ts";
 import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const K: PrKey = { host: "ghe.example.com", repo: "acme/app", n: 7 };
 const A = "a".repeat(40);
@@ -606,7 +606,7 @@ test("pr_status's review decision reaches the snapshot of the one-by-one poll", 
 
 test("the stored snapshot carries the review decision; an entry without it still parses", () => {
   const meta = { url: "u", title: "t", headRefName: "b", headRepo: "acme/app" };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-label-"));
+  const dir = trackedTmp("pf-label-");
   fs.mkdirSync(path.dirname(trackedStateFile(dir)), { recursive: true });
   const read = (extra: Record<string, unknown>) => {
     fs.writeFileSync(trackedStateFile(dir), JSON.stringify({ v: 1, trackedAt: 9_999_000, prs: { [storeKey("acme/app", 7)]: { repo: "acme/app", number: 7, at: 10_000_000, okAt: 9_999_000, meta, snap: { state: "open", mergeable: "mergeable", head: A, base: "main", updatedAt: "t1", runs: [], ...extra } } } }));

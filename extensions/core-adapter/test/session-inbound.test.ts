@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { parseInbound, readRegistry, registerSession, writeRegistry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 delete process.env.PI_SUBAGENT_CHILD;
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-inbound-")));
+const root = fs.realpathSync.native(trackedTmp("pf-session-inbound-"));
 
 test("session inbound: foreman:plan and foreman:result aliases", () => {
   assert.deepEqual(parseInbound("foreman:plan /h/plan.md"), { kind: "plan", label: "", path: "/h/plan.md" });

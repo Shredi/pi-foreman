@@ -2,15 +2,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { closeChildren } from "../closechildren.ts";
 import { RemoteWatcher } from "../remotewatch.ts";
 import type { HcResult, HcRun } from "../remotewatch.ts";
 import { writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-nokill-")));
+const root = fs.realpathSync.native(trackedTmp("pf-nokill-"));
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 
 function entry(dir: string): SessionEntry {

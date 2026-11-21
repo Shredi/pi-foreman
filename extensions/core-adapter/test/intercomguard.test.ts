@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "../intercomguard.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const MAIN = { isChild: false, allowRemote: false, allowOpenPane: false };
 
@@ -45,7 +45,7 @@ test("sender label: name, else id prefix; cross-machine marked; newest since the
 });
 
 test("doctor: install state, trusted overrides in the intercom config, Herdr hint", () => {
-  const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
+  const agent = trackedTmp("pf-intercom-");
   let lines = intercomDoctor(agent, [["npm:pi-intercom@0.17.0"]], {});
   assert.ok(lines.some((l) => l.startsWith("OK") && l.includes("pi-intercom")), lines.join("\n"));
   assert.ok(!lines.some((l) => l.startsWith("WARN") || l.includes("Herdr")));
@@ -61,8 +61,8 @@ test("doctor: install state, trusted overrides in the intercom config, Herdr hin
 });
 
 test("doctor: bundled pi-intercom under the package root, and its --no-intercom filter", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-root-"));
-  const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
+  const root = trackedTmp("pf-intercom-root-");
+  const agent = trackedTmp("pf-intercom-");
   assert.ok(intercomDoctor(agent, [[]], {}, root)[0].startsWith("INFO pi-intercom not installed (bundled"));
   fs.mkdirSync(path.join(root, "node_modules", "pi-intercom"), { recursive: true });
   fs.writeFileSync(path.join(root, "node_modules", "pi-intercom", "package.json"), "{}");
@@ -72,7 +72,7 @@ test("doctor: bundled pi-intercom under the package root, and its --no-intercom 
 });
 
 test("doctor warns on a shared stableId in the intercom config (review S6)", () => {
-  const agent = fs.mkdtempSync(path.join(os.tmpdir(), "pf-intercom-"));
+  const agent = trackedTmp("pf-intercom-");
   fs.mkdirSync(path.join(agent, "intercom"));
   fs.writeFileSync(path.join(agent, "intercom", "config.json"), JSON.stringify({ stableId: "me" }));
   const warns = intercomDoctor(agent, [], {}).filter((l) => l.startsWith("WARN"));

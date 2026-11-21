@@ -4,11 +4,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { closePrompt, CLOSE_MESSAGE_TYPE, INTERCOM_WAKE_TEXT, registerClose } from "../close.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const cwd = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-close-paths-")));
+const cwd = fs.realpathSync.native(trackedTmp("pf-close-paths-"));
 fs.mkdirSync(path.join(cwd, ".workflow"));
 execFileSync("git", ["init", "-q", cwd]);
 

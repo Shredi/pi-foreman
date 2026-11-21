@@ -1,16 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { LiveState, presenceState, type PresenceName } from "../livestate.ts";
 import { SidebarLive, type SidebarDeps, type Tokens } from "../sidebarlive.ts";
 import { symbolSet } from "../symbols.ts";
 import { countChildren } from "../herdrmeta.ts";
 import type { Registry } from "../session.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r73-"));
+const tmp = () => trackedTmp("r73-");
 const base = { done: false, owner: false, turn: false, children: false, externalWaits: false };
 const run = { launchId: "L", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
 const wait = { id: "w1", kind: "timer", note: "n", ageSeconds: 1, leftSeconds: 60 };

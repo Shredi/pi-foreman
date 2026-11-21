@@ -10,9 +10,12 @@ import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { shellWriteTargets, unresolvedWriteWords } from "../defaults.ts";
 import { parseShell } from "../shellast.ts";
 import { posixOnly } from "./_platform.ts";
+import { trackedTmp } from "./_tmpbase.ts";
+
+const mk = trackedTmp;
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r2src-")));
+  const root = fs.realpathSync.native(mk("pf-r2src-"));
   const hand = path.join(root, ".workflow", "handoffs");
   const H = path.join(hand, "up");
   const S = path.join(root, "scratch");

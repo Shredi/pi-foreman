@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { dropLock, ownsLock, takeLock, writeAtomic } from "../statefile.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "pf-statefile-"));
+const tmp = (): string => trackedTmp("pf-statefile-");
 
 test("takeLock: a second take is refused until the lock is dropped", () => {
   const dir = tmp();

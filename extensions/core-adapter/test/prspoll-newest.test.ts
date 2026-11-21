@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pollPrs } from "../prs-cli.ts";
@@ -9,13 +8,14 @@ import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, trackedCommentsFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
 
 test("more fetched comments than the cap: the newest (first of a newest-first list) are stored, with bot and state", async () => {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prsnewest-"));
+  const agentDir = trackedTmp("pf-prsnewest-");
   // pr_ops sorts newest first: c0 is the newest
   const fetched = Array.from({ length: 130 }, (_, i) => ({ id: `c${i}`, kind: "issue", author: "bob", body: "x", bot: i === 0 }));
   fetched[1] = { ...fetched[1], kind: "review_summary", state: "approved" } as (typeof fetched)[number];

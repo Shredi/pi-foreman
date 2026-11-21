@@ -4,7 +4,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { RemoteWatcher } from "../remotewatch.ts";
 import type { HcResult, HcRun } from "../remotewatch.ts";
@@ -14,8 +13,9 @@ import type { SessionEntry } from "../session.ts";
 import { HANDOFF_REPORTS, importText } from "../reportsimport.ts";
 import { readRows, storeFor } from "../reports.ts";
 import { realPath } from "../workspacekey.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const root = realPath(fs.mkdtempSync(path.join(os.tmpdir(), "pf-rwatch-rep-")));
+const root = realPath(trackedTmp("pf-rwatch-rep-"));
 const sha = (b: Buffer | string): string => crypto.createHash("sha256").update(b).digest("hex");
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 const HANDOFF = "/home/u/.pi/handoff/20261103-120000-demo";

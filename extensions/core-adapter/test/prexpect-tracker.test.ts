@@ -11,6 +11,7 @@ import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -22,7 +23,7 @@ const row = (n: number, o: Row = {}): Row => ({ repo: "acme/app", number: n, sta
 
 async function setup(numbers = [1]) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prexpect-tr-"));
+  const agentDir = trackedTmp("pf-prexpect-tr-");
   const clock = { t: T0 };
   const rows = new Map<number, Row>();
   const asked: number[][] = [];

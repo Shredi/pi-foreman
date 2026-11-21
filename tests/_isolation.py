@@ -5,6 +5,7 @@ import atexit
 import json
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -20,6 +21,21 @@ for _k in list(os.environ):
     if (_k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", *SESSION_PREFIXES)) or _k == "GIT_CONFIG_COUNT"
             or _k in SESSION_VARS):
         del os.environ[_k]
+
+# A direct run (no foreman_test_run.mjs, no node preload above it) gets its own run root, removed at exit; the Node runner does the sweep.
+if not os.environ.get("FOREMAN_TEST_TMP_ROOT"):
+    _base = tempfile.gettempdir()
+    if sys.platform == "win32" or os.path.realpath(_base) == "/tmp" or os.path.realpath(_base).startswith("/tmp/"):
+        _base = os.path.join(os.path.expanduser("~"), ".cache", "pi-foreman-tests")
+    os.makedirs(_base, exist_ok=True)
+    _root = tempfile.mkdtemp(prefix="pf-run-", dir=_base)
+    os.environ["FOREMAN_TEST_TMP_ROOT"] = _root
+    os.environ["PI_FOREMAN_TEST_TMP"] = _root
+    if sys.platform != "win32":
+        for _v in ("TMPDIR", "TMP", "TEMP"):
+            os.environ[_v] = _root
+    tempfile.tempdir = None
+    atexit.register(shutil.rmtree, _root, True)
 
 if not os.environ.get("PI_FOREMAN_TEST_AGENT_DIR"):
     _dir = tempfile.mkdtemp(prefix="pi_foreman_test_agent_")

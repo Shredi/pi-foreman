@@ -13,6 +13,7 @@ import { addTracked, clearStoreCache, readStoreEntry, trackedStateFile } from ".
 import { baselineOf, checksOf, prDelta } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -27,7 +28,7 @@ const learned = (ran: string[], merged = 3): Row => ({ names: ran, learn: { ran,
 
 async function setup(baseline: Row | undefined) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prlearn-"));
+  const agentDir = trackedTmp("pf-prlearn-");
   const clock = { t: T0 };
   const world = { row: row(), baseline };
   const deps: PollDeps = {
