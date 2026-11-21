@@ -69,6 +69,7 @@ test("an end picture whose git run fails: end unreadable with the cause (its own
 
 test("a settings file that cannot be read: (settings file unreadable)", async (t) => {
   if (process.getuid?.() === 0) return t.skip("root reads any file");
+  if (process.platform === "win32") return t.skip("chmod 000 does not deny reads on Windows");
   const dir = path.join(base, "locked");
   fs.mkdirSync(dir);
   gitIn(dir, "init", "-q", "-b", "main");
