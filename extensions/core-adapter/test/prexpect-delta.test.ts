@@ -202,10 +202,10 @@ test("a state record keeps the overdue latch across a restart", () => {
 });
 
 test("the wake kinds and their defaults are unchanged", () => {
-  assert.deepEqual([...WAKE_KINDS], ["issue", "review", "review_summary", "check_failed", "checks_settled", "mergeable", "no_checks"]);
+  assert.deepEqual([...WAKE_KINDS], ["issue", "review", "review_summary", "check_failed", "checks_settled", "mergeable", "no_checks", "gate_failed", "gate_settled"]);
   assert.deepEqual(DEFAULT_RULES, [
     { source: "github", repos: null, events: null, authors: "any", checks: null, wake: true },
-    { source: "*", repos: null, events: ["issue", "review", "review_summary", "check_failed", "checks_settled"], authors: "any", checks: null, wake: true },
+    { source: "*", repos: null, events: ["issue", "review", "review_summary", "check_failed", "checks_settled", "gate_failed", "gate_settled"], authors: "any", checks: null, wake: true },
   ]);
 });
 

@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prGateText, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, numberCellWidth, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
@@ -515,7 +515,8 @@ export default class ForemanAgents extends View {
       .child(h_flex().flex_none().w(30).gap(2).items_center()
         .child(st.conflict ? conflictMark(t) : div().flex_none().size(11))
         .child(prDot(t, st)))
-      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)));
+      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
+      .when(Boolean(prGateText(pr)), (el) => el.child(div().flex_none().text_color(pr.gate.state === "failed" ? t.blocked : t.dim).child(prGateText(pr))));
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the line tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
     const onMove = (e, cx) => guard(() => {
@@ -552,7 +553,7 @@ export default class ForemanAgents extends View {
   // `maxH` bounds the card to the room on its side of the chip; what does not fit is clipped (gpui-kit style.rs:95 max_h, gpui `overflow_hidden`).
   cardView(t, c, maxH = 0) {
     const color = tones(t);
-    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green };
+    const tone = { failed: color.red, running: color.amber, waiting: color.amber, passed: color.green, gate: color.amber, ignored: t.dim }; // Gate: amber, Not counted: grey
     const shell = v_flex().w(300).p(10).gap(7).bg(t.popover).border(1).border_color(t.border).rounded(8)
       .text_size(11).text_color(t.muted)
       .when(maxH > 0, (el) => el.max_h(maxH).overflow_hidden());
@@ -568,7 +569,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(c.status), (el) => el.child(div().text_color(t.foreground).child(c.status)))
       .when(Boolean(c.note), (el) => el.child(div().text_color(t.dim).child(c.note)))
       .when(c.groups.length === 0 && !c.status && !c.note, (el) => el.child(div().text_color(t.dim).child("no job data")));
-    const state = div().text_color(t.foreground).child(c.state);
+    const state = div().text_color(c.gate?.tone === "red" ? color.red : t.foreground).child(c.state); // a failed gate colours the line red
     return shell.child(title).child(state).when(Boolean(c.excerpt), (el) => el.child(excerpt))
       .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs);
   }

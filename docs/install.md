@@ -477,7 +477,7 @@ pi update git:github.com/Shredi/pi-foreman    # or: pi update --extensions
 ```
 
 After an update, reload or restart running sessions: a running session keeps the code it loaded and can call a file
-the update removed. Run `/foreman setup` again after an update that changes a role's tool list: setup writes the
+the update removed. Run `pi update`, then `/foreman setup`: setup ends by listing the running sessions whose code is older than the installed one, each with its restart command (`foreman session restart <label>` for an opened child, `/quit` then `pi --session <id>` for another session); `scripts/foreman_update_check.py` prints the same list. A session started before the update has no verdict channel for its reviewers until it is restarted: its `review_verdict` refusal names the restart. Run `/foreman setup` again after an update that changes a role's tool list: setup writes the
 reviewers' tool lists into your settings, and a reviewer without `review_verdict` in its list ends every review with no
 verdict and the reason "run /foreman setup" (`/foreman doctor` flags the drift).
 

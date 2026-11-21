@@ -21,8 +21,8 @@ const LABEL_MAX = 80;
 
 /** Who a blocked source waits on: the owner (a dialog, an owner question) or the parent session (ask-by-file, a gate ask waiting on its ruling). */
 export type BlockOn = "owner" | "parent";
-/** The fixed words a source names its kind with (no dialog text ever); `parent-ask` is the only `parent` kind. */
-export type BlockKind = "approval" | "question" | "checkpoint" | "script" | "confirm" | "dialog" | "parent-ask";
+/** The fixed words a source names its kind with (no dialog text ever); `parent-ask` is the only `parent` kind; `hold` is the owner wait of `foreman_hold`. */
+export type BlockKind = "approval" | "question" | "checkpoint" | "script" | "confirm" | "dialog" | "parent-ask" | "hold";
 export interface BlockClass {
   on: BlockOn;
   kind: BlockKind;
@@ -66,6 +66,9 @@ export function herdrIntegrationVersion(agentDir: string): number {
   }
 }
 
+/** How an own source ended: `answered` (a value came back, a "no" included), `dismissed` (nothing came back) or `aborted` (it threw); a release with no outcome ended for a reason that says nothing about the owner. */
+export type DialogOutcome = "answered" | "dismissed" | "aborted";
+
 /** Label priority: permission ask, Pi dialog title, own-ask title, dialog kind. */
 const RANK = { perm: 0, title: 1, own: 2, kind: 3 } as const;
 type Rank = keyof typeof RANK;
@@ -73,7 +76,7 @@ type Rank = keyof typeof RANK;
 export class BlockedTracker {
   private readonly open = new Map<string, { label: string; rank: Rank }>();
   private readonly listeners = new Set<(active: boolean, label?: string) => void>();
-  private readonly ownHooks = new Set<(label: string, cls?: BlockClass) => (() => void) | void>();
+  private readonly ownHooks = new Set<(label: string, cls?: BlockClass, detail?: Record<string, unknown>) => ((outcome?: DialogOutcome) => void) | void>();
   private seq = 0;
   private readonly events: EventBus | undefined;
   private readonly enabled: () => boolean;
@@ -119,7 +122,7 @@ export class BlockedTracker {
   }
 
   /** `onOwn` for a hook that also wants the source's class (none when the source declared none). Returns an unsubscribe. */
-  onOwnOn(fn: (label: string, cls?: BlockClass) => (() => void) | void): () => void {
+  onOwnOn(fn: (label: string, cls?: BlockClass, detail?: Record<string, unknown>) => ((outcome?: DialogOutcome) => void) | void): () => void {
     this.ownHooks.add(fn);
     return () => void this.ownHooks.delete(fn);
   }
@@ -130,26 +133,26 @@ export class BlockedTracker {
   }
 
   /** `own` with the class the source declares: who it waits on and which fixed kind word names it. */
-  ownOn(label: string, cls?: BlockClass): () => void {
+  ownOn(label: string, cls?: BlockClass, detail?: Record<string, unknown>): (outcome?: DialogOutcome) => void {
     const key = `own:${++this.seq}`;
     this.add(key, label, "own");
-    const releases: (() => void)[] = [];
+    const releases: ((outcome?: DialogOutcome) => void)[] = [];
     for (const fn of this.ownHooks) {
       try {
-        const r = fn(label, cls);
+        const r = fn(label, cls, detail);
         if (r) releases.push(r);
       } catch {
         // a hook never breaks the ask
       }
     }
     let done = false;
-    return () => {
+    return (outcome) => {
       if (done) return;
       done = true;
       this.remove(key);
       for (const r of releases) {
         try {
-          r();
+          r(outcome);
         } catch {
           // as above
         }
@@ -187,13 +190,16 @@ export async function withBlocked<T>(events: EventBus | undefined, label: string
   return withBlockedOn(events, undefined, label, fn);
 }
 
-/** `withBlocked` for a source that declares its class (`undefined`: an unclassed source, which counts as an owner wait). */
-export async function withBlockedOn<T>(events: EventBus | undefined, cls: BlockClass | undefined, label: string, fn: () => Promise<T>): Promise<T> {
-  const release = events ? trackers.get(events)?.ownOn(label, cls) : undefined;
+/** `withBlocked` for a source that declares its class (`undefined`: an unclassed source, which counts as an owner wait). `detail` rides to the `onOwnOn` hooks (what the dialog showed); `dismissed` marks a returned value that is no answer (an aborted guard dialog). */
+export async function withBlockedOn<T>(events: EventBus | undefined, cls: BlockClass | undefined, label: string, fn: () => Promise<T>, detail?: Record<string, unknown>, dismissed?: (result: T) => boolean): Promise<T> {
+  const release = events ? trackers.get(events)?.ownOn(label, cls, detail) : undefined;
+  let outcome: DialogOutcome = "aborted";
   try {
-    return await fn();
+    const result = await fn();
+    outcome = result === undefined || result === null || dismissed?.(result) === true ? "dismissed" : "answered";
+    return result;
   } finally {
-    release?.();
+    release?.(outcome);
   }
 }
 
