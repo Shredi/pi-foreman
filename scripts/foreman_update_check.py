@@ -104,13 +104,28 @@ def harness_id(root=ROOT):
 
 
 def _pid_alive(pid):
+    """True when `pid` is a running process. Never signals it: os.kill(pid, 0) is CTRL_C_EVENT on Windows."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not h:
+            return k32.GetLastError() != 87  # only ERROR_INVALID_PARAMETER means no such pid; access denied is alive
+        try:
+            return k32.WaitForSingleObject(h, 0) == 258  # WAIT_TIMEOUT: still running
+        finally:
+            k32.CloseHandle(h)
     try:
         os.kill(pid, 0)
-        return True
-    except PermissionError:
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError, ValueError):
         return True
     except OSError:
         return False
+    return True
 
 
 def older_sessions(agent_dir, current, now=None, alive=_pid_alive, me=None):
