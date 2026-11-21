@@ -15,6 +15,9 @@ export const DELIVERED_SHOW_MS = 10 * 60_000;
 export const PENDING_POLL_MS = 5_000;
 export const IDLE_POLL_MS = 30_000;
 
+/** The kinds a report can have in `notices.jsonl`; any other word from the file shows as `report`. */
+const REPORT_KINDS = new Set(["plan", "result", "update", "ask", "refused"]);
+
 export interface ReportRecord {
   seq: number;
   kind: string;
@@ -47,7 +50,7 @@ export function parseReports(text: string): ReportRecord[] {
     try {
       const o = JSON.parse(line) as { seq?: unknown; kind?: unknown; at?: unknown };
       const at = typeof o.at === "string" ? Date.parse(o.at) : NaN;
-      if (typeof o.seq === "number" && Number.isInteger(o.seq) && o.seq > 0 && typeof o.kind === "string" && o.kind !== "closed" && Number.isFinite(at)) out.push({ seq: o.seq, kind: o.kind, at });
+      if (typeof o.seq === "number" && Number.isInteger(o.seq) && o.seq > 0 && typeof o.kind === "string" && o.kind !== "closed" && Number.isFinite(at)) out.push({ seq: o.seq, kind: REPORT_KINDS.has(o.kind) ? o.kind : "report", at });
     } catch {
       // not a record
     }
@@ -170,7 +173,7 @@ export class ReceiptWatch {
     }
     const lines: string[] = [];
     for (const r of view.unconfirmed) {
-      if (this.noted.unconfirmed.includes(r.seq)) continue;
+      if (this.noted.unconfirmed.includes(r.seq) || this.noted.delivered.includes(r.seq)) continue; // an unreadable ack file is no news about a delivered report
       this.noted.unconfirmed.push(r.seq);
       lines.push(`Your ${r.kind} report #${r.seq} has no receipt from the parent after 5 minutes. Do not say it was delivered.`);
     }
