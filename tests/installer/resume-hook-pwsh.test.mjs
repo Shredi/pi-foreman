@@ -21,7 +21,7 @@ const EXES = ["pwsh", "powershell"].filter(has);
 const NODE_CMD = [
   "@echo off",
   "if \"%~1\"==\"--version\" (echo %PF_FAKE_VER%& exit /b 0)",
-  "echo %*>> \"%PF_LOG%\"",
+  ">>\"%PF_LOG%\" echo %*",
   "echo fake-node-output",
   "if defined PF_FAKE_DETACH start \"\" /b ping -n 8 127.0.0.1 >nul",
   "exit /b %PF_FAKE_RC%",
@@ -174,4 +174,22 @@ for (const exe of EXES) {
 
 test("a PowerShell edition was found on the Windows runner", { skip: !win }, () => {
   assert.ok(EXES.length > 0, "neither pwsh nor powershell started");
+});
+
+// `echo %*>> log` reads a trailing single digit as a handle redirect (`8>>`): the call is not logged. The redirect comes first in the fake.
+test("the fake node.cmd logs an argument that ends in a digit", { skip: !win }, () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-fake-node-")));
+  try {
+    const cmd = path.join(dir, "node.cmd");
+    const log = path.join(dir, "calls.log");
+    fs.writeFileSync(cmd, NODE_CMD);
+    for (const arg of ["4", "8"]) {
+      const r = spawnSync("cmd.exe", ["/d", "/c", cmd, "--shell-pid", arg], { encoding: "utf8", env: { ...process.env, PF_LOG: log, PF_FAKE_VER: "v22.6.0", PF_FAKE_RC: "0" } });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+    }
+    const lines = fs.readFileSync(log, "utf8").split(/\r?\n/).filter(Boolean);
+    assert.deepEqual(lines.map((l) => l.trim().split(" ").pop()), ["4", "8"], lines.join("\n"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

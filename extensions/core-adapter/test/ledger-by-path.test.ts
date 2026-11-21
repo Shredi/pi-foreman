@@ -48,6 +48,14 @@ const hintsIn = async (file: string, needle: string): Promise<boolean> => {
   }
   return false;
 };
+// polls the asserted condition (25 ms step, 10 s deadline) instead of waiting a fixed time; the message shows the ledgers on timeout
+const until = async (ok: () => boolean, what: () => string, ms = 10_000): Promise<void> => {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    assert.ok(Date.now() <= end, `timed out waiting: ${what()}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+};
 const pass = (n: number) => ({ agent: "reviewer", status: "completed", success: true, output: passOf(n) });
 
 test("a launch task names its ledger by path", { skip }, async (t) => {
@@ -99,7 +107,7 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
 
   await t.test("hints cite only the items of the entries that named each ledger", async () => {
     await launched({ tasks: [{ agent: "builder", task: `build item 8 of ${fa}` }, { agent: "builder", task: `build item 9 of ${fb}` }] }, "run-h1");
-    await settle(400);
+    await until(() => read(fa).includes("run-h1") && read(fb).includes("run-h1"), () => `${read(fa)}\n---\n${read(fb)}`);
     const A = read(fa).split("\n");
     const B = read(fb).split("\n");
     const under = (lines: string[], n: number): boolean => {
@@ -148,7 +156,7 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
     assert.deepEqual(unnamed?.data.paths, [null], "a launch that named none appended an entry without a path");
 
     for (const [runId, , n] of singles) a.end({ runId, agent: "reviewer", status: "completed", success: true, results: [pass(n)] });
-    await settle(1500);
+    await until(() => [1, 3, 6].every((n) => done(read(fa), n)) && [2, 5, 7].every((n) => done(read(fb), n)), () => `${read(fa)}\n---\n${read(fb)}`);
     const A = read(fa);
     const B = read(fb);
     assert.ok([1, 3, 6].every((n) => done(A, n)) && [2, 4, 5, 7].every((n) => !done(A, n)), A);
@@ -163,19 +171,19 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
     // the resumed child keeps the first launch's record folder: its call writes there
     assert.ok(a.record("run-rs1", { verdict: "pass", items: [{ id: 10, result: "pass" }] }));
     a.end({ runId: "run-rs2", agent: "reviewer", status: "completed", success: true, results: [pass(10)] });
-    await settle(1000);
+    await until(() => done(read(fa), 10), () => read(fa));
     assert.ok(done(read(fa), 10) && !done(read(fb), 10), "a resumed run's PASS marks the ledger the resumed run named: " + read(fa));
     assert.ok(await hintsIn(fa, "run-rs2"), "its hints land in A");
     assert.doesNotMatch(read(fb), /run-rs2/);
     // the reviewers' calls: the records wait in the launch folders until a notice (or a run end) reads them
     for (const [runId, n] of [["run-n2", 8], ["run-l1", 9], ["run-u1", 11]] as const) assert.ok(a.record(runId, { verdict: "pass", items: [{ id: n, result: "pass" }] }));
     await a.notice(noticeOf("run-n2", 8));
-    await settle();
+    await until(() => done(read(fa), 8), () => read(fa));
     assert.ok(done(read(fa), 8) && !done(read(fb), 8), "a named run's notice marks A");
     await a.restart(); // a reload: the routes come back from the entries, the unnamed run has none
     await a.notice(noticeOf("run-l1", 9));
     await a.notice(noticeOf("run-u1", 11));
-    await settle();
+    await until(() => done(read(fa), 9) && done(read(fb), 11), () => `${read(fa)}\n---\n${read(fb)}`);
     assert.ok(done(read(fa), 9) && !done(read(fb), 9), "after a reload a run that named A still marks A: " + read(fa));
     assert.ok(done(read(fb), 11) && !done(read(fa), 11), "after a reload an unnamed run marks the bound ledger");
   });

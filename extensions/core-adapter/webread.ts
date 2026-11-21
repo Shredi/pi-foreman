@@ -17,6 +17,8 @@ export interface WebReadCtx {
   cwd: string;
   /** The session's scratch dirs (absolute). */
   scratch: string[];
+  /** A child's `$FOREMAN_OUT` (also one of `scratch`). */
+  out?: string;
   platform?: string;
 }
 
@@ -262,7 +264,7 @@ function webChecks(tool: string, input: unknown, ctx: WebReadCtx): Check[] {
   if (tool === "fetch") return [fetchCheck(inp)];
   const cmd = inp.command ?? inp.cmd;
   if (typeof cmd !== "string" || !/\b(?:curl|wget)\b/.test(cmd)) return [];
-  const segs = parseShell(cmd, { cwd: ctx.cwd, platform: ctx.platform, ...(ctx.scratch[0] ? { env: { FOREMAN_SCRATCH: ctx.scratch[0] } } : {}) });
+  const segs = parseShell(cmd, { cwd: ctx.cwd, platform: ctx.platform, ...(ctx.scratch[0] ? { env: { FOREMAN_SCRATCH: ctx.scratch[0], ...(ctx.out ? { FOREMAN_OUT: ctx.out } : {}) } } : {}) });
   const web = segs.filter((s) => ["curl", "wget"].includes(baseName(s.program)));
   if (web.length === 0) return [];
   const piped = hasPipe(cmd);

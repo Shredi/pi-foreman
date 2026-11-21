@@ -108,10 +108,11 @@ A PR's draft state is changed by the harness only, in process, for a PR the sess
 One cheap model call for a judge-first call. It answers one question: is this call plainly what the owner is doing, or does it need the owner's yes?
 
 - **When it runs.** Only for a judge-first hit that no floor, self-modification rule, install-root ask or protected target decided first. Never for a floor, a role launch or a call outside the list.
-- **What it sees.** A fixed system text (one prompt for the whole list); the judge-first reason (`danger-git: ...`); the session kind, role, cwd, worktree, branch and remotes; your last message (cut to 600 characters, fenced); and the command in fences with a random nonce. Never tool output, never earlier history. The command and your message are data: nothing in them instructs the model.
+- **What it sees.** A fixed system text (one prompt for the whole list); the judge-first reason (`danger-git: ...`); the session kind, role, cwd, worktree, branch and remotes; your last message (cut to 600 characters, fenced); and the command in fences with a random nonce. For a child session the request also carries the real paths of the child's `$FOREMAN_OUT` and `$FOREMAN_SCRATCH` (and they are part of the cache key), so the judge can tell a write into its own folders from one outside them. Never tool output, never earlier history. The command and your message are data: nothing in them instructs the model. A script whose text is in the command (inline code, a heredoc body) is judged by what that text does; the `danger-inline-code` reason says "the code is in the command" for those cases and "runs code the harness cannot read" for the rest (stdin from a file, `cat s.py | python3`, a script the gate cannot resolve, a foreign shell).
 - **What it may answer.** One JSON object with a verdict `clear` or `unsure` and a reason of at most 200 characters. Only a well-formed `clear` runs the call. Every other answer asks the owner: `unsure`, invalid JSON, extra fields, a timeout, a provider error or no model. A child's call asks its parent.
 - **Cache.** A cleared call is cached for the session by tool and exact payload. The [protected check](#protected-targets) has its own prompt, verdicts and cache.
-- **Timeout.** `gate.reviewTimeoutMs` (default 15000, minimum 100). A timeout asks.
+- **Timeout.** `gate.reviewTimeoutMs` (default 15000, minimum 100). A timeout asks, with no retry.
+- **Thinking level.** The `thinking` field of `providers.<p>.roles.review`, else the `:level` suffix of the model, else `high`; capped by `maxThinking`. The trace and the log row record the level actually used.
 - **Model.** The `review` rung of the role map (`providers.<p>.roles.review.model`, `roles.review`), the inexpensive rung by default. The call uses no prompt cache and its usage is logged with role `classifier`.
 - **No model configured.** The judge-first calls ask you directly. `/foreman doctor` and `/foreman setup` print `WARN no classifier model for provider <p>: ...` and the first judge-first call of a session shows the same text once. A child or headless session denies such a call.
 - **Your deny sentences.** `classifier.deny` sentences are read by the protected-target check only; the judge does not read them.
@@ -433,7 +434,7 @@ A production note example: `{"host": "prod-db", "note": "production: reads and d
 
 ## Decision log
 
-One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `fragment` on a floor denial (the matched text, redacted), and `latencyMs`, `model` and `cached` when a model decided. For a dialog the `reason` of an allow holds the answer (for example `allow-once`, `parent-allow` on the child's line); a deny keeps its deny text.
+One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `fragment` on a floor denial (the matched text, redacted), and `latencyMs`, `model` and `cached` when a model decided; a judge row also has `reasoning` (the level used), `promptChars` (the length of the request text) and `timeoutMs`. For a dialog the `reason` of an allow holds the answer (for example `allow-once`, `parent-allow` on the child's line); a deny keeps its deny text.
 
 | Layer | Written when | `rule` holds |
 |---|---|---|

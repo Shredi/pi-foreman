@@ -26,11 +26,11 @@ test("loopVerdict table", () => {
   for (const [name, prev, cur, want] of rows) assert.equal(loopVerdict(prev, cur), want, name);
 });
 
-test("sigOf: failed items and located defect findings, sorted and de-duplicated; a pass or an empty record has none", () => {
+test("sigOf: failed items and defect findings keyed on their text, sorted and de-duplicated; a pass or an empty record has none", () => {
   const f = (file: string | undefined, line: number | undefined, cls: string | undefined, kind: VerdictFinding["kind"] = "defect"): VerdictFinding => ({ kind, text: "n", file, line, class: cls });
   const items = [{ id: 2, result: "fail" }, { id: 1, result: "fail" }, { id: 3, result: "pass" }, { id: 4, result: "open" }, { id: 1, result: "fail" }] as const;
   const findings = [f("a.ts", 12, "bug"), f("a.ts", 14, "bug"), f("b.ts", undefined, "style"), f(undefined, 3, "bug"), f("c.ts", 1, "bug", "later")];
-  assert.deepEqual(sigOf(items, findings), ["at:a.ts:2:bug", "at:b.ts:-:style", "item:1", "item:2"]);
+  assert.deepEqual(sigOf(items, findings), ["item:1", "item:2", "txt:n"]);
   assert.deepEqual(sigOf([{ id: 1, result: "pass" }], []), []);
   assert.deepEqual(sigOf([], []), []);
   assert.equal(findingKey({ file: "x.ts", line: 4, class: "c" }), "at:x.ts:0:c");

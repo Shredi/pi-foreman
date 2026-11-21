@@ -22,7 +22,8 @@ function exec(cmd, args, env = {}) {
 
 /** Runs a command in the repo root with its output inherited (the test runner prints its run id there). */
 function execInherited(cmd, args) {
-  const r = spawnSync(cmd, args, { cwd: root, stdio: "inherit", shell: process.platform === "win32" && cmd.endsWith(".cmd") });
+  const { FOREMAN_TEST_DETACH: _detach, ...env } = process.env; // a detached run would return before the suite ends
+  const r = spawnSync(cmd, args, { cwd: root, env, stdio: "inherit", shell: process.platform === "win32" && cmd.endsWith(".cmd") });
   return { ok: r.status === 0, status: r.status, out: "" };
 }
 

@@ -72,7 +72,7 @@ ROLE_PAIRS = [
     ("`add` (`text`, or `texts` for several items in one call); `upsert`", "`add` (`text`, or `texts` for several items in one call); `init` (`topic`, `texts?`: creates and binds `.workflow/LEDGER-<topic>.md` with the `texts` items plus V when `write` is missing, and binds an existing file unless the session is bound elsewhere); `upsert`"),
     # D72: a plan-only session closes V on a plan-review PASS (the ledgerHelper=tool V line)
     ("once a reviewer PASS stands with no builder launch or project edit since; before that the tool refuses.",
-     "once a reviewer PASS stands with no builder launch or project edit since (in a session with no builder launch and no project edit, a `[plan-review]` PASS on the current version of every plan also does); before that the tool refuses."),
+     "once a reviewer PASS stands (later work does not matter; the tool refuses before a PASS, and while a checkout's last review failed; in a session with no builder launch and no project edit, a `[plan-review]` PASS on the current version of every plan also closes it)."),
     # review occasion: the launch field `occasion` names the kind of review; a tag first in the task still works
     ("launch one `reviewer` with `[plan-review]` in its task on the plan file and the ledger,",
      "launch one `reviewer` with `occasion: \"plan-review\"` on the plan file and the ledger (the field names the kind of review; a `[plan-review]` first in the task works too),"),

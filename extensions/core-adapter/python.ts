@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { workspaceTop } from "./gitdrift.ts";
+import { POSIX_PYTHONS, WIN_PYTHONS } from "./profiles.mjs";
 import type { Spawner } from "./spawn.ts";
 
 export interface PythonCandidate {
@@ -38,18 +39,13 @@ export interface CandidateInput {
   cwd?: string | null;
 }
 
-/** python.path -> PI_FOREMAN_PYTHON -> Windows `py -3`, `python` / Unix `python3`, `python`. */
+/** python.path -> PI_FOREMAN_PYTHON -> Windows `py -3`, `python` / Unix `python3`, `python3.14`, `python3.13`, `python` (the lists of profiles.mjs). */
 export function pythonCandidates(input: CandidateInput): PythonCandidate[] {
   const out: PythonCandidate[] = [];
   if (input.configPath && input.configPath.trim()) out.push({ command: input.configPath.trim(), args: [], source: "python.path" });
   if (input.envPath && input.envPath.trim()) out.push({ command: input.envPath.trim(), args: [], source: "PI_FOREMAN_PYTHON" });
-  if (input.platform === "win32") {
-    out.push({ command: "py", args: ["-3"], source: "py -3" });
-    out.push({ command: "python", args: [], source: "python" });
-  } else {
-    out.push({ command: "python3", args: [], source: "python3" });
-    out.push({ command: "python", args: [], source: "python" });
-  }
+  if (input.platform === "win32") for (const c of WIN_PYTHONS) out.push({ command: c.command, args: [...c.args], source: [c.command, ...c.args].join(" ") });
+  else for (const c of POSIX_PYTHONS) out.push({ command: c, args: [], source: c });
   return out;
 }
 

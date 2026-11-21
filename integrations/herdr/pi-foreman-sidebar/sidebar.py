@@ -285,7 +285,9 @@ def _run_label(k, width):
 def _remote_label(k):
     """`label@machine · state · age` of a session on another machine (no pane here)."""
     age = fmt_age(k.get("age_s"))
-    return " · ".join(p for p in (k.get("name") or "?", k.get("state") or "", age) if p)
+    stale = k.get("remoteStale")
+    mark = "stale %dm" % (stale // 60) if isinstance(stale, int) and not isinstance(stale, bool) and stale > 0 else ""
+    return " · ".join(p for p in (k.get("name") or "?", k.get("state") or "", age, mark) if p)
 
 
 _aux_cache = {}

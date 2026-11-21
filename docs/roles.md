@@ -11,7 +11,7 @@ Role ids are neutral: `foreman` (the main session: triage, plan, ledger, delegat
 change) and `reviewer` (diff review against ledger items, plan review; it loads the shipped `security-review` skill
 when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input). The foreman
 writes the heavy plan itself. `session-foreman` is not a launchable role: its mapped model is the model of sessions opened by `/foreman session open` (default: the opening session's own model; only the `model` of the mapping is used, the opened session keeps Pi's default thinking; `--model` overrides; `subagent({agent: "session-foreman"})` is refused). Role files are in `agents/`. Display names come only from config: the preset
-`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
+`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock; it starts them detached as its first step and collects them with `--wait <id>`, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
 provider in `foreman.json` (see [install](install.md)). Design record: `design/architecture.md`
 [section 4](../design/architecture.md#4-role-model).
 
@@ -91,7 +91,7 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 ## Auto review model
 
 The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-judge)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
-cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you.
+cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you. The judge thinks at `providers.<p>.roles.review.thinking`, else the model's `:level` suffix, else `high` (capped by `maxThinking`). `/foreman doctor` prints `classifier model: <p>/<m> (configured, thinking <level>, timeout <n> ms)`; `/foreman doctor` and `/foreman setup` print a WARN when the model came from the auto pick (it can change with the registry; set `providers.<p>.roles.review.model`) or when there is none.
 
 ## Review critic
 

@@ -177,6 +177,7 @@ HANDOFF_NAME_RE = re.compile(r"^\d{8}-\d{6}-[A-Za-z0-9._-]+\Z")
 DELIVER_NAMES = {"ruling": re.compile(r"^(ruling|ruling-plan|ruling-[1-9]\d{0,2})\.md\Z"),
                  "steer": re.compile(r"^steer-[1-9]\d{0,2}\.md\Z"),
                  "brief": re.compile(r"^brief-[1-9]\d{0,2}\.md\Z")}
+NOT_CONFIRMED_LINE = "sent, not yet confirmed; a pi-foreman note tells you when the parent confirms"
 NOTICE_FILES = {"plan": "plan.md", "result": "result.md", "update": "result.md", "ask": "ask.md"}
 NOTICE_HEADS = {"plan": "Plan", "result": "Result", "update": "Update", "ask": "Ask"}
 HC_LABEL_TIMEOUT = 30
@@ -385,7 +386,9 @@ def remote_footer(label, plan_first):
         "A pi-foreman session on another machine (the parent) opened this one. The directory of this brief is the",
         "handoff dir. You cannot reach the parent with the intercom tool: report with the commands below, run through",
         "your bash tool. Each prints one JSON line and exits 1 when the notice was not recorded. A notice is a label on your",
-        "own hc terminal that names the file by its sha256 and size; the parent fetches the file itself.",
+        "own hc terminal that names the file by its sha256 and size; the parent fetches the file itself. The command returns",
+        "before the parent has fetched anything, so its answer `sent, not yet confirmed` is not delivery: tell the user a report",
+        "reached the parent only after a pi-foreman note says it was delivered.",
         "",
         "Write the files below (`plan.md`, `result.md`, `ask.md`) with the write tool or with `cp <file> <handoff dir>/<name>`: both",
         "work in every permission mode. A shell redirect (`echo >`, a heredoc) may ask for approval in some modes.",
@@ -1748,7 +1751,10 @@ def cmd_notice(a):
     """`remote notice <kind>`: the child's report to its remote parent, as the `fm.notice` label of its own hc terminal."""
     adir = agent_dir(a.agent_dir)
     try:
-        return notice_reply(dict(send_notice(adir, a), ok=True))
+        reply = notice_reply(dict(send_notice(adir, a), ok=True))
+        if reply == 0 and a.kind != "closed":
+            print(NOT_CONFIRMED_LINE, file=sys.stderr)
+        return reply
     except Refused as e:
         code = e.code or "refused"
         return notice_reply({"ok": False, "error": code, "code": code, "detail": strip_control(e)[:200]})
@@ -1762,8 +1768,9 @@ class NoticeFailed(Exception):
         self.reply = reply
 
 
-def next_notice_seq(handoff):
-    """The next notice number of this handoff dir: `notice-seq` holds the last one used; it is written before the label."""
+def next_notice_seq(handoff, on_seq=None):
+    """The next notice number of this handoff dir: `notice-seq` holds the last one used; it is written before the label.
+    `on_seq(seq)` runs under the lock once the number is written, so queue records are written in seq order."""
     path = handoff / "notice-seq"
     lock = str(handoff / "notice-seq.lock")
     fd = None
@@ -1789,6 +1796,11 @@ def next_notice_seq(handoff):
         tmp = handoff / ("notice-seq.%d.tmp" % os.getpid())
         tmp.write_text("%d\n" % seq, "utf-8")
         os.replace(str(tmp), str(path))
+        if on_seq is not None:
+            try:
+                on_seq(seq)
+            except OSError:
+                pass  # a failed queue write leaves the label as the only record; the parent then reads the single file
     finally:
         os.close(fd)
         try:
@@ -1814,6 +1826,7 @@ def send_notice(adir, a):
     if not target or not ADDRESS_RE.match(target):
         raise Refused("the parent file does not hold <opener id>@<machine>", "bad_parent")
     digest = None
+    data = None
     if a.kind == "refused":
         if not a.reason or not REFUSE_SLUG_RE.match(a.reason):
             raise Refused("--reason takes a slug of [a-z0-9-], 1 to 40 characters", "bad_request")
@@ -1824,7 +1837,6 @@ def send_notice(adir, a):
         given = given if given.is_absolute() else handoff / given
         if os.path.normcase(os.path.abspath(str(given))) != os.path.normcase(os.path.abspath(str(want))):
             raise Refused("%s notice takes only %s of the handoff dir" % (a.kind, name), "bad_name")
-        data = None
         try:
             if stat.S_ISREG(os.lstat(str(want)).st_mode):
                 data = want.read_bytes()
@@ -1838,7 +1850,21 @@ def send_notice(adir, a):
     terminal = os.environ.get("HC_TERMINAL_ID", "").strip()
     if not binary or not terminal:
         raise NoticeFailed({"error": "not_hc"})
-    seq = next_notice_seq(handoff)
+    def queue(n):
+        record = {"seq": n, "kind": a.kind, "sha256": digest[0] if digest else None, "bytes": digest[1] if digest else 0,
+                  "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        if a.kind == "refused":
+            record["reason"] = a.reason
+        elif data is not None:
+            copy = handoff / "notices" / ("%d-%s.md" % (n, a.kind))
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            tmp = copy.with_name(copy.name + ".%d.tmp" % os.getpid())
+            tmp.write_bytes(data)
+            os.replace(str(tmp), str(copy))
+        with open(str(handoff / "notices.jsonl"), "ab") as f:
+            f.write((json.dumps(record) + "\n").encode("utf-8"))
+
+    seq = next_notice_seq(handoff, queue)
     if a.kind == "refused":
         value = "%d:refused:%s" % (seq, a.reason)
     else:

@@ -44,6 +44,8 @@ export interface ShellRedirect {
   op: ">" | ">>" | "&>" | "&>>" | "<" | "<>" | ">|" | "dup";
   fd: string | null;
   target: string;
+  /** Set on a `dup` written `<&` (an input dup: it replaces the fd's input). */
+  input?: true;
 }
 
 export interface ShellSegment {
@@ -65,6 +67,8 @@ export interface ShellSegment {
   bodies?: string[];
   /** Set (not enumerable): the texts of the here-documents and here-strings that feed stdin (`bash <<'E'` runs its body as code). */
   heredocs?: string[];
+  /** Set (not enumerable) on a segment that is a stage of a `|` / `|&` pipeline: the pipeline's id (one per parse) and the stage's index; unset for any other command, and for a command inside a substitution of a stage. */
+  pipeline?: { id: number; stage: number };
   /** Set (true, not enumerable) on a `$( )` the walker stopped at on MAX_DEPTH with a script inside it: that script was never walked. */
   tooDeep?: boolean;
 }
@@ -72,7 +76,7 @@ export interface ShellSegment {
 export interface ShellParseOptions {
   /** The directory the line starts in (`$PWD` for the variable grammar). */
   cwd?: string | null;
-  /** The harness env the variable grammar reads (`FOREMAN_SCRATCH`). */
+  /** The harness env the variable grammar reads (`FOREMAN_SCRATCH`, `FOREMAN_OUT`). */
   env?: Record<string, string>;
   /** Defaults to process.platform; "win32" switches on the drive-path forms of shellvars.ts. */
   platform?: string;
@@ -130,7 +134,11 @@ interface Run {
   platform: string;
   /** The text of every string the parser ran as a script (`-c`, `eval` ...) behind whatever wrappers and path stood before the shell. */
   strings: string[];
-  /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` is not resolved as a constant and no trial of its own starts. */
+  /** The whole line being parsed (a nested string is walked with its own `src`). */
+  root?: string;
+  /** Pipelines numbered so far (`ShellSegment.pipeline`). */
+  pipes?: number;
+  /** A trial walk (see `passNames`): `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` are not resolved as constants and no trial of its own starts. */
   trial?: boolean;
 }
 
@@ -148,6 +156,8 @@ interface Scope {
   /** The texts of the here-documents and here-strings on stdin. */
   docs: string[];
   reason: OpaqueReason | null;
+  /** The pipeline stage the commands walked here belong to (`ShellSegment.pipeline`). */
+  pipe?: { id: number; stage: number };
   /** The source text of the script being walked (set by `walkScript`), for the body slices. */
   src?: string;
 }
@@ -305,6 +315,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "redirectEnd", { value: c?.redirectEnd ?? true, enumerable: false });
   Object.defineProperty(out, "passThrough", { value: [...(sc.passAt ?? [])], enumerable: false, configurable: true });
   Object.defineProperty(out, "heredocs", { value: [...(c ? c.docs : sc.docs)], enumerable: false, configurable: true });
+  if (sc.pipe) Object.defineProperty(out, "pipeline", { value: sc.pipe, enumerable: false, configurable: true });
   sc.run.out.push(out);
 }
 
@@ -322,7 +333,7 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
       if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     }
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null });
+    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined });
   }
 }
 
@@ -350,7 +361,7 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
     if (r.operator === ">&" || r.operator === "<&") op = /^(\d+|-)$/.test(target) ? "dup" : r.operator === ">&" ? "&>" : "<";
     else op = r.operator as ShellRedirect["op"];
     if ((op === "<" || op === "<>") && stdin) c.feeds = true;
-    c.redirs.push({ op, fd, target });
+    c.redirs.push(op === "dup" && r.operator === "<&" ? { op, fd, target, input: true } : { op, fd, target });
   }
 }
 
@@ -389,9 +400,10 @@ function walkNode(n: any, sc: Scope): string | null {
       return doCommand(n as Command, sc);
     case "Pipeline": {
       let docs = sc.docs;
+      const id = (sc.run.pipes = (sc.run.pipes ?? 0) + 1);
       (n.commands as CommandNode[]).forEach((cmd, i) => {
         const before = sc.run.out.length;
-        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0 });
+        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0, pipe: { id, stage: i } });
         // a here-document of one command flows down the pipe: the shell at the end of `cat <<E | bash` reads its body as code
         const fed = sc.run.out.slice(before).flatMap((x) => x.heredocs ?? []);
         if (fed.length) docs = [...new Set([...docs, ...fed])];
@@ -779,7 +791,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
 /** A pass-through wrapper whose words name a runner (`env sh`, `nohup bash`): the wrapped command runs text. */
 const wrapsRunner = (x: any): boolean => (x.suffix ?? []).some((w: any) => typeof (w.value ?? w.text) === "string" && (RUNNERS.has(baseName(w.value ?? w.text)) || /[$`]/.test(w.text ?? "")));
 
-/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `passing`: wrappers the walker unwrapped as pass-through (see `passNames`) do not count unless they wrap a runner (the constant `$FOREMAN_SCRATCH` only). */
+/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `passing`: wrappers the walker unwrapped as pass-through (see `passNames`) do not count unless they wrap a runner (the constants `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` only). */
 function runsCode(node: SyntaxNode, passing: ReadonlySet<string> = new Set()): boolean {
   let found = false;
   const visit = (n: SyntaxNode): void => {
@@ -888,12 +900,18 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const res = resolveVars(pipes, [], env, () => false, src, rn.platform);
   const child = childAssigns(script, src, rn);
   for (const [, , cmd] of child.values()) rn.assignOk.add(cmd);
-  // the harness constant `$FOREMAN_SCRATCH` of a child resolves on any line that never rebinds it (a heredoc or pipe leaves the closed grammar)
-  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !rn.trial && !runsCode(script, passNames(script, src, sc)) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
+  // the harness constants `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` of a child resolve on any line that never rebinds them (a heredoc or pipe leaves the closed grammar)
+  const runs = rn.trial || !(rn.env.FOREMAN_SCRATCH || rn.env.FOREMAN_OUT) ? true : runsCode(script, passNames(script, src, sc));
+  // the mention rule reads the whole line, not the nested string being walked: `env FOREMAN_OUT=/x sh -c 'echo > $FOREMAN_OUT/f'` rebinds it
+  const whole = rn.root ?? src;
+  const harnessConst = (name: string): boolean => !!rn.env[name] && !runs && [...whole.matchAll(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`, "g"))].every((m) => (whole[m.index! - 1] === "$" || (whole.slice(m.index! - 2, m.index!) === "${" && whole[m.index! + name.length] === "}")));
+  const scratchConst = harnessConst("FOREMAN_SCRATCH");
+  const outConst = harnessConst("FOREMAN_OUT");
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {
       if (n === "FOREMAN_SCRATCH" && scratchConst) return rn.env.FOREMAN_SCRATCH;
+      if (n === "FOREMAN_OUT" && outConst) return rn.env.FOREMAN_OUT;
       const c = child.get(n);
       return c && c[1] <= pr.cmd.pos ? c[0] : undefined;
     };
@@ -940,6 +958,91 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
   return spans;
 }
 
+/** `command` with every here-document body blanked (spaces, newlines kept; same length), from the parser's body positions; a text that does not parse is returned as it is. */
+export function blankHeredocBodies(command: string): string {
+  try {
+    const script = parse(command) as Script;
+    if (!script || script.errors?.length) return command;
+    let out = command;
+    const visit = (n: SyntaxNode): void => {
+      const x = n as any;
+      if (x.type === "HereDoc") {
+        const body = command.slice(x.body.pos, x.body.end).replace(/[^\n]/g, " ");
+        out = out.slice(0, x.body.pos) + body + out.slice(x.body.end);
+      }
+      forEachChild(n, visit);
+    };
+    visit(script as SyntaxNode);
+    return out;
+  } catch {
+    return command;
+  }
+}
+
+/**
+ * `command` with its comments blanked (each `#` to the end of its line replaced by spaces; same length), read from the parser's node positions. Every token node is
+ * covered: each word (also the words of compound commands: for/select names and lists, case words and patterns, function and coproc names; a substitution is part of its
+ * word), assignment, redirect, here-string, here-document with its body and closing line, `[[ ]]` and `(( ))` command and the header of an arithmetic for. What lies
+ * outside every token is keywords, operators, whitespace and comments (unbash has no comment nodes); the parser opens a comment only at a word boundary, so a `#` there
+ * is always a comment, and the blanking stops at the end of its line. A text that does not parse is returned as it is.
+ */
+export function blankComments(command: string): string {
+  try {
+    const script = parse(command) as Script;
+    if (!script || script.errors?.length) return command;
+    const spans: Array<[number, number]> = [];
+    const eol = (i: number): number => {
+      const j = command.indexOf("\n", i);
+      return j < 0 ? command.length : j;
+    };
+    const visit = (n: SyntaxNode): void => {
+      const x = n as any;
+      switch (x.type) {
+        case "Word":
+        case "Assignment":
+        case "Redirect":
+        case "HereString":
+        case "TestCommand":
+        case "ArithmeticCommand":
+          spans.push([x.pos, x.end]);
+          return;
+        case "HereDoc":
+          spans.push([x.pos, x.end], [x.body.pos, x.body.end]);
+          if (x.closing) spans.push([x.closing.pos, eol(x.closing.end)]);
+          return;
+        case "ArithmeticFor":
+          spans.push([x.pos, x.body.pos]);
+          visit(x.body);
+          return;
+      }
+      forEachChild(n, visit);
+    };
+    visit(script as SyntaxNode);
+    spans.sort((a, b) => a[0] - b[0]);
+    const gaps: Array<[number, number]> = [];
+    let at = 0;
+    for (const [a, b] of spans) {
+      if (a > at) gaps.push([at, a]);
+      at = Math.max(at, b);
+    }
+    if (at < command.length) gaps.push([at, command.length]);
+    let out = command;
+    for (const [a, b] of gaps) {
+      let i = a;
+      while (i < b) {
+        const h = command.indexOf("#", i);
+        if (h < 0 || h >= b) break;
+        const e = Math.min(eol(h), b);
+        out = out.slice(0, h) + " ".repeat(e - h) + out.slice(e);
+        i = Math.max(e, h + 1);
+      }
+    }
+    return out;
+  } catch {
+    return command;
+  }
+}
+
 /**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
  * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
@@ -947,7 +1050,7 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [] };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   const unreadable = (): ShellSegment[] => {

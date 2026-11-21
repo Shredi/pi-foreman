@@ -19,8 +19,8 @@ import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, r
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
-import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
-import { noClassifierModelText } from "./reviewwarn.ts";
+import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel } from "./classifier.ts";
+import { autoClassifierModelText, classifierModelLine, noClassifierModelText } from "./reviewwarn.ts";
 import { effectiveCheckMode } from "./protected.ts";
 import { PermStore, PROTECTED_CHECK_MODES, cleanProtected, protectedBlock, workFoldersBlock } from "./permconfig.ts";
 import { mergedFactKey, withMergedFacts } from "./defaults.ts";
@@ -87,20 +87,21 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, hsResumeRefusal, incompleteBlock, outputPathOf, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { recordNodePath } from "./nodepath.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepOldScratch, sweepScratch, wtScratchBase } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, resumeScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepOldScratch, sweepScratch, wtScratchBase } from "./childscratch.ts";
 import type { ScratchWt } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, MAX_SUITES, PRE_PR_SUITES_LINE, SUITE_COMMAND_MAX, SUITE_RESULTS, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { filler, fromJsonText } from "./jsontext.ts";
+import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, MAX_SUITES, PRE_PR_SUITES_LINE, SUITE_COMMAND_MAX, SUITE_RESULTS, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readContextUse, readItemsSidecar, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeContextUse, writeItemsSidecar, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
 import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
@@ -133,7 +134,7 @@ import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { reviewFactsFor } from "./prbody.ts";
-import { appendHeadLine, suitesLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
+import { appendHeadLine, suitesLine, appendReview, capSet, startValueOf, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -202,6 +203,8 @@ import { installHerdrMeta } from "./herdrmeta.ts";
 import { installBgRecords } from "./bgrecords.ts";
 import { RemoteWatcher } from "./remotewatch.ts";
 import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds, openChildren } from "./childblocked.ts";
+import { REMOTE_NOTICE_TYPE, RemoteNoticeBatch } from "./remotenotice.ts";
+import { RECEIPT_ENTRY, RECEIPT_STATUS_KEY, REMOTE_RECEIPT_TYPE, ReceiptWatch } from "./remotereceipt.ts";
 import { IntercomCarry, addresses, deliveredSendTo, isQuestion, parentIdsOf, senderOf } from "./intercomcarry.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
@@ -679,10 +682,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   }) as never);
   let remoteWatch: RemoteWatcher | null = null; // hc events watcher of the remote children (remotewatch.ts), a foreman session only
+  let receiptWatch: ReceiptWatch | null = null; // the delivery receipt of a remote child's reports (remotereceipt.ts), a remote child only
   let childBlocked: ChildBlocked | null = null; // the parent's notice that a child session waits on the owner (childblocked.ts), a foreman session only
   pi.on("session_shutdown", async () => {
     remoteWatch?.stop();
     remoteWatch = null;
+    receiptWatch?.stop();
+    receiptWatch = null;
     childBlocked?.stop();
     childBlocked = null;
     core.release();
@@ -802,6 +808,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const compactionGate = new CompactionGate();
   /** R39: per launch call, the roles that stayed on the bottom rung although a strong climb was asked or wanted, with the reason the receipt shows. */
   const bottomNotes = new Map<string, Map<string, string>>();
+  /** Per launch call: the base ids of explicit `model:` values the rank policy honoured (read before applyLaunchModels rewrites them); recordLaunch keeps the flag on the run. */
+  const explicitModelCalls = new Map<string, Set<string>>();
+  /** Resumed review run id -> the one checkout its target ran in: a resumed run's end carries no cwd of its own, so its verdict is recorded for this checkout, not the session's. */
+  const resumeCheckouts = new Map<string, string>();
   /** Per launch call, the roles' rung phrase from the ladder's climbs and the sizing plans (launchreceipt.ts); read and deleted with bottomNotes. */
   const climbNotes = new Map<string, Map<string, string>>();
   /** Per launch call, the occasions its review children were recorded with (taken before any rewrite); read and deleted at the tool result for the occasion lines. */
@@ -1603,7 +1613,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * (a fresh normal reviewer is never refused: it gets the findings). Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
    * and the base its facts are collected against; null otherwise.
    */
-  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; gateKey: string; base: string | null } | null> {
+  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; gateKey: string; base: string | null; from?: string } | null> {
     const refused = (r: { reason: string; text: string }): string => {
       s.trace?.emit({ event: "review_high_stakes_refused", reason: r.reason });
       return r.text;
@@ -1613,7 +1623,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (action === "resume") {
       const target = resumeTarget(input);
       // the run-id lookup holds whatever the model says
-      if (target && s.hs.ownerOf(target) !== null) return refused(resumeRefusal());
+      if (target && s.hs.ownerOf(target) !== null) {
+        // a high-stakes run resumes only while it is the incomplete one, its checkout is as at its launch and its context has room (highstakes.ts hsResumeRefusal)
+        await s.reviewSync; // a run end still being recorded lands before the state is read
+        const inc = s.hs.incomplete();
+        const here = inc?.runId === target ? inc : undefined;
+        const head = here ? await headOf(here.cwd) : null;
+        const tree = here ? await launchSnapshot(here.cwd, true).catch(() => null) : null; // the snapshot the launch took (a test rig injects its own)
+        const launch = launchOfRun(s, target);
+        const refusal = hsResumeRefusal({ target, state: s.hs.state(), running: s.hs.isRunning(), head, tree, usage: launch ? readContextUse(recordDir(s.agentDir, s.id, launch)) : null });
+        if (refusal) {
+          if (here && (head !== here.head || tree !== here.tree) && s.hs.clearIncomplete()) persistCeremonyState(s); // changed: the run can no longer be resumed
+          return refused(refusal);
+        }
+        const top = await rootOf(here!.cwd);
+        return { root: here!.cwd, gateKey: top ?? SESSION_WIDE, base: null, from: target };
+      }
       if (model && launchRoles(s, input).some((r) => REVIEW_ROLES.includes(r))) {
         await s.reviewSync; // a FAIL still being recorded lands before it is read
         for (const d of launchCwds(input, ctx.cwd)) {
@@ -1638,12 +1663,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const key = await repoKeyOf(root);
     const configured = get(s.config.config, "safety.ops.baseBranch");
     const base = await reviewBaseOf(root, { baseBranch: typeof configured === "string" ? configured : null, ...(key && s.hs.base(key) ? { recorded: s.hs.base(key) } : {}) });
+    // an earlier run that ended without a verdict: the fresh run gets its id and report path and continues it (both count as one review: only verdicts count)
+    const inc = s.hs.incomplete();
     for (const e of marked) {
       if (base) reviewFacts.setStepBase(e, base);
-      if (typeof e.task === "string") e.task = taskLine(base) + e.task;
+      if (typeof e.task === "string") e.task = taskLine(base) + (inc ? incompleteBlock(inc) : "") + e.task;
       hsEntries.add(e);
     }
-    return { root, gateKey: top ?? SESSION_WIDE, base };
+    return { root, gateKey: top ?? SESSION_WIDE, base, ...(inc ? { from: inc.runId } : {}) };
   }
 
   /**
@@ -1686,15 +1713,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
-  function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1]): void {
+  function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1], treesWf?: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null || x.incomplete);
+    // a run without a verdict (the reviewer recorded `incomplete`, it was cut off, or it left no record) records no run and changes no gate; it is kept to be resumed or handed on (D144)
+    const keepIncomplete = (): void => {
+      const launch = launchOfRun(s, runId);
+      s.hs.noteIncomplete({ runId, cwd: root, head: startValueOf(start, root), tree: startValueOf(treesWf, root), reportPath: outputPathOf(data), model: s.runs.get(runId)?.model ?? s.hs.incomplete()?.model ?? null, ...(launch ? { launch } : {}), at: Date.now() });
+      persistCeremonyState(s);
+    };
     if (r?.incomplete) {
-      // the reviewer recorded `incomplete` (it could not run its checks): nothing is recorded (no run, no gate change), as for a run with no verdict
       s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
+      keepIncomplete();
       return;
     }
     const verdict = r?.verdict;
-    if (!r || !verdict) return;
+    if (!r || !verdict) {
+      keepIncomplete();
+      return;
+    }
     const failAt = Date.now();
     const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
     if (verdict === "fail") s.reviewGates = gatesMarkStood(s.reviewGates, gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId));
@@ -2224,7 +2260,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string, readOnlyChild = false): FloorEnv {
     // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
     const scratch = s ? (s.isChild ? childScratchDirs : s.scratch.live(null)) : [];
-    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s ? { scratchBase: s.owned.childScratchRoot } : {}), ...(s?.isChild ? { child: true } : {}), ...(s?.isChild && launchBinding?.scratch && launchBinding.out ? { out: launchBinding.out } : {}), ...(s?.isChild && launchBinding?.role === "builder" ? { builder: true } : {}), ...(readOnlyChild ? { readOnlyChild: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -2373,11 +2409,26 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     remoteWatch?.stop();
     remoteWatch = null;
     if (!s.isChild) {
+      // a notice no armed wait took becomes one message per catch-up run: a turn when idle, a follow-up when busy (as CHILD_BLOCKED_TYPE below)
+      const remoteBatch = new RemoteNoticeBatch();
       remoteWatch = new RemoteWatcher({
         agentDir: s.agentDir,
         opener: () => openerIntercomId(process.env, s.agentDir, s.id),
         fetchTimeoutSeconds: () => get(s.config.config, "sessions.remote.fetchTimeoutSeconds"),
-        wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
+        wake: (label, kind, text, machine) => {
+          if (!waits.childNotice(s.id, label, kind, text)) remoteBatch.add(label, kind, text, machine);
+        },
+        flush: () => {
+          const content = remoteBatch.flush();
+          if (!content) return;
+          let idle = true;
+          try {
+            idle = ctx.isIdle();
+          } catch {
+            // a stale context: treat as idle
+          }
+          pi.sendMessage({ customType: REMOTE_NOTICE_TYPE, content, display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+        },
         notify: (msg, level) => ctx.ui.notify(msg, level),
         trace: (rec) => s.trace?.emit(rec),
         importReports: get(s.config.config, "retro.report") === false ? undefined : async (data) => {
@@ -2390,6 +2441,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
       });
       remoteWatch.start();
+    }
+    receiptWatch?.stop();
+    receiptWatch = null;
+    if (process.env[REMOTE_PARENT_ENV] === "1" && process.env[HANDOFF_DIR_ENV]?.trim()) {
+      // a remote child: footer status and `nextTurn` notes from `notices.jsonl` and `notice-ack.json` of its handoff dir; no turn of its own
+      receiptWatch = new ReceiptWatch({
+        handoff: () => process.env[HANDOFF_DIR_ENV]?.trim() || undefined,
+        setStatus: (text) => ctx.ui.setStatus(RECEIPT_STATUS_KEY, text),
+        note: (text) => pi.sendMessage({ customType: REMOTE_RECEIPT_TYPE, content: text, display: true }, { deliverAs: "nextTurn" }),
+        persist: (noted) => pi.appendEntry(RECEIPT_ENTRY, noted),
+      });
+      receiptWatch.restore(ctx.sessionManager.getBranch?.() ?? []);
+      receiptWatch.start();
     }
     childBlocked?.stop();
     childBlocked = null;
@@ -2731,6 +2795,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.selfWarm.requestFailed(); // the request of this turn is over (a reply already ended it; an error or abort did not)
     toolUsage.noteMessage(event.message);
     flushToolUsage(s);
+    // a reviewer child leaves its context usage in its record folder at every turn end (overwritten, so a run cut by the turn cap keeps the last one): a resume of a cut high-stakes run reads it (D144)
+    if (s.isChild && launchBinding?.verdictDir && REVIEW_ROLES.includes(launchBinding.role) && fs.existsSync(launchBinding.verdictDir)) {
+      const u = ctx.getContextUsage?.();
+      if (u && typeof u.contextWindow === "number" && Number.isFinite(u.contextWindow)) writeContextUse(launchBinding.verdictDir, { tokens: typeof u.tokens === "number" ? u.tokens : null, contextWindow: u.contextWindow });
+    }
   });
   pi.on("agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
@@ -3375,7 +3444,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const startAt = s.launchAt.get(runId);
           s.launchAt.delete(runId);
           const hsRoot = s.hs.ownerOf(runId);
-          if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees);
+          const resumedCheckout = resumeCheckouts.get(runId);
+          resumeCheckouts.delete(runId);
+          if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees, startTreesWf);
           const counting = reviewResultsOfRun(s, runId, data).filter((x) => x.counts && x.verdict !== null);
           let nth = 0;
           for (const r of reviewsWithOutput(data, counting)) {
@@ -3383,7 +3454,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const first = nth++ === 0;
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
-              const cwd = r.cwd ?? s.cwd;
+              const cwd = r.cwd ?? resumedCheckout ?? s.cwd;
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code" && !x.via); // an alias (coverHead) is no review round
               const top = await rootOf(cwd);
@@ -3840,7 +3911,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
       // the judge reads the call first: a clear runs it; unsure, an invalid answer or a failure asks the owner (a child asks its parent)
       const judged = await rt.classifier.judge(
-        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}) },
+        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}) },
         {
           registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
           recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
@@ -4160,6 +4231,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       let takenItems = new Map<Record<string, unknown>, unknown>();
+      /** The `items` field of a resume call (takeLaunchFlags reads it for agent entries only): the resumed reviewer's allowed items, see resumeItems below. */
+      let resumeItemsRaw: unknown;
+      let resumeItems: ItemId[] | undefined; // the resumed reviewer's allowed items (computed after the launch checks, written at recordLaunchUsage)
       const verdictItems = new Map<Record<string, unknown>, ItemId[]>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
@@ -4189,7 +4263,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let shadow: ShadowDecision = { kind: "none" };
       /** The `[high-stakes]` entries of this launch (highstakes.ts) and the checkout they review. */
       const hsEntries = new Set<Json>();
-      let hsLaunch: { root: string; gateKey: string; base: string | null } | null = null;
+      let hsLaunch: { root: string; gateKey: string; base: string | null; from?: string } | null = null;
       // The items of a review entry, computed once (verdict.ts): the re-review line, the items line of the task and the review_verdict tool read this set.
       const launchItemsCache = new Map<Record<string, unknown>, { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null }>();
       const launchItemsFor = (e: Record<string, unknown>): { given: ReturnType<typeof parseItemsField> | undefined; r: ReturnType<typeof launchItemsOf> | null } => {
@@ -4228,6 +4302,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: sized.error };
         }
         // R46: `reads` and `install` leave every launch here; a single launch carries them in its binding (recordLaunchUsage).
+        if (actionOf(input) === "resume" && input.items !== undefined && !filler(input.items)) resumeItemsRaw = fromJsonText(input.items, "array");
         const flags = takeLaunchFlags(input);
         if (flags.error && !s.isChild && actionOf(input) === null) {
           s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -4251,7 +4326,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
-        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
+        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking"), explicitAllowed: (role, m) => explicitModelAllowed(s.config.config, foremanBaseModel(ctx), m, role), hs: { run: (id) => s.hs.ownerOf(id) !== null, model: hsModel(s), ranOn: (id) => (s.hs.incomplete()?.runId === id ? (s.hs.incomplete()?.model ?? null) : null) } });
         if (act.block) return { block: true, reason: act.block };
         // r68 (A22): a workflow script that names a binding could forge one for any child.
         const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
@@ -4463,7 +4538,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           hsLaunch = hs;
         }
         // ceremony.reviewPerRevision (D5): a second review of unchanged, already passed work is refused (a pre-pr, high-stakes or plan review is no repeat).
-        const ownOccasion = [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
+        const ownOccasion = hsLaunch !== null || [...occasions.values()].some((o) => o === "pre-pr" || o === "plan-review" || o === "high-stakes");
         const dupOn = !s.isChild && !ownOccasion && shadow.kind !== "launch" && get(s.config.config, "ceremony.reviewPerRevision") !== false;
         // an uncleared high-stakes FAIL whose findings this launch gets is a change in itself: no "nothing changed" refusal (a resume gets no findings)
         // the FAIL's record lands in reviewSync (hsRunEnd): a slow host (Windows git) must not read the state before it
@@ -4612,8 +4687,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const foremanAt0 = foremanBaseModel(ctx);
         const unmodelled = new Set(launchEntries(input).filter((e) => typeof (e.model ?? input.model) !== "string" || String(e.model ?? input.model).trim() === ""));
+        const explicitHonoured = new Set<string>();
         const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), top: topLaunch.length > 0 ? topRoleEntry(s.config.config, resolution.roles) : null, explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), top: topLaunch.length > 0 ? topRoleEntry(s.config.config, resolution.roles) : null, explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); if (ok) explicitHonoured.add(splitLevel(m).base); return ok; } });
+        if (explicitHonoured.size > 0) capSet(explicitModelCalls, event.toolCallId, explicitHonoured);
         // A capped climb (RANK_CAPPED_REASON: skipped, or only carrying the pending handoff) names the model the launch runs on: the entry as applyLaunchModels wrote it (an explicit model the policy rejects was replaced by the mapped rung). A real rung_up or an above-strong climb that carries a handoff keeps its own from/to.
         const topLines: string[] = [];
         if (topLaunch.length > 0) {
@@ -4836,7 +4913,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
-          const cwds = launchCwds(input, ctx.cwd);
+          // a resume input names no cwd: the start heads also cover the checkouts the target review ran in (its recorded roots), so the run end of the resumed reviewer matches its own checkout
+          const cwdsOfLaunch = [...new Set([...launchCwds(input, ctx.cwd), ...(action === "resume" && !s.isChild ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? []) : [])])];
+          const cwds = action === "resume" && hsLaunch ? [hsLaunch.root] : cwdsOfLaunch; // a resumed high-stakes run: the checkout it reviews, not the session's
           capSet(s.launchAtByCall, event.toolCallId, Date.now());
           const [heads, trees, treesWf] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot), treesAt(cwds, (c) => launchSnapshot(c, true))]);
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
@@ -4909,6 +4988,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
           }
           verdictItems.set(e, r.items);
+        }
+        // A resumed review run keeps its first launch's binding, so its allowed items are made again here the way a fresh launch makes them (the resume's `items` field, else the open ledger items) and reach both sides: the child through the record folder, the parent through the route (tool_result).
+        if (!s.isChild && actionOf(input) === "resume") {
+          const target = resumeTarget(input) ?? "";
+          const launch = launchOfRun(s, target);
+          if (launch && s.ledgerByRun.get(target)?.review && s.hs.ownerOf(target) === null) {
+            const given = resumeItemsRaw !== undefined ? parseItemsField(resumeItemsRaw) : undefined;
+            if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
+            // the ledger the target run was launched for (a task that named one), else the bound one
+            const bound = boundLedger(s.markerDir, s.id);
+            const rlf = s.ledgerByRun.get(target)?.paths[0] ?? bound;
+            let text: string | null = null;
+            try { text = rlf ? fs.readFileSync(rlf, "utf8") : null; } catch { text = null; }
+            // the same rule as a fresh launch, after-FAIL included (s.failItems, whatever ledger is named)
+            const r = launchItemsOf(text, given && "items" in given ? given.items : undefined, { reReview: s.ledgerByRun.get(target)?.review?.occasion === "item", failed: s.failItems });
+            if ("unknown" in r) {
+              s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
+              return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
+            }
+            resumeItems = r.items;
+          }
         }
         // T13: a reviewer whose record folder cannot be made could never give a verdict; made after the last refusal above, so a refused launch leaves no folder
         const reviewRole = singleLaunchRole(input);
@@ -4995,12 +5095,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent" && !s.isChild && hsLaunch) {
         // the launch passed every check: it counts as running; the foreman's own request is a reason too (foreman)
-        s.hs.beginKeyed(event.toolCallId, hsLaunch.root, hsLaunch.gateKey);
+        s.hs.beginKeyed(event.toolCallId, hsLaunch.root, hsLaunch.gateKey, hsLaunch.from);
         hsFire(s, ["foreman"]);
         persistCeremonyState(s);
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined) });
+        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined), resumeItems });
         if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
@@ -5711,7 +5811,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
   /** The launch a run of this session belongs to: the live mapping, else the route entry of a review launch (it survives a reload or a session restart). */
-  const launchOfRun = (s: Session, runId: string): string | undefined => parkFor(s).launchFor(runId) ?? s.ledgerByRun.get(runId)?.review?.launch;
+  const launchOfRun = (s: Session, runId: string): string | undefined => {
+    const inc = s.hs.incomplete();
+    return parkFor(s).launchFor(runId) ?? s.ledgerByRun.get(runId)?.review?.launch ?? (inc?.runId === runId ? inc.launch : undefined); // the incomplete high-stakes run keeps its launch in the persisted state
+  };
 
   /**
    * D3: a resume of a run this session launched keeps the first launch's binding (same ask dir) but gets a new run id. The tool result maps the new run to
@@ -5747,9 +5850,34 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean; verdictItems?: ItemId[] }): LaunchBinding | null {
+  /** The resumed reviewer's items go into its record folder, where the child's `review_verdict` reads them on every call (the child's binding is fixed at its start). Best effort: without the file the child keeps its first items. */
+  function resumeItemsSidecar(s: Session, input: Record<string, unknown>, items: ItemId[]): void {
+    const target = resumeTarget(input);
+    const launch = target ? launchOfRun(s, target) : undefined;
+    if (!launch) return;
+    try {
+      const dir = recordDir(s.agentDir, s.id, launch);
+      makeRecordDir(dir);
+      writeItemsSidecar(dir, items);
+    } catch {
+      // the child keeps its first items
+    }
+  }
+
+  /** A resume keeps the first launch's `FOREMAN_SCRATCH`; the first run's end removed that dir, so it is made again (childscratch.ts resumeScratch) and removed when the resumed run ends. */
+  function resumeScratchDir(s: Session, input: Record<string, unknown>): string | null {
+    const target = resumeTarget(input);
+    const launch = target ? launchOfRun(s, target) : undefined;
+    return launch ? resumeScratch(s, launch) : null;
+  }
+
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean; verdictItems?: ItemId[]; resumeItems?: ItemId[] }): LaunchBinding | null {
     if (actionOf(input) === "resume") resumeAskDir(s, ctx, input, toolCallId);
-    if (actionOf(input) === "resume" && !s.isChild) resumeVerdictDir(s, input);
+    if (actionOf(input) === "resume" && !s.isChild) {
+      resumeVerdictDir(s, input);
+      resumeScratchDir(s, input);
+      if (flags?.resumeItems) resumeItemsSidecar(s, input, flags.resumeItems);
+    }
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
@@ -5835,7 +5963,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("tool_result", async (event, ctx) => {
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
-    if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content)); // R6 lane 7f
+    if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content, event.structuredContent as { exit_code?: unknown } | undefined)); // R6 lane 7f
     const created = manifest.onToolResult(event.toolCallId, event.isError);
     if (owner && created.length) {
       const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
@@ -5983,8 +6111,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s) {
         s.pendingLaunches.delete(event.toolCallId);
         parkFor(s).dropCall(event.toolCallId);
-        recordLaunch(s.runs, event.input, event.details, event.isError);
+        const honoured = explicitModelCalls.get(event.toolCallId);
+        explicitModelCalls.delete(event.toolCallId);
+        const launchModelOf = (event.input as { model?: unknown } | undefined)?.model;
+        recordLaunch(s.runs, event.input, event.details, event.isError, !!honoured && typeof launchModelOf === "string" && honoured.has(splitLevel(launchModelOf).base));
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
+        // a high-stakes resume allowed from the persisted incomplete record (after a reload the registry has no entry of the target): the new run is a high-stakes reviewer run like an in-process resume
+        const hsResumedId = launchId(event.input, event.details, event.isError);
+        if (hsResumedId && !s.isChild && !s.launchedRoles.has(hsResumedId) && actionOf(event.input as Record<string, unknown>) === "resume" && s.hs.ownerOf(resumeTarget(event.input as Record<string, unknown>) ?? "") !== null) s.launchedRoles.set(hsResumedId, ["reviewer"]);
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const trees = s.launchTreesByCall.get(event.toolCallId);
@@ -5995,10 +6129,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.launchAtByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         if (runId && s.reviewRootsByCall.has(event.toolCallId)) capSet(s.reviewRoots, runId, s.reviewRootsByCall.get(event.toolCallId) ?? null);
+        {
+          const resumedRoots = runId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume" ? s.reviewRoots.get(runId) : null;
+          if (runId && resumedRoots && resumedRoots.length === 1) capSet(resumeCheckouts, runId, resumedRoots[0]);
+        }
         s.reviewRootsByCall.delete(event.toolCallId);
         const boundId = boundLaunchId(event.input);
         if (boundId && runId && !s.isChild) parkFor(s).noteRun(runId, boundId); // a later resume of this run finds its launch
-        const launched = s.scratch.onLaunched(boundId, runId);
+        // a resume names no binding: its scratch is the target launch's, made again at the resume's tool_call
+        const resumeScratchLaunch = !boundId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume" ? (launchOfRun(s, resumeTarget(event.input as Record<string, unknown>) ?? "") ?? null) : null;
+        const launched = s.scratch.onLaunched(boundId ?? resumeScratchLaunch, runId);
         finishScratch(s, launched);
         const resumedLaunch = s.isChild ? null : parkFor(s).resumeLaunched(event.toolCallId, runId);
         askLine = closeChildAsk(s, launched ?? resumedLaunch);
@@ -6029,7 +6169,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a resume names no ledger: the resumed run's route carries over (same or new run id), persisted like the others
         const resumedRoute = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
         // the resumed run is a new run: the earlier run's `failed` does not carry over
-        const resumed = resumedRoute?.review?.failed ? { ...resumedRoute, review: { ...resumedRoute.review, failed: undefined } } : resumedRoute;
+        const resumedFresh = resumedRoute?.review?.failed ? { ...resumedRoute, review: { ...resumedRoute.review, failed: undefined } } : resumedRoute;
+        // the resume's items (its sidecar, written at the tool_call) replace the first launch's in the route that parses the record
+        const resumedItems = resumedFresh?.review && !event.isError && !s.isChild ? readItemsSidecar(recordDir(s.agentDir, s.id, launchOfRun(s, resumeTarget(event.input as Record<string, unknown>) ?? "") ?? "")) : null;
+        const resumed = resumedItems && resumedFresh?.review ? { ...resumedFresh, review: { ...resumedFresh.review, items: resumedItems } } : resumedFresh;
         if (resumed && runId) {
           capSet(s.ledgerByRun, runId, resumed);
           if (resumedRoute?.review?.failed) s.reviewRecords.delete(runId);
@@ -6774,7 +6917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const restart = b?.handoffDir ? `"foreman session restart ${launcher ?? "<label>"}", run by your parent` : `the owner quits that session (/quit) and resumes it with "pi --session ${b?.foremanSession ?? "<id>"}"`;
         return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman). The usual cause is a session that started before an update of the foreman: it needs a restart (${restart}), then it gets the channel. Stop and tell your parent; a verdict in prose does not count.`, "no_channel");
       }
-      const allowed = allowedItems(b.items, b.highStakes === true);
+      const allowed = allowedItems(readItemsSidecar(b.verdictDir) ?? b.items, b.highStakes === true); // a resume writes its items into the folder
       const c = checkVerdictCall(params, allowed);
       if ("error" in c) return refuse(c.error, "invalid");
       let replaced = false;
@@ -6864,7 +7007,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Every call returns ledger status.",
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" after a reviewer PASS that still stands: no checkout's last review failed), add (text, or texts: up to 32 items in one call), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op; entries: [{item?, text}] does up to 32 in one call), note or defer ({item, text} or {items: [n], text}: exactly one item), init ({topic, texts?}: creates .workflow/LEDGER-<topic>.md with one open item per text plus item V and binds it, for a foreman without the write tool; an existing file binds only when no other ledger is bound). Every call returns ledger status.",
     parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_TOOL_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v", ""] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, texts: { type: "array", maxItems: 32, items: { type: "string" }, description: "add: several item texts, one line each, instead of text; init: one line per open item (at most 32), refused when the file exists." }, entries: { type: "array", maxItems: 32, items: { type: "object", properties: { item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] }, text: { type: "string" } }, required: ["text"], additionalProperties: false }, description: "upsert: several {item?, text} entries instead of item and text; an item may appear once." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, topic: { type: "string", description: "init: the ledger topic (letters, digits, . _ -); the file is .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
@@ -7681,7 +7824,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
         const r = await spawner(inv.command, inv.args, { timeoutMs: 300_000, cwd: s.cwd, env: inv.env });
         const ok = !r.error && !r.timedOut && r.code === 0;
-        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...(classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never) ? [] : [`WARN ${noClassifierModelText(ctx.model?.provider)}`])].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
+        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...((): string[] => {
+          const ct = classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
+          return !ct ? [`WARN ${noClassifierModelText(ctx.model?.provider)}`] : ct.auto ? [`WARN ${autoClassifierModelText(ctx.model?.provider, `${ct.provider}/${ct.modelId}`)}`] : [];
+        })()].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
       if (sub === "config") {
@@ -7877,7 +8023,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ct = classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
     if (!ct) out.push(`WARN ${noClassifierModelText(ctx.model?.provider)}`);
     else if (!ctx.modelRegistry.find(ct.provider, ct.modelId)) fail(`classifier model ${ct.provider}/${ct.modelId} not in the model registry; dangerous-class calls ask you`, "correct providers.<p>.roles.review.model.");
-    else ok(`classifier model: ${ct.provider}/${ct.modelId} (timeout ${ct.timeoutMs} ms)`);
+    else if (ct.auto) out.push(`WARN ${autoClassifierModelText(ctx.model?.provider, `${ct.provider}/${ct.modelId}`)} (thinking ${judgeLevel(s.config.config, ct)}, timeout ${ct.timeoutMs} ms)`);
+    else ok(classifierModelLine(ct, judgeLevel(s.config.config, ct)));
     const gp = gateRuntimeOf(s);
     const pr = gp.store.resolve();
     out.push(`INFO permissions: ${pr.protected.length} protected targets, ${pr.prose.deny.length} deny sentences; decision log ${gateLogFile(s.agentDir)}`);

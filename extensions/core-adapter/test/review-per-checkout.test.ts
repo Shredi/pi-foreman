@@ -45,7 +45,7 @@ test("(a) a PASS in A stands while a builder runs in B: the finish names only B,
   assert.match(text, /requires reviewer/);
   assert.ok(text.includes(`${fs.realpathSync.native(b)}: built, no review yet`), text);
   assert.doesNotMatch(text, /revised after the last PASS/, "A is not named");
-  assert.match(await markV(a), /V closes after a reviewer PASS with no revision since/);
+  assert.doesNotMatch(await markV(a), /V closes after a reviewer PASS/, "A's PASS stands and no checkout failed: V closes while B has no review yet");
   const again = await launch(a, "reviewer", "review the branch again");
   assert.match(again.blocked ?? "", /the last review passed/, "A: a second review is a repeat");
   assert.equal(await pr(a), "", "pr_create in A: its PASS stands");

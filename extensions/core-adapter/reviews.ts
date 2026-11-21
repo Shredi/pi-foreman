@@ -208,6 +208,11 @@ function startEntryOf(start: ReadonlyMap<string, string | null>, cwd: string): {
   return null;
 }
 
+/** The value a launch snapshot map (heads or trees) holds for `cwd`; null when none matches or it is unknown. */
+export function startValueOf(start: ReadonlyMap<string, string | null> | undefined, cwd: string): string | null {
+  return (start ? startEntryOf(start, cwd)?.head : null) ?? null;
+}
+
 /** {@link reviewedHead} with the reason for a null head. */
 export function reviewedHeadWhy(start: ReadonlyMap<string, string | null> | undefined, cwd: string, end: string | null): { head: string | null; why?: NoHeadWhy } {
   if (!start) return { head: null, why: "no_launch_head" };

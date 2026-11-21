@@ -76,3 +76,14 @@ for (const [rel, args, script] of CASES) {
     assert.deepEqual(calls(sb.log), [`-E -s ${ROOT}/bin/${script} sample-arg`]);
   });
 }
+
+for (const [rel, args, script] of CASES) {
+  test(`${rel} finds a python3.13 when it is the only interpreter on PATH`, posix, () => {
+    const sb = sandbox(`only313-${path.basename(rel)}`, "3.13");
+    const fake = path.join(sb.dir, "fake");
+    fs.renameSync(path.join(fake, "python3"), path.join(fake, "python3.13"));
+    const r = launch(rel, args, sb);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(calls(sb.log).at(-1), `-E -s ${ROOT}/bin/${script} sample-arg`);
+  });
+}

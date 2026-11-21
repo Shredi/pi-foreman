@@ -69,12 +69,12 @@ test("ledgercall: knob default and permission deny detection", () => {
 
 const PASS = { last: "pass", revised: false };
 
-test("ledgercall: foreman tool batches marks and closes V only after an unrevised PASS", () => {
+test("ledgercall: foreman tool batches marks and closes V after a standing PASS", () => {
   assert.deepEqual(planLedgerCall({ action: "mark", items: [1, "2", 1] }, { child: false, gate: PASS }), { calls: [["mark", "1"], ["mark", "2"]], items: "1,2", attested: false });
   assert.deepEqual(planLedgerCall({ action: "mark", items: ["v", 3] }, { child: false, gate: PASS }), { calls: [["mark", "3"], ["mark", "V", V_ATTESTED_NOTE, "--verifier"]], items: "3,V", attested: true });
-  for (const gate of [{ last: null, revised: false }, { last: "fail", revised: false }, { last: "pass", revised: true }, { last: "none", revised: false }]) {
+  for (const gate of [{ last: null, revised: false }, { last: "fail", revised: false }, { last: "fail", revised: true }, { last: "none", revised: false }]) {
     const r = planLedgerCall({ action: "mark", items: ["V"] }, { child: false, gate });
-    assert.ok("error" in r && r.error.includes("V closes after a reviewer PASS with no revision since"), JSON.stringify(gate));
+    assert.ok("error" in r && r.error.includes("V closes after a reviewer PASS that still stands"), JSON.stringify(gate));
   }
   assert.ok("error" in planLedgerCall({ action: "defer", items: ["V"], text: "later" }, { child: false, gate: PASS }));
   assert.deepEqual(planLedgerCall({ action: "add", text: "new item" }, { child: false, gate: PASS }), { calls: [["add", "new item"]], items: "", attested: false });

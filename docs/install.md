@@ -538,7 +538,7 @@ narrows only when the checkout copy is the active one (see [permissions](permiss
 The Command Line Tools `/usr/bin/python3` is Python 3.9, which pi-foreman refuses. Install 3.13 with
 `brew install python@3.13` or from [python.org](https://www.python.org/downloads/). The POSIX launchers (`bin/foreman`,
 `bin/ledger`, `bin/foreman-worktree-setup`) use `PI_FOREMAN_PYTHON` as it is when it is set; otherwise they take the
-first of `python3`, `python3.14`, `python3.13`, `python` that is Python 3.13+. None found: exit 2 with
+first of `python3`, `python3.14`, `python3.13`, `python` that is Python 3.13+. Setup and the adapter share that list from `profiles.mjs`; the `bin/` launchers keep a copy pinned equal by a test. None found: exit 2 with
 `pi-foreman needs Python 3.13+; found <cmd> <version>`. To pin an interpreter, set `PI_FOREMAN_PYTHON` or `python.path`
 in `foreman.json` (`null` auto-detects; the adapter tries `python.path` before `PI_FOREMAN_PYTHON`).
 

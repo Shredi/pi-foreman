@@ -23,7 +23,7 @@ test("loopVerdictOf(code): an item-only repeat is progress only with work up and
     ["work up, state changed", round("s1", 1, "item:2"), round("s2", 2, "item:2"), null],
     ["work up, same state (a builder that changed nothing)", round("s1", 1, "item:2"), round("s1", 2, "item:2"), "repeat"],
     ["no work, state changed", round("s1", 1, "item:2"), round("s2", 1, "item:2"), "repeat"],
-    ["equal at: key, work up, state changed", round("s1", 1, "at:a.ts:2:bug", "item:2"), round("s2", 2, "at:a.ts:2:bug", "item:2"), "repeat"],
+    ["equal txt: key, work up, state changed", round("s1", 1, "txt:a bug", "item:2"), round("s2", 2, "txt:a bug", "item:2"), "repeat"],
     ["missing work on the earlier round", round("s1", undefined, "item:2"), round("s2", 2, "item:2"), "repeat"],
     ["missing work on the later round", round("s1", 1, "item:2"), round("s2", undefined, "item:2"), "repeat"],
     ["work went down (a fork)", round("s1", 5, "item:2"), round("s2", 0, "item:2"), "repeat"],
@@ -91,7 +91,7 @@ test("a builder run that changes nothing between two FAILs of the same item stil
   await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(2, "x"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
-  assert.equal(await codeReview(a, reportItem(2, "y"), 2), null);
+  assert.equal(await codeReview(a, reportItem(2, "x"), 2), null);
   assert.equal(await loopStops(w), 1);
   assert.ok(loopRefused(await a.launch("builder")));
 });
@@ -102,7 +102,7 @@ test("a changed tree with no builder run or edit in between still stops the loop
   await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(2, "x"), 1), null);
   change(w);
-  assert.equal(await codeReview(a, reportItem(2, "y"), 2), null);
+  assert.equal(await codeReview(a, reportItem(2, "x"), 2), null);
   assert.equal(await loopStops(w), 1);
 });
 
@@ -112,7 +112,7 @@ test("page 8: a stop lifted by an owner prompt, then a builder changes the tree 
   await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(4, "first"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
-  assert.equal(await codeReview(a, reportItem(4, "second"), 2), null);
+  assert.equal(await codeReview(a, reportItem(4, "first"), 2), null);
   assert.equal(await loopStops(w), 1, "the stop is set");
   assert.ok(loopRefused(await a.launch("builder")));
   await a.ownerPrompt();
@@ -129,7 +129,7 @@ test("page 8: a stop lifted by a parent brief, then new code lands: the next bui
   await a.writeLedger(LEDGER);
   assert.equal(await codeReview(a, reportItem(4, "first"), 1), null);
   assert.equal(await a.launch("builder"), undefined);
-  assert.equal(await codeReview(a, reportItem(4, "second"), 2), null);
+  assert.equal(await codeReview(a, reportItem(4, "first"), 2), null);
   assert.ok(loopRefused(await a.launch("builder")));
   fs.writeFileSync(path.join(w.handoff, "brief-1.md"), "go on differently\n");
   assert.equal(await a.launch("builder"), undefined, "the brief lifts the stop");
