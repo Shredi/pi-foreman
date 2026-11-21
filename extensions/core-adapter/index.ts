@@ -477,7 +477,7 @@ interface Session {
   hs: HighStakes;
   /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
   hsReminded: string[] | null;
-  /** The checkout fingerprint at the session's first start (trivial.ts checkoutBaseline; persisted, a fork takes its own); null: none, the no-change rule needs a clean status. */
+  /** The checkout fingerprint at the session's first start (trivial.ts checkoutBaseline; persisted; a fork keeps its parent's; only a brand-new startup or new session takes one, a resume without a stored one has none); null: none, the no-change rule needs a clean status. */
   baseline: string | null;
   /** The findings of the last normal-review FAIL, for the next re-review task (persisted; cleared by a PASS, replaced by the next FAIL). */
   lastFailFindings: string | null;

@@ -56,15 +56,17 @@ test("size and risk text: same Declared and stripped input as the object form, t
 
 test("size and risk text over the limit refuse with the object form's text", () => {
   const refusal = (size: unknown, risk?: unknown): string | undefined => takeSizing({ agent: "builder", task: "x", size, risk }).error;
-  for (const [text, obj] of [['{"files":"a"}', { files: "a" }], ['{"files":[""]}', { files: [""] }], ['{"files":["a"],"modules":-1}', { files: ["a"], modules: -1 }], ["{}", {}]] as const) {
+  for (const [text, obj] of [['{"files":"a"}', { files: "a" }], ['{"files":[""]}', { files: [""] }], ['{"files":["a"],"modules":-1}', { files: ["a"], modules: -1 }]] as const) {
     assert.ok(refusal(obj));
     assert.equal(refusal(text), refusal(obj), text);
   }
+  for (const f of ["{}", {}]) assert.equal(refusal(f), undefined, `empty filler ${JSON.stringify(f)} is absent (item 14)`);
   assert.equal(takeSizing({ agent: "builder", task: "x", risk: '["speed"]' }).error, takeSizing({ agent: "builder", task: "x", risk: ["speed"] }).error);
   assert.match(refusal(undefined, '["speed"]') ?? "", /unknown risk tag "speed"/);
   const plain = "size is not an object";
   for (const v of ["3", "null", '"x"', "[]", '["a"]', "not json", '"{\\"files\\":[\\"a\\"]}"', 3, true, null, ["a"]]) assert.match(refusal(v) ?? "", new RegExp(plain), JSON.stringify(v));
-  for (const v of ["{}", '{"a":1}', "3", '"[]"', "x", 3, { a: 1 }]) assert.match(takeSizing({ agent: "builder", task: "x", risk: v }).error ?? "", /risk is not an array/, JSON.stringify(v));
+  for (const v of ['{"a":1}', "3", '"[]"', "x", 3, { a: 1 }]) assert.match(takeSizing({ agent: "builder", task: "x", risk: v }).error ?? "", /risk is not an array/, JSON.stringify(v));
+  for (const v of ["{}", {}]) assert.equal(takeSizing({ agent: "builder", task: "x", risk: v }).error, undefined, `empty filler ${JSON.stringify(v)} is absent (item 14)`);
 });
 
 const ROLES = { builder: { mcp: ["fx", "other/probe"] }, reviewer: {} };
