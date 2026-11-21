@@ -335,6 +335,8 @@ export function resetText(resetsAt, now) {
   return `resets ${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
+/** `{value: true}` only for a measured number, so a dash stays grey. */
+const valueOf = (v) => (v === null || v === undefined ? {} : { value: true });
 const pctText = (v) => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
 /** `s` cut to `w` chars with "…" in the middle, the larger share kept at the end (the end of a path names it); shorter text stays. */
 export const cutMiddle = (s, w) => {
@@ -363,12 +365,12 @@ export function stripRows(strip, now = Date.now()) {
   const grp = (group, segs) => head.push(...segs.map((g) => ({ ...g, group })));
   if (strip.cpu) {
     grp("cpu", [{ text: "cpu ", tone: "neutral" },
-      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history), value: true }] : []),
-      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone, value: true }]);
+      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history), ...valueOf(strip.cpu.pct) }] : []),
+      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone, ...valueOf(strip.cpu.pct) }]);
   }
   if (strip.mem) {
-    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null }, value: true },
-      { text: pctText(strip.mem.pct), tone: strip.mem.tone, value: true }]);
+    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null }, ...valueOf(strip.mem.pct) },
+      { text: pctText(strip.mem.pct), tone: strip.mem.tone, ...valueOf(strip.mem.pct) }]);
   }
   if (strip.level) grp("level", levelSegs(strip.level));
   if (head.length) rows.push({ id: "head", segs: head });
@@ -376,7 +378,7 @@ export function stripRows(strip, now = Date.now()) {
   strip.disks.forEach((d, i) => {
     const segs = [{ text: `${fixed(d.label, w)} `, tone: "neutral" }];
     if (d.missing || d.usedPct === null) segs.push({ text: "—", tone: "neutral" });
-    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null }, value: true }, { text: pctText(d.usedPct), tone: d.tone, value: true }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
+    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null }, value: true }, { text: pctText(d.usedPct), tone: d.tone, ...valueOf(d.usedPct) }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
     rows.push({ id: `disk:${i}`, segs });
   });
   strip.quotas.forEach((q, i) => {
@@ -396,10 +398,16 @@ export function stripSummary(strip) {
   if (!isObj(strip)) return [];
   if (strip.stale) return [{ text: "status: no main session measuring", tone: "neutral" }];
   const segs = [];
-  const add = (text, toneName = "neutral", value = false) => segs.push({ text: segs.length ? `  ${text}` : text, tone: toneName, ...(value ? { value } : {}) });
-  if (strip.cpu) add(`cpu ${pctText(strip.cpu.pct)}`, strip.cpu.tone, true);
-  if (strip.mem) add(`mem ${pctText(strip.mem.pct)}`, strip.mem.tone, true);
-  if (strip.level) add(`● ${strip.level.level}`, levelSegs(strip.level)[0].tone, true);
+  const add = (group, label, text, toneName, value) => {
+    const lead = segs.length ? "  " : "";
+    segs.push({ text: `${lead}${label}`, tone: "neutral", group }, { text, tone: toneName, group, ...(value ? { value: true } : {}) });
+  };
+  if (strip.cpu) add("cpu", "cpu ", pctText(strip.cpu.pct), strip.cpu.tone, valueOf(strip.cpu.pct).value);
+  if (strip.mem) add("mem", "mem ", pctText(strip.mem.pct), strip.mem.tone, valueOf(strip.mem.pct).value);
+  if (strip.level) {
+    const toneOf = levelSegs(strip.level)[0].tone;
+    segs.push({ text: segs.length ? "  ●" : "●", tone: toneOf, group: "level", value: true }, { text: ` ${strip.level.level}`, tone: toneOf, group: "level", value: true });
+  }
   return segs;
 }
 

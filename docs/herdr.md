@@ -514,10 +514,12 @@ The herdr-app Agents view can show a small strip above the session list: how bus
 limit is spent.
 
 ```
- cpu ▂▃▅▇▅▃▂▁▂▃▅▄  42%   mem ███████░░░ 71%   ● ok
- disk /            ████████░░ 78%   52 GB free
- Claude week       ██████░░░░│░░░░  41%   resets Thu 21:00
+ cpu [spark] 42%   mem [bar] 71%   ● ok
+ disk /            [bar] 78%   52 GB free
+ Claude week       [bar|marker] 41%   resets Thu 21:00
 ```
+
+The spark line, the bars and the pace marker are drawn as small boxes, not as text characters; `[bar]` stands for a bar.
 
 A timer in the main Pi session measures every `sidebar.strip.sampleSeconds` (10 s) and writes
 `<agent dir>/pi-foreman/state/strip.json`; `foreman radar --json` passes it on as the top-level `strip` field (without the

@@ -141,7 +141,7 @@ test("stale strip: one line with dashes, folded and unfolded", () => {
 test("folded summary: cpu, memory and the level dot", () => {
   const sum = stripSummary(parseStrip(full()));
   assert.equal(text(sum), "cpu 42%  mem 71%  ● ok");
-  assert.equal(sum[1].tone, "amber");
+  assert.equal(sum[3].tone, "amber");
   const high = stripSummary(parseStrip({ ...full(), level: { level: "high", reasons: ["load"] } }));
   assert.equal(high.at(-1).tone, "amber");
   assert.equal(text(stripSummary(parseStrip({ version: 1, mem: { pct: 5 } }))), "mem 5%");
@@ -156,7 +156,7 @@ test("parseRadarDoc keeps the strip of the local document and ignores a remote o
 });
 
 test("stripRows: a long disk label is cut in the middle, a short one stays", () => {
-  const path = "/Users/x/Documents/git/repo";
+  const path = "/home/user/Documents/git/repo";
   const rows = stripRows({ ...full(), disks: [{ label: path, usedPct: 10, freeGB: 1, tone: "neutral" }, { label: "/", usedPct: 1, freeGB: 1, tone: "neutral" }], quotas: [] });
   const label = rows.find((r) => r.id === "disk:0").segs[0].text.slice(0, -1);
   assert.equal(label.length, 18);
@@ -171,7 +171,7 @@ test("stripRows: a long disk label is cut in the middle, a short one stays", () 
 });
 
 test("a long disk path keeps its real end through parse and the middle cut", () => {
-  const path = "/Users/marc/Documents/git/pi-foreman.worktrees/status-strip";
+  const path = "/home/user/src/project.worktrees/status-strip";
   const s = parseStrip({ version: 1, disks: [{ label: path, usedPct: 87, freeGB: 119, tone: "neutral" }] });
   assert.equal(s.disks[0].label, path, "parse does not cut a path from its start");
   const label = stripRows(s).find((r) => r.id === "disk:0").segs[0].text.trim();
@@ -186,4 +186,20 @@ test("a long disk path keeps its real end through parse and the middle cut", () 
 test("cutMiddle: short text stays, long text keeps both ends", () => {
   assert.equal(cutMiddle("abc", 18), "abc");
   assert.equal(cutMiddle("abcdefghijklmnopqrstuvwxyz", 10), "abc…uvwxyz");
+});
+
+test("a null cpu or memory percent is a grey dash in the rows and the summary", () => {
+  const s = parseStrip({ ...full(), cpu: { pct: null, history: [], tone: "neutral" }, mem: { pct: null, tone: "neutral" } });
+  const head = stripRows(s).find((r) => r.id === "head").segs;
+  for (const g of head.filter((x) => x.text === "—")) assert.notEqual(g.value, true);
+  assert.ok(head.filter((x) => x.bar).every((x) => x.value !== true));
+  const sum = stripSummary(s);
+  assert.equal(text(sum), "cpu —  mem —  ● ok");
+  assert.equal(sum.filter((x) => x.text === "—").length, 2);
+  assert.ok(sum.filter((x) => x.text === "—").every((x) => x.value !== true));
+});
+
+test("folded summary: labels are neutral, numbers and the level dot are values", () => {
+  const sum = stripSummary(parseStrip(full()));
+  assert.deepEqual(sum.map((g) => [g.text, !!g.value]), [["cpu ", false], ["42%", true], ["  mem ", false], ["71%", true], ["  ●", true], [" ok", true]]);
 });
