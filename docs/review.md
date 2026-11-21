@@ -274,7 +274,7 @@ base. The base triggers nothing.
 | `high_stakes_single` | The launch is inside a `tasks` or `chain` launch. |
 | `high_stakes_resume` | The call resumes a run. A run that ended without a verdict, or with an `incomplete` verdict, is launched fresh. |
 | `high_stakes_done` | The passes of the session are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
-| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass is a FAIL that no normal PASS that got its findings has cleared. |
+| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass in this checkout (the launch's directory; another checkout's FAIL never holds it) is a FAIL that no fresh normal PASS in the same directory that got its findings has cleared (a non-git directory included). A high-stakes launch may name items the normal PASS already closed, or none. |
 | `high_stakes_unrevised` | A reviewer `resume` while a high-stakes FAIL of its checkout is uncleared (a resume gets no findings). A fresh normal reviewer is never refused for it. |
 
 After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.

@@ -16,7 +16,7 @@ const DOC = "docs/features.md";
 export const SAFETY_FLOOR = [
   "safety.permissions.*", "safety.git.*", "safety.ops.*", "safety.requiredChildExtensions", "safety.preconditionOps",
   "ceremony.foremanEdits", "ceremony.required", "ceremony.reviewBeforePr", "ceremony.reviewGate", "ceremony.requireTriage",
-  "bridge.*", "python.*", "presence.command", "sidebar.statusCommand", "tools.prHost", "roles.*.mcp", "roles.*.file", "paths.hubWorkflow",
+  "bridge.*", "python.*", "presence.command", "sidebar.statusCommand", "sidebar.strip.*", "tools.prHost", "roles.*.mcp", "roles.*.file", "paths.hubWorkflow",
 ];
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);

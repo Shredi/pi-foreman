@@ -73,6 +73,7 @@ Keys outside safety that the project and session layers cannot loosen either
     tools.prPhases                   ignored (it makes the harness add a label to the PR host: user or overlay config only)
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
+    sidebar.strip                    ignored (the usage sources run programs, the interval is the user's: L1/L3/L2 only)
     childMaxThinking                 lower only (off < ... < max)
     ladder.* (but strongOnRevision, equalOnStrongRisk), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.modelDataFrom        ignored (it decides the reserve setup writes: L1/L3/L2 only)
@@ -242,6 +243,7 @@ IGNORED_KEYS = [
     (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),
+    (("sidebar", "strip"), "the status strip (its usage sources run programs) comes from the user or overlay config"),
     (("radar", "openPrs"), "the open PRs source (a GitHub search through gh) comes from the user or overlay config"),
     (("sync", "repos"), "the repository list comes from the user or overlay config"),
     (("retro", "workspaceKey"), "the workspace key comes from the user or overlay config"),

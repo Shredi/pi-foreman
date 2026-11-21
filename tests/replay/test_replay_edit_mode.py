@@ -134,6 +134,8 @@ class TestEditMode(ReplayCase):
         (rig.project / "src").mkdir()
         (rig.project / "src" / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
+        pi.session_id()  # the session-start fingerprint is taken; a file written now is a change since start, so the finish is refused
+        (rig.project / "src" / "b.txt").write_text("beta\n", "utf-8")
         recs = pi.prompt("[[replay:chain]] go", timeout=90)
         self.assertEqual([(n, e) for n, e, _ in tool_results(recs)],
                          [("foreman_triage", False), ("edit", True), ("write", False), ("subagent", False)], tool_results(recs))

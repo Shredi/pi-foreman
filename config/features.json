@@ -489,6 +489,18 @@
       "enable": "{\"sidebar\": {\"statusCommand\": \"/path/to/your-status-program\", \"statusSeconds\": 60}}"
     },
     {
+      "id": "sidebar-strip",
+      "area": "ui",
+      "title": "Status strip",
+      "purpose": "Shows CPU, memory, the load guard's level, disk free space and usage rows (the Claude week and 5-hour windows from reply headers, plus rows from usage scripts you configure) in a strip at the top of the herdr-app Agents view; the numbers come from the computer Pi runs on and the whole block is read from user or overlay config only.",
+      "doc": "docs/herdr.md#status-strip",
+      "keys": ["sidebar.strip"],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "children-may-push",
       "area": "safety",
       "title": "Children may push",

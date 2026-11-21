@@ -32,7 +32,8 @@ def events(rig, sid, name):
 
 
 def pending_change(rig):
-    """An untracked project file: the finish sees a change, so the no-change valve does not apply."""
+    """An untracked project file: the finish sees a change, so the no-change valve does not apply. Call it after `rig.start()` and `session_id()`:
+    the session-start fingerprint is taken at start, and a file written before it is part of the baseline, so the valve would still apply."""
     (rig.project / "src-change.txt").write_text("changed\n", "utf-8")
 
 
@@ -90,9 +91,9 @@ class TestTrivialBound(ReplayCase):
 class TestRequiredSteps(ReplayCase):
     def test_finish_without_builder_refused_twice_then_forced_pass(self):
         rig = self.rig("cg-nobuild", script())
-        pending_change(rig)
         pi = rig.start()
         sid = pi.session_id()
+        pending_change(rig)
         recs = pi.prompt("[[replay:nobuild]] build it", timeout=90)
         pi.close()
         msgs = gate_messages(recs)
@@ -156,10 +157,10 @@ class TestWaitingForParent(ReplayCase):
 
     def test_handoff_timer_wait_waives_the_gate_until_the_next_input(self):
         rig = self.rig("cg-parent", script(), config={"wait": {"batchWindowSeconds": 0}})
-        pending_change(rig)
         self.handoff(rig)
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
+        pending_change(rig)
         recs = pi.prompt("[[replay:handoff]] hand off", timeout=90)
         self.assertEqual([(n, e) for n, e, _ in tool_results(recs)], [("foreman_triage", False), ("foreman_wait", False)], tool_results(recs))
         self.assertEqual(gate_messages(recs), [])
@@ -176,10 +177,10 @@ class TestWaitingForParent(ReplayCase):
 
     def test_another_sessions_handoff_does_not_waive_the_gate(self):
         rig = self.rig("cg-other", script(), config={"wait": {"batchWindowSeconds": 0}})
-        pending_change(rig)
         self.handoff(rig, child="fm-someone-else-111111")
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
+        pending_change(rig)
         recs = pi.prompt("[[replay:handoff]] hand off", timeout=90)
         # Another session's handoff dir sets no waiting_for_parent; the pending timer still pauses the turn.
         self.assertEqual(gate_messages(recs), [])
@@ -192,9 +193,9 @@ class TestWaitingForParent(ReplayCase):
 
     def test_plain_timer_wait_without_handoff_context_is_refused(self):
         rig = self.rig("cg-plain", script(), config={"wait": {"batchWindowSeconds": 0}})
-        pending_change(rig)
         pi = rig.start()
         sid = pi.session_id()
+        pending_change(rig)
         recs = pi.prompt("[[replay:plainwait]] wait", timeout=90)
         # A plain timer pauses the turn (pending_wait) without setting waiting_for_parent.
         self.assertEqual(gate_messages(recs), [])
