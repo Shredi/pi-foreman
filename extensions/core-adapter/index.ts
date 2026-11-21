@@ -118,6 +118,7 @@ import type { PrPackSession } from "./gitpack.ts";
 import { addTracked, lastPollAgeMs, readStoreEntry, trackedHostOf, trackerDoctorLine } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
+import { parsePhases, tagChecks } from "./prphases.ts";
 import { parseWakeRules } from "./prwake.ts";
 import { PrHost, branchOf, isTrackedKey, resolveGithubHosts } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
@@ -1002,6 +1003,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s), resolveGithubHosts(s.config.config)),
         githubHosts: () => resolveGithubHosts(s.config.config),
         wakeRules: () => parseWakeRules(get(s.config.config, "tools.prWake")).rules,
+        phaseRules: () => parsePhases(get(s.config.config, "tools.prPhases")).rules,
         retrack: async (key) => {
           const hosts = resolveGithubHosts(s.config.config);
           if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);
@@ -1262,7 +1264,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.live?.setAwayGetter(() => s.selfWarm.state() === "watching" && s.presence.away());
       s.live?.setOwnerGetter(() => s.selfWarm.ownerPresence());
       const prCfg = new ReloadingConfig(agentDir, config, () => loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner }), (c) => c.source === "cli");
-      s.openPrs = new OpenPrsRefresher({ agentDir, prepare: () => prCfg.refresh(), config: () => get(prCfg.current().config, "radar.openPrs"), ghHost: () => { const h = get(prCfg.current().config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(prCfg.current().config) });
+      s.openPrs = new OpenPrsRefresher({ agentDir, prepare: () => prCfg.refresh(), config: () => get(prCfg.current().config, "radar.openPrs"), ghHost: () => { const h = get(prCfg.current().config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(prCfg.current().config), phases: () => parsePhases(get(prCfg.current().config, "tools.prPhases")).rules });
       s.openPrs.start();
       const live = s.live;
       waits.onChange(id, () => live?.touch());
@@ -2109,7 +2111,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       turn: () => s.turnSeq,
       fetch: async () => {
         const r = await prRun(s, s.cwd, "pr_checks", {}, 30_000);
-        return r.kind === "ran" ? checksLine(r.result as never) : "";
+        if (r.kind !== "ran") return "";
+        const rules = parsePhases(get(s.config.config, "tools.prPhases")).rules;
+        const at = rules.length > 0 ? await s.prHost.repoFor(s.cwd).catch(() => null) : null;
+        return checksLine(tagChecks(rules, at?.repo ?? null, r.result) as never);
       },
     }, s.checksCache);
   }
@@ -6254,6 +6259,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       track: s.isChild ? undefined : async (repo, n, host) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n, undefined, host) : "off"),
       trackedHost: (repo, n, hosts) => trackedHostOf(s.agentDir, repo, n, hosts),
       githubHosts: () => resolveGithubHosts(s.config.config),
+      phases: () => parsePhases(get(s.config.config, "tools.prPhases")).rules,
       draftFlow: () => draftFlowOn(s),
       recordPr: async (o) => {
         const where = await repoIdentity(s, o.cwd);
