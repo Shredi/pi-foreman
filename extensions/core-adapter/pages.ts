@@ -2,6 +2,7 @@
 // the index the herdr plan mod lists. The markdown dialect we write for plans and notes is converted here (no library): raw HTML in the
 // markdown is escaped, links keep only http, https and relative targets, and mermaid fences become a <picture> with the two themes of the
 // already-validated sidecars as data URIs (a fence without sidecars stays a code block). A model-written `html` note is stored as is.
+// The page server (pageserver.ts, docs/pages.md) serves these files and renders a markdown brief with `renderPage`; its links appear in UI lines only, never in a tool result.
 import { mermaidPres, normalizedPage } from "./htmlmd.ts";
 import { fenceSha } from "./mermaid.ts";
 

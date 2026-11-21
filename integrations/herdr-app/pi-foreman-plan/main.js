@@ -2,18 +2,20 @@
 // the panel. Reads radar from shared("pi-foreman.radar") (published by the pi-foreman Agents mod) and, per session on screen,
 // <show dir>/pages/pages.json (the index the foreman writes). A page opens in the system browser through a copy this mod writes
 // into one of eight fixed slots under its own cache folder; writes nothing else but the clearing of the sidebar's pending open request
-// (shared "pi-foreman.show-pending"); the only process it starts is the platform opener, for https links and for those page copies.
+// (shared "pi-foreman.show-pending"); the processes it starts are the platform opener, for https links, for those page copies and for the served
+// page URL of a local session, and `foreman pages url <page file>` (the binary of the `foreman` prop), which prints that URL (docs/pages.md).
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, notify } from "herdr";
+import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, notify, props } from "herdr";
 import {
   buildTree, joinAgents, allSessions, childPlans, tabDot, pageUnseen, pageStamp, chipText, parsePages, newPage, anchorAgent, joinPath,
-  isSafeHttpsUrl, openerArgv, pageOpenerArgv, slotPath, dirFileUrl, rewriteRelative, openFailure, fmtSince, findPanelBlock, PAGE_FILE, MAX_PAGE_CHARS, SLOTS,
+  isSafeHttpsUrl, openerArgv, pageOpenerArgv, pageUrlArgv, radarBinary, slotPath, dirFileUrl, rewriteRelative, openFailure, fmtSince, findPanelBlock, PAGE_FILE, MAX_PAGE_CHARS, SLOTS,
 } from "./model.js";
 
 const TICK_MS = 1000;
 const OPEN_TIMEOUT_MS = 10000; // exec `timeout` of the platform opener
+const URL_TIMEOUT_MS = 5000; // exec `timeout` of `foreman pages url`
 const POLL_MS = 5000;
 const FAILED = Symbol("read failed");
 const MOD = "pi-foreman-plan";
@@ -26,7 +28,8 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const osOf = () => { const p = guard(() => window().platform, ""); return p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux"; };
 
 export default class PlanPanel extends View {
-  init(_props, cx) {
+  init(p, cx) {
+    this.foremanProp = guard(() => props() ?? p ?? {}, {}).foreman;
     this.recs = new Map(); // `${machine}|${dir}` -> what was read of one session's pages.json
     this.watched = new Set(); // local dirs with a running watch loop
     this.tab = "foreman";
@@ -298,6 +301,12 @@ export default class PlanPanel extends View {
         const text = await this.read(joinPath(dir, p.file), machine);
         if (text === null) { this.fail(title, "the page could not be read"); return; }
         if (text.length > MAX_PAGE_CHARS) { this.fail(title, "the page is larger than 1 MiB"); return; }
+        // a local session: the served page, when `foreman pages url` answers an http(s) URL; any other outcome keeps the slot copy below
+        const served = machine ? null : await this.servedArgv(joinPath(dir, p.file));
+        if (served) {
+          if (await this.launch(served, title)) { this.seen.set(`${key}|${p.id}`, pageStamp(p)); cx.notify(); }
+          return;
+        }
         const base = machine ? null : dirFileUrl(dir);
         const body = base ? rewriteRelative(text, base) : text;
         const home = guard(() => appHome(), "");
@@ -311,6 +320,15 @@ export default class PlanPanel extends View {
       // seen only once the opener worked: a failed open keeps the dot
       if (await this.launch(argv, title)) { this.seen.set(`${key}|${p.id}`, pageStamp(p)); cx.notify(); }
     });
+  }
+
+  // The opener argv of the served URL `foreman pages url <file>` prints, or null (empty answer, error, a non-http answer, no opener).
+  async servedArgv(file) {
+    try {
+      const r = await this.execT(radarBinary(this.foremanProp, null), ["pages", "url", file], {}, URL_TIMEOUT_MS);
+      if (!r || (r.code !== undefined && r.code !== 0)) return null;
+      return pageUrlArgv(osOf(), String(r.stdout ?? "").trim());
+    } catch { return null; }
   }
 
   // exec with a `timeout`; if the call throws or rejects because of the option itself (an app that predates it), it runs once more

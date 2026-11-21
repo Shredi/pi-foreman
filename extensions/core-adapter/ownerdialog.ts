@@ -24,6 +24,8 @@ export interface DialogLink {
   path: string;
   text: string;
   kind: "page" | "text";
+  /** A served URL (page server) the link opens instead of the file URL; the dim path line stays the file path. */
+  url?: string;
 }
 
 export interface DialogSpec {
@@ -76,8 +78,12 @@ export function fileUrl(p: string, windows: boolean = process.platform === "win3
   return pathToFileURL(p, { windows }).href;
 }
 
-/** The link rule: a `page` always; a `text` file only when its real path ends in .md or .txt. Scripts are never passed as links. */
+/** The link rule: a served `url` when set; else a `page` always; a `text` file only when its real path ends in .md or .txt. Scripts are never passed as links. */
 function linkUrl(l: DialogLink, windows: boolean): string | null {
+  return l.url ?? fileLinkUrl(l, windows);
+}
+
+function fileLinkUrl(l: DialogLink, windows: boolean): string | null {
   if (l.kind === "page") return fileUrl(l.path, windows);
   let real = l.path;
   try {
@@ -101,7 +107,8 @@ export function ownerDialog(spec: DialogSpec, style: DialogStyle | null, windows
   }
   for (const l of spec.links ?? []) {
     const url = linkUrl(l, windows);
-    const shown = cleanDialogText(url ?? l.path);
+    // under a drawn (clickable) served link the dim line stays the file link of today; with no clickable link the served URL is the text to copy
+    const shown = cleanDialogText(l.url && url && style?.links ? (fileLinkUrl(l, windows) ?? l.path) : (url ?? l.path));
     const label = cleanDialogText(l.label);
     out.push("");
     if (url && style?.links) {

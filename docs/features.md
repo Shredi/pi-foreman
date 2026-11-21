@@ -113,6 +113,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
 | [resources](#resources) | ops |  | on | Samples load, free memory and free disk; at high pressure child launches run one at a time and the strong climb pauses, at critical pressure launches are deferred until the host recovers (10 minutes at most); for a load-only critical one new launch can start anyway when the owner says Yes in a dialog (one Yes, one launch). `/foreman doctor` prints the current level and `/foreman status` the last sample. | on by default | [resources](resources.md) |
+| [page-server](#page-server) | ui |  | on | One small background server per machine serves the plan, note and brief pages of the sessions on this machine over HTTP, so a link opens in the browser you use (also a Windows browser under WSL, and a phone over a VPN when you set an address). Each page folder has its own secret link; the server lists nothing and writes nothing. It listens on 127.0.0.1 by default, stops after 12 hours of no use or when `pages.server.enabled` is false, and links stay file links when it is off or cannot start. `foreman pages` starts, finds and stops it. | on by default | [pages](pages.md) |
 | [idle-cache](#idle-cache) | models | toggle | off | Per-provider prompt-cache TTL and keep-alive so an idle session does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs (claude-* 300 s, gpt-* 1800 s; keep-alive on, children included, keepalive.children false stops them); a legacy per-request plan sets keepalive.enabled false; any other provider stays off until it has a TTL and keepalive.enabled: true; silent without an entry. keepalive.enabled is the only switch: pi-foreman sends every idle warm itself (Pi's own warmer is never used), at min(0.9 x TTL, TTL - 10 s) after the last touch, for any TTL above 10 s. A budget tier caps the spend per idle: half a cold re-cache while a subagent, background task or wait runs (or the owner is present and a turn, question, dialog or command is open), a quarter otherwise; the last warm is followed by one compaction above 0.6 x the context window. keepalive.beyondPiCap, windowMinutes, selfWarmWindowMinutes, awayTicks, whileWaiting and intervalSeconds are deprecated: accepted, ignored, and doctor warns. A downshifted session uses the cache entry of the idle model's provider. | `set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or /foreman config apply-preset claude-bridge --dry-run   # or: {"providers": {"<provider>": {"cache": {"ttlSeconds": 300, "keepalive": {"enabled": true}}}}}` | [cache](cache.md#config) |
 
 ## Profiles
@@ -943,6 +944,17 @@ No config key.
 | `resources.minFreeDiskGB` | `5` | tighten-only (raise only) |
 | `resources.sampleSeconds` | `30` | not in project/session (the sampling interval comes from the user or overlay config) |
 
+### page-server
+
+**Page server.** One small background server per machine serves the plan, note and brief pages of the sessions on this machine over HTTP, so a link opens in the browser you use (also a Windows browser under WSL, and a phone over a VPN when you set an address). Each page folder has its own secret link; the server lists nothing and writes nothing. It listens on 127.0.0.1 by default, stops after 12 hours of no use or when `pages.server.enabled` is false, and links stay file links when it is off or cannot start. `foreman pages` starts, finds and stops it.
+
+| Key | Default | Layer |
+|---|---|---|
+| `pages.server.enabled` | `true` | tighten-only (only false is accepted) |
+| `pages.server.port` | `47317` | not in project/session (the page server's port comes from the user or overlay config) |
+| `pages.server.bind` | `"127.0.0.1"` | not in project/session (the page server's bind address comes from the user or overlay config) |
+| `pages.server.baseUrl` | `""` | not in project/session (the base URL of served page links comes from the user or overlay config) |
+
 ### idle-cache
 
 **Idle prompt-cache policy.** Per-provider prompt-cache TTL and keep-alive so an idle session does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs (claude-* 300 s, gpt-* 1800 s; keep-alive on, children included, keepalive.children false stops them); a legacy per-request plan sets keepalive.enabled false; any other provider stays off until it has a TTL and keepalive.enabled: true; silent without an entry. keepalive.enabled is the only switch: pi-foreman sends every idle warm itself (Pi's own warmer is never used), at min(0.9 x TTL, TTL - 10 s) after the last touch, for any TTL above 10 s. A budget tier caps the spend per idle: half a cold re-cache while a subagent, background task or wait runs (or the owner is present and a turn, question, dialog or command is open), a quarter otherwise; the last warm is followed by one compaction above 0.6 x the context window. keepalive.beyondPiCap, windowMinutes, selfWarmWindowMinutes, awayTicks, whileWaiting and intervalSeconds are deprecated: accepted, ignored, and doctor warns. A downshifted session uses the cache entry of the idle model's provider.
@@ -1003,6 +1015,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [knowledge](#knowledge) | `foreman knowledge` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
+| [page-server](#page-server) | `foreman pages`, `foreman pages ensure`, `foreman pages status`, `foreman pages stop`, `foreman pages rotate` |
 | [idle-cache](#idle-cache) | `/foreman doctor warm` |
 
 ## Overlay quick start
@@ -1063,6 +1076,9 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `skills.visible` | it hides every other skill: user or overlay config only |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
+| `pages.server.port` | the page server's port comes from the user or overlay config |
+| `pages.server.bind` | the page server's bind address comes from the user or overlay config |
+| `pages.server.baseUrl` | the base URL of served page links comes from the user or overlay config |
 | `sidebar.strip` | the status strip (its usage sources run programs) comes from the user or overlay config |
 | `radar.openPrs` | the open PRs source (a GitHub search through gh) comes from the user or overlay config |
 | `sync.repos` | the repository list comes from the user or overlay config |

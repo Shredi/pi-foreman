@@ -905,6 +905,18 @@
       "enable": ""
     },
     {
+      "id": "page-server",
+      "area": "ui",
+      "title": "Page server",
+      "purpose": "One small background server per machine serves the plan, note and brief pages of the sessions on this machine over HTTP, so a link opens in the browser you use (also a Windows browser under WSL, and a phone over a VPN when you set an address). Each page folder has its own secret link; the server lists nothing and writes nothing. It listens on 127.0.0.1 by default, stops after 12 hours of no use or when `pages.server.enabled` is false, and links stay file links when it is off or cannot start. `foreman pages` starts, finds and stops it.",
+      "doc": "docs/pages.md",
+      "keys": ["pages.server.enabled", "pages.server.port", "pages.server.bind", "pages.server.baseUrl"],
+      "commands": ["foreman pages", "foreman pages ensure", "foreman pages status", "foreman pages stop", "foreman pages rotate"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "idle-cache",
       "area": "models",
       "toggle": {"on": {"providers.*.cache.keepalive.enabled": true}, "off": {"providers.*.cache.keepalive.enabled": false}, "shipped": "on"},

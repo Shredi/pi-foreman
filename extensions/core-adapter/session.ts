@@ -35,6 +35,7 @@ import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
 import { cleanLabel, withBlockedOn } from "./herdr.ts";
 import { planWait } from "./roundstate.ts";
+import { pageLinks } from "./pagelinks.ts";
 import { cleanDialogText, ownerDialog, shapedConfirm } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
 import type { EventBus } from "./herdr.ts";
@@ -526,9 +527,20 @@ function briefHeading(file: string): string | null {
   return null;
 }
 
+/** The served URL of a brief whose real path ends in .md or .txt (the file-link rule of ownerdialog.ts), else null: other files keep today's link rule. */
+async function briefUrl(d: SessionDeps, file: string): Promise<string | null> {
+  try {
+    const real = fs.realpathSync(file);
+    return /\.(md|txt)$/i.test(real) ? await pageLinks.url(real, "file", d.config) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** What the owner confirms: what opens and why (the asking session's `summary`, else the brief's heading), the facts, the brief's link and heading. */
-function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string): DialogSpec {
+async function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string): Promise<DialogSpec> {
   const file = path.resolve(d.cwd, c.brief);
+  const url = await briefUrl(d, file);
   const heading = briefHeading(file);
   const given = c.summary === undefined ? "" : cleanDialogText(c.summary).slice(0, 300);
   return {
@@ -541,7 +553,7 @@ function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, m
       ["Model", model ?? "(default)"],
       ["Machine", c.machine ?? "this one"],
     ],
-    links: [{ label: "Brief", path: file, text: "open the brief", kind: "text" }],
+    links: [{ label: "Brief", path: file, text: "open the brief", kind: "text" as const, ...(url ? { url } : {}) }],
     ...(heading ? { detail: [`Brief heading: ${heading}`] } : {}),
     answers: "Yes: the session starts   No: nothing opens",
   };
@@ -599,7 +611,7 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const open = openEntryOf(d, c.label);
   if (open) return { text: describeEntry(open, `session ${c.label} is already open`), ok: false };
   if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
-  const spec = openSpec(d, c, model, cwdArg);
+  const spec = await openSpec(d, c, model, cwdArg);
   const ask = (signal?: AbortSignal): Promise<boolean> => {
     if (d.confirmShaped) return d.confirmShaped(spec, signal);
     const { ask: title, body } = ownerDialog(spec, null);

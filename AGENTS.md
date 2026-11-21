@@ -80,6 +80,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/cache.md`: idle prompt-cache policy per provider, keep-alive, warm compaction, cost and privacy, trace events.
 - `docs/retro.md`: reporting at the source (`foreman_report`, the report store, states, expiry, `foreman reports`, the start note, migrating the old backlog), what retro reads and prints.
 - `docs/herdr.md`: Herdr sidebar plugin `pi-foreman.sidebar`, rows snippet, tokens, Agents view, symbols.
+- `docs/pages.md`: the per-machine page server (served plan, note and brief pages), URL shape and secrets, `pages.server.*` keys, network address and its threat statement, WSL, remote sessions, fallback, `foreman pages`.
 - `docs/bench.md`: `foreman bench`, columns, price tiers.
 - `docs/tools.md`: optional git tool pack (`tools.git`), PR tools (`tools.pr`, `tools.prHost`), read tools, caps, guards, child inheritance, trace.
 - `docs/resources.md`: host pressure gate, `resources.*` keys, levels, launch behaviour at high and critical, surfaces, trace events, probes.

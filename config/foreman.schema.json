@@ -424,6 +424,21 @@
         "maxProposals": { "type": "integer", "minimum": 1, "description": "Rounds the steward proposes in one pass (default 3)." }
       }
     },
+    "pages": {
+      "type": "object", "additionalProperties": false,
+      "description": "Harness pages over HTTP (docs/pages.md): one page server per machine serves the plan, note and brief pages behind a secret per page folder.",
+      "properties": {
+        "server": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "description": "true (default) = page links point at the page server on this machine; false = links stay file links, and a running server exits within a minute. A project or session can only set false." },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535, "description": "Port of the page server (default 47317). When another program holds it, the server takes a free port. User or overlay config only." },
+            "bind": { "type": "string", "minLength": 1, "description": "Address the page server listens on (default 127.0.0.1, this machine only). Any other address, for example a VPN address for a phone, is an opt-in with the risks of docs/pages.md. User or overlay config only." },
+            "baseUrl": { "type": "string", "description": "Base of served links, for example the URL a proxy or VPN name gives the server; empty = http://127.0.0.1:<port>. Used as written. User or overlay config only." }
+          }
+        }
+      }
+    },
     "intercom": {
       "type": "object",
       "additionalProperties": false,
