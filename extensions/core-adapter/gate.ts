@@ -523,7 +523,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const scan = h?.kind === "deny" ? null : scanToolFloor(toolName, nin, cwd, env);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       const hs = strongerHit(h, scan);
-      if (!roots) return decided(h ? askFromFloor(h) : undefined);
+      if (!roots) return decided(hs ? askFromFloor(hs) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
       if (roots.child) {
