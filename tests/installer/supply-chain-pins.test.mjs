@@ -79,3 +79,26 @@ test("setup passes npm_config_ignore_scripts=true to add-on installs only, not t
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
+
+test("every job under `jobs:` has a job-level positive integer timeout-minutes", () => {
+  assert.ok(workflows.length > 0);
+  for (const f of workflows) {
+    const lines = fs.readFileSync(path.join(WORKFLOWS, f), "utf8").split(/\r?\n/);
+    const start = lines.indexOf("jobs:");
+    assert.notEqual(start, -1, `${f}: no top-level jobs: key`);
+    // a job block runs from its two-space id to the next job id or the next top-level key
+    const jobs = [];
+    for (const line of lines.slice(start + 1)) {
+      if (/^\S/.test(line) && !line.startsWith("#")) break;
+      const id = line.match(/^ {2}([\w-]+):\s*$/);
+      if (id) jobs.push({ name: id[1], lines: [] });
+      else if (jobs.length) jobs[jobs.length - 1].lines.push(line);
+    }
+    assert.ok(jobs.length > 0, `${f}: no jobs under jobs:`);
+    for (const job of jobs) {
+      const timeout = job.lines.map((l) => l.match(/^ {4}timeout-minutes:\s*(\S+)\s*$/)).find(Boolean);
+      assert.ok(timeout, `${f}: job ${job.name} has no job-level timeout-minutes`);
+      assert.match(timeout[1], /^[1-9]\d*$/, `${f}: job ${job.name} timeout-minutes must be a positive integer, got ${timeout[1]}`);
+    }
+  }
+});

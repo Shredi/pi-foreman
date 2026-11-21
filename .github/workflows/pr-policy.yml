@@ -10,6 +10,7 @@ permissions:
 jobs:
   pr-policy:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: body has a Changelog section, CHANGELOG.md is untouched
         env:
