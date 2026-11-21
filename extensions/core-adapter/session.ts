@@ -295,9 +295,9 @@ export function applyInbound(reg: Registry, sender: string, msg: Inbound, now: D
 
 /**
  * A child's own close: its registry entry (matched by its handoff dir, the one `foreman session open` sets for it)
- * becomes `closed` before the parent's `foreman:closed` arrives. True when the registry changed.
+ * becomes `closed` (with its result path when given) before the parent's `foreman:closed` arrives. True when the registry changed.
  */
-export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>): boolean {
+export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>, resultPath?: string): boolean {
   const handoff = env.PI_FOREMAN_HANDOFF_DIR?.trim();
   if (!handoff) return false;
   const reg = readRegistry(agentDir);
@@ -305,6 +305,7 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
   for (const s of reg.sessions) {
     if (s.handoff && path.basename(s.handoff) === path.basename(handoff) && s.status !== "closed") {
       s.status = "closed";
+      if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
       s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
       changed = true;
     }

@@ -1631,12 +1631,19 @@ def _block_arg(args):
 
 
 def merge_reviews_block(body, block):
-    """The PR body with the reviews block in place: the block between the markers is replaced; without markers the `## Reviews` section is appended.
-    Every line outside the block stays as it is."""
-    end = body.find(REVIEWS_CLOSE)
-    start = body.rfind(REVIEWS_OPEN, 0, end) if end >= 0 else -1
-    if start >= 0:
-        return body[:start] + block + body[end + len(REVIEWS_CLOSE):]
+    """The PR body with the reviews block in place: the lines from the last opening marker line before the first closing marker line that follows an
+    opening one are replaced. A marker counts only as a whole line (prose naming the marker strings is never rewritten); a stray closing marker line is
+    skipped, so a second update finds the block the first one appended. Without a block the `## Reviews` section is appended. Every line outside stays."""
+    lines = body.split("\n")
+    opened = -1
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s == REVIEWS_OPEN + REVIEWS_CLOSE:  # an empty block on one line
+            return "\n".join(lines[:i] + [block] + lines[i + 1:])
+        if s == REVIEWS_OPEN:
+            opened = i
+        elif s == REVIEWS_CLOSE and opened >= 0:
+            return "\n".join(lines[:opened] + [block] + lines[i + 1:])
     lead = "" if body == "" else ("" if body.endswith("\n") else "\n") + "\n"
     return body + lead + "## Reviews\n\n" + block + "\n"
 

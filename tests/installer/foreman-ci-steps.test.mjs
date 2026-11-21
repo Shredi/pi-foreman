@@ -1,5 +1,6 @@
 // scripts/foreman_ci.mjs: `npm run test:ci` runs every CI step a local machine can run, in CI's order. Unit test of the exported step table and the argument check; no step is run.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";

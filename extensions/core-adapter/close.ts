@@ -212,7 +212,7 @@ export interface CloseDeps {
   /** Close report after the sync (foreman_close.py, cleanup + `## Close` into `file`); null = none. */
   report?: (file: string) => Promise<CloseReport | null>;
   /** Mark this session's own registry entry closed (a child; before the `foreman:closed` ack). */
-  markClosed?: () => void;
+  markClosed?: (file: string) => void;
   /** Close this session's own child sessions (bounded wait); one report line per child. Never fails the close. */
   closeChildren?: () => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
@@ -562,7 +562,7 @@ export class CloseFlow {
     const head = `pi-foreman: close: ${sync.text.split("\n").slice(0, 3).join(" | ")}`;
     this.d.notify([head, ...(report ? closeReportLines(report) : []), ...childLines].join("\n"), sync.ok && report?.ready !== false ? "info" : "warning");
     try {
-      this.d.markClosed?.();
+      this.d.markClosed?.(req.file);
     } catch (err) {
       this.d.notify(`pi-foreman: could not mark the registry entry closed: ${(err as Error).message}`, "warning");
     }
@@ -658,8 +658,8 @@ export interface CloseSession {
   /** Close report with `--result file` (scripts/foreman_close.py); null = none. */
   report?: (ctx: ExtensionContext, file: string) => Promise<CloseReport | null>;
   retro: (ctx: ExtensionContext) => Promise<string>;
-  /** Mark this session's own registry entry closed (session.ts markOwnClosed). */
-  markClosed?: () => void;
+  /** Mark this session's own registry entry closed, with the result file it names (session.ts markOwnClosed). */
+  markClosed?: (file: string) => void;
   /** Close the session's own child sessions; `send` delivers `foreman:close` over the intercom outbox. */
   closeChildren?: (send: (to: string, text: string) => Promise<string>) => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
@@ -751,7 +751,7 @@ export function registerClose(
       sendUserMessage: (text) => pi.sendUserMessage(text, { deliverAs: "followUp" }),
       runSync: () => s.runSync(holder.ctx),
       report: s.report ? (file) => s.report!(holder.ctx, file) : undefined,
-      markClosed: s.markClosed ? () => s.markClosed!() : undefined,
+      markClosed: s.markClosed ? (file) => s.markClosed!(file) : undefined,
       ceremonyNote: s.ceremonyNote,
       watchedPrs: s.watchedPrs,
       refreshWatched: s.refreshWatched,

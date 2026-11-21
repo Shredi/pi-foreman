@@ -12,6 +12,7 @@ import { world, tick } from "./_r46world.ts";
 import type { Block } from "./_r46world.ts";
 import { readPlan, sha256 } from "../checkpoint.ts";
 import { posix } from "./_platform.ts";
+import { claimsHintLine } from "../planreview.ts";
 
 const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p><strong>Goal:</strong> ship the widget.</p><ol><li>Ship it.</li></ol></section><h2>Work</h2><p>x</p></body></html>";
 const BAD = "<html><body><h1>Widget</h1><h2>Work</h2><p>x</p></body></html>";
@@ -51,7 +52,7 @@ test("html plan: the form check of a launch runs on the copy; a write of the pag
   assert.match(r.blocked ?? "", /plan-widget\.html/);
   assert.match((await a.call("write", { path: pagePath, content: "x" })).note, /plan form is wrong/);
   fs.writeFileSync(pagePath, PAGE);
-  assert.equal((await a.call("write", { path: pagePath, content: "x" })).note, "");
+  assert.ok(["", `ok\n${claimsHintLine(pagePath)}`].includes((await a.call("write", { path: pagePath, content: "x" })).note), "no plan-form advice, at most the claims hint");
 });
 
 test("a task naming plan-widget.html and plan-widget.md: one form check; then one facts line, one verdict, no review_loop after a first FAIL", async () => {

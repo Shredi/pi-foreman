@@ -46,7 +46,7 @@ test("a PASS on the head: the body gets the block appended, the lines before it 
   const x = setup([prePass()]);
   const r = await x.create("## Summary\n\nDid it.");
   assert.equal(x.bodies[0], `## Summary\n\nDid it.\n\n## Reviews\n\n${reviewsBlock(reviewFactsFor([prePass()], HEAD)!)}\n`);
-  assert.match(String(x.bodies[0]), /Pre-pr review: PASS on [0-9a-f]{7} \(run run-9; suites: npm test \(pass\)\)/);
+  assert.match(String(x.bodies[0]), /Pre-pr review: PASS on [0-9a-f]{7} \(run run-9; suites: `npm test` \(pass\)\)/);
   assert.deepEqual(x.watches.records()[0].bodyMark, { head: HEAD, run: "run-9" });
   assert.equal(x.watches.records()[0].opened, true);
   assert.match(r.content[0].text, /`## Reviews` line/);

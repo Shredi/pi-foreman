@@ -29,13 +29,16 @@ export function reviewFactsFor(records: readonly ReviewRecord[], head: string): 
 
 const safeRun = (run: string): string => (/^[A-Za-z0-9._-]{1,100}$/.test(run) ? run : "");
 
+/** A suite command as one inline code span (backticks and line breaks taken out), so an @mention in it pings no one. */
+const codeSpan = (command: string): string => `\`${command.replace(/`/g, "").replace(/\s+/g, " ").trim() || "unnamed"}\``;
+
 /** `Pre-pr review: PASS on <short sha> (run <run id>; suites: a (pass), b (fail))`; `Review: PASS (<occasion>) on …` when the PASS is not a `[pre-pr]` one. Absent parts are left out. */
 export function reviewsLine(f: ReviewPass): string {
   const prePr = f.occasion === "pre-pr";
   const parts: string[] = [];
   const run = f.run ? safeRun(f.run) : "";
   if (run) parts.push(`run ${run}`);
-  if (f.suites && f.suites.length > 0) parts.push(`suites: ${f.suites.map((s) => `${s.command} (${s.result})`).join(", ")}`);
+  if (f.suites && f.suites.length > 0) parts.push(`suites: ${f.suites.map((s) => `${codeSpan(s.command)} (${s.result})`).join(", ")}`);
   else if (prePr) parts.push("suites: none named");
   const lead = prePr ? "Pre-pr review: PASS" : `Review: PASS${f.occasion ? ` (${f.occasion})` : ""}`;
   return `${lead} on ${f.head.slice(0, 7)}${parts.length > 0 ? ` (${parts.join("; ")})` : ""}`;
@@ -44,11 +47,20 @@ export function reviewsLine(f: ReviewPass): string {
 /** The marker-wrapped block of a PASS. */
 export const reviewsBlock = (f: ReviewPass): string => `${REVIEWS_OPEN}\n${reviewsLine(f)}\n${REVIEWS_CLOSE}`;
 
-/** `body` with `block` in place: the text between the markers (the last opening marker before the first closing one) is replaced, an empty block filled; without markers the `## Reviews` section is appended. */
+/**
+ * `body` with `block` in place: the lines from the last opening marker line before the first closing marker line that follows an opening one are replaced.
+ * A marker counts only as a whole line, so prose that names the marker strings is never rewritten; a stray closing marker line is skipped, so a second update
+ * finds the block the first one appended. Without a block the `## Reviews` section is appended.
+ */
 export function mergeReviewsBlock(body: string, block: string): string {
-  const end = body.indexOf(REVIEWS_CLOSE);
-  const start = end >= 0 ? body.lastIndexOf(REVIEWS_OPEN, end) : -1;
-  if (start >= 0) return body.slice(0, start) + block + body.slice(end + REVIEWS_CLOSE.length);
+  const lines = body.split("\n");
+  let open = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (l === REVIEWS_OPEN + REVIEWS_CLOSE) return [...lines.slice(0, i), block, ...lines.slice(i + 1)].join("\n"); // an empty block on one line
+    if (l === REVIEWS_OPEN) open = i;
+    else if (l === REVIEWS_CLOSE && open >= 0) return [...lines.slice(0, open), block, ...lines.slice(i + 1)].join("\n");
+  }
   const lead = body === "" ? "" : `${body.endsWith("\n") ? "" : "\n"}\n`;
   return `${body}${lead}## Reviews\n\n${block}\n`;
 }
