@@ -55,7 +55,10 @@ test("(a) a PASS in A stands while a builder runs in B: the finish names only B,
 
   await review(a, VERDICT, b);
   await tick(300);
-  assert.equal(await settle(a), "", "B has its own PASS: the finish stands without a new review in A");
+  // D5: the high-stakes budget is counted per checkout, so wtb (the first PASS there) is due its own [high-stakes] reminder; A's was spent. No re-review text remains.
+  const fin = await settle(a);
+  assert.match(fin, /^pi-foreman: a \[high-stakes\] review is due .*wtb\); otherwise finish again\.$/, "B has its own PASS: only B's high-stakes reminder is left");
+  assert.doesNotMatch(fin, /requires reviewer|re-review needed|built, no review yet/, "no review is missing in A or B");
   assert.doesNotMatch(await markV(a), /V closes after a reviewer PASS/);
   assert.equal((await traces(w, "review_dup_refused")).length, 1);
 });

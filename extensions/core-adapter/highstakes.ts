@@ -632,7 +632,7 @@ export function launchRefusal(i: HsLaunchInput): { reason: HsLaunchReason; text:
   if (i.resume) return resumeRefusal();
   if (i.running || used(i.state, i.root)) return refuse("high_stakes_done", "the high-stakes passes of this checkout are used up (one ran and passed, two ran, or one is still running).");
   if (!(i.gate.last === "pass" && !i.gate.revised)) return refuse("high_stakes_early", "no normal reviewer PASS stands (none yet, or work was revised after it); pass the normal reviewer first, then launch it.");
-  if (uncleared(i.state, i.root)) return refuse("high_stakes_early", "the last high-stakes review of this session FAILED and no normal reviewer PASS that got its findings cleared it; revise or answer the findings, pass the normal reviewer, then launch it.");
+  if (uncleared(i.state, i.root)) return refuse("high_stakes_early", "the last high-stakes review of this checkout FAILED and no normal reviewer PASS that got its findings cleared it; revise or answer the findings, pass the normal reviewer, then launch it.");
   return null;
 }
 

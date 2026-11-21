@@ -1474,6 +1474,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The key of the session's own checkout before it is resolved (`hsOwnRoot`, resolved at the session start): the realpath of the cwd, as a checkout outside git keys. */
   const ownKeyOf = (s: Session): string => s.hsOwn ?? realDir(s.cwd);
 
+  /** The high-stakes key of a directory: its checkout's top level; outside git the session's own key (one budget, not one per subdirectory). */
+  const keyOfDir = async (s: Session, d: string): Promise<string> => (await rootOf(d)) ?? ownKeyOf(s);
+
   // ------------------------------------------------------------------ review gates per checkout (reviewgates.ts)
 
   /** The checkouts of `dirs` (toplevelOf each); null when there is none or one does not resolve (an unknown checkout acts on every gate entry). */
@@ -1561,7 +1564,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const hsRequired = async (s: Session, dir?: string): Promise<boolean> => {
     if (!hsModel(s)) return false;
     hsRefresh(s);
-    const root = (await rootOf(dir ?? s.cwd)) ?? (dir ? realDir(dir) : await hsOwnRoot(s));
+    const root = (await rootOf(dir ?? s.cwd)) ?? (dir ? ownKeyOf(s) : await hsOwnRoot(s));
     return hsRequiredOf(s.hs.state(), hsDue(s), root);
   };
 
@@ -1597,7 +1600,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   async function hsNormalPass(s: Session, cwd: string, runId: string, head: string | null): Promise<void> {
     if (!hsModel(s)) return;
-    const root = (await rootOf(cwd)) ?? realDir(cwd);
+    const root = await keyOfDir(s, cwd);
     let cleared = false;
     for (const fail of s.hs.handedFailsOf(runId)) {
       // each FAIL the run got is judged on its own head and checkout: one FAIL's descent never clears another
@@ -1676,7 +1679,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await s.reviewSync; // a review round still being recorded lands before the gate is read
     const dir = hsDirOf(ctx, input, marked[0]);
     const top = await rootOf(dir);
-    const root = top ?? realDir(dir);
+    const root = top ?? ownKeyOf(s);
     const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(root), gate: gateOf(s.reviewGates, top), root });
     if (r) return refused(r);
     // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
@@ -1786,7 +1789,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const dirs = recorded.filter((c) => fs.existsSync(c)); // a removed checkout cannot be reviewed
     // a review recorded in the session's own checkout while the session has a folder was a bare launch: those run in the folder (sessionFolderFor), which is where a pass is keyed
     const folder = s.sessionFolder ? ((await rootOf(s.sessionFolder.path)) ?? realDir(s.sessionFolder.path)) : null;
-    const roots = [...new Set(await Promise.all(dirs.map(async (d) => { const k = (await rootOf(d)) ?? realDir(d); return folder && k === own ? folder : k; })))]; // keyed as a high-stakes run is
+    const roots = [...new Set(await Promise.all(dirs.map(async (d) => { const k = await keyOfDir(s, d); return folder && k === own ? folder : k; })))]; // keyed as a high-stakes run is
     // every checkout of the records is gone (merged and removed): the pass counts session-wide, as before
     return finishNeeds(s.hs.state(), { due: hsDue(s), ledgerDone: done, own, ...(roots.length > 0 ? { roots } : recorded.length > 0 ? {} : { roots: [own] }) });
   }
@@ -4610,7 +4613,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let gotFindings = false;
         if (actionOf(input) === null && hsModel(s) !== null && s.hs.openFails().length > 0) {
           for (const d of reviewDirs(ctx, input)) {
-            const root = (await rootOf(d)) ?? realDir(d);
+            const root = await keyOfDir(s, d);
             const fail = await hsFindingsRoute(s, root, await headOf(root));
             if (fail && s.hs.findingsFor(fail) !== null) {
               gotFindings = true;
@@ -5178,7 +5181,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (actionOf(input) === null) for (const [e, o] of occasions) {
           if ((o !== "item" && o !== "pre-pr") || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent) || typeof e.task !== "string") continue;
           const dir = hsDirOf(ctx, input, e);
-          const root = (await rootOf(dir)) ?? realDir(dir); // the key a high-stakes run's checkout has (a directory outside git keys as itself)
+          const root = await keyOfDir(s, dir); // the key a high-stakes run's checkout has (outside git the session's own key)
           const fail = await hsFindingsRoute(s, root, await headOf(root)); // this entry's checkout decides which FAIL's findings it gets
           const found = fail ? s.hs.findingsFor(fail) : null;
           if (!fail || !found) continue;

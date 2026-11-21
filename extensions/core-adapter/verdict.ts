@@ -366,6 +366,18 @@ export function openLedgerItems(ledger: string | null): { nums: number[]; v: boo
   return { nums, v };
 }
 
+/** Every item id of a ledger text, open or closed (same line shape as `openLedgerItems`). */
+function ledgerItemIds(ledger: string | null): ItemId[] {
+  const out: ItemId[] = [];
+  let fenced = false;
+  for (const line of (ledger ?? "").split(/\r?\n/)) {
+    if (line.trimStart().startsWith("```")) fenced = !fenced;
+    const m = fenced ? null : LEDGER_LINE.exec(line);
+    if (m) out.push(m[2] === "V" ? "V" : Number(m[2]));
+  }
+  return out;
+}
+
 /** The launch `items` field: a list of item numbers and "V" (a bare value counts as a list of one). */
 export function parseItemsField(raw: unknown): { items: ItemId[] } | { error: string } {
   const list_ = Array.isArray(raw) ? raw : [raw];
@@ -398,7 +410,8 @@ export function launchItemsOf(ledger: string | null, given: readonly ItemId[] | 
   const openList = openText.length > 0 ? list(openText) : "none";
   const prePr = o.occasion === "pre-pr";
   if (given !== undefined) {
-    const unknown = prePr ? [] : given.filter((id) => (id === "V" ? !open.v : !open.nums.includes(id)));
+    const all = prePr ? ledgerItemIds(ledger) : null; // a [pre-pr] may name closed items, not ids the ledger lacks
+    const unknown = given.filter((id) => (all ? !all.includes(id) : id === "V" ? !open.v : !open.nums.includes(id)));
     if (unknown.length > 0) return { unknown, open: openList };
     return { items: [...given] };
   }
