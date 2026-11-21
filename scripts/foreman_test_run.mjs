@@ -337,7 +337,8 @@ export async function acquireLock(
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const slotMode = slotFiles !== undefined;
   const files = slotFiles ?? [file];
-  const body = JSON.stringify({ id, pid: process.pid, started: new Date().toISOString(), cwd: process.cwd(), command, host: os.hostname() });
+  // `started` is the moment the lock is taken, not when the wait began (old wrappers age a lock by it).
+  const lockBody = () => JSON.stringify({ id, pid: process.pid, started: new Date().toISOString(), cwd: process.cwd(), command, host: os.hostname() });
   let waitStart;
   let progressStart;
   let holderKey;
@@ -359,7 +360,7 @@ export async function acquireLock(
     if (q.first) {
       for (const f of files) {
         try {
-          fs.writeFileSync(f, body, { flag: "wx" });
+          fs.writeFileSync(f, lockBody(), { flag: "wx" });
         } catch (e) {
           if (e.code !== "EEXIST") throw e;
           continue;

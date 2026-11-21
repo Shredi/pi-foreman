@@ -968,3 +968,20 @@ test("SIGTERM while waiting removes the record and the ticket; a stop file is re
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the lock's started is the moment it was taken, not when the wait began", async () => {
+  const dir = tmp();
+  try {
+    writeHolder(dir, "first-1");
+    const p = acquireLock(lockFile(dir), { pollMs: 10, announceMs: 600_000, maxWaitMs: 10_000, stderr: { write: () => {} } });
+    await new Promise((r) => setTimeout(r, 1500));
+    const released = Date.now();
+    fs.rmSync(lockFile(dir));
+    const release = await p;
+    const started = Date.parse(JSON.parse(fs.readFileSync(lockFile(dir), "utf8")).started);
+    assert.ok(started >= released - 50, `started ${released - started} ms before the release`);
+    release();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
