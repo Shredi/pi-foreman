@@ -154,8 +154,7 @@ branch.
 Other failures: `pr_not_found` (no PR for the branch or number), `pr_auth_missing`, `pr_host_failed` (any other host
 error, with the redacted first stderr line), `timeout` (the host did not answer within 30 s).
 
-In the permission baseline `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `pr_unwatch` and `pr_follow` are allowed; `pr_create` is not in
-the allow list and goes through the gates above.
+`pr_status`, `pr_checks`, `pr_comments`, `pr_watch` and `pr_unwatch` are own tools the gate allows without a question; `pr_create` and `pr_follow` go through the gates above.
 
 ### Host templates
 

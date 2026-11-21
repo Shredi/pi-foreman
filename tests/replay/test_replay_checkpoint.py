@@ -55,7 +55,7 @@ NO_PLAN_REVIEW = {"ceremony": {"planReview": {"heavy": False}}}
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestCheckpoint(ReplayCase):
     def start(self, name, run=""):
-        rig = self.rig(name, script(run), permissions="baseline", config=NO_PLAN_REVIEW)
+        rig = self.rig(name, script(run), config=NO_PLAN_REVIEW)
         herdr = rig.root / "herdr.jsonl"
         return rig, rig.start(env={"FOREMAN_FAKE_HERDR": str(herdr), "HERDR_ENV": "1"}), herdr
 
@@ -133,7 +133,7 @@ class TestCheckpoint(ReplayCase):
         self.assertEqual([(r["decision"], r.get("by")) for r in events(rig, "checkpoint")], [("pending", None)])
 
     def test_no_ui_stays_pending(self):
-        rig = self.rig("ck-noui", script(), permissions="baseline", config=NO_PLAN_REVIEW)
+        rig = self.rig("ck-noui", script(), config=NO_PLAN_REVIEW)
         code, recs, err = rig.run_print("[[replay:noui]] build it", timeout=90)
         res = tool_results(recs)
         self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("write", False), ("foreman_checkpoint", False)], (res, err[-2000:]))

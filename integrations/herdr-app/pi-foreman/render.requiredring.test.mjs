@@ -29,17 +29,17 @@ const walk = (el, out = []) => {
 };
 const hasText = (el, text) => (el.kids ?? []).includes(text);
 
-// The chip of PR `n`: the HoverCard whose trigger draws "⎇ #n", and its disc (the 6 px element of the dot).
-const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => hasText(e, `⎇ #${n}`)));
-const discOf = (chip) => walk(chip.props.trigger).find((e) => e.props.size === 6);
+// The chip of PR `n`: the HoverCard whose trigger draws "PR #n", and its badge.
+const chipOf = (root, n) => walk(root).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => hasText(e, `PR #${n}`) || hasText(e, `#${n}`)));
+const discOf = (chip) => walk(chip.props.trigger).find((e) => e.props?.font_semibold && e.props.text_size === 10);
 
-test("sample PR 116 (checks passed, required checks waiting): a still amber ring, no fill, no loop", () => {
+test("sample PR 116 (checks passed, required checks waiting): a still amber outlined badge, no fill, no loop", () => {
   const root = sampleRoot();
   const chip = chipOf(root, 116);
   assert.ok(chip, "#116 is drawn");
   const disc = discOf(chip);
   assert.equal(disc.props.border_color, "#ansi3", "amber border");
-  assert.equal(disc.props.border, 1.5);
+  assert.equal(disc.props.border, 1);
   assert.equal(disc.props.bg, undefined, "no background fill");
   assert.equal(disc.props.loop, undefined, "never pulses");
 });
@@ -49,9 +49,9 @@ test("the ring is not a pulsing disc: the sample keeps its three pulsing PR disc
   assert.equal(walk(root).filter((e) => e.props?.loop !== undefined).length, 3);
 });
 
-test("merge-blocked PR 110 without waiting names keeps its filled amber disc", () => {
+test("merge-blocked PR 110 without waiting names keeps its filled amber badge", () => {
   const root = sampleRoot();
   const disc = discOf(chipOf(root, 110));
-  assert.equal(disc.props.bg, "#ansi3");
-  assert.equal(disc.props.border_color, undefined);
+  assert.equal(disc.props.bg, "#ansi32e");
+  assert.equal(disc.props.border_color, "#ansi355");
 });

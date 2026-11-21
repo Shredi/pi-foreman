@@ -1,26 +1,20 @@
 // Security review cycle 1 fixes (S1/S2, S3/S6, S10-S15, S17, S27, foreman_move/foreman_copy, Windows paths): what stays after the permission
-// overlay was deleted is the baseline's find asks (S14) and isSelfHost.
+// overlay was deleted is isSelfHost.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readBaseline } from "../baseline.ts";
 import { isSelfHost } from "../owned.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const baseline = readBaseline(PKG)!;
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-harden-")));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 const cwd = path.join(root, "proj");
 const pkgRoot = path.join(root, "pkg");
 for (const d of [cwd, pkgRoot]) fs.mkdirSync(d, { recursive: true });
-
-test("S14: find -exec/-execdir/-delete are asks in the baseline (PS prompts)", () => {
-  for (const p of ["find * -exec*", "find * -execdir*", "find * -delete*"]) assert.ok(baseline.bash.ask.includes(p), p);
-});
 
 test("isSelfHost: equal, inside, sibling prefix, outside, symlinked cwd", () => {
   assert.equal(isSelfHost(pkgRoot, pkgRoot), true);

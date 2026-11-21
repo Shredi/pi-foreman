@@ -5,7 +5,7 @@ import { effectCtx } from "../effects.ts";
 import { matchProtected } from "../protected.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
 import { parseShell } from "../shellast.ts";
-import type { RuleCall } from "../rules.ts";
+import type { RuleCall } from "../rulecall.ts";
 
 const cwd = process.cwd();
 const env = { home: cwd, platform: process.platform, checkout: cwd, cwd, ec: effectCtx(cwd) };

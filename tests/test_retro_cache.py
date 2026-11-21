@@ -67,7 +67,7 @@ class CacheLineTest(unittest.TestCase):
     def test_absent_without_policy_and_counts(self):
         usage = [line(0, provider="nopolicy"), line(1000, provider="nopolicy")]
         self.assertIsNone(self.metrics(usage))
-        rep = fr.build([{"type": "session", "id": "s1"}], [], usage, None, 5, str(self.tmp))
+        rep = fr.build([{"type": "session", "id": "s1"}], [], usage, None, str(self.tmp))
         self.assertNotIn("cache:", fr.render_text(rep))
 
     def test_no_ttl_reports_zero_cold_resumes(self):
@@ -87,7 +87,7 @@ class CacheLineTest(unittest.TestCase):
     @mock.patch.dict("os.environ", {"FORCE_PROMPT_CACHING_5M": "1"})  # the merged config now derives 3600 s for the bridge
     def test_json_key_and_text_line(self):
         sess = [{"type": "session", "id": "s1"}]
-        rep = fr.build(sess, load("retro_cache_trace.jsonl"), load("retro_cache_usage.jsonl"), None, 5, str(self.tmp))
+        rep = fr.build(sess, load("retro_cache_trace.jsonl"), load("retro_cache_usage.jsonl"), None, str(self.tmp))
         self.assertEqual(rep["cache"], {"keepalives": 0, "keepaliveCost": 0, "warmCompactions": 2,
                                         "coldResumes": 1, "ttlSeconds": 300})
         self.assertIn("cache: keepalives 0 ($0.00), warm compactions 2, cold resumes 1", fr.render_text(rep))

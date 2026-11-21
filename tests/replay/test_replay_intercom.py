@@ -18,7 +18,7 @@ from test_replay import REASON, ReplayCase
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestIntercom(ReplayCase):
     def test_list_allowed_open_pane_and_remote_refused(self):
-        rig = self.rig("intercom", load_fixture("intercom"), permissions="baseline", intercom=True)
+        rig = self.rig("intercom", load_fixture("intercom"), intercom=True)
         pi = rig.start()
         res = tool_results(pi.prompt("[[replay:ic1]] go", timeout=90))
         pi.close()

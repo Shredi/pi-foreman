@@ -34,7 +34,7 @@ const walk = (el, out = []) => {
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
 const rowsOf = (root) => walk(root).filter((e) => /^(row:|agent:t5$)/.test(String(e.props?.id ?? "")));
-const lineOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`⎇ #${n}`));
+const lineOf = (root, n) => cards(root).find((c) => texts(c.props.trigger).includes(`PR #${n}`));
 const cx = () => { const c = { stopped: 0, notify() {}, spawn() {}, stop_propagation() { c.stopped++; } }; return c; };
 
 // a child session with its own paneless terminal t9: its row opens that terminal
@@ -75,14 +75,15 @@ test("a click on a session row's free area opens the session; the name, the fold
 
 test("the number cell never wraps and widens with the widest number", () => {
   const six = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(123456, "ok"), dot(7, "ok")] })]).render({});
-  const cell = (n) => walk(lineOf(six, n).props.trigger).find((e) => (e.kids ?? []).includes(`⎇ #${n}`));
+  const cell = (n) => walk(lineOf(six, n).props.trigger).find((e) => (e.kids ?? []).some((k) => k?.kids?.includes(`PR #${n}`)));
+  const badge = (n) => walk(lineOf(six, n).props.trigger).find((e) => (e.kids ?? []).includes(`PR #${n}`));
   for (const n of [123456, 7]) {
-    assert.equal(cell(n).props.whitespace_nowrap, true, `#${n} nowrap`);
-    assert.equal(cell(n).props.w, 66, `#${n}: the cell is as wide for the whole list`);
+    assert.equal(badge(n).props.whitespace_nowrap, true, `#${n} nowrap`);
+    assert.equal(cell(n).props.w, 98, `#${n}: the cell is as wide for the whole list`);
   }
   assert.equal(numberCellWidth([{ number: 1234 }]), 52);
   assert.equal(numberCellWidth([{ number: 12345 }, { number: 1 }]), 59);
   assert.equal(numberCellWidth([]), 52);
   const four = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(1234, "ok")] })]).render({});
-  assert.equal(walk(lineOf(four, 1234).props.trigger).find((e) => (e.kids ?? []).includes("⎇ #1234")).props.w, 52);
+  assert.equal(walk(lineOf(four, 1234).props.trigger).find((e) => (e.kids ?? []).some((k) => k?.kids?.includes("PR #1234"))).props.w, 84);
 });

@@ -242,17 +242,16 @@ class LayerRulesTest(unittest.TestCase):
 
     def test_phase4_keys_follow_their_layer_rules(self):
         res = self.load(proj={"wait": {"maxActive": 20, "maxSeconds": 100, "ci": True, "batchWindowSeconds": 10},
-                              "sync": {"repos": [], "runRetro": False}, "retro": {"proposalMinReviews": 1},
+                              "sync": {"repos": [], "runRetro": False},
                               "intercom": {"allowRemote": True}, "close": {"from": ["herdr", "other"]}},
                         session={"intercom": {"allowOpenPane": True}})
         cfg, joined = res["config"], "\n".join(res["warnings"])
         self.assertEqual((cfg["wait"]["maxActive"], cfg["wait"]["maxSeconds"], cfg["wait"]["batchWindowSeconds"]), (8, 100, 10))
-        self.assertEqual((cfg["retro"]["proposalMinReviews"], cfg["sync"]["runRetro"]), (5, False))
+        self.assertIs(cfg["sync"]["runRetro"], False)
         self.assertIs(cfg["intercom"]["allowRemote"], False)
         self.assertIs(cfg["intercom"]["allowOpenPane"], False)
         self.assertEqual(cfg["close"]["from"], ["herdr"])
         self.assertIn("project wait.maxActive ignored: it would loosen", joined)
-        self.assertIn("project retro.proposalMinReviews ignored", joined)
         self.assertIn("project intercom.allowRemote ignored", joined)
         self.assertIn("project close.from: entries not extended: other", joined)
 

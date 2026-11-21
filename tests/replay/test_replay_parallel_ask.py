@@ -115,7 +115,7 @@ def collect_notices(pi, recs, timeout=60.0):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestParallelAsk(ReplayCase):
     def test_two_launches_one_ask(self):
-        rig = self.rig("parallel-ask", load_fixture("parallel_ask"), permissions="baseline")
+        rig = self.rig("parallel-ask", load_fixture("parallel_ask"))
         # pa2 waits for the marker pa1 writes after its reply, so neither child can end before the supervisor reply is delivered
         self.user_permissions(rig, {"allow": ["Bash(until test -f replied.marker*)"]})
         pi = rig.start()

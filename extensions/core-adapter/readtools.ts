@@ -1,7 +1,7 @@
 // `gate.readTools`: extension tools (ffgrep, fffind, ...) the gate judges like read/grep on their path field.
 // The map comes from the merged config (user or overlay layer only; the project layer's gate keys are dropped by foreman_config.py).
 import { get } from "./config.ts";
-import { isBuiltinTool, type ReadToolMap } from "./rules.ts";
+import { isBuiltinTool, type ReadToolMap } from "./rulecall.ts";
 
 /** The valid entries of `gate.readTools`: a non-empty tool name mapped to a non-empty path field name, or null (no path field: the tool reads the cwd). Anything else is ignored. */
 export function readToolsOf(config: unknown): ReadToolMap | undefined {

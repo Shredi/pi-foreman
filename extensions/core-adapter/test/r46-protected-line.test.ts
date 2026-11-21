@@ -12,12 +12,12 @@ const brief = (agent: string, task: string): string => {
 };
 
 test("r46 protected line: a task citing protected files lists them as editable, never staged or committed by the child", () => {
-  const b = brief("builder", "implement item 1: add a key to config/foreman.defaults.json and bump package.json");
+  const b = brief("builder", "implement item 1: bump package.json");
   assert.ok(!/report the needed change/.test(b), b);
   const line = b.split("\n").find((l) => l.startsWith("Protected files"))!;
   assert.ok(line, b);
-  assert.ok(line.includes("config/foreman.defaults.json") && line.includes("package.json"), line);
-  assert.ok(!line.includes("config/permissions.baseline.json"), "only the cited files are listed");
+  assert.ok(line.includes("package.json"), line);
+  assert.ok(!line.includes("config/foreman.defaults.json"), "only the cited files are listed");
   assert.match(line, /you may edit/i);
   assert.match(line, /do not `?git add`? or commit/i);
   assert.match(line, /foreman stages and commits/i);

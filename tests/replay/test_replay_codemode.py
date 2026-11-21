@@ -27,7 +27,7 @@ def ends(records):
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestCodemodeInnerCalls(ReplayCase):
     def test_inner_calls_are_decided_individually(self):
-        rig = self.rig("codemode", load_fixture("codemode"), permissions="baseline")
+        rig = self.rig("codemode", load_fixture("codemode"))
         (rig.project / ".env").write_text("TOKEN=not-a-real-secret\n", "utf-8")
         (rig.project / "notes.txt").write_text("hello\n", "utf-8")
         pi = rig.start()

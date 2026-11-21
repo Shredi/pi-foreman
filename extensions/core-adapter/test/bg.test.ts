@@ -202,12 +202,9 @@ function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Pro
   return { handlers, commands, tools, ctx, project, agentDir, notes, confirms, root };
 }
 
-test("foreman_bg is gone: no shell-tool table, no permission baseline alias, no registered tool", () => {
+test("foreman_bg is gone: no shell-tool table, no registered tool", () => {
   assert.deepEqual(mapTool("foreman_bg"), mapTool("unknown_tool"));
   assert.equal(isShellTool("foreman_bg"), false);
-  const base = JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { shellTools: Record<string, unknown>; tools: Record<string, string> };
-  assert.equal(base.shellTools.foreman_bg, undefined);
-  assert.equal(base.tools.foreman_bg, undefined);
 });
 
 test("/foreman waits: lists waits with note, age, left and the last 5 log lines; includes the add-on's tasks when present", async (t) => {
@@ -290,12 +287,9 @@ test("guard parity: the add-on's bg_run gets exactly the verdict a bash call get
   assert.equal(await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command: "echo hi" } }, a.ctx), undefined);
 });
 
-test("bg_run is guarded by every shell tool table; the baseline aliases it to the bash rules", () => {
+test("bg_run is guarded by every shell tool table", () => {
   assert.deepEqual(mapTool("bg_run"), mapTool("bash"));
   assert.equal(isShellTool("bg_run"), true);
-  const base = JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { shellTools: Record<string, { commandArgument: string }>; tools: Record<string, string> };
-  assert.deepEqual(base.shellTools.bg_run, { commandArgument: "command" });
-  assert.equal(base.tools.bg_run, undefined);
 });
 
 test("foreman_wait tool: a log outside the bound or of the wrong type is rejected, no wait is registered", async (t) => {

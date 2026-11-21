@@ -1,5 +1,5 @@
 // Quote-aware split of a bash command into a chain of simple commands (ladder-polish item 7), for
-// the review link's deterministic allows (timeoutallow.ts, effects.ts). It splits on top-level
+// the effect classes (effects.ts). It splits on top-level
 // `&&`, `||`, `;` and `|` and parses redirects; it returns null (the caller then refuses the whole
 // command) on anything it does not model exactly:
 //   - `$(`, backticks, a newline anywhere (also inside quotes);

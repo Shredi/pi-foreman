@@ -424,6 +424,14 @@ function worktreeLabel(lbl: string): { n: string; what: string; quiet: string[] 
 const BRANCH_TRACKING = /^branch\..+\.(remote|merge|rebase)$/;
 
 /**
+ * D141: keys git writes into an absorbed submodule's `git:modules/<x>/config` (probed: `submodule add`, `submodule update --init`, `submodule status`
+ * and `git -C sub worktree add` write only these, plus the routine branch tracking pair) and that cannot make git run a program. A change confined to
+ * them is one grouped line; any other key (filter.*, core.hooksPath, core.fsmonitor, include.path, unknown) keeps its own file line.
+ */
+const QUIET_MODULE_KEYS = /^(?:core\.(?:worktree|bare|repositoryformatversion|filemode|logallrefupdates|ignorecase|precomposeunicode)|remote\.[^.]+\.(?:url|fetch))$/;
+const MODULE_CONFIG = /^git:modules\/(.+)\/config$/;
+
+/**
  * An added or changed branch.<b>.merge / branch.<b>.remote key that `worktree add -b`, `push -u` or
  * `checkout -b` write: merge only as refs/heads/<any name> while branch.<b>.remote names a safe remote; remote only as a name
  * whose remote.<name>.url is present in both snapshots with an unchanged hash (a URL or path value
@@ -461,6 +469,7 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
   const out: string[] = [];
   // Per-worktree changes collapse into one line (a repo with many worktrees would flood the ask).
   const wt = new Map<string, string[]>();
+  const quietModules: string[] = [];
   const labels = [...new Set([...before.files.keys(), ...after.files.keys()])].sort();
   for (const lbl of labels) {
     const a = before.files.get(lbl);
@@ -468,6 +477,11 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
     if (a && b && a.hash === b.hash) continue;
     const kind = !a ? "new" : !b ? "removed" : "changed";
     let state: string;
+    const mod = b && b.keys !== null ? MODULE_CONFIG.exec(lbl) : null; // only a parsed config, not a hook that happens to be named config
+    if (mod && kind === "new" && [...(b!.keys?.keys() ?? [])].every((k) => QUIET_MODULE_KEYS.test(k) || (BRANCH_TRACKING.test(k) && routineTracking(k, b!, b!)))) {
+      quietModules.push(mod[1]);
+      continue;
+    }
     if (kind === "new") state = `new file${b!.keys && b!.keys.size ? ` (${listed("keys", [...b!.keys.keys()])})` : ""}`;
     else if (kind === "removed") state = "removed";
     else {
@@ -481,6 +495,10 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
       const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
       const onlyTracking = !parts.length && [...ka.keys(), ...kb.keys()].some((k) => BRANCH_TRACKING.test(k) && ka.get(k) !== kb.get(k));
       if (onlyTracking) continue;
+      if (mod && parts.length && [...added, ...changed, ...removed].every((k) => QUIET_MODULE_KEYS.test(k))) {
+        quietModules.push(mod[1]);
+        continue;
+      }
       state = parts.length ? parts.join("; ") : "content changed";
     }
     const w = worktreeLabel(lbl);
@@ -496,6 +514,7 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
     const items = [...wt].slice(0, MAX_ITEMS).map(([n, xs]) => `${clean(n)}: ${xs.join(", ")}`);
     out.push(`worktrees: ${wt.size} changed (${items.join("; ")}${wt.size > MAX_ITEMS ? `; +${wt.size - MAX_ITEMS} more` : ""})`);
   }
+  if (quietModules.length) out.push(`submodule configs: ${quietModules.length} changed (${quietModules.slice(0, MAX_ITEMS).map(clean).join("; ")}${quietModules.length > MAX_ITEMS ? `; +${quietModules.length - MAX_ITEMS} more` : ""})`);
   if (before.hooksDirId !== after.hooksDirId) out.push("hooks directory changed (core.hooksPath)");
   const hooks = [...new Set([...before.hooks.keys(), ...after.hooks.keys()])].sort();
   const hAdded = hooks.filter((h) => !before.hooks.has(h));

@@ -32,7 +32,7 @@ const rendered = () => {
   m.changed = {}; m.feed = []; m.folded = new Set(); m.busy = new Map(); m.recs = new Map(); m.childPi = new Set();
   m.radar = new Map([["local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() }]]);
   m.poll = () => {};
-  const chip = cards(m.render({})).find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes("⎇ #7")));
+  const chip = cards(m.render({})).find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes("#7")));
   return chip;
 };
 const click = async (execFn) => {

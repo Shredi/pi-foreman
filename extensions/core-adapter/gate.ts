@@ -15,8 +15,8 @@ import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, l
 const PUBKEY_READ_RULE = "floor-pubkey-read";
 import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
 import { relaxPatternWords } from "./patternargs.ts";
-import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
-import type { ReadToolMap, RuleCall, RuleEnv } from "./rules.ts";
+import { builtinAllow, readFieldOf, ruleCallOf } from "./rulecall.ts";
+import type { ReadToolMap, RuleCall, RuleEnv } from "./rulecall.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
@@ -395,7 +395,7 @@ export interface GateOutcome {
   result: GateResult;
   /** Set only when `result` is undefined, the gate has roots and the call falls into the dangerous class. */
   danger: DangerHit | null;
-  /** The parse of a shell tool's line (proposeRule reads it). */
+  /** The parse of a shell tool's line (the judge-first checks and the built-in allow read it). */
   segments?: ShellSegment[];
   /** Every judge-first label the line matched (tests and the log read them). */
   dangers?: string[];
@@ -427,7 +427,6 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
     const home = env.home ?? os.homedir();
     const rules0 = deps.rules ?? { env: { cwd, home, platform, checkout: cwd } };
     const rules = readTools ? { env: { ...rules0.env, readTools } } : rules0;
-    const noRules = { deny: [], ask: [], allow: [] };
     const effectCtx0 = roots ? effectCtxOf({ roots, platform, cwd }) : undefined;
     const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
@@ -448,8 +447,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       }
       if (pending?.kind === "judge") return undefined;
       if (pending) return askFromFloor(pending);
-      const v = matchRules(noRules, call, rules.env, builtin);
-      return v.verdict === "allow" ? { allow: true, rule: v.rule, layer: "default" } : undefined;
+      const rule = builtinAllow(call, builtin);
+      return rule !== null ? { allow: true, rule, layer: "default" } : undefined;
     };
 
     // a child's `$FOREMAN_OUT` is its kept output dir (set in its process env): the guards read the line with the path in it (childscratch.ts expandOutVar)

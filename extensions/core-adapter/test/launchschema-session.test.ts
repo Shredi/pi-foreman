@@ -10,6 +10,7 @@ import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager
 import { getCurrentTools } from "@earendil-works/pi-ai";
 import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import coreAdapter from "../index.ts";
+import { nodePathFile } from "../nodepath.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { SUBAGENTS_PKG } from "./_subagents-handlers.ts";
 
@@ -24,6 +25,15 @@ test("real session: the request declares the launch fields on subagent, and a ca
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
+  // The adapter resolves its agent dir from the environment, not from the session: point it and HOME at the temp dir so session_start
+  // (the node-path record, nodepath.ts) writes there and never into the real ~/.pi/agent.
+  const fakeHome = path.join(root, "home");
+  fs.mkdirSync(fakeHome, { recursive: true });
+  const envKeys = ["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR"] as const;
+  const savedEnv = envKeys.map((k) => process.env[k]);
+  process.env.HOME = process.env.USERPROFILE = fakeHome;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(() => envKeys.forEach((k, i) => void (savedEnv[i] === undefined ? delete process.env[k] : (process.env[k] = savedEnv[i]))));
   const savedChild = process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_SUBAGENT_CHILD;
   t.after(() => void (savedChild === undefined ? delete process.env.PI_SUBAGENT_CHILD : (process.env.PI_SUBAGENT_CHILD = savedChild)));
@@ -77,4 +87,6 @@ test("real session: the request declares the launch fields on subagent, and a ca
   for (const f of ["reason", "items", "occasion", "reads", "install"]) assert.ok(properties[f], `${f} is declared in the request`);
   assert.equal(seen.length, 1, "the call reached the tool_call handlers");
   assert.deepEqual(seen[0].input, call, "Pi's argument check left every field as the model gave it");
+  assert.equal(fs.readFileSync(nodePathFile(agentDir), "utf8"), `${process.execPath}\n`, "session_start recorded the node path under the session's agent dir");
+  assert.equal(fs.existsSync(path.join(fakeHome, ".pi")), false, "nothing was written under HOME/.pi");
 });

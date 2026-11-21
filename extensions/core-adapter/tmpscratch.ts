@@ -1,30 +1,12 @@
-// Deterministic allow for a child's scratch copy under /tmp (label `tmp-scratch`): a child that copies the
-// workspace aside (`cp -r /app /tmp/x`) or makes a scratch dir (`mkdir -p /tmp/x`) otherwise goes to the
-// model review and, headless, is denied. Only one simple command is handled, nothing chained:
-//   cp [-r|-R|-a|-p, also combined] <src>... <dest>     mkdir [-p] <dest>...
-// Every destination must be an absolute path under /tmp/ (no `..`, not /tmp itself) whose deepest
-// existing ancestor really lies inside /tmp (a symlink planted in /tmp cannot lead out); into an existing
-// dir the written `dest/<basename>` is checked the same way, and a recursive copy into one is refused.
-// Every source must pass `deps.source` (timeoutallow.ts: a contained read of the effect context, a
-// recursive source from the worktree only); without it no cp matches. A lowercase `-r` only on Linux
-// (BSD `cp -r` follows the symlinks of the tree). No rm in any form: `rm -rf /tmp/...` stays reviewed. POSIX only; on Windows
-// it never matches. Words are parsed by sedread.ts `shellWords` (bare words and plain quotes only).
+// A scratch destination under /tmp (effects.ts `tmp-scratch` write class): an absolute path under /tmp/ (no `..`, not /tmp itself) whose deepest
+// existing ancestor really lies inside /tmp, so a symlink planted in /tmp cannot lead out. POSIX only; on Windows effects.ts never asks.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { shellWords } from "./sedread.ts";
-
-const SHELL_SYNTAX = /[;&|<>`$()\n\r]/;
-const CP_FLAGS = /^-[rRap]+$/;
 
 export interface TmpScratchDeps {
-  platform?: string;
   /** realpath of an existing path, or null; injectable for tests. */
   realpath?: (p: string) => string | null;
   exists?: (p: string) => boolean;
-  /** stat says a directory (follows links); injectable for tests. */
-  isDir?: (p: string) => boolean;
-  /** A cp source may be read (and, `recursive`, copied as a tree); no cp matches without it. */
-  source?: (src: string, recursive: boolean) => boolean;
 }
 
 const defaultRealpath = (p: string): string | null => {
@@ -53,35 +35,4 @@ export function tmpDest(dest: string, deps: TmpScratchDeps = {}): boolean {
   // The destination itself exists: it must not be a symlink (its realpath is its parent's plus its name).
   const parent = real(path.posix.dirname(norm));
   return parent !== null && r === `${parent.replace(/\/+$/, "")}/${path.posix.basename(norm)}`;
-}
-
-/** True when the whole `command` is one `cp`/`mkdir` call that writes only under /tmp/ (see the header). */
-export function isTmpScratch(command: string, deps: TmpScratchDeps = {}): boolean {
-  if ((deps.platform ?? process.platform) === "win32") return false;
-  if (SHELL_SYNTAX.test(command)) return false;
-  const w = shellWords(command.trim());
-  if (!w || w.length < 2) return false;
-  const [prog, ...args] = w;
-  let k = 0;
-  if (prog === "cp") {
-    while (k < args.length && args[k].startsWith("-")) if (!CP_FLAGS.test(args[k++])) return false;
-    const ops = args.slice(k);
-    if (ops.length < 2 || ops.some((o) => !o || o.startsWith("-"))) return false;
-    const flags = args.slice(0, k).join("");
-    const recursive = /[rRa]/.test(flags);
-    if (flags.includes("r") && (deps.platform ?? process.platform) !== "linux") return false;
-    const srcs = ops.slice(0, -1);
-    const dest = ops[ops.length - 1];
-    if (!deps.source || !srcs.every((o) => deps.source!(o, recursive)) || !tmpDest(dest, deps)) return false;
-    const isDir = deps.isDir ?? ((p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } });
-    const d = path.posix.normalize(dest).replace(/\/+$/, "");
-    if (!isDir(d)) return true;
-    return !recursive && srcs.every((o) => tmpDest(`${d}/${path.posix.basename(o)}`, deps));
-  }
-  if (prog === "mkdir") {
-    while (k < args.length && args[k].startsWith("-")) if (args[k++] !== "-p") return false;
-    const ops = args.slice(k);
-    return ops.length > 0 && ops.every((o) => !o.startsWith("-") && tmpDest(o, deps));
-  }
-  return false;
 }

@@ -90,16 +90,18 @@ import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, m
 import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
+import { recordNodePath } from "./nodepath.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
-import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepOldScratch, sweepScratch, wtScratchBase } from "./childscratch.ts";
+import { boundLaunchId, ChildScratch, finishScratch, launchScratch, OUT_ENV, resumeScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepKept, sweepOldScratch, sweepScratch, wtScratchBase } from "./childscratch.ts";
 import type { ScratchWt } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { filler, fromJsonText } from "./jsontext.ts";
+import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readItemsSidecar, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeItemsSidecar, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
 import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
@@ -232,7 +234,7 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overr
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { samePath, selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
+import { samePath, selfFinish, spawnDetached, verifiedMergeFor, worktreeRoot as containingWorktree } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -257,6 +259,7 @@ import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyS
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
+import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
 import { climbNotesOf, rungNote } from "./launchreceipt.ts";
 import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
@@ -314,6 +317,9 @@ function releaseLedgerHold(toolCallId: string): void {
 
 /** Session entry type: one small record per review launch or launch that named a ledger (run id, paths, cited, and for a review its launch, items and occasion), so the route survives a reload (D31). */
 const LEDGER_ROUTE_ENTRY = "pi-foreman-ledger-route";
+
+/** Session entry type: the session folder (sessionfolder.ts, D118) the session made at its first builder launch, so a reload or resume reuses it. */
+const SESSION_FOLDER_ENTRY = "pi-foreman-session-folder";
 
 /** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). A review launch also carries its launch id, the ids its verdict tool accepts and its occasion (the record dir is derived from the launch id, never stored). */
 interface LedgerRoute {
@@ -467,6 +473,12 @@ interface Session {
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
   ceremonyRestored: boolean;
+  /** Foreman only: the session folder made at the first builder launch from a primary checkout (D118), else null. */
+  sessionFolder: SessionFolder | null;
+  /** Foreman only: a builder already ran in the session's own (primary) checkout, so no session folder is made later (persisted with the folder entry). */
+  primaryWork: boolean;
+  /** Foreman only: the launch line named why no session folder is made. */
+  primaryNoted: boolean;
   /** Foreman only: item numbers of the last FAIL verdict, until a review passes (item-only re-review). */
   failItems: string[];
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
@@ -788,6 +800,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const compactionGate = new CompactionGate();
   /** R39: per launch call, the roles that stayed on the bottom rung although a strong climb was asked or wanted, with the reason the receipt shows. */
   const bottomNotes = new Map<string, Map<string, string>>();
+  /** Per launch call: the base ids of explicit `model:` values the rank policy honoured (read before applyLaunchModels rewrites them); recordLaunch keeps the flag on the run. */
+  const explicitModelCalls = new Map<string, Set<string>>();
+  /** Resumed review run id -> the one checkout its target ran in: a resumed run's end carries no cwd of its own, so its verdict is recorded for this checkout, not the session's. */
+  const resumeCheckouts = new Map<string, string>();
   /** Per launch call, the roles' rung phrase from the ladder's climbs and the sizing plans (launchreceipt.ts); read and deleted with bottomNotes. */
   const climbNotes = new Map<string, Map<string, string>>();
   /** Per launch call, the occasions its review children were recorded with (taken before any rewrite); read and deleted at the tool result for the occasion lines. */
@@ -1179,6 +1195,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
+      sessionFolder: null,
+      primaryWork: false,
+      primaryNoted: false,
       failItems: [],
       critique: new CritiqueCounter(),
       budgetWarned: false,
@@ -1321,6 +1340,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const bridgeCfgRisks = bridgeTrusted(agentDir, cwd) ? [] : projectBridgeConfigRisks(cwd); // silent while the owner's trust record matches the file (bridgetrust.ts)
     if (bridgeCfgRisks.length) ctx.ui.notify(`pi-foreman: the project's claude-bridge config makes the bridge run what the project chose: ${bridgeCfgRisks.join(", ")}. Fix: ${PROJECT_BRIDGE_FIX}`, "error");
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
+    recordNodePath(agentDir); // bin/foreman falls back to this Node when the PATH has none (nodepath.ts)
     tracePoint(s, ctx.model);
     if (selfHost) {
       s.trace?.emit({ event: "protect_selfhost", reason: "dev checkout" });
@@ -1861,6 +1881,76 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
+  /** session_start: the session folder of the latest entry of the branch (a fork is another session and makes its own). */
+  function restoreSessionFolder(s: Session, ctx: ExtensionContext, reason: string): void {
+    if (s.isChild || reason === "fork") return;
+    const entries = (ctx.sessionManager.getBranch?.() ?? []) as { type?: unknown; customType?: unknown; data?: { v?: unknown; path?: unknown; branch?: unknown; primary?: unknown } }[];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (!e || e.type !== "custom" || e.customType !== SESSION_FOLDER_ENTRY) continue;
+      if (e.data?.v === 1 && e.data.primary === true) s.primaryWork = true;
+      if (e.data?.v === 1 && typeof e.data.path === "string" && typeof e.data.branch === "string") s.sessionFolder = { path: e.data.path, branch: e.data.branch };
+      return;
+    }
+  }
+
+  /**
+   * D118: the folder a launch entry without `cwd` runs in. A foreman session at standard or heavy tier in a primary checkout makes its own linked worktree at
+   * the first builder launch and every later entry without `cwd` gets it; an explicit `cwd` (also `workdir`, `worktree`) is left alone. Returns the launch line,
+   * "" when nothing changed, or a refusal.
+   */
+  async function sessionFolderFor(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): Promise<{ line: string; primary?: true } | { refuse: string }> {
+    // only an interactive TUI session gets a folder; print, json and rpc sessions (bench, scripts, CI) run in their checkout
+    if (s.isChild || !(ctx.mode === "tui" && ctx.hasUI) || actionOf(input) !== null) return { line: "" };
+    const isDir = (v: unknown): boolean => (typeof v === "string" && v !== "") || v === true;
+    // `machine` (a remote launch) is an explicit choice too: a local path means nothing there
+    const explicit = (e: Record<string, unknown>): boolean => [e, input].some((x) => isDir(x.cwd) || isDir(x.workdir) || isDir(x.worktree) || isDir(x.machine));
+    const entries = launchEntries(input).filter((e) => typeof e.agent === "string");
+    const bare = entries.filter((e) => !explicit(e));
+    // A builder that works in the session's own primary checkout (no `cwd`, or an explicit `cwd` inside it) is the work a later folder would split; the caller
+    // sets the mark once the launch is accepted.
+    let primary: true | undefined;
+    if (!s.sessionFolder && !s.primaryWork && entries.some((e) => e.agent === "builder")) {
+      const top = await primaryCheckout(s.cwd);
+      if (top) {
+        const inTop = (e: Record<string, unknown>): boolean => {
+          const c = [e, input].map((x) => x.cwd).find((v) => typeof v === "string" && v !== "") as string | undefined;
+          if (c === undefined) return s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy" && !explicit(e);
+          // selffinish's native real paths: git's forward-slash long-name top matches a Windows 8.3 short or backslash spelling
+          return containingWorktree(path.resolve(s.cwd, c), [{ path: top, branch: null }]) !== null;
+        };
+        if (entries.some((e) => e.agent === "builder" && inTop(e))) primary = true;
+      }
+    }
+    if (bare.length === 0) return { line: "", ...(primary ? { primary } : {}) };
+    if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") return { line: "", ...(primary ? { primary } : {}) };
+    if (!s.sessionFolder && s.primaryWork) {
+      if (s.primaryNoted) return { line: "" };
+      s.primaryNoted = true;
+      return { line: "pi-foreman: no session folder was made: a builder already worked in this session's own checkout, so launches stay there." };
+    }
+    if (!s.sessionFolder && !bare.some((e) => e.agent === "builder")) return { line: "", ...(primary ? { primary } : {}) };
+    if (!s.sessionFolder && !(await primaryCheckout(s.cwd))) return { line: "" };
+    const r = await ensureSessionFolder({ cwd: s.cwd, sessionId: s.id, sessionName: pi.getSessionName?.(), worktreeDir: get(s.config.config, "close.worktreeDir"), branchPrefix: get(s.config.config, "sessions.worktree.branchPrefix"), recorded: s.sessionFolder });
+    if ("reason" in r) {
+      s.trace?.emit({ event: "launch_refused", reason: "session_folder", tier: s.ceremony.tier, ...launchDeny(input) });
+      return { refuse: `pi-foreman: launch refused [session_folder]: ${r.reason}` };
+    }
+    if (r.created) {
+      s.sessionFolder = r.folder;
+      try {
+        pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, path: r.folder.path, branch: r.folder.branch });
+      } catch {
+        // the session file is not writable now: the folder stays in memory
+      }
+      const o = manifestOwner({ id: s.id, isChild: false }, process.env);
+      await recordEntries([{ kind: "worktree", path: r.folder.path, branch: r.folder.branch }], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000), (k, why) => s.trace?.emit({ event: "manifest_record_failed", kind: k.kind, error: why }));
+      s.trace?.emit({ event: "session_folder", path: r.folder.path, branch: r.folder.branch, base: r.base });
+    }
+    for (const e of bare) e.cwd = r.folder.path;
+    return { line: folderLine(r), ...(primary ? { primary } : {}) };
+  }
+
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
@@ -2231,6 +2321,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     initDeferred(s, ctx);
     if (!s.isChild && (event.reason === "startup" || event.reason === "new") && (!latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]))) s.baseline = await checkoutBaseline(ctx.cwd, editModeOfSession(s).scratchDir, platform); // a brand-new session only; a reload or resume keeps the stored one, a fork its parent's (without one: none)
     restoreCeremonyState(s, ctx, event.reason);
+    restoreSessionFolder(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
     if (!s.isChild) {
       try {
@@ -3178,7 +3269,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     void compareRunEnd(entry, os.homedir(), readonlyGit, deps.readonlyDeadlineMs)
       .then((r) => {
         const lines = traceLines(r);
-        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
+        s.trace?.emit({ event: "readonly_state_diff", runId, role, outcome: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ...(r.cause ? { cause: r.cause } : {}), roots: entry.roots.join("; "), count: entry.roots.length, lines: r.perRoot.reduce((n, x) => n + x.lines.length, 0), ...(lines.length ? { items: lines.join("; ") } : {}) });
         if (r.outcome === "unchanged") return;
         let idle = true;
         try {
@@ -3282,6 +3373,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const startAt = s.launchAt.get(runId);
           s.launchAt.delete(runId);
           const hsRoot = s.hs.ownerOf(runId);
+          const resumedCheckout = resumeCheckouts.get(runId);
+          resumeCheckouts.delete(runId);
           if (hsRoot !== null && hsModel(s)) hsRunEnd(s, runId, hsRoot, data, start, startTrees);
           const counting = reviewResultsOfRun(s, runId, data).filter((x) => x.counts && x.verdict !== null);
           let nth = 0;
@@ -3290,7 +3383,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const first = nth++ === 0;
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
-              const cwd = r.cwd ?? s.cwd;
+              const cwd = r.cwd ?? resumedCheckout ?? s.cwd;
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code" && !x.via); // an alias (coverHead) is no review round
               const top = await rootOf(cwd);
@@ -4060,10 +4153,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const blocked = childLaunchBlock(s, event.toolName);
       if (blocked) return { block: true, reason: blocked };
       let notices: string[] = [];
+      let folderNote = "";
+      let primaryBuilder = false;
       let launchMcp: string[] | undefined;
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       let takenItems = new Map<Record<string, unknown>, unknown>();
+      /** The `items` field of a resume call (takeLaunchFlags reads it for agent entries only): the resumed reviewer's allowed items, see resumeItems below. */
+      let resumeItemsRaw: unknown;
+      let resumeItems: ItemId[] | undefined; // the resumed reviewer's allowed items (computed after the launch checks, written at recordLaunchUsage)
       const verdictItems = new Map<Record<string, unknown>, ItemId[]>();
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
@@ -4112,6 +4210,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return c;
       };
       if (event.toolName === "subagent") {
+        const folder = await sessionFolderFor(s, ctx, input);
+        if ("refuse" in folder) return { block: true, reason: folder.refuse };
+        folderNote = folder.line;
+        primaryBuilder = folder.primary === true;
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
         // The owner-approval request of a deferred launch leaves every call here, before the copy: pi-subagents and a relaunch never carry it.
@@ -4128,6 +4230,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: sized.error };
         }
         // R46: `reads` and `install` leave every launch here; a single launch carries them in its binding (recordLaunchUsage).
+        if (actionOf(input) === "resume" && input.items !== undefined && !filler(input.items)) resumeItemsRaw = fromJsonText(input.items, "array");
         const flags = takeLaunchFlags(input);
         if (flags.error && !s.isChild && actionOf(input) === null) {
           s.trace?.emit({ event: "launch_refused", reason: "launch_flag_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -4151,7 +4254,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const resolution = await currentRoles(s, ctx);
         const allowWorkflow = get(s.config.config, "safety.subagents.allowWorkflow") === true;
-        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking") });
+        const act = subagentActionCheck(input, { allowWorkflow, runs: s.runs, allowed: childRoleIds(get(s.config.config, "roles")), resolution, maxThinking: get(s.config.config, "maxThinking"), explicitAllowed: (role, m) => explicitModelAllowed(s.config.config, foremanBaseModel(ctx), m, role) });
         if (act.block) return { block: true, reason: act.block };
         // r68 (A22): a workflow script that names a binding could forge one for any child.
         const branch = (ctx.sessionManager.getBranch?.() ?? []) as { type?: string; message?: unknown }[];
@@ -4512,8 +4615,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const foremanAt0 = foremanBaseModel(ctx);
         const unmodelled = new Set(launchEntries(input).filter((e) => typeof (e.model ?? input.model) !== "string" || String(e.model ?? input.model).trim() === ""));
+        const explicitHonoured = new Set<string>();
         const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), top: topLaunch.length > 0 ? topRoleEntry(s.config.config, resolution.roles) : null, explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), top: topLaunch.length > 0 ? topRoleEntry(s.config.config, resolution.roles) : null, explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); if (ok) explicitHonoured.add(splitLevel(m).base); return ok; } });
+        if (explicitHonoured.size > 0) capSet(explicitModelCalls, event.toolCallId, explicitHonoured);
         // A capped climb (RANK_CAPPED_REASON: skipped, or only carrying the pending handoff) names the model the launch runs on: the entry as applyLaunchModels wrote it (an explicit model the policy rejects was replaced by the mapped rung). A real rung_up or an above-strong climb that carries a handoff keeps its own from/to.
         const topLines: string[] = [];
         if (topLaunch.length > 0) {
@@ -4684,6 +4789,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (drift) return drift;
         s.gitDrift.snapshot(ctx.cwd, os.homedir());
         // Frugal-roles D5: base for the review diff at a builder launch, diff facts into a reviewer's task.
+        reviewFacts.mergeBase = (dir) => {
+          const configured = get(s.config.config, "safety.ops.baseBranch");
+          return reviewBaseOf(dir, { baseBranch: typeof configured === "string" ? configured : null });
+        };
         await reviewFacts.noteBuilders(input, ctx.cwd);
         if (occasions.size > 0) {
           // Review bookkeeping to the run end (occasion.ts): occasion, shadow, model per entry; the files the findings are located in.
@@ -4732,7 +4841,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
-          const cwds = launchCwds(input, ctx.cwd);
+          // a resume input names no cwd: the start heads also cover the checkouts the target review ran in (its recorded roots), so the run end of the resumed reviewer matches its own checkout
+          const cwds = [...new Set([...launchCwds(input, ctx.cwd), ...(action === "resume" && !s.isChild ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? []) : [])])];
           capSet(s.launchAtByCall, event.toolCallId, Date.now());
           const [heads, trees, treesWf] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot), treesAt(cwds, (c) => launchSnapshot(c, true))]);
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
@@ -4744,6 +4854,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         await noteReadonlyStart(s, event.toolCallId, input, ctx.cwd);
       }
       // Kept for the tool result only once the launch passed every check.
+      if (primaryBuilder && !s.sessionFolder && !s.primaryWork) {
+        s.primaryWork = true;
+        try {
+          pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
+        } catch {
+          // the session file is not writable now: the decision stays in memory
+        }
+      }
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
       const reviewOccasions = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o);
       if (reviewOccasions.length > 0) capSet(launchOccasions, event.toolCallId, reviewOccasions);
@@ -4758,7 +4876,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
       }
-      if (notices.length + budgetNotes.length + mcpNotes.length > 0) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes]);
+      if (notices.length + budgetNotes.length + mcpNotes.length > 0 || folderNote) s.launchNotices.set(event.toolCallId, [...notices, ...budgetNotes, ...mcpNotes, ...(folderNote ? [folderNote] : [])]);
       if (event.toolName === "subagent" && !s.isChild && subagentAgents(input).includes("builder")) {
         const applied = s.critique.onBuilder();
         if (applied) s.trace?.emit(applied);
@@ -4797,6 +4915,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
           }
           verdictItems.set(e, r.items);
+        }
+        // A resumed review run keeps its first launch's binding, so its allowed items are made again here the way a fresh launch makes them (the resume's `items` field, else the open ledger items) and reach both sides: the child through the record folder, the parent through the route (tool_result).
+        if (!s.isChild && actionOf(input) === "resume") {
+          const target = resumeTarget(input) ?? "";
+          const launch = launchOfRun(s, target);
+          if (launch && s.ledgerByRun.get(target)?.review && s.hs.ownerOf(target) === null) {
+            const given = resumeItemsRaw !== undefined ? parseItemsField(resumeItemsRaw) : undefined;
+            if (given && "error" in given) return { block: true, reason: `pi-foreman: ${given.error}.` };
+            // the ledger the target run was launched for (a task that named one), else the bound one
+            const bound = boundLedger(s.markerDir, s.id);
+            const rlf = s.ledgerByRun.get(target)?.paths[0] ?? bound;
+            let text: string | null = null;
+            try { text = rlf ? fs.readFileSync(rlf, "utf8") : null; } catch { text = null; }
+            // the same rule as a fresh launch, after-FAIL included (s.failItems, whatever ledger is named)
+            const r = launchItemsOf(text, given && "items" in given ? given.items : undefined, { reReview: s.ledgerByRun.get(target)?.review?.occasion === "item", failed: s.failItems });
+            if ("unknown" in r) {
+              s.trace?.emit({ event: "launch_refused", reason: "items_unknown", tier: s.ceremony.tier, ...launchDeny(input) });
+              return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}.` };
+            }
+            resumeItems = r.items;
+          }
         }
         // T13: a reviewer whose record folder cannot be made could never give a verdict; made after the last refusal above, so a refused launch leaves no folder
         const reviewRole = singleLaunchRole(input);
@@ -4888,7 +5027,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         persistCeremonyState(s);
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined) });
+        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined), resumeItems });
         if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
@@ -4916,6 +5055,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // R30 item 8: traced only once the guards let the child's bash call through
     if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
+    // D155: a capped timeout is told to the child at this call's result (structured result of bashtimeout.ts, no command text read)
+    if (!res && bashTimeout?.action === "capped" && bashTimeout.requested !== null) {
+      if (cappedCalls.size >= 200) cappedCalls.delete(cappedCalls.keys().next().value as string);
+      cappedCalls.set(event.toolCallId, `pi-foreman: timeout ${bashTimeout.requested} s was capped to ${bashTimeout.timeout} s (child bash cap, docs/safety.md)`);
+    }
     // The launching session reads the open command to tell a test run from an unknown command (opencommand.ts).
     if (!res && ms?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) {
       const command = (event.input as { command?: unknown }).command;
@@ -5461,6 +5605,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const bashRulingSnaps = new Map<string, Map<string, number>>();
   /** ask_user_question calls whose text read like jargon: the hint is appended to the result (ownertext.ts). */
   const questionHints = new Map<string, string>();
+  /** Child bash calls whose `timeout` was capped (bounded): the line appended to that call's result. */
+  const cappedCalls = new Map<string, string>();
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
@@ -5628,9 +5774,34 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean; verdictItems?: ItemId[] }): LaunchBinding | null {
+  /** The resumed reviewer's items go into its record folder, where the child's `review_verdict` reads them on every call (the child's binding is fixed at its start). Best effort: without the file the child keeps its first items. */
+  function resumeItemsSidecar(s: Session, input: Record<string, unknown>, items: ItemId[]): void {
+    const target = resumeTarget(input);
+    const launch = target ? launchOfRun(s, target) : undefined;
+    if (!launch) return;
+    try {
+      const dir = recordDir(s.agentDir, s.id, launch);
+      makeRecordDir(dir);
+      writeItemsSidecar(dir, items);
+    } catch {
+      // the child keeps its first items
+    }
+  }
+
+  /** A resume keeps the first launch's `FOREMAN_SCRATCH`; the first run's end removed that dir, so it is made again (childscratch.ts resumeScratch) and removed when the resumed run ends. */
+  function resumeScratchDir(s: Session, input: Record<string, unknown>): string | null {
+    const target = resumeTarget(input);
+    const launch = target ? launchOfRun(s, target) : undefined;
+    return launch ? resumeScratch(s, launch) : null;
+  }
+
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean; highStakes?: boolean; verdictItems?: ItemId[]; resumeItems?: ItemId[] }): LaunchBinding | null {
     if (actionOf(input) === "resume") resumeAskDir(s, ctx, input, toolCallId);
-    if (actionOf(input) === "resume" && !s.isChild) resumeVerdictDir(s, input);
+    if (actionOf(input) === "resume" && !s.isChild) {
+      resumeVerdictDir(s, input);
+      resumeScratchDir(s, input);
+      if (flags?.resumeItems) resumeItemsSidecar(s, input, flags.resumeItems);
+    }
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
@@ -5808,10 +5979,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.readNotices.delete(event.toolCallId);
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
+    const capNote = cappedCalls.get(event.toolCallId);
+    cappedCalls.delete(event.toolCallId);
     // D27: a project-file edit through the foreman's own tools is work, at every tier.
     const projectChanged = !!owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform });
     if (owner && projectChanged) (owner.work.edits++), clearHold(owner, "edit");
-    const withNote = () => (readNote || qHint || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
+    const withNote = () => (readNote || qHint || capNote || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(capNote ? [{ type: "text" as const, text: capNote }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
     if (owner && projectChanged && owner.hs.hasRuns()) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
@@ -5857,7 +6030,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (s) {
         s.pendingLaunches.delete(event.toolCallId);
         parkFor(s).dropCall(event.toolCallId);
-        recordLaunch(s.runs, event.input, event.details, event.isError);
+        const honoured = explicitModelCalls.get(event.toolCallId);
+        explicitModelCalls.delete(event.toolCallId);
+        const launchModelOf = (event.input as { model?: unknown } | undefined)?.model;
+        recordLaunch(s.runs, event.input, event.details, event.isError, !!honoured && typeof launchModelOf === "string" && honoured.has(splitLevel(launchModelOf).base));
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
@@ -5869,10 +6045,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.launchAtByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         if (runId && s.reviewRootsByCall.has(event.toolCallId)) capSet(s.reviewRoots, runId, s.reviewRootsByCall.get(event.toolCallId) ?? null);
+        {
+          const resumedRoots = runId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume" ? s.reviewRoots.get(runId) : null;
+          if (runId && resumedRoots && resumedRoots.length === 1) capSet(resumeCheckouts, runId, resumedRoots[0]);
+        }
         s.reviewRootsByCall.delete(event.toolCallId);
         const boundId = boundLaunchId(event.input);
         if (boundId && runId && !s.isChild) parkFor(s).noteRun(runId, boundId); // a later resume of this run finds its launch
-        const launched = s.scratch.onLaunched(boundId, runId);
+        // a resume names no binding: its scratch is the target launch's, made again at the resume's tool_call
+        const resumeScratchLaunch = !boundId && !s.isChild && actionOf(event.input as Record<string, unknown>) === "resume" ? (launchOfRun(s, resumeTarget(event.input as Record<string, unknown>) ?? "") ?? null) : null;
+        const launched = s.scratch.onLaunched(boundId ?? resumeScratchLaunch, runId);
         finishScratch(s, launched);
         const resumedLaunch = s.isChild ? null : parkFor(s).resumeLaunched(event.toolCallId, runId);
         askLine = closeChildAsk(s, launched ?? resumedLaunch);
@@ -5903,7 +6085,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a resume names no ledger: the resumed run's route carries over (same or new run id), persisted like the others
         const resumedRoute = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
         // the resumed run is a new run: the earlier run's `failed` does not carry over
-        const resumed = resumedRoute?.review?.failed ? { ...resumedRoute, review: { ...resumedRoute.review, failed: undefined } } : resumedRoute;
+        const resumedFresh = resumedRoute?.review?.failed ? { ...resumedRoute, review: { ...resumedRoute.review, failed: undefined } } : resumedRoute;
+        // the resume's items (its sidecar, written at the tool_call) replace the first launch's in the route that parses the record
+        const resumedItems = resumedFresh?.review && !event.isError && !s.isChild ? readItemsSidecar(recordDir(s.agentDir, s.id, launchOfRun(s, resumeTarget(event.input as Record<string, unknown>) ?? "") ?? "")) : null;
+        const resumed = resumedItems && resumedFresh?.review ? { ...resumedFresh, review: { ...resumedFresh.review, items: resumedItems } } : resumedFresh;
         if (resumed && runId) {
           capSet(s.ledgerByRun, runId, resumed);
           if (resumedRoute?.review?.failed) s.reviewRecords.delete(runId);
@@ -6648,7 +6833,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const restart = b?.handoffDir ? `"foreman session restart ${launcher ?? "<label>"}", run by your parent` : `the owner quits that session (/quit) and resumes it with "pi --session ${b?.foremanSession ?? "<id>"}"`;
         return refuse(`${VERDICT_TOOL}: this launch has no verdict channel (no record folder from the foreman). The usual cause is a session that started before an update of the foreman: it needs a restart (${restart}), then it gets the channel. Stop and tell your parent; a verdict in prose does not count.`, "no_channel");
       }
-      const allowed = allowedItems(b.items, b.highStakes === true);
+      const allowed = allowedItems(readItemsSidecar(b.verdictDir) ?? b.items, b.highStakes === true); // a resume writes its items into the folder
       const c = checkVerdictCall(params, allowed);
       if ("error" in c) return refuse(c.error, "invalid");
       let replaced = false;
@@ -7291,7 +7476,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   pi.registerCommand("retro", {
-    description: "Friction metrics of this session and permission-allow proposals (foreman only); --model adds a foreman-written section (one turn)",
+    description: "Friction metrics of this session (foreman only); --model adds a foreman-written section (one turn)",
     handler: async (args, ctx) => {
       const s = await ensureSession(ctx);
       if (s.isChild) {
@@ -7302,9 +7487,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("pi-foreman: /retro --model is off (retro is disabled or this is not an interactive session).", "warning");
         return;
       }
-      const day = new Date().toISOString().slice(0, 10);
-      const argv = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
-      const r = await runScript(s, "foreman_retro.py", argv);
+      const r = await runScript(s, "foreman_retro.py", retroInputs(s, ctx, "--session"));
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
       let file: string | null = null;
       try {
@@ -7679,6 +7862,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return Array.isArray(v) ? v.some((x) => typeof x === "string" && x.trim() !== "") : typeof v === "string" && v.trim() !== "";
     });
     if (commitKeySet) out.push("INFO safety.git.commit.* is no longer used; commit messages are checked by the project's commit hooks");
+    // Keys the schema still accepts so old configs load; the shipped defaults no longer set them, so a value here comes from a user or project layer.
+    for (const k of ["gate.mode", "gate.askTimeoutMs", "gate.readClear", "gate.readonlyClear", "retro.proposalMinReviews"]) {
+      if (get(s.config.config, k) !== undefined) out.push(`INFO ${k} is no longer used and has no effect`);
+    }
 
     // Host pressure: a fresh sample (the sampler timer's call); a missing probe is never a FAIL.
     try {

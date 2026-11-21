@@ -17,7 +17,7 @@ from test_replay import REASON, ReplayCase
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestChildBaseline(ReplayCase):
     def baseline_rig(self, name):
-        rig = self.rig(name, load_fixture("child_baseline"), permissions="baseline",
+        rig = self.rig(name, load_fixture("child_baseline"),
                        config={"safety": {"permissions": {"projectCommands": ["cargo test*"]}}, "gate": {"childAsk": "parent"}})
         (rig.project / "sub").mkdir()
         return rig

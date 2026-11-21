@@ -43,10 +43,10 @@ const walk = (el, out = []) => {
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const hasText = (el, text) => (el.kids ?? []).includes(text);
 const cards = (el) => walk(el).filter((e) => e.kind === "HoverCard" && e.cardId !== "legend-card");
-// The line (or chip) of PR `n`: the HoverCard whose trigger draws "⎇ #n".
-const lineOf = (root, n) => cards(root).find((c) => walk(c.props.trigger).some((e) => hasText(e, `⎇ #${n}`)));
-const checkOf = (line) => walk(line.props.trigger).find((e) => hasText(e, "✓"));
-const discOf = (line) => walk(line.props.trigger).find((e) => e.props.size === 6);
+// The line (or chip) of PR `n`: the HoverCard whose trigger draws "PR #n".
+const lineOf = (root, n) => cards(root).find((c) => walk(c.props.trigger).some((e) => hasText(e, `PR #${n}`)));
+const discOf = (line) => walk(line.props.trigger).find((e) => e.props?.font_semibold && e.props.text_size === 10); // the badge
+const checkOf = (line) => (hasText(discOf(line), "✓ ") ? discOf(line) : undefined);
 
 test("a ready PR beside a red one in one session: both lines, each with its own state", () => {
   const root = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(201, "ok"), dot(202, "fail"), dot(203, "ok")] })]).render({});
@@ -55,11 +55,10 @@ test("a ready PR beside a red one in one session: both lines, each with its own 
   assert.ok(ready, "#201 has a line");
   assert.ok(red, "#202 has a line");
   assert.equal(checkOf(ready).props.text_color, "#ansi2", "the ready line has the ready mark");
-  assert.equal(discOf(ready), undefined, "and no disc");
-  assert.notEqual(ready.props.trigger.props.text_color, "#blocked", "the ready number is not red");
+  assert.notEqual(discOf(ready).props.text_color, "#blocked", "the ready number is not red");
   assert.equal(checkOf(red), undefined, "the red line has no ready mark");
-  assert.equal(discOf(red).props.bg, "#blocked", "the red line has the red disc");
-  assert.equal(red.props.trigger.props.text_color, "#blocked", "the red line's number is red");
+  assert.equal(discOf(red).props.text_color, "#blocked", "the red line's badge is red");
+  assert.equal(discOf(red).props.bg, "#blocked2e", "with a red tint");
   assert.ok(lineOf(root, 203), "the merge-blocked PR is a line too");
   assert.ok(texts(red.props.trigger).includes("PR 202"), "the line carries the title");
 });
@@ -76,7 +75,7 @@ test("a two-PR session draws two lines below the row, none on the title row", ()
   const root = view([sess("s-a", "agent-a", { pid: 7, hcTerminal: "t5", dots: [dot(201, "ok"), dot(202, "fail")] })], OPEN.slice(0, 2)).render({});
   const rows = walk(root).filter((e) => /^(row:|agent:t5$)/.test(String(e.props?.id ?? "")));
   assert.equal(rows.flatMap((r) => (r.kids ?? []).filter((k) => k.kind === "HoverCard")).length, 0, "no chip on the row");
-  assert.deepEqual(cards(root).map((c) => walk(c.props.trigger).find((e) => /^⎇/.test(e.kids?.[0] ?? ""))?.kids[0]), ["⎇ #202", "⎇ #201"], "failing first, as lines");
+  assert.deepEqual(cards(root).map((c) => walk(c.props.trigger).flatMap((e) => e.kids ?? []).find((k) => /^PR #/.test(k))), ["PR #202", "PR #201"], "failing first, as lines");
 });
 
 test("hovering a session line builds its card; a click opens its page", () => {

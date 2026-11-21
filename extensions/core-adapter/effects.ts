@@ -15,7 +15,6 @@
 // such a place and never under `.git`. A chain takes the class of its worst segment; `cd <dir>`
 // moves the cwd the later segments resolve against; a path under an earlier segment's write
 // destination is unknown (ChainWrites).
-// Only write-out and unknown go on to the model review (timeoutallow.ts composes the allow).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -31,7 +30,7 @@ import { netReadSegment } from "./netread.ts";
 import { foldCase, longForm, memoLookup, nativeResolver, nullDevice } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
-/** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
+/** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments. */
 export type EffectClass = "read" | "net-read" | "build-test" | "write-in" | "write-out" | "unknown";
 
 export interface EffectCtx {
@@ -433,7 +432,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   if (recursive && !c.cpSourceRead && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
   const reads = prog === "cp" ? ops.slice(0, -1) : [];
   const writes = prog === "cp" ? ops.slice(-1) : ops;
-  // rm and mv never reach into the shared /tmp (as tmp-scratch: `rm -rf /tmp/...` stays reviewed)
+  // rm and mv never reach into the shared /tmp (`rm -rf /tmp/...` stays reviewed)
   const where = prog === "rm" || prog === "mv" ? [...(c.root ? [c.root] : []), ...(c.scratch ?? [])] : undefined;
   // mv into an existing dir: every moved name was judged above, so the dir itself needs no check of its own
   let movedIntoDir = false;

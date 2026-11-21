@@ -11,6 +11,7 @@ import {
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
 } from "./model.js";
+import { prsStaleText, PR_STALE_WORDS } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
 const LOCAL_MS = 3000;
@@ -69,21 +70,22 @@ const statusGlyph = (t, status) => glyph(t, glyphSpec(status));
 
 const tones = prTones;
 
-// One dot per PR: its colour is the PR's state, and it pulses (opacity, native loop) while a job runs or the checks are not settled.
-// A ready PR (`mark: "check"`) gets a check mark in the same box instead: a bold text glyph in its green, never pulsing.
-// A PR that waits on required checks (`hollow`) gets a still ring instead: an amber border, no fill.
-function prDot(t, st) {
-  const color = tones(t)[st.fill];
-  if (st.mark === "check") return h_flex().relative().flex_none().size(14).mx(1).items_center().justify_center()
-    .text_size(12).font_semibold().text_color(color).child("✓");
-  if (st.hollow) return div().relative().flex_none().size(14).mx(1)
-    .child(div().absolute().top(4).left(4).size(6).rounded(3).border(1.5).border_color(color));
-  return div().relative().flex_none().size(14).mx(1)
-    .child(div().absolute().top(4).left(4).size(6).rounded(3).bg(color)
-      .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));
+// The number of a PR in a badge (the "Needs you" recipe): its colour is the PR's state, a tint behind the text and a border. It pulses (opacity,
+// native loop) while a job runs or the checks are not settled. A ready PR (`mark: "check"`) has a check mark before the number, never pulsing.
+// A PR that waits on required checks (`hollow`) has the border only, no tint. The badge never shrinks or truncates.
+function prBadge(t, st, label) {
+  const ink = tones(t)[st.fill];
+  return h_flex().flex_none().items_center().h(16).px(5).rounded(5).whitespace_nowrap()
+    .when(!st.hollow, (el) => el.bg(ink + "2e"))
+    .border(1).border_color(st.hollow ? ink : ink + "55")
+    .text_size(10).font_semibold().text_color(ink)
+    .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 }))
+    .when(st.mark === "check", (el) => el.child("✓ ")).child(label);
 }
 
 // An Open PRs line needs attention when a finished check failed (its dot is red) or the PR conflicts with its base (the conflict mark).
+// The badge cell of a PR line: the number cell plus room for the badge (and its check mark); the session form ("PR #n") is wider than the list form ("#n").
+const badgeCellWidth = (prs, form) => numberCellWidth(prs) + (form === "session" ? 32 : 8);
 const prFailing = (pr) => prDotState(pr).fill === "red";
 const prConflict = (pr) => prDotState(pr).conflict === true;
 
@@ -271,7 +273,7 @@ export default class ForemanAgents extends View {
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
           const doc = r.code === 0 ? parseRadarDoc(r.stdout, machine) : null;
-          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, strip: doc.strip ?? null, tried: Date.now() } : null;
+          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, trackedAt: doc.trackedAt, trackedN: doc.trackedN, trackedOff: doc.trackedOff, strip: doc.strip ?? null, tried: Date.now() } : null;
         } catch {
           next = null;
         }
@@ -406,6 +408,7 @@ export default class ForemanAgents extends View {
             cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "", watchdog: true })),
           ]);
           if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
+          else if (typeof r?.code === "number" && r.code !== 0) this.fail(key, "Foreman PR poll failed", openFailure({ ...r, stderr: String(r.stderr || r.stdout || "") }));
           else this.failed?.delete(key);
         } catch (e) {
           if (missingBinary(e)) this.failed?.delete(key);
@@ -498,7 +501,7 @@ export default class ForemanAgents extends View {
     });
   }
 
-  // A PR is a line: number, the conflict mark and the dot, the title. A click opens its page when radar gave a URL (or a repository URL to
+  // A PR is a line: the number in a badge (its colour is the state), the conflict mark, the title. A click opens its page when radar gave a URL (or a repository URL to
   // derive it from). Resting on the line opens the hover card; the tooltip names the state in words. `line` is {title, numW}: the title and the width of the number cell.
   prChip(t, pr, href, key, line = {}) {
     return this.prGuard(() => this.prChipRaw(t, pr, href, key, line), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
@@ -506,16 +509,13 @@ export default class ForemanAgents extends View {
 
   prChipRaw(t, pr, href, key, line) {
     const st = prDotState(pr);
-    const red = st.fill === "red";
-    const label = `⎇ #${pr.number}`;
-    // The marks cell has a fixed width (the conflict slot stays as blank space without a conflict), so the titles stand at one x.
+    const label = `${line.form === "session" ? "PR " : ""}#${pr.number}`;
+    // The number cell has a fixed width and so has the conflict slot (blank without a conflict), so the titles stand at one x.
     const chip = h_flex().w_full().h(18).px(4).gap(4).items_center().rounded(4).text_size(10.5).font_medium()
-      .text_color(red ? t.blocked : t.muted)
-      .child(div().flex_none().w(line.numW ?? 52).whitespace_nowrap().child(label))
-      .child(h_flex().flex_none().w(30).gap(2).items_center()
-        .child(st.conflict ? conflictMark(t) : div().flex_none().size(11))
-        .child(prDot(t, st)))
-      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(red ? t.foreground : t.muted).child(line.title)))
+      .text_color(t.muted)
+      .child(h_flex().flex_none().w(line.numW ?? badgeCellWidth([pr], line.form)).items_center().child(prBadge(t, st, label)))
+      .child(h_flex().flex_none().w(11).items_center().child(st.conflict ? conflictMark(t) : div().flex_none().size(11)))
+      .when(Boolean(line.title), (el) => el.child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.foreground).child(line.title)))
       .when(Boolean(prGateText(pr)), (el) => el.child(div().flex_none().text_color(pr.gate.state === "failed" ? t.blocked : t.dim).child(prGateText(pr))));
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the line tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
@@ -579,12 +579,12 @@ export default class ForemanAgents extends View {
     return this.prGuard(() => enrichPrs(prs, this.feed), prs);
   }
 
-  // The PRs of a session row: one line each (number, marks, dot, title), in sorted order, indented like the row's sub-rows. Hover and click are the line's.
+  // The PRs of a session row: one line each (number badge, conflict mark, title), in sorted order, indented like the row's sub-rows. Hover and click are the line's.
   prLines(t, item, below, ind) {
     const lines = this.enrich(below);
-    const numW = numberCellWidth(lines);
+    const numW = badgeCellWidth(lines, "session");
     return v_flex().flex_none().pl(ind + 20).pr(8).gap(1)
-      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "", numW })));
+      .children(lines.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, { title: p.title ?? "", numW, form: "session" })));
   }
 
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
@@ -649,7 +649,7 @@ export default class ForemanAgents extends View {
             .on_click((_e, cx) => { this.press(id, cx); this.openPanel(item.node, r.kind); }).child(on ? `${r.text} …` : r.text);
         }))] : []),
       ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
-        .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : line.icon ? t.dim : t.muted).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
+        .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : t.dim).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
     ];
     return x === null ? rows : rows.map((r, i) => div().relative().flex_none().child(r).child(this.rail(t, `${item.id}/x${i}`, x)));
   }
@@ -761,12 +761,13 @@ export default class ForemanAgents extends View {
   // first and start open, drawing OPEN_PR_GROUP_LINES lines at most (the problem ones first) and then a "+N more" line; with more than
   // OPEN_PR_FOLD_AT PRs the others start folded. Folding by hand (`this.folded`, `this.unfolded`) lasts while Herdr is open. A group that fails to build is replaced by a plain row (its name and count), so one repository does not
   // take the section down.
-  openPrRows(t, groups, age = "") {
+  openPrRows(t, groups, age = "", stale = "") {
     if (!groups.length) return [];
     this.folded ??= new Set();
     this.unfolded ??= new Set();
     const rows = [sectionHead(t, "op-head", "Open PRs", { rule: true })
-      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
+      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))
+      .when(stale !== "", (el) => el.child(div().ml(6).text_size(10).text_color(tones(t).amber).child(stale)))];
     const info = groups.map((g) => guard(() => openPrInfo(g), { g, prs: null, failing: 0, conflicts: 0 }));
     const total = info.reduce((n, i) => n + (i.prs?.length ?? 0), 0);
     const attention = (i) => i.failing > 0 || i.conflicts > 0;
@@ -802,10 +803,10 @@ export default class ForemanAgents extends View {
     // failing, then the rest in order, then "+N more" until a click shows all.
     const capped = (failing > 0 || conflicts > 0) && n > OPEN_PR_GROUP_LINES && !this.expanded.has(g.repo);
     const shown = capped ? [...prs.filter(prConflict), ...prs.filter((p) => !prConflict(p) && prFailing(p)), ...prs.filter((p) => !prConflict(p) && !prFailing(p))].slice(0, OPEN_PR_GROUP_LINES) : prs;
-    const numW = numberCellWidth(prs);
+    const numW = badgeCellWidth(prs, "list");
     const more = (_e, cx) => { this.expanded.add(g.repo); cx.notify(); };
     return group.child(v_flex().flex_none().pl(20).pr(8).gap(1)
-      .children(shown.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "", numW })))
+      .children(shown.map((p) => this.prChip(t, p, p.href, `op-${g.repo}`, { title: p.title ?? "", numW, form: "list" })))
       .when(capped, (el) => el.child(h_flex().id(`opm-${g.repo}`).flex_none().h(18).px(4).items_center().rounded(4).cursor_pointer().text_size(10.5).text_color(t.dim)
         .hover((x) => x.bg(t.hover)).on_click(more).child(`+${n - shown.length} more`))));
   }
@@ -883,12 +884,13 @@ export default class ForemanAgents extends View {
     const rows = PR_LEGEND.map((e) => {
       const st = prDotState(e.sample);
       return h_flex().gap(6).items_center()
-        .child(h_flex().flex_none().w(30).gap(2).items_center().child(e.key === "pr-conflict" ? conflictMark(t) : div().flex_none().size(11)).child(prDot(t, st)))
+        .child(h_flex().flex_none().w(98).gap(4).items_center().child(e.key === "pr-conflict" ? conflictMark(t) : div().flex_none().size(11)).child(prBadge(t, st, "PR #12")))
         .child(div().flex_1().min_w(0).child(e.words));
     });
     return v_flex().w(300).p(10).gap(4).bg(t.popover).border(1).border_color(t.border).rounded(8).text_size(11).text_color(t.muted)
-      .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Pull request dots"))
-      .children(rows);
+      .child(div().text_size(12).font_semibold().text_color(t.foreground).child("Pull request badges"))
+      .children(rows)
+      .child(div().text_color(t.dim).child(PR_STALE_WORDS));
   }
 
   render(cx) {
@@ -1022,7 +1024,8 @@ export default class ForemanAgents extends View {
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     const age = listedAt ? this.clock("open-prs-age", (n) => openPrsAge(listedAt, n), now) : "";
-    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age), []));
+    const stale = this.clock("open-prs-stale", (n) => prsStaleText([...this.radar.values()], n), now);
+    rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age, stale), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)

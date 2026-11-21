@@ -178,7 +178,7 @@ class Rig:
     """One throwaway Pi world: agent dir + project + tmp, plus the processes started in it."""
 
     def __init__(self, name, script, providers=(PROVIDER_A,), config=None, settings=None, unmapped=(),
-                 project_config=None, l2_providers=True, permissions="open", intercom=False):
+                 project_config=None, l2_providers=True, intercom=False):
         """`project_config` is written to project/.pi/foreman.json after the user block is
         generated (Pi runs with --approve, so the adapter trusts it); `l2_providers=False` leaves
         the L2 `providers` map, and so the generated agentOverridesByProvider, empty."""
@@ -188,12 +188,12 @@ class Rig:
         self.root = Path(tempfile.mkdtemp(prefix="pf-replay-%s-" % name, dir=base)).resolve()
         self.procs = []
         try:
-            self._setup(script, providers, config, settings, unmapped, project_config, l2_providers, permissions, intercom)
+            self._setup(script, providers, config, settings, unmapped, project_config, l2_providers, intercom)
         except BaseException:
             self.close()  # same pf-replay- prefix and tmp-root check; the caller's addCleanup is not registered yet
             raise
 
-    def _setup(self, script, providers, config, settings, unmapped, project_config, l2_providers, permissions, intercom):
+    def _setup(self, script, providers, config, settings, unmapped, project_config, l2_providers, intercom):
         self.agent = self.root / "agent"
         self.project = self.root / "project"
         self.tmp = self.root / "tmp"

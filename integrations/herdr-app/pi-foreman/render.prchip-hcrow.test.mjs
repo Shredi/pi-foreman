@@ -21,7 +21,7 @@ const walk = (el, out = []) => {
   if (el.props?.trigger) walk(el.props.trigger, out);
   return out;
 };
-const chipOf = (out) => walk(out).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes("⎇ #7")));
+const chipOf = (out) => walk(out).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).some((k) => k === "PR #7" || k === "#7")));
 
 // Row shapes: where the session with the PR sits. `top`: the listed agent t5 is joined to the node itself; `hcchild`: the node is
 // the radar twin of the live hc terminal t9 below t5 (joined by hcTerminal); `bare`: the live terminal t9 has no radar node.

@@ -113,7 +113,7 @@ Off by default. Without a steward nobody groups reports that use different words
 - The steward lock lives for days. The watch refreshes it at every check, so the age break that frees a lock of a dead session (three missed checks, at least ten minutes) never hits a live steward. `off` and the end of the session give the lock back; a stale lock of a dead session can be taken.
 - A watch checks the report list every `steward.checkMinutes` (default 30). It wakes the session with a `pi-foreman-steward` message when at least `steward.minNew` (default 3) ungrouped open entries were seen since the last pass, or when `steward.maxWaitHours` (default 24) passed since the last pass and at least one such entry exists. With no new entry it never wakes. The wake text holds counts only, never report text. A check that throws is traced (`steward {action: tick_failed}`) and never stops the watch. A busy session is not woken: a pending question to you counts as busy, and the next check tries again. A wake counts as a pass; the same reports do not wake twice.
 - The watch is stored in the session like a PR watch, so it survives a reload or resume. If another session holds the lock by then, or `steward.enabled` is false, the watch is not restored and the session says so once.
-- The steward reads the retro counters of its own session with `foreman_reports` action `retro` (the JSON of `foreman retro --json` without the permission proposals, `session_tools` and `flagged_asks`: counters plus the tool and skill names of `tool_usage`; no report text and no command text), so it never has to name the trace and usage files. The action is steward-only: any other session, a child, and a session with `steward.enabled` false get a one-line refusal, and the tool otherwise acts as before. In every pass the steward first binds a standing ledger (`foreman_ledger`, topic `steward`: status first, `init` only when none exists; a ledger whose items are all closed, whether found by `status` or bound by the plain `init` of an existing file, gets the standing item with action `add`) so the spawn gate lets the launch through. With a bound ledger, the gate refuses only a closed ledger untouched since the session started.
+- The steward reads the retro counters of its own session with `foreman_reports` action `retro` (the JSON of `foreman retro --json` without `session_tools` and `flagged_asks`: counters plus the tool and skill names of `tool_usage`; no report text and no command text), so it never has to name the trace and usage files. The action is steward-only: any other session, a child, and a session with `steward.enabled` false get a one-line refusal, and the tool otherwise acts as before. In every pass the steward first binds a standing ledger (`foreman_ledger`, topic `steward`: status first, `init` only when none exists; a ledger whose items are all closed, whether found by `status` or bound by the plain `init` of an existing file, gets the standing item with action `add`) so the spawn gate lets the launch through. With a bound ledger, the gate refuses only a closed ledger untouched since the session started.
 - Limits: a stale lock taken over by two sessions at the same moment can let both hold it until the next check, which corrects it. A lesson set from the shell carries no `repo`.
 - The steward session gets no start note.
 - `model: "top"` is the launch keyword of the steward's analysis helper (see [ladder](ladder.md#the-keyword-top)); the harness allows it only while this session is the steward.
@@ -135,13 +135,12 @@ from usage records and the Pi model registry rates, whichever provider logged th
 
 ## What retro reports
 
-Retro prints counters and proposals; it creates no report entries and writes no store file (the trace-derived entries of the older backlog loop are gone). What it prints:
+Retro prints counters; it creates no report entries and writes no store file (the trace-derived entries of the older backlog loop are gone). What it prints:
 
 - approvals and denials, with the denials a later approve overrode;
 - trace counters: guard blocks, revisions, turn causes, `friction:` counters (rereviews, read-budget hits, rung-ups, child read-budget hits, headless review defers, turns), `reports:` (the `foreman_report` calls of the session by kind), pressure and critique counters;
 - spawn cost per role, cost outliers, repeated bash families, read counts, top tools;
 - flagged asks (see below);
-- permission proposals: the allow rules `/retro` suggests, with `--proposals-out`;
 - the report lines below, and `foreman retro models`.
 
 The trace does not carry the key of a report, so these counters add no counts to entries. To see what was reported, use `foreman reports list`.
@@ -256,7 +255,7 @@ entry is still written and says `(the compaction summary has no Retro section)`.
 - `trace.enabled`: `null` (default) follows the effective `retro.enabled`, so a session that retros also traces.
   An explicit `true` or `false` wins; `false` turns the trace off even when retro is on.
 - `/retro --model` is refused when retro is off or the session is not interactive.
-- `retro.proposalMinReviews`: see [sessions](sessions.md).
+- `retro.proposalMinReviews`: accepted and ignored (the permission proposals it limited are gone); `/foreman doctor` prints one INFO line when a config sets it.
 
 ## Flagged asks
 

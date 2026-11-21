@@ -1,4 +1,4 @@
-"""gate.readClear (the read question): default true; the project and session layers may only set false."""
+"""gate.readClear has no effect but stays a known key: every layer loads it without a warning."""
 import json
 import os
 import sys
@@ -30,23 +30,18 @@ class ReadClearLayerTest(unittest.TestCase):
         return fc.load_config(agent_dir=str(self.agent), project_dir=str(self.project), trusted_project=True,
                               session_json=json.dumps(session) if session is not None else None)
 
-    def test_default_is_true(self):
-        self.assertIs(self.load()["config"]["gate"]["readClear"], True)
-
     def test_user_layer_may_set_either_value(self):
         self.assertIs(self.load(l2={"gate": {"readClear": False}})["config"]["gate"]["readClear"], False)
         self.assertIs(self.load(l2={"gate": {"readClear": True}})["config"]["gate"]["readClear"], True)
 
-    def test_project_may_set_false_only(self):
-        self.assertIs(self.load(proj={"gate": {"readClear": False}})["config"]["gate"]["readClear"], False)
-        res = self.load(l2={"gate": {"readClear": False}}, proj={"gate": {"readClear": True}})
-        self.assertIs(res["config"]["gate"]["readClear"], False)
-        self.assertIn("project gate.readClear ignored", "\n".join(res["warnings"]))
-
-    def test_session_may_set_false_only(self):
-        self.assertIs(self.load(session={"gate": {"readClear": False}})["config"]["gate"]["readClear"], False)
-        res = self.load(l2={"gate": {"readClear": False}}, session={"gate": {"readClear": True}})
-        self.assertIs(res["config"]["gate"]["readClear"], False)
+    def test_project_and_session_load_without_warning(self):
+        for v in (True, False):
+            res = self.load(proj={"gate": {"readClear": v}})
+            self.assertIs(res["config"]["gate"]["readClear"], v)
+            self.assertNotIn("readClear", "\n".join(res["warnings"]))
+            res = self.load(session={"gate": {"readClear": v}})
+            self.assertIs(res["config"]["gate"]["readClear"], v)
+            self.assertNotIn("readClear", "\n".join(res["warnings"]))
 
     def test_user_layer_overrides_an_organisation_overlay(self):
         # the overlay (L3) merges below the user layer (L2): the user's true wins over the organisation's false, no warning
@@ -63,10 +58,6 @@ class ReadClearLayerTest(unittest.TestCase):
         res = self.load(l2={"gate": {"readClear": "false"}})
         self.assertIn("gate.readClear: expected boolean", res["errors"])
         self.assertEqual(res["config"]["gate"]["readClear"], "false")
-
-    def test_non_boolean_is_not_taken(self):
-        res = self.load(proj={"gate": {"readClear": "no"}})
-        self.assertIs(res["config"]["gate"]["readClear"], True)
 
 
 if __name__ == "__main__":
