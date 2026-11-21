@@ -1,4 +1,4 @@
-import { after, test } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,17 +9,9 @@ import type { PollDeps } from "../prs-cli.ts";
 import { addTracked, clearStoreCache, readStoreEntry, storeKey, trackedCommentsFile, trackedFile, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const made: string[] = [];
-after(() => {
-  for (const d of made) rmTestTmp(d);
-});
-const mk = (prefix: string): string => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  made.push(d);
-  return d;
-};
+const mk = trackedTmp;
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;

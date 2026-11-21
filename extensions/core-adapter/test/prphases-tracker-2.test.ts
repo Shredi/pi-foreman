@@ -11,6 +11,7 @@ import { addTracked, clearStoreCache, trackedStateFile } from "../prstore.ts";
 import { settledOf } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -21,7 +22,7 @@ const row = (o: Row = {}): Row => ({ repo: "acme/app", number: 1, state: "open",
 
 async function setup(phases: unknown, r: Row, baseline?: Row, source?: { status: string }) {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-prphases2-"));
+  const agentDir = trackedTmp("pf-prphases2-");
   const clock = { t: T0 };
   const deps: PollDeps = {
     agentDir,

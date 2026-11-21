@@ -1,5 +1,5 @@
 // foreman knowledge: a PDF source is hashed and cached as its raw bytes (`<id>.pdf`), stable across runs; one CLI spawn against a local fixture (no network).
-import { after, test } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -8,17 +8,9 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { compareSource, hashText } from "../../../scripts/foreman_knowledge.mjs";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const made: string[] = [];
-after(() => {
-  for (const d of made) rmTestTmp(d);
-});
-const mk = (prefix: string): string => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  made.push(d);
-  return d;
-};
+const mk = trackedTmp;
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "foreman_knowledge.mjs");
 const tmp = () => mk("pf-knowledge-pdf-");

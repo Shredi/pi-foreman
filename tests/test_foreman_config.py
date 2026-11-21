@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -710,7 +711,10 @@ class SlimRolesTest(unittest.TestCase):
 
 class SessionForemanRoleTest(unittest.TestCase):
     def test_excluded_from_child_roles_and_subagents(self):
-        cfg = fc.load_config(agent_dir=tempfile.mkdtemp(), project_dir=tempfile.mkdtemp())["config"]
+        agent, project = tempfile.mkdtemp(), tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, agent, True)
+        self.addCleanup(shutil.rmtree, project, True)
+        cfg = fc.load_config(agent_dir=agent, project_dir=project)["config"]
         cfg["providers"] = PROV
         self.assertIn(fc.SESSION_FOREMAN, cfg["roles"])
         self.assertNotIn(fc.SESSION_FOREMAN, fc.child_roles(cfg))

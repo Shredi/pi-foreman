@@ -1,21 +1,13 @@
-import { after, test } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addTracked, clearStoreCache, readStoreEntry, storeKey, trackedCommentsFile, trackedFile, trackedStateFile } from "../prstore.ts";
 import type { PrKey } from "../prhost.ts";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const made: string[] = [];
-after(() => {
-  for (const d of made) rmTestTmp(d);
-});
-const mk = (prefix: string): string => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  made.push(d);
-  return d;
-};
+const mk = trackedTmp;
 
 const K: PrKey = { host: "github.com", repo: "Acme/App", n: 7 };
 const NOW = 10_000_000;

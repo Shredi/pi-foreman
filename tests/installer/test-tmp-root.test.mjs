@@ -129,3 +129,13 @@ test("sweepStale stops when the time budget is spent", () => {
   entry(b, "pf-old-0", 3 * DAY);
   assert.equal(sweepStale({ bases: [b], budgetMs: -1 }).removed, 0);
 });
+
+test("leftovers leaves tool caches out of the count", () => {
+  const b = base();
+  fs.mkdirSync(path.join(b, "node-compile-cache"));
+  fs.mkdirSync(path.join(b, "jiti"));
+  fs.mkdirSync(path.join(b, "tsx-501"));
+  assert.deepEqual(leftovers(b), []);
+  fs.mkdirSync(path.join(b, "pf-leak"));
+  assert.deepEqual(leftovers(b), ["pf-leak"]);
+});

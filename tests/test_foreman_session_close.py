@@ -416,7 +416,9 @@ class RadarRemoteTest(unittest.TestCase):
     def test_the_pull_interval_helper_is_gone(self):
         self.assertFalse(hasattr(fr, "config_pull_interval"))
         self.assertFalse(hasattr(fr, "PULL_INTERVAL"))
-        self.assertNotIn("pullInterval", fr.load(Path(tempfile.mkdtemp(prefix="radar_cfg_"))))
+        cfg = Path(tempfile.mkdtemp(prefix="radar_cfg_"))
+        self.addCleanup(shutil.rmtree, cfg, True)
+        self.assertNotIn("pullInterval", fr.load(cfg))
 
 
 class SidebarRemoteTest(unittest.TestCase):

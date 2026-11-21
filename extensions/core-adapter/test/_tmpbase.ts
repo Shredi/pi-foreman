@@ -2,6 +2,7 @@
 // so a fixture created below /tmp (Linux CI: os.tmpdir() === "/tmp") would be classed tmp-scratch / write-in
 // and hide the containment these tests assert. PI_FOREMAN_TEST_TMP overrides the base.
 import * as fs from "node:fs";
+import { after } from "node:test";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -23,6 +24,19 @@ export function mkTestTmp(prefix: string): string {
   if (underTmp(root)) root = path.join(os.homedir(), ".cache", "pi-foreman-tests");
   fs.mkdirSync(root, { recursive: true });
   return fs.mkdtempSync(path.join(root, prefix));
+}
+
+const tracked: string[] = [];
+// Registered once per importing test file (each file is its own process); a file that never calls trackedTmp removes nothing.
+after(() => {
+  for (const d of tracked) rmTestTmp(d);
+});
+
+/** `mkdtemp` under os.tmpdir() whose dir is removed by this file's top-level after hook. */
+export function trackedTmp(prefix: string): string {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tracked.push(d);
+  return d;
 }
 
 // Captured at load: tests mock setTimeout via t.mock.timers, and an after hook can still run under the mock.

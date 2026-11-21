@@ -37,10 +37,15 @@ export function createRunRoot(base = realTmpBase()) {
   return { root, env };
 }
 
-/** Top-level entry names of a run root (for the end warning); [] when it is gone. */
+/** Caches that Node and tools create on purpose in TMPDIR; not a test leak. */
+const TOOL_CACHES = new Set(["node-compile-cache", "jiti"]);
+/** tsx keeps `tsx-<uid>`. */
+const isToolCache = (n) => TOOL_CACHES.has(n) || /^tsx-\d+$/.test(n);
+
+/** Top-level entry names of a run root (for the end warning), tool caches left out; [] when it is gone. */
 export function leftovers(root) {
   try {
-    return fs.readdirSync(root);
+    return fs.readdirSync(root).filter((n) => !isToolCache(n));
   } catch {
     return [];
   }
@@ -57,11 +62,11 @@ export function removeRunRoot(root) {
 
 /**
  * Sets up a run root for this process unless FOREMAN_TEST_TMP_ROOT is already set (then returns undefined and removes nothing).
- * Sets the env on `env` (process.env by default) and registers removal on exit. For the preloads and direct runs.
+ * Sets the env on `env` (process.env by default) and registers removal on exit. For the preloads and direct runs; never sweeps
+ * (a preload runs once per test file process on Node 26, the sweep belongs to the runner only).
  */
-export function ownRunRoot({ env = process.env, sweep = true } = {}) {
+export function ownRunRoot({ env = process.env } = {}) {
   if (env.FOREMAN_TEST_TMP_ROOT) return undefined;
-  if (sweep) sweepStale({ bases: sweepBases() });
   const { root, env: add } = createRunRoot(realTmpBase());
   Object.assign(env, add);
   process.on("exit", () => removeRunRoot(root));

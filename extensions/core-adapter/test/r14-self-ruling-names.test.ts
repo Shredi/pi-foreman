@@ -10,9 +10,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { isRulingName, SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 function rig() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r14sn-")));
+  const root = fs.realpathSync.native(trackedTmp("pf-r14sn-"));
   const hand = path.join(root, ".workflow", "handoffs");
   // H: the own handoff dir (the parent writes its rulings here); C: a second handoff dir where this session is the child
   const H = path.join(hand, "own");

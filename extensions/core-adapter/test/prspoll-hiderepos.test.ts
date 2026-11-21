@@ -10,6 +10,7 @@ import { openPrsFile } from "../openprs.ts";
 import { addTracked, clearStoreCache, storeKey, trackedStateFile } from "../prstore.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { MergedConfig } from "../config.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const T0 = 50_000_000;
@@ -19,7 +20,7 @@ const row = (repo: string, n: number, o: Row = {}): Row => ({ repo, number: n, s
 
 function setup(hideRepos: unknown, refresh: "refreshed" | "fresh" = "refreshed") {
   clearStoreCache();
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-hide-"));
+  const agentDir = trackedTmp("pf-hide-");
   const rows = new Map<string, Row>();
   const clock = { t: T0 };
   const cfg = { value: { radar: { openPrs: { hideRepos } } } as Record<string, unknown> };

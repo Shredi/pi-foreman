@@ -1,6 +1,6 @@
 // Round 2, step 2a: the own-ruling refusal (ruling.ts selfRulingRefusal) reads the write words from the gate's parse (shellast.ts, defaults.ts
 // shellWriteTargets) instead of permoverlay.ts shellWrites. Lines are data strings, never run.
-import { after, test } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -10,17 +10,9 @@ import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { shellWriteTargets, unresolvedWriteWords } from "../defaults.ts";
 import { parseShell } from "../shellast.ts";
 import { posixOnly } from "./_platform.ts";
-import { rmTestTmp } from "./_tmpbase.ts";
+import { trackedTmp } from "./_tmpbase.ts";
 
-const made: string[] = [];
-after(() => {
-  for (const d of made) rmTestTmp(d);
-});
-const mk = (prefix: string): string => {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  made.push(d);
-  return d;
-};
+const mk = trackedTmp;
 
 function rig() {
   const root = fs.realpathSync.native(mk("pf-r2src-"));
