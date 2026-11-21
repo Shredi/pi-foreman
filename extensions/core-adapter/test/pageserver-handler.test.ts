@@ -187,13 +187,16 @@ test("every request is reported as activity, a 404 too", () => {
   assert.equal(touched, before + 2);
 });
 
-test("health answers only with its key", () => {
-  assert.equal(get(`/_health/${"k".repeat(32)}`).status, 200);
-  assert.deepEqual(JSON.parse(text(get(`/_health/${"k".repeat(32)}`))), { pid: 1, version: "1.0.0", port: 1, bind: "127.0.0.1" });
-  assert.equal(get(`/_health/${"x".repeat(32)}`).status, 404);
+test("health answers a nonce with a proof of the key, never the key", () => {
+  const nonce = "n".repeat(32);
+  const body = JSON.parse(text(get(`/_health/${nonce}`)));
+  assert.equal(get(`/_health/${nonce}`).status, 200);
+  assert.deepEqual({ ...body, proof: undefined }, { pid: 1, version: "1.0.0", port: 1, bind: "127.0.0.1", proof: undefined });
+  assert.ok(!JSON.stringify(body).includes("k".repeat(32)));
+  assert.equal(get("/_health/short").status, 404);
   assert.equal(get("/_health/").status, 404);
-  assert.equal(get(`/_health/${"k".repeat(32)}/more`).status, 404);
-  assert.equal(get(`/_health/${"k".repeat(32)}`, "evil.example").status, 404);
+  assert.equal(get(`/_health/${nonce}/more`).status, 404);
+  assert.equal(get(`/_health/${nonce}`, "evil.example").status, 404);
 });
 
 test("a root record outside the id shape or a deleted record gives 404", () => {

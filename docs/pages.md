@@ -46,7 +46,9 @@ If another program holds the port, the server takes a free port (the port of its
 
 ## Restarts after an update
 
-The server records a `build` in its state file and health answer: a short sha256 over the bytes of its own source files (the page server, the `foreman pages` command and every local module they import). A session that finds a healthy server of another build replaces it only when its own files are newer than that server's start, so an updated install replaces an old server and an older install never displaces a newer one. The server of another build is ended only by the pid its health answer gives; a record that does not answer is never killed.
+The server records a `build` in its state file and health answer: a short sha256 over the bytes of its own source files (the page server, the `foreman pages` command and every local module they import). A session that finds a healthy server of another build replaces it only when its own files are newer than that server's start, so an updated install replaces an old server and an older install never displaces a newer one. The server of another build is ended only by the pid its verified health answer gives; a record that does not answer, or answers without a valid proof, is never killed.
+
+The health answer is authenticated by challenge and response. The client asks `GET /_health/<nonce>` with a fresh random nonce; the server answers its pid, version, build, port and bind plus `proof`, the HMAC-SHA256 of the nonce under a health key it wrote to `server.json` (mode 0600). The client accepts the answer only when the proof matches the key from `server.json`; the key itself is never sent. A program that merely listens on the recorded port cannot answer correctly, so no link points at it, no health key reaches it and no pid it names is signalled. A server whose `server.json` no longer names its own pid ends itself at the next periodic check. A fresh server gets 5 s to start answering.
 
 ## Network address for a phone
 

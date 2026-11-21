@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json } from "./config.ts";
 import { piAgentDir } from "./env.ts";
@@ -25,7 +25,7 @@ export const RECHECK_MS = 60_000;
 export const IDLE_CHECK_MS = 10 * 60_000;
 export const ENSURE_CACHE_MS = 60_000;
 const HEALTH_TIMEOUT_MS = 1000;
-const START_WAIT_MS = 2000;
+const START_WAIT_MS = 5000;
 const LOCK_STALE_MS = 10_000;
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const LOG_MAX_BYTES = 64 * 1024;
@@ -282,6 +282,10 @@ export async function loadPagesConfig(input: { agentDir: string; pkgRoot: string
   return parsePagesCfg(m.config);
 }
 
+/** Nonce of a health probe: 16+ random bytes as base64url (22+ chars). */
+const NONCE_RE = /^[A-Za-z0-9_-]{22,128}$/;
+const healthProof = (key: string, nonce: string): string => createHmac("sha256", key).update(nonce).digest("hex");
+
 // ---------------------------------------------------------------- request handler
 
 export interface HostRules {
@@ -293,7 +297,7 @@ export interface HostRules {
 export interface HandlerCtx {
   stateDir: string;
   hosts(): HostRules;
-  /** The answer of GET /_health/<key>, with the key. */
+  /** The answer of GET /_health/<nonce>, with the key that signs the nonce. */
   health(): { key: string; info: Health };
   /** Called on every request. */
   touch(): void;
@@ -421,10 +425,8 @@ export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHead
   const raw = pathPart.slice(1).split("/");
   if (raw[0] === "_health") {
     const { key, info } = ctx.health();
-    const given = Buffer.from(raw[1] ?? "");
-    const want = Buffer.from(key);
-    if (raw.length !== 2 || given.length !== want.length || !timingSafeEqual(given, want)) return notFound();
-    return reply(200, "application/json", JSON.stringify(info));
+    if (raw.length !== 2 || !NONCE_RE.test(raw[1])) return notFound();
+    return reply(200, "application/json", JSON.stringify({ ...info, proof: healthProof(key, raw[1]) }));
   }
   const id = raw[0];
   if (!ROOT_ID_RE.test(id) || raw.length < 2) return notFound();
@@ -468,10 +470,11 @@ export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHead
 /** Connect address of a bind address (a wildcard bind is reached on loopback). */
 export const connectHost = (bind: string): string => (bind === "0.0.0.0" ? "127.0.0.1" : bind === "::" ? "::1" : bind);
 
-/** GET /_health/<key> within 1 s; null when nothing answers like a pi-foreman page server on that port. */
+/** GET /_health/<nonce> within 1 s; the answer counts only with HMAC-SHA256(healthKey, nonce) as proof, the key itself is never sent. Null when nothing answers like the recorded pi-foreman page server. */
 export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Promise<Health | null> {
   return new Promise((resolve) => {
     const host = connectHost(rec.bind);
+    const nonce = randomBytes(24).toString("base64url");
     let done = false;
     const finish = (h: Health | null): void => {
       if (done) return;
@@ -479,7 +482,7 @@ export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Pr
       resolve(h);
     };
     try {
-      const req = http.get({ host, port: rec.port, path: `/_health/${rec.healthKey}`, timeout: timeoutMs, headers: { Host: `${bracket(host)}:${rec.port}` } }, (res) => {
+      const req = http.get({ host, port: rec.port, path: `/_health/${nonce}`, timeout: timeoutMs, headers: { Host: `${bracket(host)}:${rec.port}` } }, (res) => {
         if (res.statusCode !== 200) {
           res.resume();
           finish(null);
@@ -494,7 +497,10 @@ export function httpHealth(rec: ServerRecord, timeoutMs = HEALTH_TIMEOUT_MS): Pr
         res.on("end", () => {
           try {
             const j = JSON.parse(text) as Record<string, unknown>;
-            finish(Number.isInteger(j.pid) && (j.pid as number) > 0 && typeof j.version === "string" && j.port === rec.port && typeof j.bind === "string" ? { pid: j.pid as number, version: j.version, ...(typeof j.build === "string" ? { build: j.build } : {}), port: rec.port, bind: j.bind } : null);
+            const want = Buffer.from(healthProof(rec.healthKey, nonce));
+            const got = Buffer.from(typeof j.proof === "string" ? j.proof : "");
+            const proven = got.length === want.length && timingSafeEqual(got, want);
+            finish(proven && Number.isInteger(j.pid) && (j.pid as number) > 0 && typeof j.version === "string" && j.port === rec.port && typeof j.bind === "string" ? { pid: j.pid as number, version: j.version, ...(typeof j.build === "string" ? { build: j.build } : {}), port: rec.port, bind: j.bind } : null);
           } catch {
             finish(null);
           }
@@ -644,6 +650,8 @@ export async function startPageServer(deps: ServeDeps): Promise<PageServer | nul
       if (busy || ended) return;
       busy = true;
       try {
+        // an orphan: server.json no longer names this process, a newer server owns the state
+        if (readServer(stateDir)?.pid !== pid) return shutdown(0, "server.json names another server");
         const r = await deps.loadConfig();
         if (ended) return;
         if (!r.ok) return shutdown(1, `config re-read failed: ${r.why}`);
