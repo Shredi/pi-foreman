@@ -175,6 +175,5 @@ if not exist "%PF_NREC%" exit /b 0
 set "PF_NBIN="
 set /p PF_NBIN=<"%PF_NREC%"
 if not defined PF_NBIN exit /b 0
-if not exist "%PF_NBIN%" exit /b 0
-for %%i in ("%PF_NBIN%") do set "PATH=%%~dpi;%PATH%"
+for %%i in ("%PF_NBIN%") do if exist "%%~dpinode.exe" set "PATH=%%~dpi;%PATH%"
 exit /b 0

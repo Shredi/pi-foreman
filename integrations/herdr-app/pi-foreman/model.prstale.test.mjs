@@ -1,4 +1,4 @@
-// The stale mark of the Open PRs header: tracked PRs exist and the tracked state time is missing or older than 90 s.
+// The stale mark of the Open PRs header: tracked PRs exist and the tracked state time is missing or older than 3 min.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { parseRadarDoc, prsStaleText, PRS_STALE_MS, PR_STALE_WORDS } from "./model.js";
@@ -6,9 +6,9 @@ import { parseRadarDoc, prsStaleText, PRS_STALE_MS, PR_STALE_WORDS } from "./mod
 const NOW = Date.parse("2026-11-21T12:00:00Z");
 const rec = (over) => ({ ok: true, trackedN: 1, trackedAt: NOW - 10_000, ...over });
 
-test("fresh trackedAt: no mark; older than 90 s: stale; missing with tracked PRs: stale", () => {
+test("fresh trackedAt: no mark; older than 3 min: stale; missing with tracked PRs: stale", () => {
   assert.equal(prsStaleText([rec()], NOW), "");
-  assert.equal(prsStaleText([rec({ trackedAt: NOW - PRS_STALE_MS })], NOW), "", "exactly 90 s is not yet stale");
+  assert.equal(prsStaleText([rec({ trackedAt: NOW - PRS_STALE_MS })], NOW), "", "exactly 3 min is not yet stale");
   assert.equal(prsStaleText([rec({ trackedAt: NOW - PRS_STALE_MS - 1 })], NOW), "stale");
   assert.equal(prsStaleText([rec({ trackedAt: null })], NOW), "stale");
   assert.equal(prsStaleText([rec({ trackedAt: undefined })], NOW), "stale");
@@ -33,4 +33,16 @@ test("parseRadarDoc passes trackedAt (ms) and trackedN through; absent or bad va
   assert.equal(b.trackedN, undefined);
   const c = parseRadarDoc(JSON.stringify(base));
   assert.deepEqual([c.trackedAt, c.trackedN], [undefined, undefined]);
+});
+
+test("off: no mark; 120 s old: no mark; 200 s old: mark", () => {
+  assert.equal(prsStaleText([rec({ trackedOff: true, trackedAt: null })], NOW), "");
+  assert.equal(prsStaleText([rec({ trackedAt: NOW - 120_000 })], NOW), "");
+  assert.equal(prsStaleText([rec({ trackedAt: NOW - 200_000 })], NOW), "stale");
+});
+
+test("parseRadarDoc passes trackedOff through only when true", () => {
+  const base = { v: 1, now: "2026-11-21T12:00:00Z", roots: [], openPrs: [] };
+  assert.equal(parseRadarDoc(JSON.stringify({ ...base, trackedOff: true })).trackedOff, true);
+  assert.equal(parseRadarDoc(JSON.stringify(base)).trackedOff, undefined);
 });

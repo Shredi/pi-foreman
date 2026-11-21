@@ -253,7 +253,7 @@ export function parseRadarDoc(text, machine = null) {
   dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
   const trackedAt = typeof doc.trackedAt === "string" ? Date.parse(doc.trackedAt) : NaN;
   const trackedN = Number.isInteger(doc.trackedN) && doc.trackedN > 0 ? doc.trackedN : 0;
-  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}), ...(trackedN ? { trackedN } : {}), ...(Number.isFinite(trackedAt) ? { trackedAt } : {}) };
+  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}), ...(trackedN ? { trackedN } : {}), ...(doc.trackedOff === true ? { trackedOff: true } : {}), ...(Number.isFinite(trackedAt) ? { trackedAt } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
@@ -952,15 +952,16 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
 }
 
-/** The tracked PR state is stale after three poll rounds (`foreman prs poll` runs every 30 s). */
-export const PRS_STALE_MS = 90000;
+/** The tracked PR state is stale after 3 min. `trackedAt` is stamped when a poll run starts and the next run starts 30 s after one ends, so a
+ *  run of a minute or more is normal and a mark at three plain poll rounds (90 s) would be false. */
+export const PRS_STALE_MS = 180_000;
 /** The words the legend gives the "stale" mark on the Open PRs header. */
-export const PR_STALE_WORDS = "stale: the tracked PR poll has not run for 90 s, so the PR states may be old";
+export const PR_STALE_WORDS = "stale: the tracked PR poll has not run for 3 min, so the PR states may be old";
 
-/** "stale" when a radar record has tracked PRs (`trackedN`) and its tracked state time (`trackedAt`, ms) is missing or older than PRS_STALE_MS at `now` (ms); else "".
+/** "stale" when a radar record has tracked PRs (`trackedN`) and its tracked state time (`trackedAt`, ms) is missing or older than PRS_STALE_MS at `now` (ms); else "" (also while the tracker is `off`).
  *  `recs` is the list of radar records; one stale record is enough. */
 export function prsStaleText(recs, now) {
-  return Number.isFinite(now) && listOf(recs).some((r) => isObj(r) && r.ok && r.trackedN > 0 && !(Number.isFinite(r.trackedAt) && now - r.trackedAt <= PRS_STALE_MS)) ? "stale" : "";
+  return Number.isFinite(now) && listOf(recs).some((r) => isObj(r) && r.ok && !r.trackedOff && r.trackedN > 0 && !(Number.isFinite(r.trackedAt) && now - r.trackedAt <= PRS_STALE_MS)) ? "stale" : "";
 }
 
 /** "updated 12m ago" ("updated <1m ago" under a minute) for the Open PRs header from the `openPrsAt` time (ms) and now (ms); "" when the time is unknown. */

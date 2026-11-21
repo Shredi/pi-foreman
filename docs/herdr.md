@@ -723,10 +723,9 @@ Every marker the herdr-app sidebar draws, with the one thing it means. The first
 A pulse is a native opacity loop of the disc (0.35 to 1, 1.2 s), drawn only while the PR is in a pulsing state; it adds no
 timer and no redraw. The turning circle belongs to agents alone.
 
-The Open PRs header shows an amber `stale` mark next to its age when tracked PRs exist and the tracked state is older than 90 s (three
-poll rounds) or missing: `foreman radar --json` reports `trackedAt` (the `trackedAt` of `tracked-prs-state.json`, ISO, `null` when missing) and
+The Open PRs header shows an amber `stale` mark next to its age when tracked PRs exist and the tracked state is older than 3 min or missing (never while the tracker is `off`; `foreman radar --json` then adds `trackedOff: true`): `foreman radar --json` reports `trackedAt` (the `trackedAt` of `tracked-prs-state.json`, ISO, `null` when missing) and
 `trackedN` (the lines of `tracked-prs.json`), and the mod compares `trackedAt` with its clock. The poll writes `trackedAt` at the start of every run
-(a run less than 25 s after the last one skips the work and keeps it), so a healthy tracker stays under 90 s unless one run takes longer. The
+(a run less than 25 s after the last one skips the work and keeps it), the mark is set at 3 min because a run of a minute or more is normal. The
 legend card (`pr-legend`) ends with a line that explains the mark. A poll that exits non-zero raises one error notice ("Foreman PR poll failed"
 with the first stderr line); the next run that exits 0 clears it.
 

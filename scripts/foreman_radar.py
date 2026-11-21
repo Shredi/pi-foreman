@@ -327,7 +327,7 @@ def _join_key(p):
 
 
 def tracked_meta(adir):
-    """(trackedAt ISO stamp or None, tracked list size) of the PR poll: `trackedAt` of state/tracked-prs-state.json (None when missing or 0) and the number of
+    """(trackedAt ISO stamp or None, tracked list size, tracker off) of the PR poll: `trackedAt` of state/tracked-prs-state.json (None when missing or 0) and the number of
     lines in state/tracked-prs.json. The sidebar marks the PR list stale from these; reads files only."""
     sdir = Path(adir) / "pi-foreman" / "state"
     st = read_json(sdir / "tracked-prs-state.json")
@@ -340,7 +340,7 @@ def tracked_meta(adir):
             at = None
     lst = read_json(sdir / "tracked-prs.json")
     n = len([x for x in lst["prs"] if isinstance(x, dict)]) if isinstance(lst, dict) and isinstance(lst.get("prs"), list) else 0
-    return at, n
+    return at, n, isinstance(st, dict) and st.get("off") is True
 
 
 def read_pr_feed(adir, now):
@@ -1272,7 +1272,9 @@ def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=
         if open_prs[1] is not None:
             doc["openPrsAt"] = open_prs[1]
         if len(open_prs) > 2:
-            doc["trackedAt"], doc["trackedN"] = open_prs[2]
+            doc["trackedAt"], doc["trackedN"], off = open_prs[2]
+            if off:
+                doc["trackedOff"] = True
     return doc
 
 

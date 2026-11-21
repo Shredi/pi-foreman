@@ -41,6 +41,14 @@ class TrackedAtTests(Fixture):
         self.assertIsNone(d["trackedAt"])
         self.assertEqual(d["trackedN"], 0)
 
+    def test_off_state_adds_tracked_off(self):
+        self.enable()
+        self.put_search([GOOD])
+        self.put_state([], off=True)
+        self.assertIs(self.doc()["trackedOff"], True)
+        self.put_state([])
+        self.assertNotIn("trackedOff", self.doc())
+
 
 if __name__ == "__main__":
     unittest.main()

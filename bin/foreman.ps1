@@ -6,7 +6,11 @@ if (-not (Get-Command node -CommandType Application -ErrorAction SilentlyContinu
     $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $HOME '.pi/agent' }
     $rec = Join-Path $agentDir 'pi-foreman/state/node-path'
     $nbin = if (Test-Path -LiteralPath $rec) { (Get-Content -LiteralPath $rec -TotalCount 1) } else { $null }
-    if ($nbin -and (Test-Path -LiteralPath $nbin -PathType Leaf)) { $env:PATH = (Split-Path -Parent $nbin) + [IO.Path]::PathSeparator + $env:PATH }
+    if ($nbin) {
+        $ndir = Split-Path -Parent $nbin
+        # only a folder that holds node(.exe) joins PATH (Pi may have run from a binary not named node)
+        if ($ndir -and ((Test-Path -LiteralPath (Join-Path $ndir 'node.exe') -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $ndir 'node') -PathType Leaf))) { $env:PATH = $ndir + [IO.Path]::PathSeparator + $env:PATH }
+    }
 }
 if ($sub -eq 'setup') {
     & node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" 2>$null

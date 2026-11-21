@@ -56,6 +56,17 @@ class NodeFallback(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("needs Node", r.stderr)
 
+    def test_record_of_a_binary_not_named_node_keeps_the_old_message(self):
+        node = self.fake_node()
+        other = node.parent / "bun"
+        other.write_text('#!/bin/sh\necho "FAKE-BUN"\n')
+        other.chmod(0o755)
+        node.unlink()
+        self.record(f"{other}\n")
+        r = self.run_foreman()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("foreman prs needs Node >= 22.6", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

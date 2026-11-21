@@ -9,7 +9,11 @@ case "$sub" in setup|dialogs|prs|rounds|reports|pane-resume|features|knowledge)
         nrec="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/node-path"
         nbin=""
         [ -f "$nrec" ] && IFS= read -r nbin < "$nrec" 2>/dev/null
-        if [ -n "$nbin" ] && [ -x "$nbin" ] && [ ! -d "$nbin" ]; then PATH="$(dirname -- "$nbin"):$PATH"; export PATH; fi
+        # only a folder that holds an executable `node` joins PATH (Pi may have run from a binary not named node)
+        if [ -n "$nbin" ]; then
+            ndir=$(dirname -- "$nbin")
+            if [ -f "$ndir/node" ] && [ -x "$ndir/node" ]; then PATH="$ndir:$PATH"; export PATH; fi
+        fi
     fi ;;
 esac
 if [ "$sub" = "setup" ]; then
