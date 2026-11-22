@@ -434,7 +434,7 @@ class BaselineTest(Base):
         self.baseline(self.entry(self.repo, paths=False))
         rep = self.build()
         self.assertEqual([u["paths"] for u in rep["uncommitted"]], [["old.txt"]])
-        self.assertEqual(rep["notes"], ["no session baseline for %s (too many changed files): every uncommitted file listed" % self.repo])
+        self.assertEqual(rep["notes"], ["no session baseline for %s (no per-file record: too many changed files or the record failed): every uncommitted file listed" % self.repo])
 
     def test_a_failed_baseline_entry_with_null_head_and_paths_counts_the_dirt_as_the_sessions_and_stays_open(self):
         self.put(self.repo, "own.txt")

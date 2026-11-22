@@ -352,7 +352,7 @@ def scoped_uncommitted(roots, base):
         entry = base.get(key(r))
         recorded = entry["paths"] if entry else None
         if entry and recorded is None:
-            notes.append("no session baseline for %s (too many changed files): every uncommitted file listed" % r)
+            notes.append("no session baseline for %s (no per-file record: too many changed files or the record failed): every uncommitted file listed" % r)
         old = [p for p in paths if recorded is not None and p in recorded and same_fingerprint(recorded[p], hash_path(r, p))]
         own = [p for p in paths if p not in old]
         if old:
