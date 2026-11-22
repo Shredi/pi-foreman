@@ -527,7 +527,7 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
             continue
         elif rule in ("higher_only", "higher_only_number"):
             num = rule == "higher_only_number"
-            isnum = lambda v: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
+            isnum = lambda v, num=num: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
             if not isnum(val):
                 why = "not a number" if num else "not an integer"
             elif val < 0:
@@ -540,7 +540,7 @@ def _tighten_pattern(node, base, keys, rule, done, who, warnings, minimum=0):
                 continue
         else:  # lower_only, lower_only_number
             num = rule == "lower_only_number"
-            isnum = lambda v: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
+            isnum = lambda v, num=num: isinstance(v, (int, float) if num else int) and not isinstance(v, bool)  # noqa: E731
             if not isnum(val):
                 why = "not a number" if num else "not an integer"
             elif val < minimum:
@@ -1188,7 +1188,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
         l1 = read_json(DEFAULTS_PATH)
         schema = read_json(SCHEMA_PATH)
     except (OSError, ValueError) as exc:
-        raise ConfigError("cannot read L1 defaults or schema: %s" % exc)
+        raise ConfigError("cannot read L1 defaults or schema: %s" % exc) from exc
     agent = resolve_agent_dir(agent_dir)
     cfg = copy.deepcopy(l1)
 
@@ -1252,7 +1252,7 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
     validate_schema(cfg, schema, "", issues)
     issues.extend(semantic_issues(cfg))
     fallback = False
-    for kind, path, msg in issues:
+    for kind, path, _msg in issues:
         if kind == "error" and (path == "safety" or path.startswith("safety.")):
             fallback = True
     for kind, path, msg in issues:
