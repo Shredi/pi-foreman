@@ -41,6 +41,7 @@ import type { DialogSpec } from "./ownerdialog.ts";
 import type { EventBus } from "./herdr.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
+import { strRaw } from "./strof.ts";
 
 export const SESSION_USAGE =
   "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session restart <label> | /foreman session list";
@@ -753,7 +754,7 @@ function openEntryOf(d: SessionDeps, label: string): SessionEntry | undefined {
 function terminalOf(e: SessionEntry): string {
   const hc = e.hc && typeof e.hc === "object" ? (e.hc as { address?: unknown }).address : undefined;
   if (typeof e.machine === "string") return `machine ${e.machine}${typeof hc === "string" ? ` (${hc})` : ""}`;
-  if (e.pane !== undefined) return `Herdr tab ${String(e.tab)} (workspace ${String(e.workspace)}, pane ${String(e.pane)})`;
+  if (e.pane !== undefined) return `Herdr tab ${String(e.tab)} (workspace ${String(e.workspace)}, pane ${strRaw(e.pane)})`;
   if (typeof hc === "string") return `herdr-core terminal ${hc}`;
   return "a terminal started by hand from the printed command";
 }

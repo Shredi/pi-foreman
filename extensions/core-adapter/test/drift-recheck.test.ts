@@ -15,6 +15,7 @@ import { registerSafeOps } from "../safeops.ts";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
+import { strRaw } from "../strof.ts";
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "scripts", "safe_ops.py");
 const HOME = os.tmpdir();
@@ -30,7 +31,7 @@ function tmp(t: { after(fn: () => void): void }, prefix: string): string {
 const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" };
 function g(cwd: string, ...args: string[]): void {
   const r = spawnSync("git", args, { cwd, env: GIT_ENV });
-  assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+  assert.equal(r.status, 0, `git ${args.join(" ")}: ${strRaw(r.stderr)}`);
 }
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const py = await resolvePython({ envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });

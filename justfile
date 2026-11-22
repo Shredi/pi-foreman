@@ -22,9 +22,11 @@ test-installer:
 typecheck:
     npm run typecheck
 
-# Ruff over the tree (version pinned in .github/lint-requirements.txt).
+# Every linter: ruff (version pinned in .github/lint-requirements.txt), the type check and oxlint (npm run lint:ts).
 lint:
     ruff check .
+    npm run typecheck
+    npm run lint:ts
 
 # Everything CI runs that a local machine can (npm run test:ci).
 ci:

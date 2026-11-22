@@ -14,7 +14,7 @@ import { tagChecks } from "./prphases.ts";
 import type { PhaseRule } from "./prphases.ts";
 import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
-import { isTrackedKey, keyText, parsePrUrl, remoteReposOf, validHost, validNumber, validRepo } from "./prhost.ts";
+import { isTrackedKey, parsePrUrl, remoteReposOf, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { bodyWithReviews, markOf, reviewFactsFor } from "./prbody.ts";
 import { commitOf, headOf, prGateRefusal } from "./reviews.ts";
@@ -538,7 +538,7 @@ export function registerPrFollow(pi: Pick<ExtensionAPI, "registerTool">, deps: P
         case "full": return failure(`${PR_FOLLOW}: ${FULL_TEXT}`, { decision: "tracked_full", ...details });
         case "unavailable": return failure(`${PR_FOLLOW}: could not update the tracked list (busy, unreadable or not writable); nothing was done.`, { decision: "tracked_unavailable", ...details });
         case "present": return { content: [{ type: "text" as const, text: `${PR_FOLLOW}: already following ${at}` }], details: { decision: "ran", ...details } };
-        default: return { content: [{ type: "text" as const, text: `${PR_FOLLOW}: following ${at}; herdr-app's \`foreman prs poll\` polls it and drops it when it is merged or closed` }], details: { decision: "ran", ...details } };
+        case "added": return { content: [{ type: "text" as const, text: `${PR_FOLLOW}: following ${at}; herdr-app's \`foreman prs poll\` polls it and drops it when it is merged or closed` }], details: { decision: "ran", ...details } };
       }
     },
   } as never);
@@ -679,7 +679,7 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
   const key = explicit ?? (await watchKey(s, ctx, n, url, cwd));
   if (!key.repo) return { error: noRepoCause(cwd ?? ctx.cwd), noRepo: true };
   if (!isTrackedKey(key, hosts.hosts)) return { error: notTracked(hosts.hosts, key.host), hostUnsupported: true };
-  const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n, key.host).catch((): TrackOutcome => "unavailable") : undefined);
+  const track = async (): Promise<TrackOutcome | undefined> => (s.track ? s.track(key.repo, key.n, key.host).catch((): TrackOutcome => "unavailable") : undefined);
   let tracked = created ? await track() : undefined;
   if (!s.watches.reserve(key)) return { duplicate: true, tracked: tracked ?? (await track()) };
   try {

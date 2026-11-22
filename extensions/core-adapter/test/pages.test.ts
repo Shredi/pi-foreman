@@ -430,7 +430,7 @@ test("milestones: PR opened, ready and merged come from the PR watch", async () 
   const watches = new PrWatches({ storeEntry, send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers, child: () => true, milestone: (k, n) => void seen.push(`${k}:${n}`) });
   const key = { host: "github.com", repo: "acme/app", n: 7 };
   watches.startPending(key, undefined, undefined, false);
-  assert.deepEqual(seen, [], "a watch of a PR this session did not create records no PR opened");
+  assert.deepEqual<string[]>(seen, [], "a watch of a PR this session did not create records no PR opened");
   watches.unwatch(7, "acme/app", "github.com");
   watches.startPending(key, undefined, undefined, false, true);
   assert.deepEqual(seen, ["pr_opened:7"]);

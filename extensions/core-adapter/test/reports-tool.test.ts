@@ -47,7 +47,7 @@ async function rig(t: T, o: { role?: string; launchId?: string; config?: Record<
   const notes: string[] = [];
   const r = await r11Rig(t, {}, {
     child: !!o.role,
-    config: { presence: { enabled: false }, ...(o.config ?? {}) },
+    config: { presence: { enabled: false }, ...o.config },
     ctx: { ui: { notify: (m: string) => notes.push(m), confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined } },
     piExtra: {
       registerTool: (d: { name: string } & Tool) => void tools.set(d.name, d),

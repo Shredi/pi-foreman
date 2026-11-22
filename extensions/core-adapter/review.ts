@@ -4,6 +4,7 @@
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import { isSubagentWakeText } from "./idlecustom.ts";
+import { strOf } from "./strof.ts";
 
 export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
 
@@ -14,7 +15,7 @@ export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
  * its input cannot put the command into the log.
  */
 export function errorKind(message: unknown, value = ""): string {
-  let m = String(message ?? "").replace(/\s+/g, " ").trim();
+  let m = strOf(message).replace(/\s+/g, " ").trim();
   for (const v of [value, value.trim(), value.replace(/\s+/g, " ").trim()]) if (v.length >= 4) m = m.split(v).join("<value>");
   if (/not logged in|unauthori[sz]ed|\b40[13]\b|api key|credential|authenticat|not configured/i.test(m)) return "auth";
   if (/^abort/i.test(m)) return "aborted";
@@ -92,7 +93,7 @@ export interface RegistryLike {
 function replyText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map((c) => (c && typeof c === "object" && (c as { type?: string }).type === "text" ? String((c as { text?: unknown }).text ?? "") : "")).join("");
+  return content.map((c) => (c && typeof c === "object" && (c as { type?: string }).type === "text" ? strOf((c as { text?: unknown }).text) : "")).join("");
 }
 
 /**

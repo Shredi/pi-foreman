@@ -6,7 +6,7 @@ import { pollPrs } from "../prs-cli.ts";
 import type { PollDeps } from "../prs-cli.ts";
 import { parseWire, runSource, sourceRuns } from "../prsources.ts";
 import type { PrContext, SourceCfg, SourceResult } from "../prsources.ts";
-import { addTracked, clearStoreCache, readStoreEntry, storeKey } from "../prstore.ts";
+import { addTracked, clearStoreCache, readStoreEntry } from "../prstore.ts";
 import { baselineOf, prDelta } from "../prwatch.ts";
 import type { WatchSnapshot } from "../prwatch.ts";
 import { DEFAULT_RULES } from "../prwake.ts";

@@ -116,7 +116,7 @@ test("applyRemoteNotice: a hash or size mismatch writes nothing; a truncated not
   const size = applyRemoteNotice(regOf(e), origin, parsed(noteText("Result", "result.md", "abc").replace("bytes:3", "bytes:9")));
   assert.equal(size?.changed, false);
   assert.deepEqual(fs.readdirSync(path.join(dir, "mirror")), []);
-  assert.equal(e.last, undefined);
+  assert.equal<typeof e.last>(e.last, undefined);
   const cut = applyRemoteNotice(regOf(e), origin, parsed(`Plan from demo: ${REMOTE_DIR}/plan.md sha256:${"a".repeat(64)} bytes:900 truncated\n---\nfirst part`));
   assert.ok(cut?.changed);
   assert.match(cut?.message ?? "", /truncated/);

@@ -1000,7 +1000,7 @@ def render_table(out, prices=None, tasks_root=None):
         usd = sum(usd_cells) if usd_cells else None
         est = any((c.get("usage") or {}).get("estimated") for c in mc)
         secs = [c["secs"] for c in mc if c.get("secs") is not None]
-        pct = lambda n: " (%.0f%%)" % (100.0 * n / total) if total else ""  # noqa: E731
+        pct = lambda n, total=total: " (%.0f%%)" % (100.0 * n / total) if total else ""  # noqa: E731
         lines.append("| %s | %d | %d/%d%s | %d/%d%s | %d/%d | %d/%d | %d/%d | %s%s | %s | %s | %s | %d |" % (
             m, len(mc), loc, total, pct(loc), dia, total, pct(dia),
             sum(len(c["score"]["false_alarms"]) for c in seeded), len(seeded),

@@ -11,7 +11,7 @@ import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { endWith, type Ended } from "./_hsrig.ts";
-import { tick, world } from "./_r46world.ts";
+import { world } from "./_r46world.ts";
 
 // pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup (no seam); PI_OFFLINE keeps the child rig from starting npm.
 process.env.PI_OFFLINE = "1";

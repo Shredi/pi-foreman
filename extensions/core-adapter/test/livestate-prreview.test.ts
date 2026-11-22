@@ -18,7 +18,7 @@ const fact = (n: number, head: string, state: "ok" | "wip" | "unreviewed", noChe
 test("prWatchWait without the review input is what it was; the unreviewed field stays", () => {
   const w = prWatchWait([{ n: 5, key: key("owner/repo") }], [{ n: 5, repo: "owner/repo", host: "github.com" }]);
   assert.deepEqual(w, { id: "pr_watch", kind: "pr", note: "1 pr watch", ageSeconds: 0, leftSeconds: 0, prs: [5], prRefs: [{ n: 5, repo: "owner/repo", host: "github.com" }], unreviewed: [{ n: 5, repo: "owner/repo", host: "github.com" }] });
-  assert.equal("review" in prWatchWait([{ n: 5, key: key("owner/repo") }], [], []), false);
+  assert.equal("review" in prWatchWait([{ n: 5, key: key("owner/repo") }], [], [])!, false);
 });
 
 test("prWatchWait with review facts carries them beside unreviewed", () => {

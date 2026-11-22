@@ -578,9 +578,9 @@ export interface ServeDeps {
   loadConfig(): Promise<CfgResult>;
   log(line: string): void;
   /** Ends the process (the real one) or records the code (tests). Called once. */
-  exit(code: number): void;
+  exit: (code: number) => void;
   pid?: number;
-  health?(rec: ServerRecord): Promise<Health | null>;
+  health?: (rec: ServerRecord) => Promise<Health | null>;
 }
 
 export interface PageServer {
@@ -745,7 +745,7 @@ export interface EnsureDeps {
   spawnServer(): void;
   /** SIGTERM to the pid of an older healthy server. */
   kill(pid: number): void;
-  sleep?(ms: number): Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
   startWaitMs?: number;
   /** Cache of outcomes by call site; default: one per process. */
   cache?: Map<string, { at: number; result: Promise<ServerRecord | null> }>;

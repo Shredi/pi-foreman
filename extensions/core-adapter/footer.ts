@@ -10,6 +10,7 @@ import { cacheBar, formatLeft, formatTotal, type CacheTier } from "./cachebar.ts
 import type { CachePolicy } from "./cachepolicy.ts";
 import { warmDelayMs } from "./selfwarm.ts";
 import { realTimers, type Timers } from "./prwatch.ts";
+import { strOf } from "./strof.ts";
 type Json = Record<string, unknown>;
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
@@ -34,7 +35,7 @@ export interface PriceRegistry {
 /** Registry rates (USD per million tokens) of a message's model; the claude-bridge provider is priced at anthropic rates. */
 export function lookupRate(registry: PriceRegistry | undefined, provider: unknown, model: unknown): { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } | undefined {
   try {
-    return registry?.find(provider === "claude-bridge" ? "anthropic" : String(provider ?? ""), String(model ?? ""))?.cost;
+    return registry?.find(provider === "claude-bridge" ? "anthropic" : strOf(provider), strOf(model))?.cost;
   } catch {
     return undefined;
   }

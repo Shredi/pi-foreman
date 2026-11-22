@@ -12,7 +12,7 @@ import { isShellTool } from "../toolmap.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
-function adapter(t: { after(fn: () => void): void }, toolNames: string[]) {
+function adapter(t: { after(fn: () => unknown): void }, toolNames: string[]) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-edbk-")));
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {

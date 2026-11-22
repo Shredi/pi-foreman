@@ -24,9 +24,9 @@ function rig(t: { after(fn: () => void): void }): { d: string; plan: string } {
 
 test("a shell line writing ruling.md in the own handoff dir is refused; one writing ruling-plan.md is not refused and the path rules refuse its write", async (t) => {
   const { d } = rig(t);
-  assert.equal(await selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, "ruling.md")}` }, d, [d]), SELF_RULING_REASON);
+  assert.equal(selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, "ruling.md")}` }, d, [d]), SELF_RULING_REASON);
   // ruling-plan.md left the tracked names with the parent's plan approval: no literal-path refusal for it any more
-  assert.equal(await selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, "ruling-plan.md")}` }, d, [d]), undefined);
+  assert.equal(selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, "ruling-plan.md")}` }, d, [d]), undefined);
   // the write protection of the handoff dir stays: a child's write tool gets no allow for either name in its own handoff dir
   const roots: GateRoots = { worktree: path.join(d, "wt"), scratch: [], tmp: [], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false, ownHandoff: d };
   assert.equal(pathDecide("write", { path: path.join(d, "plan.md") }, roots.worktree, roots)?.rule, "path-write-handoff", "the child's own plan.md is allowed in these roots");

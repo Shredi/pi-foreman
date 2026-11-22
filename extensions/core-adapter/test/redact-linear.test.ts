@@ -12,9 +12,9 @@ function redactOld(cmd: string): string {
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd
     .replace(/(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s'"]+/gi, `$1${R}`)
-    .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`)
     .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, `$1${R}@`)
     .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R)
     .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)

@@ -468,7 +468,8 @@ def cache_metrics(trace, usage, sid, config=None):
         except Exception:  # noqa: BLE001 - the line is optional
             return None
     cold, ttl = 0, None
-    for (t0, a), (t1, b) in zip(fore, fore[1:]):
+    # zip strict=False: adjacent pairs: fore[1:] is one shorter
+    for (t0, a), (t1, b) in zip(fore, fore[1:], strict=False):
         pol = policy(b)
         if pol and pol.get("ttlSeconds"):
             ttl = pol["ttlSeconds"]

@@ -62,7 +62,9 @@ function pathPattern(pattern: string, env: RuleEnv): string {
   let p = win ? pattern.replace(/\\/g, "/") : pattern;
   if (p.startsWith("//")) p = win && /^\/\/[A-Za-z]:/.test(p) ? p.slice(2) : p.slice(1);
   else if (p === "~" || p.startsWith("~/")) p = `${slashForm(env.platform, env.home)}${p.slice(1)}`;
-  else if (win && /^[A-Za-z]:\//.test(p)) p = p;
+  else if (win && /^[A-Za-z]:\//.test(p)) {
+    // a drive-letter path is already absolute and stays as it is
+  }
   else if (p.startsWith("/")) p = `${slashForm(env.platform, env.checkout)}${p}`;
   else p = `${slashForm(env.platform, env.checkout)}/${p.replace(/^\.\//, "")}`;
   return comparableFs(env.platform, p);

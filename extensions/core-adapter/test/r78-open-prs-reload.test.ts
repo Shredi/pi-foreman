@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { OpenPrsRefresher, ReloadingConfig, configFingerprint, openPrsFile } from "../openprs.ts";
+import { OpenPrsRefresher, ReloadingConfig, configFingerprint } from "../openprs.ts";
 import type { GhRunner } from "../openprs.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 

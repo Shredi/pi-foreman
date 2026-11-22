@@ -18,7 +18,7 @@ import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
-import { posix, posixOnly } from "./_platform.ts";
+import { posixOnly } from "./_platform.ts";
 
 // C: no `danger-opaque` label: a powershell line carries no label of its own (judge-first kinds only), for every role
 const base = fs.realpathSync(mkTestTmp("pf-r2-ps-"));
@@ -345,7 +345,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { role?: "explorer" | "bu
     child: role !== "main",
     deps: { spawner: inprocSpawner },
     ctx: { hasUI: false, mode: "json", modelRegistry: registry },
-    config: { gate: { reviewTimeoutMs: 300, ...(o.gate ?? {}) }, providers: { fake: { review: { model: "small" }, roles: { explorer: { model: "fake/explorer" } } } } },
+    config: { gate: { reviewTimeoutMs: 300, ...o.gate }, providers: { fake: { review: { model: "small" }, roles: { explorer: { model: "fake/explorer" } } } } },
   });
   if (role === "explorer") {
     const dir = path.join(r.agentDir, "pi-foreman", "state", "sessions", "parent-s");
@@ -444,7 +444,7 @@ test("= ends a word: -Path=<folder>, $d='<folder>' and @{Path='<folder>/x'} reac
 
 test("psWords: a repeated word is resolved once and the answer does not change", () => {
   let calls = 0;
-  const counting = (p: string): string | null => (calls++, null);
+  const counting = (): string | null => (calls++, null);
   assert.deepEqual(psWords("a a a a b b", "/w", "/h", "linux", counting), ["/w/a", "/w/b"]);
   const once = calls;
   calls = 0;

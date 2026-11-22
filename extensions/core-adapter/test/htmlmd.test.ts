@@ -57,7 +57,7 @@ test("htmlmd: title from the first h1, else the title element", () => {
 
 test("htmlmd: hidden-style facts count what the copy does not show", () => {
   const r = htmlToMarkdown("<p style=\"display:none\">a</p><p hidden>b</p><span style=\"font-size:0\">c</span><div style=\"opacity:0\">d</div><style>p::after{content:'x'}</style>");
-  const line = hiddenFactsLine(r.hidden);
+  const line = hiddenFactsLine(r.hidden) ?? "";
   assert.match(line, /display:none/);
   assert.match(line, /hidden attribute/);
   assert.match(line, /font-size:0/);

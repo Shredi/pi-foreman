@@ -149,7 +149,7 @@ test("addTracked: always writes the host; a host-less github.com line of the sam
   await withDirs(null, async ({ agentDir }) => {
     assert.equal(await addTracked(agentDir, "acme/app", 1, undefined, "GitHub.com"), "added");
     const r = readTracked(agentDir);
-    assert.deepEqual(r.kind === "ok" ? r.lines.map(({ addedAt: _a, ...l }: Record<string, unknown>) => l) : null, [{ repo: "acme/app", number: 1, host: "github.com" }]);
+    assert.deepEqual(r.kind === "ok" ? r.lines.map((x) => { const { addedAt: _a, ...l } = x as Record<string, unknown>; return l; }) : null, [{ repo: "acme/app", number: 1, host: "github.com" }]);
     fs.writeFileSync(`${agentDir}/pi-foreman/state/tracked-prs.json`, JSON.stringify({ v: 1, prs: [{ repo: "acme/app", number: 2, addedAt: 5 }, { repo: "acme/app", number: 3, addedAt: 6, host: GHE }] }));
     assert.equal(await addTracked(agentDir, "Acme/App", 2, undefined, "github.com"), "present");
     const after = readTracked(agentDir);

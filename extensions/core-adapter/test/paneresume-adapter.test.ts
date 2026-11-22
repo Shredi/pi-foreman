@@ -21,7 +21,7 @@ const SLOT = Symbol.for("pi-foreman.paneresume");
 const SID = "11111111-2222-3333-4444-555555555555";
 let importN = 0;
 const fresh = (): Promise<Mod> => import(`../paneresume.ts?v=${++importN}`) as Promise<Mod>;
-const NO = () => undefined;
+const NO = (): null => null;
 const slotOf = (): { installed: boolean; ours: Record<string, () => void>; persistent: Record<string, unknown[]>; signalled: boolean } | undefined => (globalThis as unknown as Record<symbol, never>)[SLOT];
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 async function until(pred: () => boolean, ms = 3000): Promise<void> {
@@ -405,7 +405,7 @@ function messageRig(t: TestContext) {
   const r = rig(t);
   const runs = path.join(r.root, "runs");
   fs.mkdirSync(runs);
-  const asyncCall = (args: Record<string, unknown>): void => void fs.appendFileSync(r.sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "subagent", arguments: args }] } })}\n`);
+  const asyncCall = (args: Record<string, unknown>): void => fs.appendFileSync(r.sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "subagent", arguments: args }] } })}\n`);
   return { ...r, runs, asyncCall };
 }
 

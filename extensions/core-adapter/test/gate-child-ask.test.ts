@@ -253,7 +253,7 @@ test("child ask: DENY blocks with the parent's reason (parent-deny); a foreign f
   assert.match(String(res.reason), /denied by the parent: not this one/);
   assert.equal(r.events("dialog").at(-1)!.decision, "parent-deny");
   const p2 = r.call("bash", { command: "git branch -D other-branch" });
-  await until(() => /^# Ask 2: /.test(fs.readFileSync(path.join(dir, "ask.md"), "utf8")));
+  await until(() => fs.readFileSync(path.join(dir, "ask.md"), "utf8").startsWith("# Ask 2: "));
   fs.writeFileSync(path.join(dir, "ruling-2.md"), "maybe\n");
   assert.match(String((await p2)?.reason), /not ALLOW or DENY/);
 });

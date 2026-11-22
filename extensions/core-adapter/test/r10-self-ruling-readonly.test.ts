@@ -11,7 +11,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
@@ -48,7 +47,7 @@ const PASSES_R13: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASSES_R13) {
   test(`r13 lexed write surfaces: ${name} passes`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(view(r))), undefined, line(view(r)));
+    assert.equal(run(r, line(view(r))), undefined, line(view(r)));
   });
 }
 
@@ -66,14 +65,14 @@ const DENY_R14: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of DENY_R14) {
   test(`r14 ruling 3 (write forms of the Addendum-D row): ${name} is refused`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(view(r))), SELF_RULING_REASON, line(view(r)));
+    assert.equal(run(r, line(view(r))), SELF_RULING_REASON, line(view(r)));
   });
 }
 
 for (const [name, line] of PASSES_NOW) {
   test(`documented current state (R10, narrowing reverted): ${name} passes`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(view(r))), undefined, line(view(r)));
+    assert.equal(run(r, line(view(r))), undefined, line(view(r)));
   });
 }
 
@@ -94,7 +93,7 @@ const DENY: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of DENY) {
   test(`r10 write surface denied: ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(view(r))), SELF_RULING_REASON, line(view(r)));
+    assert.equal(run(r, line(view(r))), SELF_RULING_REASON, line(view(r)));
   });
 }
 
@@ -110,11 +109,11 @@ const DENY_R1: Array<[string, (r: Rig) => string, string?]> = [
 for (const [name, line, tool] of DENY_R1) {
   test(`r10 write surface denied (round 1): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(view(r, tool)), tool ?? "bash"), SELF_RULING_REASON, line(view(r, tool)));
+    assert.equal(run(r, line(view(r, tool)), tool ?? "bash"), SELF_RULING_REASON, line(view(r, tool)));
   });
 }
 
 test("r10 write surface denied: write and edit tools on <H>/ruling.md", async () => {
   const r = rig();
-  for (const tool of ["write", "edit"]) assert.equal(await selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs), SELF_RULING_REASON, tool);
+  for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling.md") }, r.root, r.dirs), SELF_RULING_REASON, tool);
 });

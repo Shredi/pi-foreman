@@ -592,7 +592,7 @@ export function keepSection<M>(messages: readonly M[], name: string, fallback?: 
   const i = out.findIndex((m) => (m as Sys).role === "system");
   if (i < 0) return [{ role: "system", content: "", sections: { [name]: fallback }, timestamp: Date.now() } as M, ...out];
   const head = out[i] as Sys;
-  out[i] = { ...head, sections: { ...(head.sections ?? {}), [name]: fallback } } as M;
+  out[i] = { ...head, sections: { ...head.sections, [name]: fallback } } as M;
   return out;
 }
 

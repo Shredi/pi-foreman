@@ -464,7 +464,7 @@ def herdr(binary, args, timeout=HERDR_TIMEOUT):
         r = subprocess.run([binary] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            stdin=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise HerdrError("herdr %s: %s" % (args[0] if args else "", e))
+        raise HerdrError("herdr %s: %s" % (args[0] if args else "", e)) from e
     out = r.stdout.decode("utf-8", "replace").strip()
     if r.returncode != 0:
         err = r.stderr.decode("utf-8", "replace").strip() or out
@@ -474,7 +474,7 @@ def herdr(binary, args, timeout=HERDR_TIMEOUT):
     try:
         return json.loads(out)
     except ValueError:
-        raise HerdrError("herdr %s: output is not JSON" % " ".join(args[:2]))
+        raise HerdrError("herdr %s: output is not JSON" % " ".join(args[:2])) from None
 
 
 def hc_bin():
@@ -821,7 +821,7 @@ def hc_read(binary, args, timeout=HC_TIMEOUT):
         r = subprocess.run([binary] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            stdin=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise HcError("hc %s: %s" % (args[0] if args else "", e))
+        raise HcError("hc %s: %s" % (args[0] if args else "", e)) from e
     out = r.stdout.decode("utf-8", "replace").strip()
     if r.returncode != 0:
         err = r.stderr.decode("utf-8", "replace").strip() or out
@@ -829,7 +829,7 @@ def hc_read(binary, args, timeout=HC_TIMEOUT):
     try:
         return json.loads(out)
     except ValueError:
-        raise HcError("hc %s: output is not JSON" % (args[0] if args else ""))
+        raise HcError("hc %s: output is not JSON" % (args[0] if args else "")) from None
 
 
 def hc(binary, args, timeout=HC_TIMEOUT):
@@ -1240,7 +1240,7 @@ def cmd_open(a):
     try:
         text = brief.read_text("utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        raise Refused("cannot read the brief: %s" % e)
+        raise Refused("cannot read the brief: %s" % e) from e
     wtree = None
     if wt:
         plan = plan_worktree(cwd, a.label, adir, a.base, fetch=not a.dry_run)
@@ -1572,7 +1572,7 @@ def remote_open(adir, params):
             raise Refused("firstCommands must be a list of strings")
         check_first_commands(first)
     except Refused as e:
-        raise Refused(str(e), "bad_request")
+        raise Refused(str(e), "bad_request") from e
     space = params.get("space")
     if space is not None and not VALUE_RE.match(space):
         raise Refused("space may use only A-Z a-z 0-9 . _ : / @ -", "bad_request")
@@ -1612,7 +1612,7 @@ def deliver_dir(adir, name):
     try:
         st = os.lstat(str(d))
     except OSError:
-        raise Refused("no handoff dir %s on this machine" % name, "no_handoff")
+        raise Refused("no handoff dir %s on this machine" % name, "no_handoff") from None
     if not stat.S_ISDIR(st.st_mode):
         raise Refused("%s is not a real directory" % name, "no_handoff")
     return d
@@ -1717,7 +1717,7 @@ def read_params():
     try:
         params = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        raise Refused("stdin is not one JSON object", "bad_request")
+        raise Refused("stdin is not one JSON object", "bad_request") from None
     if not isinstance(params, dict):
         raise Refused("stdin is not one JSON object", "bad_request")
     return params
@@ -1876,7 +1876,7 @@ def send_notice(adir, a):
         r = subprocess.run([binary, "label", terminal] + words, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, timeout=HC_LABEL_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as e:
-        raise NoticeFailed({"error": "label_failed", "detail": strip_control(e)[:200]})
+        raise NoticeFailed({"error": "label_failed", "detail": strip_control(e)[:200]}) from e
     if r.returncode != 0:
         detail = strip_control(r.stderr.decode("utf-8", "replace").strip()[:200])
         raise NoticeFailed({"error": "label_failed", "detail": detail})
@@ -1922,7 +1922,7 @@ def check_hc_machine(binary, name, timeout=DISCOVERY_TIMEOUT):
     try:
         data = hc_read(binary, ["machine", "ls", "--json"], timeout)
     except HcError as e:
-        raise Refused("cannot list the hc machines: %s" % e, "machine_unknown")
+        raise Refused("cannot list the hc machines: %s" % e, "machine_unknown") from e
     rows = data.get("machines") if isinstance(data, dict) else None
     if not any(isinstance(r, dict) and r.get("name") == name for r in (rows if isinstance(rows, list) else [])):
         raise Refused("hc has no machine %r (hc machine ls)" % name, "machine_unknown")
@@ -1966,9 +1966,9 @@ def hc_exec_verb(binary, name, argv, verb, payload, timeout, deadline=None):
         r = subprocess.run(cmd, input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=local)
     except subprocess.TimeoutExpired:
-        raise Unreachable("remote %s unreachable: no answer within %d s" % (name, timeout))
+        raise Unreachable("remote %s unreachable: no answer within %d s" % (name, timeout)) from None
     except OSError as e:
-        raise Unreachable("remote %s unreachable: %s" % (name, strip_control(e)))
+        raise Unreachable("remote %s unreachable: %s" % (name, strip_control(e))) from e
     try:
         env = json.loads(r.stdout.decode("utf-8", "replace"))
     except ValueError:
@@ -2159,7 +2159,7 @@ def cmd_open_remote(a):
         raw = brief.read_bytes()
         text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        raise Refused("cannot read the brief: %s" % e)
+        raise Refused("cannot read the brief: %s" % e) from e
     if len(raw) > MAX_CONTENT_BYTES:
         raise Refused("the brief is larger than %d bytes" % MAX_CONTENT_BYTES, "too_large")
     binary = hc_required()
@@ -2405,7 +2405,7 @@ def remote_brief(a, adir, entry):
     try:
         kind, file_name, content = brief_name(a.text, entry)
     except (OSError, UnicodeDecodeError) as e:
-        raise Refused("cannot read the brief: %s" % e)
+        raise Refused("cannot read the brief: %s" % e) from e
     payload = {"handoffName": entry.get("handoffName"), "parentAddress": entry.get("parentAddress"), "kind": kind,
                "name": file_name, "content": content}
     if getattr(a, "rework", False):
@@ -3225,7 +3225,7 @@ def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
         try:
             made = open_in_hc(binary, hc_name(child), cwd, argv, outlive, space if rctx else None, labels, bool(rctx), True, nest)
         except HcError as e:
-            raise Refused("%s was not restarted: %s" % (label, e), "restart_failed")
+            raise Refused("%s was not restarted: %s" % (label, e), "restart_failed") from e
         hc_new = {"address": made["address"], "parent": made["parent"], "space": space}
         fields = {"status": "open", "hc": hc_new, "backend": "hc", "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
                   "restartedEpoch": time.time(), "lastError": None}
@@ -3240,7 +3240,7 @@ def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
             except Refused as e:
                 raise Refused("%s was restarted in terminal %s (parent %s) but the registry could not be updated (%s); its entry "
                               "still names the old address, and the new session is left running"
-                              % (label, made["address"], made["parent"], e), "registry_busy")
+                              % (label, made["address"], made["parent"], e), "registry_busy") from e
     say("restarted %s under herdr-core: %s (%s)" % (label, made["address"], "parent %s" % made["parent"] if made["parent"]
                                                     else "not nested: no parent terminal"))
     return {"child": child, "label": label, "status": "open", "address": made["address"], "parent": made["parent"], "hc": hc_new}
@@ -3506,9 +3506,9 @@ def new_brief(handoff, data):
         with open(target, "xb") as f:
             f.write(data)
     except FileExistsError:
-        raise Refused("%s appeared meanwhile; not overwritten" % target.name)
+        raise Refused("%s appeared meanwhile; not overwritten" % target.name) from None
     except OSError as e:
-        raise Refused("cannot write the brief: %s" % e)
+        raise Refused("cannot write the brief: %s" % e) from e
     return target
 
 
@@ -3519,7 +3519,7 @@ def new_rework(handoff):
     try:
         names = os.listdir(str(handoff))
     except OSError as e:
-        raise Refused("cannot write the rework marker: %s" % e)
+        raise Refused("cannot write the rework marker: %s" % e) from e
     top = max([int(m.group(1)) for m in (re.match(r"rework-([1-9][0-9]{0,2})$", n) for n in names) if m] or [0])
     k = top + 1
     while True:
@@ -3532,7 +3532,7 @@ def new_rework(handoff):
         except FileExistsError:
             k += 1
         except OSError as e:
-            raise Refused("cannot write the rework marker: %s" % e)
+            raise Refused("cannot write the rework marker: %s" % e) from e
 
 
 def cmd_brief(a):
@@ -3551,7 +3551,7 @@ def cmd_brief(a):
         try:
             data = given.read_bytes()
         except OSError as e:
-            raise Refused("cannot read the brief file: %s" % e)
+            raise Refused("cannot read the brief file: %s" % e) from e
     else:
         data = (a.text + "\n").encode("utf-8")
     brief = new_brief(handoff, data).resolve()

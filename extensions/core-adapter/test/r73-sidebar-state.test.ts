@@ -12,7 +12,7 @@ import { trackedTmp } from "./_tmpbase.ts";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const tmp = () => trackedTmp("r73-");
 const base = { done: false, owner: false, turn: false, children: false, externalWaits: false };
-const run = { launchId: "L", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
+const run = { launchId: "L", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null as number | null };
 const wait = { id: "w1", kind: "timer", note: "n", ageSeconds: 1, leftSeconds: 60 };
 
 const withTpl = JSON.stringify({ tokens: { fm_hd: "static job", fm_meta: "$1" }, fm_hd_tpl: "{spin} job", stamp: "/s/push/sid.stamp", pane: "w1:p1" });

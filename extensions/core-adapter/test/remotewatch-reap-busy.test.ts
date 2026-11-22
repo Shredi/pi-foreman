@@ -35,7 +35,10 @@ function rig() {
   const hc: HcRun = async (args) => {
     calls.push(args);
     const res = (o: Partial<HcResult>): HcResult => ({ code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, ...o });
-    if (args[0] === "kill") (killed.v = true), (killed.atGet = state.gets);
+    if (args[0] === "kill") {
+      killed.v = true;
+      killed.atGet = state.gets;
+    }
     if (args[0] === "rm") return res({ code: rmCode.v });
     if (args[0] !== "get") return res({});
     const r = state.get(state.gets++);

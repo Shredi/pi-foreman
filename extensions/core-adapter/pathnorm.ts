@@ -176,7 +176,7 @@ function piNormalize(input: string, home: string, platform: string, spacesAndAt:
   if (platform === "win32") n = winShellPath(n);
   if (n === "~") return home;
   if (n.startsWith("~/") || (platform === "win32" && n.startsWith("~\\"))) return px(platform).join(home, n.slice(2));
-  if (/^file:\/\//.test(n)) return fileURLToPath(n);
+  if (n.startsWith("file://")) return fileURLToPath(n);
   return n;
 }
 

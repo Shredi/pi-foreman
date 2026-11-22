@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { BUILTIN_CACHE, PI_IDLE_CAP_MINUTES, SELF_WARM_MIN_TTL_SECONDS, resolveCachePolicy, resolveWarmPolicy } from "../cachepolicy.ts";
+import { PI_IDLE_CAP_MINUTES, SELF_WARM_MIN_TTL_SECONDS, resolveCachePolicy, resolveWarmPolicy } from "../cachepolicy.ts";
 
 const withCache = (provider: string, cache: unknown) => ({ providers: { [provider]: { cache } } });
 

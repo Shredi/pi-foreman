@@ -86,6 +86,7 @@ export class LedgerGate {
             .then(fn)
             .then(
               (v) => (done(), resolve(v)),
+              // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- forwards the original rejection reason unchanged
               (e) => (done(), reject(e)),
             );
         },

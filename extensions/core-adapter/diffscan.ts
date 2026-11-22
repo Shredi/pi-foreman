@@ -37,7 +37,7 @@ export function isTestPath(file: string): boolean {
   const p = file.replace(/\\/g, "/");
   const base = p.slice(p.lastIndexOf("/") + 1);
   return (
-    /_test\.go$/.test(base) ||
+    base.endsWith("_test.go") ||
     /(^|[._-])(test|spec)s?\.[a-z]+$/i.test(base) ||
     /^test_.*\.py$/.test(base) ||
     /_tests?\.(py|rs)$/.test(base) ||

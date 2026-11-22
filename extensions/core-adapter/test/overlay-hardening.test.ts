@@ -5,10 +5,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { isSelfHost } from "../owned.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-harden-")));
 after(() => fs.rmSync(root, { recursive: true, force: true }));

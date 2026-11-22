@@ -84,7 +84,7 @@ export class ClaudeUsageHook {
         writeAtomic(file, { windows });
       }, CLAUDE_LOCK_WAIT_MS);
     } catch (err) {
-      return /^locked:/.test((err as Error)?.message ?? "") ? "locked" : "error";
+      return ((err as Error)?.message ?? "").startsWith("locked:") ? "locked" : "error";
     }
     this.last = now;
     return "written";

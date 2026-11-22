@@ -10,7 +10,7 @@ import coreAdapter, { type AdapterDeps } from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { addonPeerRangeLine, anthropicCredentialKind, ATTRIBUTION_WARNING, bgFeaturesDoctor, rangeAllows } from "../bg.ts";
 
-const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
+const tmp = (t: { after(fn: () => unknown): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(async () => {
     await beforeRm?.(dir);
@@ -27,7 +27,7 @@ function fakeAddon(agentDir: string, peerDependencies: Record<string, string> | 
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "pi-background-tasks", version: "0.0.1", ...(peerDependencies ? { peerDependencies } : {}) }));
 }
 
-function doctorHarness(t: { after(fn: () => void): void }, deps: AdapterDeps = {}, env: Record<string, string | undefined> = {}) {
+function doctorHarness(t: { after(fn: () => unknown): void }, deps: AdapterDeps = {}, env: Record<string, string | undefined> = {}) {
   const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "GIT_CONFIG_COUNT", ...Object.keys(env)];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   t.after(() => {

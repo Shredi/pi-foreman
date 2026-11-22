@@ -23,7 +23,7 @@ const reminders = (sent: Sent) => sent.filter((m) => m.message.customType === "p
 /** The turn end after the ledger stop hold (it fires once per session and ledger): the finish gate's answer. */
 async function finishAnswer(a: Adapter): Promise<R> {
   const r = await settle(a);
-  return types(r).includes("pi-foreman-stop-gate") ? await settle(a) : r;
+  return types(r).includes("pi-foreman-stop-gate") ? settle(a) : r;
 }
 async function built(a: Adapter) {
   const b = await a.agentLaunch("builder", "build it");

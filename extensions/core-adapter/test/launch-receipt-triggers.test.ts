@@ -7,7 +7,6 @@ import * as path from "node:path";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
-const RANKS = [{ match: "foreman*", tier: 0 }, { match: "top", tier: 1 }, { match: "strong", tier: 2 }, { match: "*", tier: 3 }];
 
 async function rig(t: Parameters<typeof r11Rig>[0], o: { ceremony?: Record<string, unknown>; ranks?: unknown[]; top?: boolean; sizing?: Record<string, unknown> } = {}): Promise<Rig> {
   const roles = { explorer: { model: "fake/explorer" }, reviewer: { model: "fake/reviewer" }, builder: { model: "fake/builder", strong: { model: "fake/strong" } } };

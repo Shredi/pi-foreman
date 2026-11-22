@@ -61,7 +61,7 @@ test("own close: the close flow marks the registry before the foreman:closed ack
   const ctx = { isIdle: () => true, shutdown: () => void log.push("shutdown") };
   const flow = new CloseFlow(deps);
   const file = "/x/.workflow/r.md";
-  flow.request({ source: "intercom-parent", file, replyTo: "fm-top" }, ctx, true);
+  void flow.request({ source: "intercom-parent", file, replyTo: "fm-top" }, ctx, true);
   assert.equal(flow.onInput(INTERCOM_WAKE_TEXT, "extension"), true);
   flow.onInput(closePrompt(file), "extension");
   flow.onModelReply("stop");

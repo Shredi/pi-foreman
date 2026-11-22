@@ -7,7 +7,7 @@ export const flat = (lines: readonly string[]): string[] => lines.map((l) => l.t
 
 /** Per line: whether it belongs to a fenced block, nested ones included (its opening and closing lines included). */
 export function fencedMask(lines: readonly string[]): boolean[] {
-  const mask: boolean[] = new Array(lines.length).fill(false);
+  const mask: boolean[] = Array.from<boolean>({ length: lines.length }).fill(false);
   const flatLines = flat(lines);
   for (let i = 0; i < lines.length; i++) {
     const f = scanFence(flatLines, i);
