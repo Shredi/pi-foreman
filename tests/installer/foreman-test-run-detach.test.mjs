@@ -159,10 +159,32 @@ test("detach: returns at once, runs in the background with one id, a log and a d
     assert.match(w.stdout, /RUNID=undefined DETACHED=undefined DETACH=undefined/);
     const done = JSON.parse(fs.readFileSync(path.join(histDir(dir), `${id[1]}.done.json`), "utf8"));
     assert.equal(done.exit, 7);
-    await new Promise((res) => setTimeout(res, 300));
     const [h] = history(dir);
     assert.deepEqual([h.id, h.detached, h.exit], [id[1], true, 7]);
-    assert.ok(!fs.existsSync(path.join(runsDir(dir), `${id[1]}.json`)), "record removed");
+    const recordFile = path.join(runsDir(dir), `${id[1]}.json`);
+    const deadline = Date.now() + 10_000;
+    while (fs.existsSync(recordFile) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 50));
+    assert.ok(!fs.existsSync(recordFile), "record removed");
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("detach: a done file implies its history line is already written", async () => {
+  const dir = tmp();
+  try {
+    for (let i = 0; i < 3; i++) {
+      const r = exec(dir, "process.exit(4)", { FOREMAN_TEST_DETACH: "1" });
+      assert.equal(r.status, 0, r.stderr);
+      const id = idOf(r.stdout);
+      const doneFile = path.join(histDir(dir), `${id}.done.json`);
+      const deadline = Date.now() + 30_000;
+      while (!fs.existsSync(doneFile) && Date.now() < deadline) await new Promise((res) => setTimeout(res, 10));
+      assert.ok(fs.existsSync(doneFile), "done file appeared");
+      const h = history(dir).find((e) => e.id === id);
+      assert.ok(h, `history line for ${id} present when the done file exists`);
+      assert.equal(h.exit, 4);
+    }
   } finally {
     cleanup(dir);
   }
