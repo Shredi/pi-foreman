@@ -16,6 +16,13 @@
       "checkedOn": "2026-11-01"
     },
     {
+      "id": "skills-guide",
+      "url": "https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf",
+      "target": "skills/skill-authoring/references/skills-guide.md",
+      "sha256": "66cbcc06df9271e0bb59986582646f0c4c7c94697554f893f937a5a55cef736d",
+      "checkedOn": "2026-11-22"
+    },
+    {
       "id": "fold-subagents",
       "url": "https://claude.com/de/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop",
       "target": "docs/orchestration-design.md",
