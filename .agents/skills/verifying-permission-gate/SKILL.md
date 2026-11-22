@@ -24,11 +24,16 @@ A seeded generator test on the real entry point `gateEvaluate`: the question is 
 - Bounds and assumptions: 7 dangerous and 3 harmless payloads, 55 constructs (52 wrappers); every construct alone (734 gate calls), every ordered pair a `KNOWN_GAPS` entry names, and per seed 120 chains of depth 2 and 60 of depth 3; roles builder and reviewer; default seed 1; the fast oracle is cross-checked against the real `tool_call` handler on about 20 lines (judge stubbed). Whole file about 12 s.
 - Last confirmed at: `1dc62618aea61f58a6de90a5e613b97ba34a328e`
 
+## Marks
+
+Open gaps are expected-fail marks with an id and a source: `KNOWN_GAPS` (shapes found through constructs) and `PLAIN_GAPS` (plain lines, evaluated per role). `git-outside-tilde` is the plain line `git -C ~/other stash push`, silent for a builder today (new, found by the generator); the check fails with "gap git-outside-tilde is closed" once it stops being silent.
+
 ## Left out
 
 - The main (owner) session: it has its own roots and mode step.
 - Constructs that are not in `CONSTRUCTS` and payloads that are not in `DANGEROUS`.
 - Every payload of a shape whose `KNOWN_GAPS` mark names no payload: a blind spot until that gap closes.
+- Chains are composed only with the `/opt` form of the git-outside payload (`git -C /opt/other stash push`). The `~` form (`git -C ~/other stash push`) is a plain line in `PLAIN_GAPS` (gap `git-outside-tilde`, silent for a builder, blocked for a reviewer); no wrapper is tried around it.
 - `wait -p` and the two friction notes of the #347 follow-up list (about too strict verdicts).
 - PowerShell, tools other than bash, Windows (the file is skipped there).
 - The judge's own verdict quality: a judge look counts as seen.
@@ -61,7 +66,7 @@ Reverted and green again: yes, `git checkout -- extensions/core-adapter/shellast
 - Real bug: property A prints seed, construct names, the shrunk command and a rerun line, and the shrunk command is a plain construct around a payload that runs with no look. Report the shortest case to the owner of the gate. Add a `KNOWN_GAPS` line only with a slug id and its source, never to silence an unexplained failure.
 - Fault of the check: the precondition test fails first (a plain payload already runs silent), or the quoting test says "the marker payload did not run" (a construct builds a line that does not run its payload; fix the construct in `_gate-gen.ts`, it is not a finding).
 - Stricter than today: property B names the construct, role and class (`sss` is silent for the three harmless payloads). If the change meant it, edit `TWIN_PINS` and say why in the change.
-- Stale mark: "gap `<id>` is closed: remove its line from `KNOWN_GAPS`". Checked at the default seed only.
+- Stale mark: "gap `<id>` is closed: remove its line from `KNOWN_GAPS`" (or from `PLAIN_GAPS` for a plain line such as `git-outside-tilde`). Checked at the default seed only. A plain line silent for a role its entry does not list is a new find: report it.
 - Too many harmless chains judged: the pinned ceiling in `gate-generator.test.ts` (`MEASURED_SHARE` plus 2 points); change `MEASURED_SHARE` only for an intended change, with the measured figure.
 
 ## After an intended change

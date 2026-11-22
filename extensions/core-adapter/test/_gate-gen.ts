@@ -336,6 +336,37 @@ export const KNOWN_GAPS: readonly Gap[] = [
   { id: "trace-prompt", shape: ["trace-prompt"], source: "#347 follow-up list: \"`SHELLOPTS`/`PS4`; nameref, `${!x:=v}`, `wait -p`; `python3 $FOREMAN_SCRATCH/s.py` after a rebind.\"" },
 ];
 
+/**
+ * A known gap that a plain line (no construct around it) already shows: it cannot be a DANGEROUS payload, because the precondition test needs every payload non-silent,
+ * and a payload's wrappers cannot be blamed for it. The line is evaluated per role; it is expected silent for `silentFor` and not silent for every other role.
+ * `/opt/other` stays the composing payload (git-outside in DANGEROUS), so no chain reaches this gap: the `~` form is only this plain line.
+ */
+export interface PlainGap {
+  id: string;
+  command: string;
+  /** The roles for which the line runs silent today. */
+  silentFor: readonly Role[];
+  source: string;
+}
+
+export const PLAIN_GAPS: readonly PlainGap[] = [
+  { id: "git-outside-tilde", command: "git -C ~/other stash push", silentFor: ["builder"], source: "new, found by the generator" },
+];
+
+/** The plain gap lines per role: `stale` are marks whose line is no longer silent for a listed role (the gap closed), `unexpected` are lines silent for a role not listed. */
+export function checkPlainGaps(oracle: Oracle, gaps: readonly PlainGap[]): { stale: string[]; unexpected: string[] } {
+  const stale: string[] = [];
+  const unexpected: string[] = [];
+  for (const g of gaps) {
+    for (const role of ROLES) {
+      const silent = oracle(g.command, role) === "silent";
+      if (g.silentFor.includes(role) && !silent) stale.push(`gap ${g.id} is closed: remove its line from PLAIN_GAPS (role ${role}, line ${g.command}, source ${g.source})`);
+      if (!g.silentFor.includes(role) && silent) unexpected.push(`[${role}] ${g.command} runs silent and gap ${g.id} does not list this role: report it, then add the role to silentFor with its source`);
+    }
+  }
+  return { stale, unexpected };
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // Property A: a dangerous line is never silent
 
@@ -595,6 +626,7 @@ export function checkHarmlessChains(oracle: Oracle, pins: Record<Role, Record<st
 export const LEFT_OUT: readonly string[] = [
   "the main (owner) session: it has its own roots and mode step",
   "constructs that are not in CONSTRUCTS, payloads that are not in DANGEROUS",
+  "chains are composed only with the /opt form of git-outside; the ~/other form (gap git-outside-tilde, builder) is a plain line in PLAIN_GAPS and no wrapper is tried around it",
   "every payload of a shape that has a KNOWN_GAPS mark without payload names (a blind spot until the gap closes)",
   "wait -p (it stores a process number and carries no command text) and the two friction notes of the #347 follow-up list (about too strict verdicts)",
   "PowerShell and tools other than bash; Windows",

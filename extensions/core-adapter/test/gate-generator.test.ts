@@ -17,7 +17,7 @@ import { r11Rig } from "./_r11rig.ts";
 import { posixOnly } from "./_platform.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import {
-  CONSTRUCTS, DANGEROUS, HARMLESS, KNOWN_GAPS, ROLES, TWIN_PINS, WRAPS, buildCommand, checkDanger, checkHarmlessChains, checkTwins, chainNames, construct, depthOneCases, describeStale,
+  CONSTRUCTS, DANGEROUS, HARMLESS, KNOWN_GAPS, PLAIN_GAPS, ROLES, TWIN_PINS, WRAPS, buildCommand, checkDanger, checkHarmlessChains, checkPlainGaps, checkTwins, chainNames, construct, depthOneCases, describeStale,
   describeTwin, describeUnexpected, gateOracle, makeLayout, memoOracle, pairCases, sampleCases, sampleChains, sortFound, staleGaps, sq,
   type Chain, type Cls, type DangerCase, type Found, type Needs, type Oracle,
 } from "./_gate-gen.ts";
@@ -25,8 +25,15 @@ import {
 process.env.PI_OFFLINE = "1";
 
 const DEFAULT_SEED = 1;
-const SEED = Number(process.env.FOREMAN_GATE_GEN_SEED ?? DEFAULT_SEED);
-const SEEDS = Math.max(1, Number(process.env.FOREMAN_GATE_GEN_SEEDS ?? 1));
+/** A positive integer from an env value; anything else (empty, text, zero, negative, fraction) is an error, never an empty seed list. */
+export function parseSeedEnv(name: string, raw: string | undefined, dflt: number): number {
+  if (raw === undefined) return dflt;
+  const n = Number(raw);
+  if (raw.trim() === "" || !Number.isInteger(n) || n < 1) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+  return n;
+}
+const SEED = parseSeedEnv("FOREMAN_GATE_GEN_SEED", process.env.FOREMAN_GATE_GEN_SEED, DEFAULT_SEED);
+const SEEDS = parseSeedEnv("FOREMAN_GATE_GEN_SEEDS", process.env.FOREMAN_GATE_GEN_SEEDS, 1);
 const SEED_LIST = Array.from({ length: SEEDS }, (_, i) => SEED + i);
 const DEFAULT_RUN = SEEDS === 1 && SEED === DEFAULT_SEED;
 // Chains per seed, sized so the whole file runs in about ten seconds (one gate call is about 5 ms).
@@ -81,6 +88,11 @@ test("known gaps: a mark whose gap is closed fails (default seed only)", { skip:
   const matched = sortFound([...fixedPart.found, ...perSeed.flatMap((r) => r.found)], KNOWN_GAPS).matched;
   const stale = staleGaps(matched, KNOWN_GAPS);
   assert.equal(stale.length, 0, stale.map(describeStale).join("\n"));
+});
+
+test("plain gap lines: silent only for the listed roles; a closed one fails (default seed only)", { skip: posixOnly || (DEFAULT_RUN ? false : "stale marks are checked at the default seed only") }, () => {
+  const { stale, unexpected } = checkPlainGaps(real, PLAIN_GAPS);
+  assert.equal(stale.length + unexpected.length, 0, [...stale, ...unexpected].join("\n"));
 });
 
 test("property B: a harmless twin is not stricter than its pinned class today", { skip: posixOnly }, () => {
@@ -296,4 +308,22 @@ test("self-test: a gate that closes one marked gap makes the stale check name it
   const stale = staleGaps(sortFound(found, KNOWN_GAPS).matched, KNOWN_GAPS);
   assert.deepEqual(stale.map((g) => g.id), ["dbracket"]);
   assert.ok(describeStale(stale[0]).includes("gap dbracket is closed: remove its line from KNOWN_GAPS"));
+});
+
+test("self-test: a gate that closes the plain git-outside-tilde line makes the stale check name it", { skip: posixOnly }, () => {
+  const fake: Oracle = (command, role) => (command.includes("~/other") ? "block" : real(command, role));
+  const { stale, unexpected } = checkPlainGaps(fake, PLAIN_GAPS);
+  assert.equal(unexpected.length, 0);
+  assert.equal(stale.length, 1);
+  assert.ok(stale[0].includes("gap git-outside-tilde is closed: remove its line from PLAIN_GAPS"));
+  const loose: Oracle = (command, role) => (command.includes("~/other") ? "silent" : real(command, role));
+  assert.ok(checkPlainGaps(loose, PLAIN_GAPS).unexpected.some((m) => m.includes("[reviewer]")));
+});
+
+test("seed settings: a non-numeric or non-positive value fails with a message, a positive integer parses", () => {
+  assert.equal(parseSeedEnv("FOREMAN_GATE_GEN_SEEDS", undefined, 1), 1);
+  assert.equal(parseSeedEnv("FOREMAN_GATE_GEN_SEED", "7", 1), 7);
+  for (const bad of ["abc", "0", "-3", "", "  ", "1.5", "NaN"]) {
+    assert.throws(() => parseSeedEnv("FOREMAN_GATE_GEN_SEEDS", bad, 1), /FOREMAN_GATE_GEN_SEEDS must be a positive integer/, JSON.stringify(bad));
+  }
 });

@@ -18,7 +18,7 @@ Use a model when the harm comes from the order or the timing of steps by more th
 
 ## Writing the model
 
-1. List the steps of the real code that can happen on their own (a message arrives, a timer fires, a process dies, a file is written). Each is one TLA+ action, and each action maps to one indivisible step in the code: the unit between two places where another actor can act. If one action stands for several code steps, an interleaving the code allows is missing from the model.
+1. List the steps of the real code that can happen on their own (a message arrives, a timer fires, a process dies, a file is written). Each is one TLA+ action, and each action must correspond to exactly one stretch of code that no other actor can interrupt. If one action stands for several code steps, an interleaving the code allows is missing from the model.
 2. List the state the rule talks about, and nothing else. Few variables keep the state space small and the chart readable.
 3. Write each rule the reader agreed to as an invariant (a statement true in every reachable state). Write it in the reader's terms first ("a wait that resolves is delivered once"), then as a formula.
 4. Keep the constants small (two actors, two messages, one failure). Most order bugs show with two of everything. Raise a bound only when a run is clean and the left-out list needs it covered.

@@ -7,17 +7,17 @@ metadata:
 
 # Creating verify skills
 
-A unit test checks the cases someone thought to write. A verify check covers every case inside a stated scope: every input up to a depth, or every order of steps in a model. This skill picks one promise of the code, builds that check, proves it can fail, and leaves a short project-local skill so the next agent can rerun it and read its result.
+A unit test runs the examples its author imagined. A verify check instead sweeps a whole stated scope: all inputs up to some depth, or all interleavings of a small model. This skill picks one promise of the code, builds that check, proves it can fail, and leaves a short project-local skill so the next agent can rerun it and read its result.
 
 The rule that matters most: a finding stays a finding. Report it; never bend the rule, the model or the generator until the check passes, because a check that was bent proves nothing.
 
 ## Instructions
 
-1. **Pick the target from the code.** Choose a promise the code makes, where a break harms users and tests rarely hit the breaking case. Take the strongest such target, not the easiest. Ask the owner only what the code cannot tell; if the owner named an area, start there. Success looks like: one file or function set named, with the reason it ranks first.
+1. **Pick the target from the code.** Look for the guarantee whose failure would hurt most and whose failing case an example-based test is least likely to hit. Rank candidates by that pair and take the top one, even when an easier one is nearby. Ask the owner only what the code cannot tell; if the owner named an area, start there. Success looks like: one file or function set named, with the reason it ranks first.
 2. **State the rule and the harm, one sentence each.** "A shell line that holds a delete outside the worktree never runs without a block or a look" is a rule; "the gate is correct" is not. The owner reads the rule and the left-out list (step 7), because no check proves the rule itself is right. Success looks like: two sentences the owner can accept or change.
 3. **Let the question choose the cheapest tool**, and say why in one line.
    - Every input of real code: a generator (property) test on the real entry point, or a verifier where the language has one. Read `references/generator-tests.md`.
-   - Every order of steps (races, retries, hand-overs): a small model and a model checker, TLA+ with TLC. Read `references/state-flow.md`.
+   - Sequencing questions (races, retries, hand-overs): a small model of the moving parts, explored by a model checker, TLA+ with TLC. Read `references/state-flow.md`.
    - Every size: a proof. Only with the owner's agreement, since it costs the most.
    - A tool that needs an install (Java, TLC, a verifier) is a local opt-in command. It becomes a CI or install dependency only on the owner's decision; state its cost (install size, run time) when you propose it.
 4. **Build the check true to the code.** Use the repo's names, call the real entry point, and keep no hand copy of the function: a copy drifts and then checks itself. Success looks like: the check calls production code, or a model whose every action maps to one step of production code.
@@ -27,10 +27,10 @@ The rule that matters most: a finding stays a finding. Report it; never bend the
    - Never weaken the rule, the model or the generator to turn it green. Change no product code unless the task says so; the owner decides what to fix.
    - A known open finding gets an expected-fail mark with an id and a source. A mark whose case now passes fails the check ("gap `<id>` is closed: remove the mark"), so marks come off when the bug is fixed.
    - A failure with no mark fails the check; a mark is added only with an id and a source, never to silence an unexplained failure.
-7. **Say the scope.** Write what is checked, the bounds (depth, constants, sample size, seed), the assumptions, and what is left out. A bound the reader does not see reads as full coverage. Success looks like: a left-out list the owner can read in a minute.
+7. **Say the scope.** Write down what the check covers, its bounds (depth, constants, sample size, seed) and its assumptions, then list everything it skips. A bound the reader does not see reads as full coverage. Success looks like: a left-out list the owner can read in a minute.
 8. **Give one rerun command.** It is short enough to run on every change (seconds, not minutes) and runs in the project's normal test runner when the tool is already a dependency. A longer sweep (more seeds, bigger bounds) is a separate opt-in command. Success looks like: the command printed in the verify skill and run once from a clean shell.
-9. **Write the project-local verify skill** from `assets/verify-skill-template.md` in the project's own skill folder. It holds: rule, harm, left-out list, covered files and functions, the commit last confirmed, the rerun command, how to tell a real bug from a fault of the check or a model that fell behind the code, and how to update after an intended change. In a squash-merge repository record a commit on the main branch, since branch commits disappear after the merge. Move the commit forward only after confirming the check still describes the code. Make a test pin that the skill loads and names files that exist.
-10. **Follow the verify skill once as the next agent would.** Read only that skill, make a scratch break inside a covered file, follow its rerun and reading steps, drop the break. Fix any line you had to guess. Then hand off: rule, tool and reason, bounds, findings with their shortest counterexample, the rerun command, the left-out list. For a state flow, show the Mermaid chart to the owner so they can judge the rule (in this harness: `foreman_show`, or the plan page, which draws Mermaid).
+9. **Write the project-local verify skill** from `assets/verify-skill-template.md` in the project's own skill folder. It holds: rule, harm, left-out list, covered files and functions, the commit last confirmed, the rerun command, how to separate a genuine bug from a fault in the check or a model that lags the code, and how to update after an intended change. In a squash-merge repository record a commit on the main branch, since branch commits disappear after the merge. Move the commit forward only after confirming the check still describes the code. Make a test pin that the skill loads and names files that exist.
+10. **Play the next agent.** Open only the new verify skill, make a scratch break inside a covered file, follow its rerun and reading steps, drop the break. Fix any line you had to guess. Then hand off: rule, tool and reason, bounds, findings with their shortest counterexample, the rerun command, the left-out list. For a state flow, show the Mermaid chart to the owner so they can judge the rule (in this harness: `foreman_show`, or the plan page, which draws Mermaid).
 
 ## Examples
 
