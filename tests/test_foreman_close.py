@@ -436,6 +436,14 @@ class BaselineTest(Base):
         self.assertEqual([u["paths"] for u in rep["uncommitted"]], [["old.txt"]])
         self.assertEqual(rep["notes"], ["no session baseline for %s (too many changed files): every uncommitted file listed" % self.repo])
 
+    def test_a_failed_baseline_entry_with_null_head_and_paths_counts_the_dirt_as_the_sessions_and_stays_open(self):
+        self.put(self.repo, "own.txt")
+        top = os.path.realpath(str(self.repo))
+        self.baseline({"repo": top, "head": None, "paths": None})
+        rep = self.build()
+        self.assertEqual([u["paths"] for u in rep["uncommitted"]], [["own.txt"]])
+        self.assertFalse(rep["ready"])
+
     def test_a_cwd_missing_from_the_file_lists_everything_without_a_note(self):
         other = self.other_repo()
         self.put(self.repo, "old.txt")

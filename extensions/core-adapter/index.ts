@@ -7,7 +7,7 @@ import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
 import { checkTrivial, checkoutBaseline, cleanTreeStatus, effectiveRequired, escalationNote, skipper, trivialBuilderPath } from "./trivial.ts";
-import { baselineAt, dirtyPaths, memoCheckout, nearestDirectory, resolveCheckout, takeBaseline, unchangedSince, type CheckoutMemo, type DirtyBase } from "./dirtybase.ts";
+import { baselineAt, dirtyPaths, memoCheckout, nearestDirectory, resolveCheckout, takeBaseline, unchangedSince, type CheckoutMemo, type DirtyBase, type DirtyEntry } from "./dirtybase.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -516,6 +516,8 @@ interface Session {
   dirtyChain: Promise<void>;
   /** The checkout each directory of the session's writes belongs to (memory; reset at session start). */
   checkoutMemo: CheckoutMemo;
+  /** Directories of the session's work whose checkout could not be resolved (git failed or no work tree). */
+  unresolvedDirs: Set<string>;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
@@ -1229,6 +1231,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       dirtyBase: null,
       dirtyChain: Promise.resolve(),
       checkoutMemo: new Map(),
+      unresolvedDirs: new Set(),
       ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
@@ -2069,22 +2072,52 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     writeScope(s);
   }
 
+  /** True when `dir` is `top` or below it (real paths when they exist). */
+  function insideCheckout(dir: string, top: string): boolean {
+    let d = dir;
+    try {
+      d = fs.realpathSync.native(dir);
+    } catch {
+      // keep the given path
+    }
+    const rel = path.relative(top, d);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  }
+
+  function containsUnresolved(s: Session, top: string): boolean {
+    for (const d of s.unresolvedDirs) if (insideCheckout(d, top)) return true;
+    return false;
+  }
+
   /** The first work of the session in each checkout of `dirs` (nearest directory of a path, a builder's cwd): its baseline is taken once, before the work. */
   async function noteCheckouts(s: Session, dirs: readonly string[]): Promise<void> {
     if (s.isChild || s.dirtyBase === null || dirs.length === 0) return;
     const job = async (): Promise<void> => {
       for (const dir of dirs) {
+        if (s.dirtyBase === null) return;
+        let c: { top: string; key: string } | null = null;
         try {
-          if (s.dirtyBase === null) return;
-          const c = await memoCheckout(s.checkoutMemo, dir, platform);
-          if (!c || s.dirtyBase[c.key]) continue;
-          const e = await baselineAt(c.top);
-          if (!e) continue;
-          s.dirtyBase = { ...s.dirtyBase, [c.key]: e };
-          saveDirtyBase(s);
+          c = await memoCheckout(s.checkoutMemo, dir, platform);
         } catch {
-          // no baseline for this checkout: it is counted whole
+          c = null;
         }
+        if (!c) {
+          s.unresolvedDirs.add(dir); // work may follow here: a later checkout containing it is counted whole
+          continue;
+        }
+        if (s.dirtyBase[c.key]) continue;
+        let e: DirtyEntry | null = null;
+        if (!containsUnresolved(s, c.top)) {
+          try {
+            e = await baselineAt(c.top);
+          } catch {
+            e = null;
+          }
+        }
+        // no baseline (git failed, or an earlier lookup here failed while the session may have worked): counted whole, never baselined after the work
+        s.dirtyBase = { ...s.dirtyBase, [c.key]: e ?? { repo: c.top, head: null, paths: null } };
+        for (const d of [...s.unresolvedDirs]) if (insideCheckout(d, c.top)) s.unresolvedDirs.delete(d);
+        saveDirtyBase(s);
       }
     };
     s.dirtyChain = s.dirtyChain.then(job, job);
@@ -2110,6 +2143,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = restoreDirtyBase((ctx.sessionManager.getBranch?.() ?? []) as unknown[], reason);
     s.dirtyBase = r.map;
     s.checkoutMemo = new Map();
+    s.unresolvedDirs = new Set();
     if (r.fresh) {
       const b = await takeBaseline(ctx.cwd, platform).catch(() => null);
       if (b) s.dirtyBase = { [b.key]: { repo: b.repo, head: b.head, paths: b.paths } };

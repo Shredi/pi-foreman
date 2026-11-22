@@ -259,3 +259,38 @@ test("the unreviewed-work reminder is queued only after a session change: none o
   assert.equal(await settle(a), undefined);
   assert.equal(reminders(), 2, "a new commit is a change");
 });
+
+// Ledger session-own-changes 1, 3, 4: a checkout whose first baseline fails is never baselined after the session worked there (fail closed).
+test("a failed first baseline (git status fails) records a paths:null entry; the later launch does not baseline the post-work files", async (t) => {
+  const { w, a } = await rig(t);
+  const other = path.join(w.project, "..", "broken");
+  repoAt(other);
+  const real = fs.realpathSync(other);
+  const index = path.join(real, ".git", "index");
+  const good = fs.readFileSync(index);
+  fs.writeFileSync(index, "corrupt");
+  const r1 = await a.agentLaunch("builder", "one", { cwd: real });
+  assert.equal(r1.blocked, null, String(r1.blocked));
+  fs.writeFileSync(index, good);
+  for (let i = 0; i < 30; i++) put(real, `own/f${i}.txt`);
+  const r2 = await a.agentLaunch("builder", "two", { cwd: real });
+  assert.equal(r2.blocked, null, String(r2.blocked));
+  const e = lastMap(w)[checkoutKey(real)];
+  assert.ok(e, "an entry exists");
+  assert.equal(e.paths, null, "counted whole, not the 30 own files as preexisting");
+  assert.equal(e.head, null);
+  assert.deepEqual(scope(w)?.roots?.find((x) => x.repo === real)?.paths, null);
+});
+
+test("an unresolved directory that later resolves to a checkout is recorded as paths:null, not baselined", async (t) => {
+  const { w, a } = await rig(t);
+  const plain = fs.realpathSync(fs.mkdirSync(path.join(w.project, "..", "plain"), { recursive: true }) ?? path.join(w.project, "..", "plain"));
+  await a.checkCall("write", { path: path.join(plain, "sub", "a.txt"), content: "a\n" });
+  assert.equal(dirtyEntries(w).length, 1, "no checkout yet: nothing recorded");
+  gitIn(plain, "init", "-q", "-b", "main");
+  put(plain, "sub/a.txt");
+  await a.checkCall("write", { path: path.join(plain, "b.txt"), content: "b\n" });
+  const e = lastMap(w)[checkoutKey(plain)];
+  assert.ok(e);
+  assert.equal(e.paths, null);
+});
