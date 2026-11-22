@@ -35,9 +35,9 @@ const line = (s: CacheSource | null, width = 200, branch: string | null = null):
   return renderFooter(v, width, theme)[0];
 };
 
-test("running turn: `♨` and the tier glyph when a fresh stretch allows warms, plain countdown, no mark", () => {
-  assert.match(line(src({ running: true, warmsLeft: 0 })), /■■■■■■■■■■ 04:45 ♨ ¼$/);
-  assert.match(line(src({ running: true, warmsFresh: 1 })), /■■■■■■■■■■ 04:45 ♨ ¼$/);
+test("running turn: `♨` and the tier glyph when a fresh stretch allows warms, the fresh total and its marks", () => {
+  assert.match(line(src({ running: true, warmsLeft: 0 })), /■■│■■│■■│■■│■■ 22:45 ♨ ¼$/);
+  assert.match(line(src({ running: true, warmsFresh: 1 })), /■■■■■│■■■■■ 09:15 ♨ ¼$/);
 });
 
 test("budget used up: the tier glyph without `♨`", () => {
@@ -61,7 +61,7 @@ test("cold: `❄ cold` and the tier glyph", () => {
 });
 
 test("one warm left: the mark, the total warm time, `♨` and the tier glyph", () => {
-  assert.match(line(src({ warmsLeft: 1 })), /■│■■■■■■■■■ 09:15 ♨ ¼$/);
+  assert.match(line(src({ warmsLeft: 1 })), /■■■■■│■■■■■ 09:15 ♨ ¼$/);
 });
 
 test("ascii glyphs", () => {
@@ -76,7 +76,7 @@ test("narrow: branch, then the step, then 10 -> 5 cells; the warm part stays", (
   const noBranch = line(s, visibleWidth(full) - 1, "br");
   assert.ok(!noBranch.includes("br ·") && noBranch.endsWith("↓ claude-sonnet-5-5"), noBranch);
   const noStep = line(s, visibleWidth(noBranch) - 1, "br");
-  assert.ok(noStep.endsWith("♨ ¼") && !noStep.includes("↓") && noStep.includes("■│■■■■■■■■■"), noStep);
+  assert.ok(noStep.endsWith("♨ ¼") && !noStep.includes("↓") && noStep.includes("■■■│■■│■■■│■■"), noStep);
   const five = line(s, visibleWidth(noStep) - 1, "br");
   assert.ok(five.endsWith("♨ ¼") && !five.includes("■│■■■■■■■■■") && !five.includes("↓"), five);
   assert.match(line(s, visibleWidth(five) - 3, "br"), /…\x1b\[0m$/);

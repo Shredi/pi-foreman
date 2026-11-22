@@ -1,6 +1,7 @@
 // The numbers of the footer's cache bar (docs/cache.md, "Footer bar"): the countdown to cold, the share left of the
-// current cache lifetime, the mark where the next warm fires, the warms still to come and the budget tier that allows them. Pure: no Pi imports; the
-// adapter hands in state it already holds.
+// current cache lifetime, the mark where the next warm fires, the warms still to come and the budget tier that allows them,
+// and the warm span the bar drains over while warms come (stretch start to cold after the last allowed warm). Pure: no Pi
+// imports; the adapter hands in state it already holds.
 import { coldAt } from "./warmcompact.ts";
 
 export type CacheTier = "half" | "quarter";
@@ -36,6 +37,22 @@ export interface CacheBar {
   lifeShare: number | null;
   /** Where the next warm fires on the lifetime bar, as the share of the lifetime still ahead at that moment, 0..1; null when no warm is coming. */
   markShare: number | null;
+}
+
+/** Share of the span [start, end] still ahead at `t`, 0..1; an empty span (end not after start) gives 0. */
+export function shareAhead(t: number, start: number, end: number): number {
+  return end > start ? Math.max(0, Math.min(1, (end - t) / (end - start))) : 0;
+}
+
+/** The warm span: from the stretch start (the last touch when that is missing or later than it) to the cold point after `warmsLeft` more warms. */
+export function warmSpan(lastTouch: number, stretchStartAt: number | null, cold: number, warmsLeft: number, tick: number): { start: number; end: number } {
+  const start = stretchStartAt !== null && stretchStartAt <= lastTouch ? stretchStartAt : lastTouch;
+  return { start, end: cold + warmsLeft * tick };
+}
+
+/** Shares of `span` still ahead when each of `count` warms fires, one `tick` apart from `firstAt` (the next warm first). */
+export function warmShares(firstAt: number, tick: number, count: number, span: { start: number; end: number }): number[] {
+  return Array.from({ length: count }, (_, i) => shareAhead(firstAt + i * tick, span.start, span.end));
 }
 
 export function cacheBar(s: CacheSnapshot): CacheBar {

@@ -1,5 +1,5 @@
-// The footer's total warm time (current lifetime plus the warms the budget still allows), the lifetime bar that refills at
-// each warm, and the one mark where the next warm fires, in every symbol set.
+// The footer's total warm time (current lifetime plus the warms the budget still allows), the warm bar that stays continuous
+// across each warm, and the marks where the warms fire, in every symbol set.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cacheViewOf, markGlyph, tierGlyphs, type CacheSource } from "../footer.ts";
@@ -39,11 +39,11 @@ test("the time is the lifetime now plus the warms left, one warm interval each, 
   assert.equal(cacheViewOf(src({ policy: { ...POLICY, ttlSeconds: 3600 }, warmsLeft: 5, nextWarmAt: T0 + 3_240_000 }))!.left, "5h"); // 3420 s + 5 x 3240 s
 });
 
-test("the bar is the current lifetime and refills at each warm", () => {
+test("the bar spans the warm time and stays continuous across a warm", () => {
   const before = cacheViewOf(src({ now: T0 + 270_000 }))!;
-  assert.ok(Math.abs(before.share! - 15 / 285) < 1e-9);
+  assert.ok(Math.abs(before.share! - 825 / 1095) < 1e-9); // 825 s of 1095 s ahead
   const after = cacheViewOf(src({ now: T0 + 270_500, lastTouch: T0 + 270_500, nextWarmAt: T0 + 270_500 + TICK, warmsLeft: 2 }))!;
-  assert.equal(after.share, 1);
+  assert.ok(Math.abs(after.share! - before.share!) < 0.001, `${before.share} -> ${after.share}`); // no refill at the warm
   assert.equal(cacheBar({ now: T0 + 142_500, lastTouch: T0, ttlSeconds: TTL, stretchStartAt: T0, spanEndAt: null, warmsLeft: 0, tier: null, nextWarmAt: null }).lifeShare, 0.5);
 });
 
@@ -52,9 +52,10 @@ test("the mark sits where the next warm fires: after the first cell of 10", () =
   assert.ok(Math.abs(b.markShare! - 15 / 285) < 1e-9);
   assert.equal(cacheBar({ now: T0, lastTouch: T0, ttlSeconds: TTL, stretchStartAt: T0, spanEndAt: null, warmsLeft: 3, tier: "half", nextWarmAt: null }).markShare, null);
   // a different warm lead moves the mark: a warm at half the lifetime sits after cell 5
-  const mid = cacheViewOf(src({ nextWarmAt: T0 + 142_500 }))!;
-  assert.match(line(src({ nextWarmAt: T0 + 142_500 })), /■■■■■│■■■■■ 18:15/);
-  assert.equal(mid.mark, 0.5);
+  const one = { warmsLeft: 1, nextWarmAt: T0 + 277_500 }; // span 555 s, the warm at 277.5 s ahead
+  const mid = cacheViewOf(src(one))!;
+  assert.match(line(src(one)), /■■■■■│■■■■■ 09:15/);
+  assert.deepEqual(mid.marks, [0.5]);
 });
 
 test("every symbol set draws the mark, `|` in ascii", () => {
@@ -63,7 +64,7 @@ test("every symbol set draws the mark, `|` in ascii", () => {
     const tier = tierGlyphs(set).half;
     const mark = set === "ascii" ? "|" : "│";
     assert.equal(markGlyph(set), mark, set);
-    assert.equal(line(src({ symbols: set })).split(" · ").pop(), `■${mark}■■■■■■■■■ 18:15 ${sym.keepalive} ${tier}`, set);
+    assert.equal(line(src({ symbols: set })).split(" · ").pop(), `■■■${mark}■■${mark}■■■${mark}■■ 18:15 ${sym.keepalive} ${tier}`, set);
   }
 });
 
@@ -74,7 +75,7 @@ test("no mark when no warm is coming: miss, error, budget used up, disabled, bus
     src({ endedBy: "miss" }),
     src({ warmsLeft: 0, nextWarmAt: null }),
     src({ policy: { ...POLICY, active: false, skip: "disabled" } }),
-    src({ running: true }),
+    src({ running: true, warmsFresh: 0 }),
     src({ lastTouch: null, nextWarmAt: null }),
     src({ now: T0 + 3_600_000 }),
   ];
@@ -82,7 +83,7 @@ test("no mark when no warm is coming: miss, error, budget used up, disabled, bus
     for (const set of ["unicode", "ascii"]) {
       const l = line({ ...s, symbols: set });
       assert.ok(!hasMark(l), l);
-      assert.equal(cacheViewOf({ ...s, symbols: set })!.mark, null);
+      assert.deepEqual(cacheViewOf({ ...s, symbols: set })!.marks ?? [], []);
     }
   }
 });
@@ -94,11 +95,11 @@ test("miss and error keep the plain countdown, budget used up and disabled drop 
   assert.match(line(src({ policy: { ...POLICY, active: false, skip: "disabled" } })), /■■■■■■■■■■ 04:45 ½$/);
 });
 
-test("the mark adds one column and the width rules count it", () => {
+test("the marks add one column each and the width rules count them", () => {
   const withMark = line(src());
   const without = line(src({ warmsLeft: 0, nextWarmAt: null }));
-  // the mark column plus the " ♨" (the time has 5 columns in both)
-  assert.equal(visibleWidth(withMark) - visibleWidth(without), 1 + visibleWidth(" ♨"));
+  // the three mark columns plus the " ♨" (the time has 5 columns in both)
+  assert.equal(visibleWidth(withMark) - visibleWidth(without), 3 + visibleWidth(" ♨"));
   // the line never overflows, at the exact width and below it
   for (const width of [visibleWidth(withMark), visibleWidth(withMark) - 1, 40, 30]) {
     assert.ok(visibleWidth(line(src(), width)) <= width, `width ${width}`);

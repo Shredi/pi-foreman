@@ -65,20 +65,20 @@ for (const which of ["unicode", "emoji", "nerd", "ascii"] as const) {
   test(`cache bar goldens (${which})`, () => {
     const tg = tierGlyphs(which);
     const mk = markGlyph(which);
-    assert.equal(line1(s()), `${HEAD}■■■■■■■${mk}□□□ 3h ${sym.keepalive} ${tg.half} · ${sym.downshift} ${RUNG}`, "warm, 3 left");
-    assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1) })), `${HEAD}■■■■■■■${mk}□□□ 1h ${sym.keepalive} ${tg.half} · ${sym.downshift} ${RUNG}`, "last warm");
+    assert.equal(line1(s()), `${HEAD}■■■■${mk}■■■${mk}■■${mk}□ 3h ${sym.keepalive} ${tg.half} · ${sym.downshift} ${RUNG}`, "warm, 3 left");
+    assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1) })), `${HEAD}■■■■■■■■${mk}□□ 1h ${sym.keepalive} ${tg.half} · ${sym.downshift} ${RUNG}`, "last warm");
     assert.equal(line1(s({ warmsLeft: 0, spanEndAt: spanEnd(0) })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "budget spent: counting to cold");
-    assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1), tier: "quarter" })), `${HEAD}■■■■■■■${mk}□□□ 1h ${sym.keepalive} ${tg.quarter} · ${sym.downshift} ${RUNG}`, "quarter tier");
+    assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1), tier: "quarter" })), `${HEAD}■■■■■■■■${mk}□□ 1h ${sym.keepalive} ${tg.quarter} · ${sym.downshift} ${RUNG}`, "quarter tier");
     assert.equal(line1(s({ lastTouch: null, nextWarmAt: null })), `${HEAD}□□□□□□□□□□ ${sym.cold} cold ${tg.half} · ${sym.downshift} ${RUNG}`, "cold");
-    assert.equal(line1(s({ downshifted: true })), `${HEAD}■■■■■■■${mk}□□□ 3h ${sym.keepalive} ${tg.half}`, "downshifted: no step");
+    assert.equal(line1(s({ downshifted: true })), `${HEAD}■■■■${mk}■■■${mk}■■${mk}□ 3h ${sym.keepalive} ${tg.half}`, "downshifted: no step");
     assert.equal(line1(s({ running: true })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "running turn: no fresh warms left in the source = 0");
     assert.equal(line1(s({ policy: policy({ active: false, skip: "disabled" }) })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "keep-alive disabled");
     assert.equal(line1(s({ policy: policy({ skip: "ttl_long", selfWarm: false }) })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "ttl_long without self-warm");
     const preset = resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 300, byModel: [{ match: "claude-*", ttlSeconds: 3600 }], keepalive: { enabled: true } } } } }, "claude-bridge", "claude-opus-5-5");
     assert.equal(preset.skip, "ttl_long");
     assert.equal(preset.selfWarm, true);
-    assert.equal(line1(s({ policy: preset })), `${HEAD}■■■■■■■${mk}□□□ 3h ${sym.keepalive} ${tg.half} · ${sym.downshift} ${RUNG}`, "ttl_long with self-warm shows the keepalive");
-    assert.equal(line1(s({ idleRung: null })), `${HEAD}■■■■■■■${mk}□□□ 3h ${sym.keepalive} ${tg.half}`, "no idle rung");
+    assert.equal(line1(s({ policy: preset })), `${HEAD}■■■■${mk}■■■${mk}■■${mk}□ 3h ${sym.keepalive} ${tg.half} · ${sym.downshift} ${RUNG}`, "ttl_long with self-warm shows the keepalive");
+    assert.equal(line1(s({ idleRung: null })), `${HEAD}■■■■${mk}■■■${mk}■■${mk}□ 3h ${sym.keepalive} ${tg.half}`, "no idle rung");
   });
 }
 
