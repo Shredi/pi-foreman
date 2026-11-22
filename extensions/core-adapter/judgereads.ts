@@ -115,13 +115,13 @@ export function judgeReadScope(a: { cwd: string; worktree: string; out?: string;
 
 // ------------------------------------------------------------------ the path check
 
-const NAME_EXACT = new Set(["auth.json", "models.json", "models-store.json", "trust.json", "claude-bridge", ".git", ".claude", ".adb-mcp-backup", "cc-cli-logs", ".claude.json", ".envrc", ".pgpass", ".vault-token", ".history", "kubeconfig", ".htpasswd", "token.txt"]);
+const NAME_EXACT = new Set(["auth.json", "models.json", "models-store.json", "trust.json", "claude-bridge", ".git", ".claude", ".adb-mcp-backup", "cc-cli-logs", ".claude.json", ".envrc", ".pgpass", ".vault-token", ".history", "kubeconfig", ".htpasswd", "token.txt", ".secrets", "token"]);
 const NAME_PREFIX = ["mcp.json", "claude-bridge", "claudecfg-", "claude-config"];
 
 /** True when a path segment names a file or folder that is never shown. */
 const withheldName = (seg: string): boolean => {
   const s = seg.toLowerCase();
-  return NAME_EXACT.has(s) || s.startsWith("secrets.") || /^service-account.*\.json$/.test(s) || s.endsWith(".token") || NAME_PREFIX.some((p) => s.startsWith(p)) || s.endsWith(".tfvars") || s.includes(".tfstate") || /^\..*_history$/.test(s);
+  return NAME_EXACT.has(s) || s.startsWith("secrets.") || s.startsWith("secret.") || /^(service[-_]account|client_secret).*\.json$/.test(s) || s.endsWith(".token") || NAME_PREFIX.some((p) => s.startsWith(p)) || s.endsWith(".tfvars") || s.includes(".tfstate") || /^\..*_history$/.test(s);
 };
 
 interface Place {

@@ -74,3 +74,15 @@ test("added deny names are withheld", () => {
   assert.ok(l.startsWith("(0 entries shown"), l);
   assert.equal(readPaths([put(path.join(wt, "d", "ok.txt"))], S, { left: 10000 }).records[0].outcome, "ok");
 });
+
+test("further deny names are withheld", () => {
+  for (const n of ["service_account.json", "service_account-prod.json", "Service_Account.JSON", "client_secret.json", "client_secret_123.apps.json", "secret.txt", "Secret.yaml", ".secrets", "token"]) {
+    const p = put(path.join(wt, "d2", n), "data\n");
+    assert.equal(readPaths([p], S, { left: 10000 }).records[0].outcome, "withheld", n);
+  }
+  assert.equal(readPaths([put(path.join(wt, "d2", "tokens.txt"))], S, { left: 10000 }).records[0].outcome, "ok");
+});
+
+test("cleanup", () => {
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
