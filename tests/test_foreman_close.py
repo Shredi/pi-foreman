@@ -295,5 +295,146 @@ class MergedTest(Base):
         self.assertEqual(fcl.parse(["record", "--kind", "scratch", "--path", "p"]).cmd, "record")
 
 
+class BaselineTest(Base):
+    """The session baseline (`sessions/<S>/baseline.json`, written by the adapter): the report counts only what differs from it."""
+
+    def put(self, repo, rel, text="x\n"):
+        p = Path(repo) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+
+    def entry(self, repo, paths=True):
+        top = os.path.realpath(str(repo))
+        listed = fsync.status_paths(top) if paths else None
+        return {"repo": top, "head": None, "paths": {p: fcl.hash_path(top, p) for p in listed} if paths else None}
+
+    def baseline(self, *entries, raw=None):
+        d = self.state / "sessions" / SID
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "baseline.json").write_text(raw if raw is not None else json.dumps({"v": 1, "roots": list(entries)}))
+
+    def build(self, cfg=None):
+        return fcl.build(str(self.state), SID, str(self.repo), cfg or {}, clean=False)
+
+    def other_repo(self, name="foreign"):
+        d = self.tmp / name
+        d.mkdir()
+        g(d, "init", "-q")
+        self.put(d, "f")
+        g(d, "add", "f")
+        g(d, "commit", "-q", "-m", "init")
+        return d
+
+    def test_hash_vectors_match_the_adapter(self):
+        self.put(self.repo, "u.txt", "hello\n")
+        self.assertEqual(fcl.hash_path(str(self.repo), "u.txt"), "5891b5b522d5df08")
+        self.assertEqual(fcl.hash_path(str(self.repo), "nothing.txt"), "deleted")
+        self.assertEqual(fcl.dir_digest("abc123", "?? x\0"), "dir:5befc4edba8ace35")
+        self.assertEqual(fcl.dir_digest("", ""), "dir:01ba4719c80b6fe9")
+        if os.name != "nt":
+            os.symlink("target.txt", str(self.repo / "l"))
+            self.assertEqual(fcl.hash_path(str(self.repo), "l"), "link:199b3badd968634e")
+
+    def test_no_file_keeps_todays_output_without_notes(self):
+        self.put(self.repo, "old.txt")
+        rep = self.build()
+        self.assertEqual([u["paths"] for u in rep["uncommitted"]], [["old.txt"]])
+        self.assertEqual(rep["notes"], [])
+        self.assertFalse(any(ln.startswith("note:") for ln in rep["lines"]))
+
+    def test_a_foreign_sync_repo_with_dirt_is_not_listed(self):
+        other = self.other_repo()
+        self.put(other, "dirt")
+        cfg = {"sync": {"repos": [{"path": str(other)}]}}
+        self.assertEqual([os.path.basename(u["repo"]) for u in self.build(cfg)["uncommitted"]], ["foreign"], "without a baseline file")
+        self.baseline(self.entry(self.repo))
+        rep = self.build(cfg)
+        self.assertEqual((rep["uncommitted"], rep["ready"]), ([], True))
+
+    def test_preexisting_path_is_a_note_and_ready_until_edited_further_and_a_new_path_blocks(self):
+        self.put(self.repo, "old.txt")
+        self.baseline(self.entry(self.repo))
+        rep = self.build()
+        self.assertEqual((rep["uncommitted"], rep["ready"]), ([], True))
+        self.assertEqual(rep["notes"], ["preexisting uncommitted in %s: 1 file(s), not this session's" % self.repo])
+        self.assertIn("note: %s" % rep["notes"][0], rep["lines"])
+        self.put(self.repo, "old.txt", "edited\n")
+        rep = self.build()
+        self.assertEqual(([u["paths"] for u in rep["uncommitted"]], rep["ready"]), ([["old.txt"]], False))
+        self.put(self.repo, "old.txt")
+        self.put(self.repo, "new.txt")
+        rep = self.build()
+        self.assertEqual(([u["paths"] for u in rep["uncommitted"]], rep["ready"], rep["lines"][0]), ([["new.txt"]], False, "CLOSE: open"))
+
+    def test_a_preexisting_staged_rename_is_a_note(self):
+        g(self.repo, "mv", "README", "MOVED")
+        self.baseline(self.entry(self.repo))
+        rep = self.build()
+        self.assertEqual((rep["uncommitted"], rep["ready"]), ([], True))
+        self.assertIn("2 file(s)", rep["notes"][0])
+
+    def test_workflow_files_compare_by_hash_like_any_path(self):
+        self.put(self.repo, ".workflow/LEDGER-old.md", "old\n")
+        self.baseline(self.entry(self.repo))
+        rep = self.build()
+        self.assertEqual((rep["uncommitted"], rep["ready"]), ([], True))
+        self.put(self.repo, ".workflow/LEDGER-new.md")
+        rep = self.build()
+        self.assertEqual(([u["paths"] for u in rep["uncommitted"]], rep["ready"]), ([[".workflow/LEDGER-new.md"]], False))
+        os.remove(str(self.repo / ".workflow" / "LEDGER-new.md"))
+        self.put(self.repo, ".workflow/LEDGER-old.md", "changed\n")
+        self.assertEqual([u["paths"] for u in self.build()["uncommitted"]], [[".workflow/LEDGER-old.md"]])
+
+    def test_a_root_without_a_path_map_lists_everything_with_a_note(self):
+        self.put(self.repo, "old.txt")
+        self.baseline(self.entry(self.repo, paths=False))
+        rep = self.build()
+        self.assertEqual([u["paths"] for u in rep["uncommitted"]], [["old.txt"]])
+        self.assertEqual(rep["notes"], ["no session baseline for %s (too many changed files): every uncommitted file listed" % self.repo])
+
+    def test_a_cwd_missing_from_the_file_lists_everything_without_a_note(self):
+        other = self.other_repo()
+        self.put(self.repo, "old.txt")
+        self.baseline(self.entry(other))
+        rep = self.build()
+        self.assertEqual(([u["paths"] for u in rep["uncommitted"]], rep["notes"]), ([["old.txt"]], []))
+
+    def test_a_root_of_the_file_is_listed_too(self):
+        other = self.other_repo()
+        self.baseline(self.entry(other))
+        self.put(other, "built.txt")
+        rep = self.build()
+        self.assertEqual([os.path.basename(u["repo"]) for u in rep["uncommitted"]], ["foreign"])
+
+    def test_legacy_and_malformed_files_list_the_configured_repositories_with_a_note(self):
+        other = self.other_repo()
+        self.put(other, "dirt")
+        cfg = {"sync": {"repos": [{"path": str(other)}]}}
+        bad = ["{not json", json.dumps({"v": 2, "roots": []}), json.dumps({"v": 1}), json.dumps({"v": 1, "roots": [{"repo": 1}]}),
+               json.dumps({"v": 1, "roots": [{"repo": str(other), "paths": {"a": 1}}]}), json.dumps({"v": 1, "legacy": True})]
+        for raw in bad:
+            self.baseline(raw=raw)
+            rep = self.build(cfg)
+            self.assertEqual([os.path.basename(u["repo"]) for u in rep["uncommitted"]], ["foreign"], raw)
+            self.assertEqual(rep["notes"], ["no session baseline: every configured repository listed"], raw)
+
+    def test_a_builder_worktree_root_stays_a_handover_only(self):
+        dirty = self.worktree("dirty", dirty=True)
+        self.baseline(self.entry(self.repo), {"repo": os.path.realpath(str(dirty)), "head": None, "paths": {}})
+        rep = self.build()
+        self.assertEqual(rep["uncommitted"], [])
+        self.assertEqual([(os.path.basename(h["path"]), h["reason"]) for h in rep["handovers"]], [("dirty", "worktree_dirty")])
+        self.assertNotIn("preexisting", " ".join(rep["lines"]))
+
+    def test_notes_survive_cleanup_next_to_its_own(self):
+        self.put(self.repo, "old.txt")
+        self.baseline(self.entry(self.repo))
+        self.worktree("merged")
+        rep = fcl.build(str(self.state), SID, str(self.repo), {}, clean=True)
+        self.assertEqual(len(rep["removed"]), 1)
+        self.assertEqual(len(rep["notes"]), 1)
+        self.assertTrue(rep["ready"])
+
+
 if __name__ == "__main__":
     unittest.main()

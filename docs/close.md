@@ -64,7 +64,8 @@ A record call that fails (a time-out, a non-zero exit or a throw) is not retried
 | Line | Meaning |
 | --- | --- |
 | `CLOSE: ready` or `CLOSE: open` | The verdict. |
-| `uncommitted:`, `unmerged:` | Dirty repositories; branches this session created that are not merged. |
+| `uncommitted:`, `unmerged:` | Dirty repositories (only changes made since the session's baseline); branches this session created that are not merged. |
+| `note:` | Information, never blocking: files that were already changed before the session; a missing baseline. |
 | `open item:` | An open `- [ ]` item of the bound ledger. |
 | `pending child:` | A child session or run that is not done. |
 | `removed:` / `would remove:` | Cleaned up (`would remove:` with `--dry-run`). |
@@ -72,10 +73,16 @@ A record call that fails (a time-out, a non-zero exit or a throw) is not retried
 | `handover: <path> — <reason>` | Own entry that could not be removed. |
 | `child handover: <path> — <reason> (from <session>)` | A child's handover, not yet taken or dropped. |
 
-Ready means nothing is uncommitted, unmerged, open, pending or an untaken child handover. The session's own
+Ready means nothing is uncommitted (since the session's baseline), unmerged, open, pending or an untaken child handover. The session's own
 handovers block only a top session (no parent); with a parent they are passed up and do not block.
 
 After the `## Close` section the adapter appends the review rounds of the session's changes to the result file, one line per branch the session's reviews ran on (`Review rounds: 4 (2 fail, 2 pass; 1 high-stakes), plan reviews 2, PR #301`; with more than one branch each line starts with `<branch>: `). The counts cover every session's reviews of that change; see [review](review.md#review-rounds). Nothing is appended when the session ran no counted review; an unreadable store or result file appends nothing and never fails the close.
+
+### The baseline and the close report
+
+The adapter writes `<state>/sessions/<session>/baseline.json` (`{v: 1, roots: [{repo, head, paths}]}`, or `{v: 1, legacy: true}` for a session saved before it) at every session start and whenever it takes a new baseline ([ceremony](ceremony.md#session-baseline)). With a valid file the close report lists only the checkouts the session wrote in: the session's own folder (as before), the checkouts of its builder launches and of its own edits, minus its own worktrees (a dirty own worktree stays the `worktree_dirty` handover). Repositories of `sync.repos` are no longer listed, and `/sync` still shows them. In each checkout only the paths whose content differs from the file's record count as `uncommitted:`; paths that are still the same become `note: preexisting uncommitted in <repo>: <n> file(s), not this session's` and do not make the close open. `.workflow/` files are compared like any other path. A root recorded without a per-file map (more than 2000 changed files) lists every changed file, with a note. The comparison hashes the files at close time (the spec is in `scripts/foreman_close.py` and `extensions/core-adapter/dirtybase.ts`), so the file cannot be stale.
+
+A `legacy` or unreadable file keeps the roots of today (the session's folder plus `sync.repos`) and adds `note: no session baseline: every configured repository listed`. No file at all (`foreman close` outside a session, a failed write) is today's output exactly, without a note.
 
 `close.json` next to the manifest holds `{v, session, parent, ts, dryRun, uncommitted, unmerged, openItems,
 pendingChildren, removed, wouldRemove, kept, handovers, childHandovers, ready, lines}`; `--dry-run` writes
@@ -129,7 +136,7 @@ A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and 
   files there are never overwritten), and the `foreman:closed <path>` reply names the copy. A copy that fails does not stop the
   close or the cleanup: the reply keeps the original path and a notice says so; the archive below still holds the file as it was
   before the section. When no cleanup starts, nothing is copied and the reply names the original file. Uncommitted files of another repository (a `sync.repos`
-  entry) show in the CLOSE report but are no cleanup precondition: only the round's own worktree is checked.
+  entry) show in the CLOSE report only for a session without a baseline file (see above); they are no cleanup precondition: only the round's own worktree is checked.
 
 - **Target worktree.** The session cwd may be a subfolder: it is first resolved to its worktree root (the `git worktree list --porcelain` entry containing it, longest match, by real path) and that root is the worktree in every check and message. A cwd in no listed worktree refuses the cleanup with a line naming the cwd, removes nothing and prints no remove command; the cwd's `.workflow/` is still snapshotted. The adapter runs one `pr_status` first. When the session's cwd has the PR head ref checked out, that
   worktree is the target. Otherwise (a round that worked in a second worktree while the session sits in the main checkout)

@@ -39,10 +39,12 @@ from __future__ import annotations
 import argparse
 import datetime
 import glob
+import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -272,6 +274,94 @@ def repo_roots(cwd, cfg):
             r = os.path.realpath(top.strip())
             if all(key(r) != key(x) for x in roots):
                 roots.append(r)
+    return roots
+
+
+# ------------------------------------------------------------------ session baseline (extensions/core-adapter/dirtybase.ts)
+#
+# `<state>/sessions/<S>/baseline.json` = {v:1, roots:[{repo, head, paths: {path: hash} | null}]} or {v:1, legacy:true}, written by the
+# adapter. The hash spec is the one of dirtybase.ts (same test vectors): "deleted", "unreadable", "link:"+sha256(readlink)[:16],
+# "dir:"+sha256(HEAD + "\n" + status -z inside it)[:16], sha256(bytes)[:16], "big:<size>:<mtime ms>" over 64 MiB.
+
+BIG_FILE = 64 * 1024 * 1024
+
+
+def _sha16(data):
+    return hashlib.sha256(data).hexdigest()[:16]
+
+
+def dir_digest(head, status):
+    return "dir:" + _sha16((head + "\n" + status).encode("utf-8", "surrogateescape"))
+
+
+def hash_path(top, rel):
+    p = os.path.join(top, *rel.split("/"))
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return "deleted"
+    try:
+        if stat.S_ISLNK(st.st_mode):
+            return "link:" + _sha16(os.readlink(p).encode("utf-8", "surrogateescape"))
+        if stat.S_ISDIR(st.st_mode):
+            code, head, _ = fsync.git(["rev-parse", "HEAD"], p)
+            code2, status, _ = fsync.git(["status", "--porcelain=v1", "-z", "--untracked-files=all"], p)
+            return dir_digest(head.strip() if code == 0 else "", status if code2 == 0 else "")
+        if st.st_size > BIG_FILE:
+            return "big:%d:%d" % (st.st_size, st.st_mtime_ns // 1_000_000)
+        with open(p, "rb") as fh:
+            return _sha16(fh.read())
+    except OSError:
+        return "unreadable"
+
+
+def read_baseline(state, sid):
+    """None (no file), "legacy" (a legacy or malformed file) or {key(repo): {repo, paths}} of a valid one."""
+    path = os.path.join(session_dir(state, sid), "baseline.json")
+    if not os.path.exists(path):
+        return None
+    d = read_json(path)
+    if not isinstance(d, dict) or d.get("v") != 1 or d.get("legacy") is True:
+        return "legacy"
+    out = {}
+    for r in d.get("roots") if isinstance(d.get("roots"), list) else [None]:
+        paths = r.get("paths") if isinstance(r, dict) else 0
+        if (not isinstance(r, dict) or not isinstance(r.get("repo"), str) or not r["repo"]
+                or not (paths is None or (isinstance(paths, dict) and all(isinstance(v, str) for v in paths.values())))):
+            return "legacy"
+        out[key(r["repo"])] = {"repo": r["repo"], "paths": paths}
+    return out
+
+
+def scoped_uncommitted(roots, base):
+    """([uncommitted], [notes]): per root the paths whose content differs from the baseline's; the equal ones become a note."""
+    out, notes = [], []
+    for r in roots:
+        try:
+            paths = fsync.status_paths(r)
+        except RuntimeError:
+            continue
+        entry = base.get(key(r))
+        recorded = entry["paths"] if entry else None
+        if entry and recorded is None:
+            notes.append("no session baseline for %s (too many changed files): every uncommitted file listed" % r)
+        old = [p for p in paths if recorded is not None and p in recorded and hash_path(r, p) == recorded[p]]
+        own = [p for p in paths if p not in old]
+        if old:
+            notes.append("preexisting uncommitted in %s: %d file(s), not this session's" % (r, len(old)))
+        if own:
+            out.append({"repo": r, "paths": own})
+    return out, notes
+
+
+def scoped_roots(state, sid, cwd, entries, base):
+    """The cwd's checkout, then the baseline's, minus the manifest's worktrees (they are handovers)."""
+    roots = repo_roots(cwd, {})
+    worktrees = {key(e["path"]) for e in entries if e.get("kind") == "worktree"}
+    for k, e in base.items():
+        if k in worktrees or not os.path.isdir(e["repo"]) or any(k == key(x) for x in roots):
+            continue
+        roots.append(os.path.realpath(e["repo"]))
     return roots
 
 
@@ -564,12 +654,22 @@ def build(state, sid, cwd, cfg, clean=True, dry_run=False):
     ids = me_ids(state, sid)
     parent = parent_of(live)
     m = load_manifest(state, sid)
+    base, base_notes = read_baseline(state, sid), []
+    if base is None:
+        dirty = uncommitted(repo_roots(cwd, cfg))
+    elif base == "legacy":
+        dirty = uncommitted(repo_roots(cwd, cfg))
+        base_notes = ["no session baseline: every configured repository listed"]
+    else:
+        dirty, base_notes = scoped_uncommitted(scoped_roots(state, sid, cwd, entries_of(state, sid, m), base), base)
     rep = {"v": 1, "session": sid, "parent": parent, "ts": now(), "dryRun": bool(dry_run or not clean),
-           "uncommitted": uncommitted(repo_roots(cwd, cfg)),
+           "uncommitted": dirty,
            "unmerged": unmerged(state, sid, ops_cfg["baseBranch"]),
            "openItems": open_items(bound_ledger(state, sid)),
            "pendingChildren": pending_children(state, sid, ids)}
     rep.update(cleanup(entries_of(state, sid, m), state, sid, ops_cfg, auto, dry_run or not clean))
+    if base_notes:
+        rep["notes"] = list(rep.get("notes", [])) + base_notes  # after the update: cleanup's own list replaced the key
     mark_removed(state, sid, rep["removed"])
     rep["childHandovers"] = child_handovers(state, sid, ids, m["entries"], m["dropped"])
     blocking = (rep["uncommitted"] or rep["unmerged"] or rep["openItems"] or rep["pendingChildren"]
