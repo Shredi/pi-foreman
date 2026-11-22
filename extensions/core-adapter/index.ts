@@ -1763,15 +1763,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId), record).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
   }
 
+  /** A high-stakes run ended without a verdict: it is kept as the incomplete run (resumable at the head and tree of its launch). */
+  function keepHsIncomplete(s: Session, runId: string, root: string, data: unknown, head: string | null, tree: string | null): void {
+    const launch = launchOfRun(s, runId);
+    s.hs.noteIncomplete({ runId, cwd: root, head, tree, reportPath: outputPathOf(data), model: s.runs.get(runId)?.model ?? s.hs.incomplete()?.model ?? null, ...(launch ? { launch } : {}), at: Date.now() });
+    persistCeremonyState(s);
+  }
+
   /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
   function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1], treesWf?: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null || x.incomplete);
     // a run without a verdict (the reviewer recorded `incomplete`, it was cut off, or it left no record) records no run and changes no gate; it is kept to be resumed or handed on (D144)
-    const keepIncomplete = (): void => {
-      const launch = launchOfRun(s, runId);
-      s.hs.noteIncomplete({ runId, cwd: root, head: startValueOf(start, root), tree: startValueOf(treesWf, root), reportPath: outputPathOf(data), model: s.runs.get(runId)?.model ?? s.hs.incomplete()?.model ?? null, ...(launch ? { launch } : {}), at: Date.now() });
-      persistCeremonyState(s);
-    };
+    const keepIncomplete = (): void => keepHsIncomplete(s, runId, root, data, startValueOf(start, root), startValueOf(treesWf, root));
     if (r?.incomplete) {
       s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
       keepIncomplete();
@@ -3618,6 +3621,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (typeof runId === "string" && !s.isChild && !s.launchedRoles.has(runId) && s.ledgerByRun.get(runId)?.review) {
           const status = runEndOf(data)?.status;
           if (status !== undefined && status !== "completed") failedReviewRun(s, runId);
+        }
+        // a high-stakes run launched before a reload (no launched roles) that ends not completed: kept incomplete with the head and tree stored at its launch, so it can be resumed (a verdict after a reload is not recorded)
+        if (typeof runId === "string" && !s.isChild && !s.launchedRoles.has(runId) && hsModel(s)) {
+          const hsRoot = s.hs.ownerOf(runId);
+          const stored = hsRoot !== null ? s.hs.launchStartOf(runId) : null;
+          const status = runEndOf(data)?.status;
+          if (hsRoot !== null && stored && status !== undefined && status !== "completed") keepHsIncomplete(s, runId, hsRoot, data, stored.head, stored.tree);
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           const ended = runEndOf(data);
@@ -6473,7 +6483,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.ladder.onLaunched(event.toolCallId, runId);
         // a `[high-stakes]` launch: the run id is kept in the state (persisted); a failed launch drops the running mark
         if (!s.isChild) s.hs.settleHanded(event.toolCallId, runId, event.isError);
-        if (!s.isChild && s.hs.settle(event.toolCallId, runId, event.isError) !== null && runId) persistCeremonyState(s);
+        if (!s.isChild && s.hs.settle(event.toolCallId, runId, event.isError, (cwd) => ({ head: startValueOf(heads, cwd), tree: startValueOf(treesWf, cwd) })) !== null && runId) persistCeremonyState(s);
         if (runId && !s.isChild) {
           const rowRoles = s.launchedRoles.get(runId) ?? [];
           if (actionOf(event.input as Record<string, unknown>) === "resume") s.childRuns.onResumed(event.toolCallId, runId, resumeTarget(event.input as Record<string, unknown>), rowRoles);
