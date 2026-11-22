@@ -131,6 +131,7 @@ export interface GitSnapshot {
 }
 
 const MAX_REL_TOPS = 32;
+const MAX_PASSED_CALLS = 256;
 
 /** Carry the per-top hooks maps of `prev` into `next` (same relative hooks path), dropping tops whose worktree is gone. */
 export function mergeRelTops(prev: GitSnapshot | null, next: GitSnapshot): GitSnapshot {
@@ -596,7 +597,8 @@ export class GitDriftWatch {
   /** Set when the stored snapshot was missing or corrupt for a workspace that had one; asks until approved. */
   tamper: string | null = null;
   private stateFile: string | null = null;
-  private readonly passed = new Set<string>();
+  /** Call id -> the cwd `gate` compared; `after` re-snapshots that checkout, never one the gate did not compare. */
+  private readonly passed = new Map<string, string>();
 
   private set(s: GitSnapshot | null): void {
     if (s) s = mergeRelTops(this.snap, s);
@@ -642,7 +644,11 @@ export class GitDriftWatch {
       this.set(takeGitSnapshot(cwd, home));
     }
     else if (r.decision === "none") this.recordFirstSeenTop(cwd, home);
-    if (callId) this.passed.add(callId);
+    if (callId) {
+      this.passed.delete(callId);
+      while (this.passed.size >= MAX_PASSED_CALLS) this.passed.delete(this.passed.keys().next().value as string);
+      this.passed.set(callId, cwd);
+    }
     return undefined;
   }
 
@@ -662,8 +668,9 @@ export class GitDriftWatch {
 
   /** After the foreman's own git call ran: its own config changes (push -u, branch -d) become the baseline. */
   after(cwd: string, home: string, callId: string): void {
+    const gated = this.passed.get(callId) ?? cwd;
     if (!this.passed.delete(callId) || !this.snap) return;
-    this.set(takeGitSnapshot(cwd, home));
+    this.set(takeGitSnapshot(gated, home));
   }
 }
 

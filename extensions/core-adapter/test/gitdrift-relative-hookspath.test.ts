@@ -157,3 +157,15 @@ test("relative hooksPath: a worktree used only through gate is recorded, a later
   assert.match(r.reason, /pre-push/);
   assert.match(r.reason, /pre-commit/);
 });
+
+test("relative hooksPath: after() re-snapshots the gated checkout, a hook planted in another checkout stays named", { skip }, async (t) => {
+  const { primary, wt, state } = setup(t);
+  const w = new GitDriftWatch();
+  assert.deepEqual(w.bind(state, primary, HOME), []);
+  fs.writeFileSync(path.join(primary, "scripts", "git-hooks", "pre-push"), "#!/bin/sh\nexit 1\n");
+  assert.equal(await w.gate(wt, HOME, "git", PRINT, noTrace, "c1"), undefined);
+  w.after(primary, HOME, "c1");
+  const r = await gate(w, primary);
+  assert.ok(r && r.block);
+  assert.match(r.reason, /hooks: added pre-push/);
+});
