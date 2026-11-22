@@ -252,8 +252,8 @@ The walker reads the forms listed under [forms the walker now reads](permissions
 - `GIT_DIR=`, `GIT_WORK_TREE=` and `CDPATH=` before a command (see the git floors above);
 - `echo 'branch -D main' | xargs git`: arguments fed on stdin to a known program are not read by the git checks;
 - options that start another program: `sort --compress-program`, `tar --to-command`;
-- positional references inside an `eval` or `bash -c` text in a body, `${!#}`;
-- `(( $(...) ))`, `coproc`, `trap`, `find -exec sh -c`, `npx sh -c` and `nameref`.
+- positional references inside an `eval` or `bash -c` text in a body;
+- `coproc`, `trap`, `find -exec sh -c`, `npx sh -c` and `nameref`.
 
 ## Known limit: network reads (R31c)
 
