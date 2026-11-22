@@ -335,6 +335,50 @@ class BaselineTest(Base):
             os.symlink("target.txt", str(self.repo / "l"))
             self.assertEqual(fcl.hash_path(str(self.repo), "l"), "link:199b3badd968634e")
 
+    def test_dir_entry_never_unchanged_and_close_stays_open_after_a_nested_reedit(self):
+        inner = self.repo / "inner"
+        inner.mkdir()
+        g(inner, "init", "-q")
+        self.put(inner, "f")
+        g(inner, "add", "f")
+        g(inner, "commit", "-q", "-m", "i")
+        self.put(inner, "g")
+        self.baseline(self.entry(self.repo))
+        top = os.path.realpath(str(self.repo))
+        key = [p for p in fsync.status_paths(top) if p.startswith("inner")][0]
+        h = fcl.hash_path(top, key)
+        self.assertTrue(h.startswith("dir:"))
+        self.put(inner, "g", "edited again\n")  # same status text
+        self.assertEqual(fcl.hash_path(top, key), h)
+        self.assertFalse(fcl.same_fingerprint(h, fcl.hash_path(top, key)))
+        rep = self.build()
+        self.assertEqual(([u["paths"] for u in rep["uncommitted"]], rep["ready"], rep["lines"][0]), ([[key]], False, "CLOSE: open"))
+
+    @unittest.skipIf(os.name == "nt", "no exec bit on win32")
+    def test_exec_bit_is_part_of_the_fingerprint_and_a_chmod_is_counted(self):
+        self.put(self.repo, "u.sh", "hello\n")
+        os.chmod(str(self.repo / "u.sh"), 0o644)
+        self.assertEqual(fcl.hash_path(str(self.repo), "u.sh"), "5891b5b522d5df08")
+        self.baseline(self.entry(self.repo))
+        self.assertEqual(self.build()["uncommitted"], [])
+        os.chmod(str(self.repo / "u.sh"), 0o755)
+        self.assertEqual(fcl.hash_path(str(self.repo), "u.sh"), "5891b5b522d5df08:x")
+        rep = self.build()
+        self.assertEqual(([u["paths"] for u in rep["uncommitted"]], rep["ready"]), ([["u.sh"]], False))
+
+    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0), "needs POSIX permissions, not root")
+    def test_unreadable_is_never_unchanged_and_enotdir_is_deleted(self):
+        self.put(self.repo, "u.txt", "hello\n")
+        self.assertEqual(fcl.hash_path(str(self.repo), "README/below"), "deleted")
+        os.chmod(str(self.repo / "u.txt"), 0)
+        try:
+            self.assertEqual(fcl.hash_path(str(self.repo), "u.txt"), "unreadable")
+            self.assertFalse(fcl.same_fingerprint("unreadable", "unreadable"))
+            self.assertFalse(fcl.same_fingerprint("5891b5b522d5df08", "unreadable"))
+        finally:
+            os.chmod(str(self.repo / "u.txt"), 0o644)
+        self.assertTrue(fcl.same_fingerprint("deleted", "deleted"))
+
     def test_no_file_keeps_todays_output_without_notes(self):
         self.put(self.repo, "old.txt")
         rep = self.build()

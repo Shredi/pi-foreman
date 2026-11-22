@@ -3,10 +3,13 @@
 // reminder and the close report (scripts/foreman_close.py, same hash spec) count only what differs from it.
 //
 // Hash spec (shared with foreman_close.py, same test vectors):
-//   missing path            "deleted"        (lstat fails with ENOENT)      unreadable file  "unreadable"
+//   missing path            "deleted"        (lstat fails with ENOENT or ENOTDIR)
+//   any other lstat/read error "unreadable"
+//   unchanged               a baseline value counts as unchanged only when the current one is equal and is neither "unreadable"
+//                           nor a "dir:" digest (a nested repository may change inside without changing its status text: fail closed)
 //   symlink                 "link:" + sha256(readlink text, utf-8)[:16]
 //   directory               "dir:" + sha256(HEAD (trimmed, "" when none) + "\n" + `git status --porcelain=v1 -z --untracked-files=all` inside it)[:16]
-//   regular file            sha256(bytes)[:16]; over 64 MiB "big:" + size + ":" + (mtime in ns // 1_000_000)
+//   regular file            sha256(bytes)[:16] + ":x" when any exec bit is set (never on win32); over 64 MiB "big:" + size + ":" + (mtime in ns // 1_000_000)
 // The listing is `git status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all` with both sides of a rename or copy,
 // backslashes to `/` (foreman_sync.status_paths). More than 2000 paths: no per-path map (`paths: null`).
 import { createHash } from "node:crypto";
@@ -72,8 +75,9 @@ export async function hashPath(top: string, rel: string): Promise<string> {
   let st: fs.BigIntStats;
   try {
     st = await fs.promises.lstat(p, { bigint: true });
-  } catch {
-    return "deleted";
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "deleted" : "unreadable";
   }
   try {
     if (st.isSymbolicLink()) return `link:${sha16(Buffer.from(await fs.promises.readlink(p), "utf8"))}`;
@@ -83,7 +87,8 @@ export async function hashPath(top: string, rel: string): Promise<string> {
       return dirDigest(head, status);
     }
     if (st.size > BigInt(BIG_FILE)) return `big:${st.size}:${st.mtimeNs / 1000000n}`;
-    return sha16(await fs.promises.readFile(p));
+    const exec = process.platform !== "win32" && (st.mode & 0o111n) !== 0n ? ":x" : "";
+    return sha16(await fs.promises.readFile(p)) + exec;
   } catch {
     return "unreadable";
   }
@@ -148,9 +153,14 @@ export async function takeBaseline(dir: string, platform: string = process.platf
   return c && e ? { key: c.key, ...e } : null;
 }
 
+/** True when a recorded fingerprint and the current one prove the path unchanged: equal, and neither unreadable nor a directory digest. */
+export function sameFingerprint(recorded: string, current: string): boolean {
+  return recorded === current && current !== "unreadable" && !current.startsWith("dir:");
+}
+
 /** The baseline paths whose content still equals the recorded fingerprint. */
 export async function unchangedSince(top: string, paths: Record<string, string>): Promise<Set<string>> {
   const same = new Set<string>();
-  for (const [p, h] of Object.entries(paths)) if ((await hashPath(top, p)) === h) same.add(p);
+  for (const [p, h] of Object.entries(paths)) if (sameFingerprint(h, await hashPath(top, p))) same.add(p);
   return same;
 }

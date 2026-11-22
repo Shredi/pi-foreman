@@ -280,8 +280,8 @@ def repo_roots(cwd, cfg):
 # ------------------------------------------------------------------ session baseline (extensions/core-adapter/dirtybase.ts)
 #
 # `<state>/sessions/<S>/baseline.json` = {v:1, roots:[{repo, head, paths: {path: hash} | null}]} or {v:1, legacy:true}, written by the
-# adapter. The hash spec is the one of dirtybase.ts (same test vectors): "deleted", "unreadable", "link:"+sha256(readlink)[:16],
-# "dir:"+sha256(HEAD + "\n" + status -z inside it)[:16], sha256(bytes)[:16], "big:<size>:<mtime ms>" over 64 MiB.
+# adapter. The hash spec is the one of dirtybase.ts (same test vectors): "deleted" (ENOENT/ENOTDIR only), "unreadable" (any other error), "link:"+sha256(readlink)[:16],
+# "dir:"+sha256(HEAD + "\n" + status -z inside it)[:16], sha256(bytes)[:16] (+ ":x" when an exec bit is set, never on win32), "big:<size>:<mtime ms>" over 64 MiB.
 
 BIG_FILE = 64 * 1024 * 1024
 
@@ -298,8 +298,10 @@ def hash_path(top, rel):
     p = os.path.join(top, *rel.split("/"))
     try:
         st = os.lstat(p)
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return "deleted"
+    except OSError:
+        return "unreadable"
     try:
         if stat.S_ISLNK(st.st_mode):
             return "link:" + _sha16(os.readlink(p).encode("utf-8", "surrogateescape"))
@@ -310,9 +312,15 @@ def hash_path(top, rel):
         if st.st_size > BIG_FILE:
             return "big:%d:%d" % (st.st_size, st.st_mtime_ns // 1_000_000)
         with open(p, "rb") as fh:
-            return _sha16(fh.read())
+            data = fh.read()
+        return _sha16(data) + (":x" if sys.platform != "win32" and st.st_mode & 0o111 else "")
     except OSError:
         return "unreadable"
+
+
+def same_fingerprint(recorded, current):
+    """Unchanged only when equal and neither unreadable nor a dir: digest (a nested repo may change inside with the same status)."""
+    return recorded == current and current != "unreadable" and not current.startswith("dir:")
 
 
 def read_baseline(state, sid):
@@ -345,7 +353,7 @@ def scoped_uncommitted(roots, base):
         recorded = entry["paths"] if entry else None
         if entry and recorded is None:
             notes.append("no session baseline for %s (too many changed files): every uncommitted file listed" % r)
-        old = [p for p in paths if recorded is not None and p in recorded and hash_path(r, p) == recorded[p]]
+        old = [p for p in paths if recorded is not None and p in recorded and same_fingerprint(recorded[p], hash_path(r, p))]
         own = [p for p in paths if p not in old]
         if old:
             notes.append("preexisting uncommitted in %s: %d file(s), not this session's" % (r, len(old)))

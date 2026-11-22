@@ -116,3 +116,50 @@ test("checkoutKey: separators to /, lowercased on win32 and darwin only", () => 
   assert.equal(checkoutKey("/Tmp/Nope/Repo", "linux"), "/Tmp/Nope/Repo");
   assert.equal(checkoutKey("C:\\Tmp\\Nope", "win32"), "c:/tmp/nope");
 });
+
+test("a dir: entry never counts as unchanged, even re-edited inside without a status change", async (t) => {
+  const dir = repo(t);
+  const inner = path.join(dir, "inner");
+  fs.mkdirSync(inner);
+  gitIn(inner, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(inner, "f"), "f\n");
+  gitIn(inner, "add", "f");
+  gitIn(inner, "commit", "-q", "-m", "i");
+  fs.writeFileSync(path.join(inner, "g"), "g\n"); // untracked inside: status text "?? g"
+  const b = await takeBaseline(dir);
+  const paths = b?.paths as Record<string, string>;
+  const key = Object.keys(paths).find((k) => k.startsWith("inner")) as string;
+  assert.match(paths[key], /^dir:/);
+  assert.equal(await hashPath(dir, key), paths[key], "same status text, same digest");
+  fs.writeFileSync(path.join(inner, "g"), "edited again\n"); // same status text
+  assert.equal(await hashPath(dir, key), paths[key]);
+  assert.equal((await unchangedSince(dir, paths)).has(key), false);
+});
+
+test("an executable bit is part of a regular file's fingerprint (POSIX)", { skip: process.platform === "win32" }, async (t) => {
+  const dir = repo(t);
+  fs.writeFileSync(path.join(dir, "u.sh"), "hello\n");
+  fs.chmodSync(path.join(dir, "u.sh"), 0o644);
+  const plain = await hashPath(dir, "u.sh");
+  assert.equal(plain, "5891b5b522d5df08");
+  fs.chmodSync(path.join(dir, "u.sh"), 0o755);
+  assert.equal(await hashPath(dir, "u.sh"), "5891b5b522d5df08:x");
+  assert.equal((await unchangedSince(dir, { "u.sh": plain })).size, 0);
+});
+
+test("an unreadable file is 'unreadable' and never unchanged; a missing path below a file is 'deleted'", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
+  const dir = repo(t);
+  fs.writeFileSync(path.join(dir, "u.txt"), "hello\n");
+  assert.equal(await hashPath(dir, "README/below"), "deleted", "ENOTDIR");
+  fs.chmodSync(path.join(dir, "u.txt"), 0o000);
+  t.after(() => {
+    try {
+      fs.chmodSync(path.join(dir, "u.txt"), 0o644);
+    } catch {
+      // the checkout is already removed
+    }
+  });
+  assert.equal(await hashPath(dir, "u.txt"), "unreadable");
+  assert.equal((await unchangedSince(dir, { "u.txt": "unreadable" })).size, 0, "unreadable baseline and current");
+  assert.equal((await unchangedSince(dir, { "u.txt": "5891b5b522d5df08" })).size, 0);
+});

@@ -90,3 +90,27 @@ test("preexisting untracked files: one edited further is counted, both edited ar
   put(dir, "src/n3.txt");
   assert.equal((await check(dir, base))?.reason, "files", "an edited and a new file");
 });
+
+test("re-edit inside a preexisting dirty untracked nested repo is counted; chmod +x on a preexisting dirty file is counted (POSIX)", async (t) => {
+  const dir = repo(t);
+  const inner = path.join(dir, "inner");
+  fs.mkdirSync(inner);
+  gitIn(inner, "init", "-q", "-b", "main");
+  put(inner, "f");
+  gitIn(inner, "add", "f");
+  gitIn(inner, "commit", "-q", "-m", "i");
+  put(inner, "g");
+  put(dir, "src/n1.txt");
+  const base = await based(dir);
+  const none = { files: 0, lines: 40, newFiles: 3 };
+  put(inner, "g", "edited again\n"); // the nested repo's status text is unchanged
+  assert.equal((await checkTrivial([], dir, none, "", base))?.reason, "bound", "a directory entry is always counted (fail closed)");
+  if (process.platform !== "win32") {
+    const d2 = repo(t);
+    put(d2, "src/n1.txt");
+    const b2 = await based(d2);
+    assert.equal(await checkTrivial([], d2, none, "", b2), null);
+    fs.chmodSync(path.join(d2, "src/n1.txt"), 0o755);
+    assert.equal((await checkTrivial([], d2, none, "", b2))?.reason, "bound");
+  }
+});
