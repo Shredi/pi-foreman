@@ -145,5 +145,5 @@ test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict:
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /nobody is at this session/);
-  assert.equal(c.sent.length, 1);
+  assert.equal(c.sent.length, 2); // item 5: an invalid verdict is asked for once more
 });
