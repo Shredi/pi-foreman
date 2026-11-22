@@ -1520,7 +1520,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (rest) {
       const restText = wordsText(rest);
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
-      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => carryFacts({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
       withHeredocs(inner, seg);
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, acc);

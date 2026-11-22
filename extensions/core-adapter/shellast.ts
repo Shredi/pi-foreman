@@ -199,6 +199,8 @@ interface Scope {
   src?: string;
   /** The run unit of the line the commands walked here belong to (see `unitNodes`). */
   unit?: number;
+  /** The script being walked runs in a shell that reads startup files (`bash -l -c`, `sh -i -c`): they may rebind any name before it. */
+  startup?: boolean;
 }
 
 /** One simple command being resolved. */
@@ -387,6 +389,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
 function reboundAt(sc: Scope): string[] {
   const rn = sc.run;
   if (rn.trial) return [];
+  if (sc.startup) return HARNESS_NAMES;
   const own = sc.unit === undefined ? (rn.rebound ? HARNESS_NAMES : []) : (rn.rebound?.[sc.unit] ?? []);
   return [...new Set([...(rn.seed ?? []), ...own])];
 }
@@ -757,6 +760,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       let i = 0;
       let cflag = false;
       let sflag = false;
+      let startup = false;
       for (; i < rest.length; i++) {
         const v = rest[i].value;
         if (v === null) return bad(cflag ? "nonliteral_script" : (rest[i].reason ?? "unresolved_var"), !rest[i].lit);
@@ -765,11 +769,13 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
           break;
         }
         if (v.startsWith("--")) {
+          if (v === "--login") startup = true;
           if (!["--login", "--noprofile", "--norc", "--posix", "--restricted", "--verbose", "--noediting"].includes(v)) return bad("wrapper_option");
         } else if (/^[-+][A-Za-z]/.test(v)) {
           for (const ch of v.slice(1)) {
             if (ch === "c") cflag = true;
             else if (ch === "s") sflag = true;
+            else if (ch === "l" || ch === "i") startup = true;
             else if (ch === "o" || ch === "O") i++;
           }
         } else break;
@@ -778,7 +784,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const script = rest[i];
       if (!script) return plain(prog, name, rest, c, cwd);
       if (script.value === null) return bad("nonliteral_script");
-      return runString(name, script.value, c, cwd);
+      return runString(name, script.value, startup ? { ...c, sc: { ...c.sc, startup: true } } : c, cwd);
     }
     case "eval": {
       if (!rest.length) return plain(prog, name, rest, c, cwd);
@@ -1395,6 +1401,8 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
   };
   const rec = (n: string, kind: Binding["kind"], lit: string | null = null): void => {
     noteDetail(n);
+    // a changed IFS splits the words of a later expansion into other names and paths: from here on any name may be rebound (the detail only; `boundNames` keeps its answer)
+    if (n === "IFS" && !quiet) site("any", () => true);
     const l = bindings.get(n);
     if (l) l.push({ kind, lit });
     else bindings.set(n, [{ kind, lit }]);
@@ -1541,7 +1549,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
    * a name (`$unset'HOME'`). `${n:=..}` itself and `$((..))` are read elsewhere.
    */
   let braceSlash = false;
-  const expands = (raw: string): boolean => {
+  const expands = (raw: string, word?: any): boolean => {
     braceSlash = false;
     let live = "";
     let unquoted = "";
@@ -1574,7 +1582,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
     }
     if (/(?<!\$)\{[^{}]*(?:,|\.\.)/.test(unquoted)) {
       // a brace list joined to a `/` makes only paths (`$X/{a,b}`): no variant is a variable name, so for D4 it binds nothing
-      braceSlash = unquoted.replace(/\{[^{}]*\}/g, "").includes("/");
+      braceSlash = !!word?.parts?.some((p: any) => p.type === "BraceExpansion") && !!word.parts.some((p: any) => p.type === "Literal" && String(p.value ?? p.text).includes("/"));
       return true;
     }
     const text = live.replace(/\$\(\(.*?\)\)/gs, " ");
@@ -1600,7 +1608,9 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
           // `[key]=v` of a compound array: the key is an arithmetic subscript, the value is what is assigned
           const plain = vals.map((v) => (/^\[.*\]=/s.test(wordText(v)) ? { value: wordText(v).replace(/^\[.*?\]=/s, "") } : v));
           const single = a.value?.type === "Word" && !a.append && !a.index && plain.length === 1;
-          bind(a.name, single && valNum(plain[0]) ? "num" : "text", single ? litOf(plain[0]) : null);
+          // an integer name holds a number whatever is assigned (bash evaluates the value; the site below fires when that value is not shown to be a number)
+          const intLit = single && ints.has(a.name) && plain[0].type === "Word" && (!plain[0].parts || plain[0].parts.every((q: any) => q.type === "Literal"));
+          bind(a.name, single && (valNum(plain[0]) || intLit) ? "num" : "text", single ? litOf(plain[0]) : null);
           if (RUNS_FILE_VARS.has(a.name)) structural();
           for (const v of vals) {
             const key = /^\[(.*?)\]=/s.exec(wordText(v));
@@ -1609,7 +1619,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
           if (plain.some(nonDecimal)) tainted.add(a.name);
           if (!quiet) late.push(() => ints.has(a.name) && plain.some(nonDecimal));
           // an integer name evaluates what is assigned to it as arithmetic
-          site("arith", (at) => ints.has(a.name) && !plain.every((v: any) => valShown(v, at)));
+          site("arith", (at) => ints.has(a.name) && !plain.every((v: any) => (intLit ? textShown(String(v.value ?? ""), at) : valShown(v, at))));
           if (a.index) lateArith(() => arith(wordText(a.index), false), (at) => wordShown(a.index, at));
         }
         // a computed program name (`$x ./f`) or a quote-broken assignment word (`HO""ME=/x`, `{HOME,X}=/x`)
@@ -1664,7 +1674,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
               if (!/[A-Za-z]/.test(a[k])) break;
             }
           if (subscriptRisky(a)) subscriptSite(a);
-          else if (expands(raws[i + 1])) {
+          else if (expands(raws[i + 1], nodes[i + 1])) {
             markOld();
             const slash = braceSlash;
             site("any", () => !slash);
