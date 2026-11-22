@@ -711,6 +711,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
   const pythonCache = new PythonCache();
   const sessions = new Map<string, Session>();
+  /** Session id -> why startSession failed (a reload across versions leaves a stale module); the tools are refused with it and no start is retried. */
+  const startErrors = new Map<string, string>();
+  const startFailText = (e: unknown): string => `pi-foreman could not start this session: ${e instanceof Error ? e.message : String(e)}. Restart Pi; a reload cannot load a changed install.`;
   let userPickedModel = false;
   let applyingModel = false;
   /** Idle model downshift (idlemodel.ts): one instance per extension load, bound to the session and context of the latest event. */
@@ -2017,6 +2020,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (bare.length === 0) return { line: "", ...(primary ? { primary } : {}) };
     if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") return { line: "", ...(primary ? { primary } : {}) };
+    // A session that started on code before the dirty-base entry and already has builder or edit work stays in its checkout: a folder made now would split the work.
+    if (!s.sessionFolder && !s.primaryWork && s.dirtyBase === null && (s.work.builders > 0 || s.work.edits > 0) && bare.some((e) => e.agent === "builder") && (await primaryCheckout(s.cwd))) {
+      s.primaryWork = true;
+      try {
+        pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
+      } catch {
+        // the session file is not writable now: the decision stays in memory
+      }
+    }
     if (!s.sessionFolder && s.primaryWork) {
       if (s.primaryNoted) return { line: "" };
       s.primaryNoted = true;
@@ -2326,7 +2338,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   async function ensureSession(ctx: ExtensionContext): Promise<Session> {
-    return sessionFor(ctx) ?? (await startSession(ctx));
+    const known = sessionFor(ctx);
+    if (known) return known;
+    const failed = startErrors.get(ctx.sessionManager.getSessionId());
+    if (failed !== undefined) throw new Error(failed);
+    return await startSession(ctx);
   }
 
   function refreshLedgerTier(s: Session): void {
@@ -2534,7 +2550,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     toolUsage = new ToolUsageTracker();
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
-    const s = await startSession(ctx);
+    let s: Session;
+    try {
+      s = await startSession(ctx);
+      startErrors.delete(s.id);
+    } catch (e) {
+      const text = startFailText(e);
+      startErrors.set(ctx.sessionManager.getSessionId(), text);
+      process.stderr.write(`${text}\n`);
+      ctx.ui.notify(text, "error");
+      return;
+    }
     closingSessions.delete(s.id);
     if (!s.isChild) await hsOwnRoot(s); // the own checkout's key, so no review fact is filed under a raw cwd
     if (!s.isChild) {
@@ -4058,7 +4084,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return (gs && (repeatedDeny(gs, ctx, r.reason, denialSentence(r)) ?? undefined)) || { block: true as const, reason: r.reason };
     }
     // no session: no dialog, classifier or log to decide with; floors and rules ran above
-    if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
+    if (!gs || !rt || !resolved) return { block: true as const, reason: startErrors.get(ctx.sessionManager.getSessionId()) ?? "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
     const allowed = (rule: string, layer: GateLayer, label: string, folder = false, reason?: string): undefined => {
       gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role, ...(folder ? { mode: "auto", source: "workFolder" } : {}) });
       if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule, reason); // the classifier logs its own record
