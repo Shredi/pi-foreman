@@ -45,6 +45,17 @@ class GateLayerTest(unittest.TestCase):
         res = self.load(proj={"gate": {"tmpAccess": False}})
         self.assertIs(res["config"]["gate"]["tmpAccess"], False)
 
+    def test_judge_reads_project_cannot_set_true_over_user_false(self):
+        res = self.load(l2={"gate": {"judgeReads": False}}, proj={"gate": {"judgeReads": True}})
+        self.assertIs(res["config"]["gate"]["judgeReads"], False)
+        self.warned(res, "project gate.judgeReads ignored")
+        self.assertEqual(res["errors"], [])
+
+    def test_judge_reads_project_may_set_false(self):
+        res = self.load(proj={"gate": {"judgeReads": False}})
+        self.assertIs(res["config"]["gate"]["judgeReads"], False)
+        self.assertEqual(res["errors"], [])
+
     def test_timeouts_project_may_only_lower(self):
         res = self.load(l2={"gate": {"reviewTimeoutMs": 5000}}, proj={"gate": {"reviewTimeoutMs": 9000}})
         self.assertEqual(res["config"]["gate"]["reviewTimeoutMs"], 5000)

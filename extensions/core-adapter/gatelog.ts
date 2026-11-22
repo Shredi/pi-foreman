@@ -168,6 +168,12 @@ export interface GateRecord {
   promptChars?: number;
   /** The time limit of the judge's model call. */
   timeoutMs?: number;
+  /** The paths the judge read (root label, relative tail, `:outcome` unless shown); never content. */
+  reads?: string[];
+  /** The characters of file text sent to the judge. */
+  readBytes?: number;
+  /** The read rounds the judge used. */
+  rounds?: number;
 }
 
 export interface GateLogOptions {
@@ -228,6 +234,9 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             ...(rec.reasoning ? { reasoning: field(rec.reasoning) } : {}),
             ...(typeof rec.promptChars === "number" ? { promptChars: Math.round(rec.promptChars) } : {}),
             ...(typeof rec.timeoutMs === "number" ? { timeoutMs: Math.round(rec.timeoutMs) } : {}),
+            ...(rec.reads?.length ? { reads: rec.reads.slice(0, 16).map((r) => redactCommand(String(r)).slice(0, 200)) } : {}),
+            ...(rec.reads?.length && typeof rec.readBytes === "number" ? { readBytes: Math.round(rec.readBytes) } : {}),
+            ...(rec.reads?.length && typeof rec.rounds === "number" ? { rounds: Math.round(rec.rounds) } : {}),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,
           }) + "\n";
