@@ -89,7 +89,7 @@ test("a nested repository is recorded by a dir: digest of its HEAD and status", 
   const b = await takeBaseline(dir);
   const key = Object.keys(b?.paths ?? {}).find((k) => k.startsWith("inner"));
   assert.ok(key, JSON.stringify(b?.paths));
-  const h = (b?.paths as Record<string, string>)[key];
+  const h = (b?.paths ?? {})[key] as string;
   assert.match(h, /^dir:[0-9a-f]{16}$/);
   fs.writeFileSync(path.join(inner, "g"), "g\n");
   assert.notEqual(await hashPath(dir, key), h, "a change inside it changes the digest");

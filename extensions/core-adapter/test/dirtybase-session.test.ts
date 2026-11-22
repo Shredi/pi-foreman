@@ -26,10 +26,13 @@ const put = (root: string, rel: string, text = "x\n") => {
 const settle = async (a: Adapter): Promise<R> => (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
 const finishAnswer = async (a: Adapter): Promise<R> => {
   const r = await settle(a);
-  return (r?.entries ?? []).some((e) => e.customType === "pi-foreman-stop-gate") ? await settle(a) : r;
+  return (r?.entries ?? []).some((e) => e.customType === "pi-foreman-stop-gate") ? settle(a) : r;
 };
 const dirtyEntries = (w: World) => w.entries.filter((e) => e.customType === DIRTY_BASE_ENTRY);
-const lastMap = (w: World): Map => (dirtyEntries(w).at(-1)?.data as { map: Map }).map;
+const lastMap = (w: World): Map => {
+  const e = dirtyEntries(w).at(-1) as { data: { map: Map } };
+  return e.data.map;
+};
 const sessionsDir = (w: World) => path.join(w.project, "..", "agent", "pi-foreman", "state", "sessions");
 const scope = (w: World): { v: number; legacy?: boolean; roots?: { repo: string; head: string | null; paths: Record<string, string> | null }[] } | null => {
   const d = sessionsDir(w);
