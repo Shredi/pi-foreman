@@ -78,6 +78,8 @@ export interface FloorHit {
   kind: "deny" | "ask" | "judge";
   /** The text that matched (raw and opaque-text floors: the regex match; segment floors: program and deciding argument; path floors: the path as written), redacted like the gate log (secrets `[redacted]`, home directory `~`) and cut by `cutFragment`. The gate appends it to the denial; `reason` itself does not carry it. */
   fragment?: string;
+  /** Rule names (`danger-<name>`) of the other judge-first hits of the same line that lost to this one (only on a `judge` hit; the chosen hit and every verdict stay as they were). */
+  also?: string[];
 }
 
 /** A fragment of the matched text for a denial: redacted (as the gate log), control characters removed, cut to 80 characters. */
@@ -90,7 +92,17 @@ const askHit = (name: string, reason: string, fragment?: string): FloorHit => ({
 const judgeHit = (name: string, reason: string, fragment?: string): FloorHit => ({ rule: `danger-${name}`, kind: "judge", reason, ...(fragment ? { fragment: cutFragment(fragment) } : {}) });
 
 /** The stronger of two non-deny hits: an ask (the owner decides at once) over a judge-first hit. */
-export const strongerHit = (a: FloorHit | null, b: FloorHit | null): FloorHit | null => (a?.kind === "ask" ? a : b?.kind === "ask" ? b : a ?? b);
+export const strongerHit = (a: FloorHit | null, b: FloorHit | null): FloorHit | null => absorb(a?.kind === "ask" ? a : b?.kind === "ask" ? b : a ?? b, a, b);
+
+/** The judge-first rule names a hit stands for: its own and the ones it absorbed. */
+const judgeNames = (h: FloorHit | null): string[] => (h ? [...(h.kind === "judge" ? [h.rule] : []), ...(h.also ?? [])] : []);
+
+/** `kept`, a judge-first hit, with the judge-first rules of the `others` it won over in `also` (the same object when there is none). */
+function absorb(kept: FloorHit | null, ...others: (FloorHit | null)[]): FloorHit | null {
+  if (kept?.kind !== "judge") return kept;
+  const also = [...new Set([...judgeNames(kept), ...others.flatMap(judgeNames)])].filter((n) => n !== kept.rule);
+  return also.length === 0 && !kept.also ? kept : { ...kept, also };
+}
 
 const base = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCase().replace(/\.exe$/, "");
 const isWord = (w: string): boolean => !/[$`*?[\]{}]/.test(w) && !tildeWord(w);
@@ -648,7 +660,10 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   if (git?.kind === "deny") return git;
   soft.hit = git;
   const inj = injectFloor(seg, prog);
-  soft.hit ??= inj;
+  const keep = (h: FloorHit | null): void => {
+    soft.hit = soft.hit ? absorb(soft.hit, h) : h;
+  };
+  keep(inj);
   const pw = protectedWrite(seg, prog, env, line);
   if (pw) return pw;
   if (PRIVILEGE.has(prog)) return hit("privilege", `\`${prog}\` escalates privileges. Run the command as the current user; ask the user when root is needed.`);
@@ -660,7 +675,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   }
   if (prog === "dd" && seg.argv.some((w) => /^of=(\/dev\/|\\\\\.\\)/i.test(w))) return hit("disk", "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
   const unreadable = unknownWriteTarget(seg, prog);
-  if (unreadable !== undefined) soft.hit ??= unknownWriteHit(unreadable);
+  if (unreadable !== undefined) keep(unknownWriteHit(unreadable));
   for (const r of seg.redirects) if (r.op !== "<" && r.op !== "dup" && /^\/dev\/(sd|nvme|hd|vd|xvd|disk|rdisk|mmcblk)/i.test(r.target)) return hit("disk", "Redirecting into a block device overwrites a disk. Write to a file inside the worktree or /tmp instead.");
   const del = deleteFloor(seg, prog, env) ?? chmodFloor(seg, prog, env);
   if (del) return del;
@@ -671,7 +686,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
     const d = seg.argv.filter((w) => !w.startsWith("-")).slice(-1)[0];
     if (d !== undefined && outside(d, seg.cwd ?? env.cwd, env)) return hit("delete-outside", `\`rsync --delete\` into '${d}' deletes files outside the worktree, your scratch dir and /tmp.`);
   }
-  soft.hit ??= fsScanFloor(seg, env);
+  keep(fsScanFloor(seg, env));
   const pub = publishFloor(prog, seg.argv);
   if (pub) return hit("publish", `${pub} publishes a package or image. Ask the user to publish; build and test locally instead.`);
   if (downloadFeedsShell(seg, line)) return hit("download-shell", DOWNLOAD_SHELL_REASON);
@@ -1505,7 +1520,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   // a judge-first hit is kept, not returned: a deny later on the line still wins
   const settle = (h: FloorHit | null): FloorHit | null => {
     if (h?.kind !== "judge") return h;
-    acc.hit ??= h;
+    acc.hit = acc.hit ? absorb(acc.hit, h) : h;
     return null;
   };
   // an unreadable nesting this deep goes to the judge unread
@@ -1908,11 +1923,12 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   const psTool = segments.length === 1 && segments[0].program === "powershell" && segments[0].argv.length === 0 && segments[0].opaque === "foreign_shell";
   const n1 = nestedKinds(text, psTool ? parseShell(text, { cwd: segments[0].cwd, platform: env.platform }) : segments, env, !psTool);
   const n2 = psTool ? null : completeLines(text, segments, env);
-  const nested = n1?.kind === "deny" ? n1 : n2?.kind === "deny" ? n2 : n1 ?? n2;
+  const nested = n1?.kind === "deny" ? n1 : n2?.kind === "deny" ? n2 : absorb(n1 ?? n2, n1, n2);
   if (nested?.kind === "deny") return nested;
   // a recursive delete the gate cannot read goes to the judge, by the predicate of the label
   const unknown = unknownFloor(text, segments, env);
-  return pending ?? nested ?? unknown ?? (foreignSegments(segments) ? psOutsideDelete(text, env) : null);
+  const last = pending ?? nested ?? unknown ?? (foreignSegments(segments) ? psOutsideDelete(text, env) : null);
+  return absorb(last, pending, nested, unknown);
 }
 
 /**

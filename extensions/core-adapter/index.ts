@@ -20,7 +20,7 @@ import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, r
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
-import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel } from "./classifier.ts";
+import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel, WITHHELD } from "./classifier.ts";
 import { autoClassifierModelText, classifierModelLine, noClassifierModelText } from "./reviewwarn.ts";
 import { effectiveCheckMode } from "./protected.ts";
 import { PermStore, PROTECTED_CHECK_MODES, cleanProtected, protectedBlock, workFoldersBlock } from "./permconfig.ts";
@@ -210,6 +210,7 @@ import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds, openChildren } from ".
 import { REMOTE_NOTICE_TYPE, RemoteNoticeBatch } from "./remotenotice.ts";
 import { RECEIPT_ENTRY, RECEIPT_STATUS_KEY, REMOTE_RECEIPT_TYPE, ReceiptWatch } from "./remotereceipt.ts";
 import { IntercomCarry, addresses, deliveredSendTo, isQuestion, parentIdsOf, senderOf } from "./intercomcarry.ts";
+import { LAUNCH_TASK_ENTRY, ledgerTaskText, readBrief, restoreLaunchTask } from "./judgecontext.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, checkpointConfigRefusal, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, copyStale, currentPlanHash, isPlanPath, launchRefusalText, parentPhaseCheckpointText, planSummary, readPlan, restoreFromStore, rulingsTopic, saveStored, sha256 } from "./checkpoint.ts";
@@ -3096,6 +3097,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (prompt !== null) {
       if (!s.isChild) gateOwnerMessages.set(s.id, [prompt, ...(gateOwnerMessages.get(s.id) ?? [])].slice(0, MAX_OWNER_MESSAGES));
       if (!gateFirstPrompt.has(s.id)) gateFirstPrompt.set(s.id, prompt);
+      if (s.isChild && !gateLaunchTask.has(s.id)) {
+        // the child's launch task as it received it: the first run's prompt. A reload or a resume restores it from the session entry (this session's id; a fork copies the parent's entry with another id), so a follow-up prompt never replaces it.
+        const sid = ctx.sessionManager.getSessionId?.() ?? s.id;
+        const kept = restoreLaunchTask((ctx.sessionManager.getBranch?.() ?? []) as unknown[], sid);
+        gateLaunchTask.set(s.id, kept ?? prompt);
+        if (kept === null) {
+          try {
+            pi.appendEntry(LAUNCH_TASK_ENTRY, { piSessionId: sid, task: prompt });
+          } catch {
+            // the session file is not writable now: the value stays in memory for this process
+          }
+        }
+      }
       // D7: a child never triages; only the foreman's request can escalate on a signal.
       const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
       if (signals.length) {
@@ -3974,6 +3988,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const gateOwnerMessages = new Map<string, string[]>();
   /** The first user message of a session: the task text of the protected check when no ledger is bound. */
   const gateFirstPrompt = new Map<string, string>();
+  /** A helper agent's launch task by session id (see before_agent_start); the judge reads it as context. */
+  const gateLaunchTask = new Map<string, string>();
+  /** The launch task of a gated call: a helper agent's own, or the brief of a child session (its handoff dir); undefined in an owner session or when none is known. */
+  const launchTaskOf = (gs: Session): string | undefined => (gs.isChild ? gateLaunchTask.get(gs.id) : readBrief(process.env.PI_FOREMAN_HANDOFF_DIR) ?? undefined);
   const gateRuntimeOf = (s: Session): GateRuntime => {
     let rt = gateRuntimes.get(s.id);
     if (!rt) {
@@ -4093,12 +4111,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         try {
           const ledgerFile = boundLedger(gs.markerDir, gs.id);
           const ledgerText = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
-          const title = ledgerText ? /^#\s+(.+)$/m.exec(ledgerText)?.[1] : undefined;
-          const task = (ledgerText ? [title ?? "", ...ledgerLines(ledgerText, "")].filter(Boolean).join("\n") : "") || gateFirstPrompt.get(gs.id) || "";
+          const launchTask = launchTaskOf(gs);
+          // the launch task rides in its own block; the first prompt stays the fallback only where no such block exists (an owner session)
+          const task = ledgerTaskText(ledgerText) || (launchTask === undefined ? gateFirstPrompt.get(gs.id) : undefined) || "";
           const facts = reviewGitFacts(ctx.cwd);
           const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
           const v = await rt.classifier.protectedCache.check(
-            { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}) },
+            { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(m.remoteClasses.length > 0 || m.kinds.includes("host") ? { withholdLaunch: true } : {}) },
             {
               registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
               recordUsage: (u) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, u as never)),
@@ -4141,9 +4160,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const cause = `${danger.name}: ${danger.reason}`;
       const facts = reviewGitFacts(ctx.cwd);
       const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
+      const launchTask = launchTaskOf(gs);
+      const ledger = (() => {
+        try {
+          const f = boundLedger(gs.markerDir, gs.id);
+          return ledgerTaskText(f ? fs.readFileSync(f, "utf8") : null);
+        } catch {
+          return "";
+        }
+      })();
+      // the task text is not passed for the riskiest kinds: any judge-first label of the call decides (a structured field), never the first one alone
+      const withhold = (out.dangers ?? [danger.name]).some((n) => WITHHELD.has(n));
       // the judge reads the call first: a clear runs it; unsure, an invalid answer or a failure asks the owner (a child asks its parent)
       const judged = await rt.classifier.judge(
-        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}) },
+        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(ledger ? { ledger } : {}), ...(withhold ? { withhold } : {}) },
         {
           registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
           recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
