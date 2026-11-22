@@ -21,7 +21,7 @@ Write a skill by default. A skill loads only when its task matches and combines 
 
 The generic role ids are `foreman` (the main session), `explorer` (read-only search), `builder` (one scoped change) and `reviewer` (review of a diff or plan). Explorer and reviewer deny `mcp__*` by default, so MCP work goes to a builder. A role body holds the role, its output contract and the skills it names; domain facts stay in the skill.
 
-Set the role in the user or overlay config (project and session values of these two keys are ignored):
+Set the role in config, in the layer "Giving a role a skill" (Pi section) names:
 
 ```json
 {
@@ -34,7 +34,7 @@ Set the role in the user or overlay config (project and session values of these 
 }
 ```
 
-Set the model under `providers.<p>.roles.<role>.model`, never under `roles.<id>`. Then ask for the launch with the skill and the servers the child needs, for example: launch a builder with `mcp: ["<server-name>"]` and this skill. Run `foreman setup` after a change to `skills`.
+Set the model under `providers.<p>.roles.<role>.model`, never under `roles.<id>`. Then ask for the launch with the skill and the servers the child needs, for example: launch a builder with `mcp: ["<server-name>"]` and this skill. For the config layer and `foreman setup`, see "Giving a role a skill" under Pi.
 
 ## Folder rules
 
@@ -119,13 +119,13 @@ Write instructions as imperatives. Explain why a rule exists when the reason cha
 Trigger tests, run after every description edit:
 
 1. Write three prompts that should load the skill and three that should not. Include near misses that share vocabulary with it.
-2. Make the skill visible (a placement above, or `roles.<id>.skills` for a child role). Run each prompt headless in a fresh session:
+2. Make the skill visible (a placement under "Placement and precedence" below, or `roles.<id>.skills` for a child role). Run each prompt headless in a fresh session:
 
    ```bash
    pi -p --no-session --mode json "<prompt>"
    ```
 
-   Text mode prints only the final answer, so read the JSON event stream: a hit is a `read` tool call on the skill's `SKILL.md` path.
+   Text mode prints only the final answer, and `--no-session` keeps no transcript, so read the JSON event stream: a hit is a `read` tool call on the skill's `SKILL.md` path.
 3. Pass at five of six. A should-prompt that misses needs the missing phrase in the description; a should-not prompt that fires needs a "not for" clause or a narrower verb.
 4. Description probe: ask "When would you use the <skill-name> skill?" Whatever the answer leaves out is missing from the description.
 5. Fix by symptom. Undertriggering: add the phrases users type, technical terms and file types. Overtriggering: add a "not for" clause that names the right skill, narrow the verbs, drop generic ones such as "helps with". Instructions ignored: move the key rule to the top of Instructions, shorten the body, move detail into `references/`, or turn the prose check into a script.
@@ -201,7 +201,3 @@ When two skills share a name, the earlier one wins. Pi's loader takes the frontm
 ### Frontmatter the loader honours
 
 `name`, `description`, `disable-model-invocation` (hides the skill from the catalog; it is then used only when named explicitly). `metadata` is ignored by Pi; pi-foreman reads `metadata.visibility` (see above). Other keys (`compatibility`, `allowed-tools`, `context`, `agent`) are ignored silently. A YAML error drops the skill and logs a warning, so check the warning when a skill is missing. Quote a description that contains a colon followed by a space: YAML reads an unquoted one as a nested key and fails. A description over 1024 characters warns.
-
-### Trigger-test recipe
-
-The trigger-test recipe is under Testing above. Use its `--mode json` form: `--no-session` keeps no transcript, so the read shows only in the event stream.
