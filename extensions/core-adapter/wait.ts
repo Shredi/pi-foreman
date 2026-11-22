@@ -3,10 +3,10 @@
 // `foreman_wait` (foreman only) starts a model-free wait on a timer, a file appearing, a process
 // ending or a GitHub Actions run completing, and returns at once with a wait id. Polling is
 // plain unref'd one-shot timers, started with the first wait and all cleared at
-// session_shutdown; no model turn runs while waiting. The first resolved trigger opens a window
-// of `wait.batchWindowSeconds` (0 = immediate); when it closes, or as soon as no wait is left,
-// ONE `foreman_wake` custom message carries every outcome (metadata only: no file contents, no
-// CI logs). The wake is an ordinary custom message: its turn meets the same context-event drift
+// session_shutdown; no model turn runs while waiting. The first resolved outcome is delivered at
+// once as a `foreman_wake` custom message; outcomes resolving within `wait.batchWindowSeconds`
+// (0 = immediate) after a delivery are batched into the next wake, and same-tick outcomes share
+// one wake (metadata only: no file contents, no CI logs). The wake is an ordinary custom message: its turn meets the same context-event drift
 // check, triage gate, permission system and launch checks as any other turn (no bypass here).
 //
 // File bound (item 39): the path (as given and with symlinks resolved, triage.ts realDeep) must
