@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tick, world } from "./_r46world.ts";
+import { world } from "./_r46world.ts";
 
 const WITH = "# Widget\n\n## For the owner\nWe ship the widget.\nIt takes one builder.\n\n## Goal\nShip it.\n";
 

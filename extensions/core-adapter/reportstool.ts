@@ -92,7 +92,7 @@ export async function runReport(s: ReportSession, params: Record<string, unknown
     }
     return { ...done(`${r.status} ${r.id}`, r.status), ...(r.status === "recorded" ? { event: { kind: r.kind, subject: r.subject, effect: r.effect, id: r.id } } : {}), ...(handoff ? { handoff } : {}) };
   } catch (err) {
-    return done(`${REPORT_TOOL}: not recorded (${/^locked/.test((err as Error).message) ? "the list is busy" : "the list is not writable"}); carry on with the task.`, "failed");
+    return done(`${REPORT_TOOL}: not recorded (${String((err as Error).message).startsWith("locked") ? "the list is busy" : "the list is not writable"}); carry on with the task.`, "failed");
   }
 }
 
@@ -157,6 +157,6 @@ export function runReports(s: ReportSession, params: Record<string, unknown>): T
     }
     return done(`${REPORTS_TOOL}: action must be one of: list, group, set`, "invalid", true);
   } catch (err) {
-    return done(`${REPORTS_TOOL}: ${/^locked/.test((err as Error).message) ? "the list is busy, try again" : "the list is not readable or writable"}`, "failed", true);
+    return done(`${REPORTS_TOOL}: ${String((err as Error).message).startsWith("locked") ? "the list is busy, try again" : "the list is not readable or writable"}`, "failed", true);
   }
 }

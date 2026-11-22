@@ -9,7 +9,6 @@ import { spinnerFrame, symbolSet } from "../symbols.ts";
 import { trackedTmp } from "./_tmpbase.ts";
 
 const tmp = () => trackedTmp("r33l-");
-const run = { launchId: "l", role: "b", rung: null, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null };
 
 test("four glyph sets (unknown -> unicode) with the new keys and the spinner frames", () => {
   assert.equal(symbolSet("bogus").agent, "◆");

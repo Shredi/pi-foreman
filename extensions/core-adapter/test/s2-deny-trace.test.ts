@@ -33,7 +33,7 @@ test("a self_ruling guard row carries the command and a non-empty reason", async
     fs.writeFileSync(path.join(up, "child"), "me\n");
     const dirs = childHandoffDirs(path.join(root, "handoffs"), "me");
     const input = { command: `cp x ${inBash(path.join(up, "ruling-1.md"))}` };
-    const why = await selfRulingRefusal("bash", input, root, dirs);
+    const why = selfRulingRefusal("bash", input, root, dirs);
     assert.equal(why, SELF_RULING_REASON);
     const row = sanitizeTrace({ event: "guard", guard: "self_ruling", toolFamily: "bash", decision: "blocked", ...denyFields(`self_ruling: ${why}`, "bash", input, "builder", [pkgRoot, root]) });
     assert.equal(row.reason, `self_ruling: ${SELF_RULING_REASON}`);
@@ -56,9 +56,9 @@ test("self-ruling guard: read-only pipelines pass, a real write to the parent's 
       `grep -o '"model":"[^"]*"' status.json events.jsonl | sort | uniq -c`,
       `ls ${inBash(runs)}; grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
       `cd ${inBash(runs)} && grep -ho '"model":"[^"]*"' *.json | sort | uniq -c`,
-    ]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), undefined, command);
+    ]) assert.equal(selfRulingRefusal("bash", { command }, runs, dirs), undefined, command);
     // R16 item 4a: the `sort -o <H>/ruling.md x` row lives in test/retired/self-ruling-rows.json (the flat ask trigger)
-    for (const command of [`echo APPROVED > ${inBash(path.join(up, "ruling-1.md"))}`, `cat x | tee ${inBash(path.join(up, "ruling-2.md"))}`]) assert.equal(await selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
+    for (const command of [`echo APPROVED > ${inBash(path.join(up, "ruling-1.md"))}`, `cat x | tee ${inBash(path.join(up, "ruling-2.md"))}`]) assert.equal(selfRulingRefusal("bash", { command }, runs, dirs), SELF_RULING_REASON, command);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

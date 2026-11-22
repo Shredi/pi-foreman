@@ -122,7 +122,7 @@ function flowRig(closeChildrenDep?: () => Promise<string[]>) {
   const flow = new CloseFlow(deps);
   const file = "/x/.workflow/r.md";
   const settle = async () => {
-    flow.request({ source: "herdr", file }, ctx);
+    void flow.request({ source: "herdr", file }, ctx);
     flow.onInput(INTERCOM_WAKE_TEXT, "extension");
     flow.onInput(closePrompt(file), "extension");
     flow.onModelReply("stop");

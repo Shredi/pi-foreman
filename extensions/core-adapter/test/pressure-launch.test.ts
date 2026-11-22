@@ -18,11 +18,6 @@ const iso = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}Z
 const ROLES = ["explorer", "builder", "reviewer"];
 
 
-function tmp(t: { after(fn: () => void): void }, prefix: string): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => rmTestTmp(dir));
-  return dir;
-}
 
 interface Rig {
   handlers: Map<string, Handler>;
@@ -43,7 +38,7 @@ interface Rig {
   clock: { now: number };
 }
 
-async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } = {}): Promise<Rig> {
+async function rig(t: { after(fn: () => unknown): void }, o: { strong?: boolean } = {}): Promise<Rig> {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-press-launch-")));

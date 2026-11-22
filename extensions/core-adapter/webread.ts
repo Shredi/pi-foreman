@@ -12,6 +12,7 @@ import { insideRoot } from "./floors.ts";
 import { sameOrUnder, tildeWord } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
+import { strRaw } from "./strof.ts";
 
 export interface WebReadCtx {
   cwd: string;
@@ -249,7 +250,7 @@ function fetchCheck(input: Record<string, unknown>): Check {
   for (const k of Object.keys(input)) if (/^(?:auth|authorization|cookies?|credentials|username|password|token|bearer)$/i.test(k)) return fail("(b) auth or cookie field");
   const h = input.headers;
   if (h && typeof h === "object") {
-    const names = Array.isArray(h) ? h.map((x) => (Array.isArray(x) ? String(x[0]) : x && typeof x === "object" ? String((x as { name?: unknown }).name ?? Object.keys(x)[0]) : String(x).split(":")[0])) : Object.keys(h);
+    const names = Array.isArray(h) ? h.map((x) => (Array.isArray(x) ? String(x[0]) : x && typeof x === "object" ? strRaw((x as { name?: unknown }).name ?? Object.keys(x)[0]) : String(x).split(":")[0])) : Object.keys(h);
     if (names.some((n) => /^\s*(?:authorization|cookie|proxy-authorization)\s*$/i.test(n))) return fail("(b) auth header");
   } else if (typeof h === "string" && AUTH_HEADER.test(h)) return fail("(b) auth header");
   if (typeof input.url !== "string") return fail("(a) no URL");

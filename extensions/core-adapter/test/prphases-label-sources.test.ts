@@ -45,8 +45,15 @@ function rig(first: WatchSnapshot, phaseRules: () => readonly PhaseRule[]) {
   } as never);
   watches.start(K, first, null, false);
   const tick = async (s?: WatchSnapshot) => {
-    if (s) (cur = s, (at += 1000));
-    for (let i = 0; i < 4; i++) (fns.shift()?.(), await flush(), await flush());
+    if (s) {
+      cur = s;
+      at += 1000;
+    }
+    for (let i = 0; i < 4; i++) {
+      fns.shift()?.();
+      await flush();
+      await flush();
+    }
   };
   return { labels, tick, watches };
 }

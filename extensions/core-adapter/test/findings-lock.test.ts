@@ -14,7 +14,6 @@ const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "pyt
 const PRELUDE = `import sys, time, json; sys.path.insert(0, ${JSON.stringify(path.join(PKG, "scripts"))}); import foreman_config as bl, foreman_findings as ff\n`;
 
 const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "flock-"));
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const sleepSync = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 function python(code: string, ...args: string[]) {

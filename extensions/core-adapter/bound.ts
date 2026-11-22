@@ -65,9 +65,9 @@ export function changedLines(before: string, after: string): number {
   const y = b.slice(lo, eb);
   if (x.length === 0 || y.length === 0) return x.length + y.length;
   if (x.length * y.length > 4_000_000) return x.length + y.length;
-  let prev = new Array<number>(y.length + 1).fill(0);
+  let prev = Array.from<number>({ length: y.length + 1 }).fill(0);
   for (let i = 1; i <= x.length; i++) {
-    const cur = new Array<number>(y.length + 1).fill(0);
+    const cur = Array.from<number>({ length: y.length + 1 }).fill(0);
     for (let j = 1; j <= y.length; j++) cur[j] = x[i - 1] === y[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
     prev = cur;
   }

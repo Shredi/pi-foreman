@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { askOwner, commandDisplay, DIALOG_OPTIONS, HEAD_LINES, STOP_TEXT, TAIL_LINES } from "../gatedialog.ts";
+import { askOwner, commandDisplay, DIALOG_OPTIONS, HEAD_LINES, TAIL_LINES } from "../gatedialog.ts";
 import type { OwnerAsk, OwnerDeps } from "../gatedialog.ts";
 import { PermStore } from "../permconfig.ts";
 
@@ -56,7 +56,6 @@ function deps(u: ReturnType<typeof ui>, w: ReturnType<typeof world>, extra: Part
   const d: OwnerDeps = { ui: u.ui, stateDir: w.state, ...extra };
   return { d, after: () => after };
 }
-const projectFile = (w: ReturnType<typeof world>) => path.join(w.root, ".workflow", "permissions.json");
 
 test("the dialog offers the three options (no remember) with cause, classifier reason, cwd and the whole command with the heredoc; allow once runs", async (t) => {
   const w = world(t);

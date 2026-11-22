@@ -116,7 +116,7 @@ test("the counter preload labels each count file with its script: relative to th
       const r = spawnSync(process.execPath, ["--import", COUNTER, ...args], { cwd: dir, env, encoding: "utf8" });
       assert.equal(r.status, 0, r.stderr);
     }
-    assert.deepEqual(readSpawnCounts(dir).map((c) => c.file).sort(), ["-", "probe-label.mjs", "probe-outside.mjs"]);
+    assert.deepEqual(readSpawnCounts(dir).map((c) => c.file).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), ["-", "probe-label.mjs", "probe-outside.mjs"]);
   } finally {
     rmTestTmp(dir);
     rmTestTmp(outside);

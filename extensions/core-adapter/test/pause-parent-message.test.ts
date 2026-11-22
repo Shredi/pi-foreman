@@ -15,7 +15,7 @@ const types = (r: R) => (r?.entries ?? []).map((e) => e.customType);
 const events = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
 async function finishAnswer(a: Adapter): Promise<R> {
   const r = await settle(a);
-  return types(r).includes("pi-foreman-stop-gate") ? await settle(a) : r;
+  return types(r).includes("pi-foreman-stop-gate") ? settle(a) : r;
 }
 async function built(a: Adapter) {
   const b = await a.agentLaunch("builder", "build it");

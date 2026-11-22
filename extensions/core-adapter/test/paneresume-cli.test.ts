@@ -51,7 +51,7 @@ function rig(t: TestContext, sid = SID, terminal = "t1") {
   writeNote(agentDir, note);
   fs.mkdirSync(path.join(agentDir, "pi-foreman", "state", "live"), { recursive: true });
   const live = (o: Record<string, unknown> = {}): void =>
-    void fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${sid}.json`), JSON.stringify({ state: "working", hcTerminal: terminal, pid: 999_999_999, heartbeatAt: new Date(now - 5000).toISOString(), cwd, ...o }));
+    fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${sid}.json`), JSON.stringify({ state: "working", hcTerminal: terminal, pid: 999_999_999, heartbeatAt: new Date(now - 5000).toISOString(), cwd, ...o }));
   live();
   const events: string[] = [];
   const stdin = new FakeStdin(events);

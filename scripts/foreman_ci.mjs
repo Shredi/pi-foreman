@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `npm run test:ci`: every check CI runs that a local machine can run, in CI's order (unit, core-pin, ruff, conformance, node, installer, typecheck, replay, bench).
+// `npm run test:ci`: every check CI runs that a local machine can run, in CI's order (unit, core-pin, ruff, conformance, node, installer, typecheck, lint-ts, replay, bench).
 // The fresh-install job stays out (it needs the network). One line per step; exits 1 when a step fails.
 // The unit and node steps go through scripts/foreman_test_run.mjs and run with inherited output, so the runner's run id and lock-wait lines show; FOREMAN_TEST_TIMEOUT applies to each of them.
 // Replay is the slow step (scripts/replay_run.mjs runs the modules in parallel and prints its wall time). `--only <step>` runs one step (any name above).
@@ -58,6 +58,11 @@ function typecheck() {
   return { status: r.ok ? "pass" : "fail", line: r.ok ? "tsc --noEmit" : `exit ${r.status}`, out: r.out };
 }
 
+function lintTs() {
+  const r = exec(npm, ["run", "lint:ts"]);
+  return { status: r.ok ? "pass" : "fail", line: r.ok ? "oxlint --type-aware" : `exit ${r.status}`, out: r.out };
+}
+
 function replay() {
   const cli = path.join(root, "node_modules", "@earendil-works", "pi-coding-agent", "dist", "bundle", "cli.js");
   if (!fs.existsSync(cli)) return { status: "fail", line: `Pi CLI missing at ${cli} (run npm install)`, out: "" };
@@ -107,6 +112,7 @@ export const STEPS = [
   { name: "node", run: nodeTests, inherited: true },
   { name: "installer", run: installer, inherited: false },
   { name: "typecheck", run: typecheck, inherited: false },
+  { name: "lint-ts", run: lintTs, inherited: false },
   { name: "replay", run: replay, inherited: false },
   { name: "bench", run: bench, inherited: false },
 ];

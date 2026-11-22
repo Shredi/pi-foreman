@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { forEachChild, parse } from "unbash";
-import type { Command, Redirected, SyntaxNode, Word } from "unbash";
+import type { Command, Redirected, SyntaxNode } from "unbash";
 import { inlineCode, segWriteWords, shellWriteTargets, unresolvedShellWriteWords, unresolvedWriteWords } from "./defaults.ts";
 import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits.ts";
 import { READ_PROGS, braceVariants } from "./floors.ts";

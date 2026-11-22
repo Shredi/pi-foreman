@@ -50,7 +50,11 @@ async function go(s: WatchSnapshot, rules: PhaseRule[]): Promise<{ labels: strin
     timers,
   } as never);
   watches.start(K, s, null, false);
-  for (let i = 0; i < 4; i++) (fns.shift()?.(), await flush(), await flush());
+  for (let i = 0; i < 4; i++) {
+    fns.shift()?.();
+    await flush();
+    await flush();
+  }
   return { labels, sent };
 }
 

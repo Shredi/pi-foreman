@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { world } from "./_r46world.ts";
 import { IDENTITY_ENTRY_TYPE, buildSpawnEnv, readNoteRaw, readSessionFile } from "../paneresume-core.ts";
 import { posixOnly } from "./_platform.ts";
+import { strRaw } from "../strof.ts";
 
 const SLOT = Symbol.for("pi-foreman.paneresume");
 type Sent = { message: { customType: string; content: string }; options: unknown }[];
@@ -46,13 +47,13 @@ test("the adapter writes the pane note at session_start; a shutdown without reas
   await until(() => readNoteRaw(agentDir, "t1") !== undefined);
   const note = readNoteRaw(agentDir, "t1") as Record<string, unknown>;
   assert.equal(note.terminal, "t1");
-  assert.equal(note.sessionFile, path.join(agentDir, "sessions", "--project--", `2026_${note.sessionId}.jsonl`));
+  assert.equal(note.sessionFile, path.join(agentDir, "sessions", "--project--", `2026_${strRaw(note.sessionId)}.jsonl`));
   assert.equal(note.createdMs, 1000);
   assert.equal(note.rootPid, 777);
   assert.equal(note.cwd, w.project);
   await a.down(); // the rig's shutdown carries no reason: nothing is deleted
   assert.ok(readNoteRaw(agentDir, "t1"), "no quit: the note stays");
-  const live = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${note.sessionId}.json`), "utf8"));
+  const live = JSON.parse(fs.readFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${strRaw(note.sessionId)}.json`), "utf8"));
   assert.equal(live.hcTerminal, "t1");
   assert.equal("endedBy" in live, false, "a normal end carries no endedBy");
 });

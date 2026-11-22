@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { holdsHome } from "./effects.ts";
+import { strRaw } from "./strof.ts";
 export const PROSE_MAX = 300;
 export const PROTECTED_NOTE_MAX = 200;
 
@@ -181,7 +182,7 @@ function protectedList(v: unknown, where: string, notices: string[]): ProtectedR
       if ((PROTECTED_CHECK_MODES as readonly unknown[]).includes(x.check)) check = x.check as ProtectedCheckMode;
       else {
         check = "ask";
-        notices.push(`${at} (${kind} '${clip(g)}') check '${clip(String(x.check))}' must be model, read-only or ask; treated as ask`);
+        notices.push(`${at} (${kind} '${clip(g)}') check '${clip(strRaw(x.check))}' must be model, read-only or ask; treated as ask`);
       }
     }
     out.push({ kind, glob: g.trim(), ...(typeof n === "string" && n.trim() !== "" ? { note: n.trim() } : {}), ...(check ? { check } : {}) });
@@ -255,7 +256,7 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
           return;
         }
         const m = (f as Json).mode;
-        if (m !== undefined && m !== "auto" && m !== "read") notices.push(`workFolders[${i}] mode '${clip(String(m))}' is not auto or read; using read`);
+        if (m !== undefined && m !== "auto" && m !== "read") notices.push(`workFolders[${i}] mode '${clip(strRaw(m))}' is not auto or read; using read`);
         workFolders.push({ path: p.trim(), mode: m === undefined || m === "auto" ? "auto" : "read" });
       });
     }

@@ -20,6 +20,7 @@ const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR"
 const SCRIPT = ".workflow/scratch/set-key.sh";
 const TEXTS = { description: "Sets one key in the user config.", risk: "A wrong value in the user config.", undo: "Run the script again with the old value." };
 import { posixOnly } from "./_platform.ts";
+import { strOf } from "../strof.ts";
 
 interface RigOpts {
   /** The owner's answer to the script dialog; undefined = dismissed. May edit files first. */
@@ -126,7 +127,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
   };
   return {
     registered: !!raw,
-    description: String((raw as { description?: unknown } | undefined)?.description ?? ""),
+    description: strOf((raw as { description?: unknown } | undefined)?.description),
     call,
     propose: () => call({ action: "propose", path: SCRIPT, ...TEXTS }),
     seen,

@@ -2,8 +2,6 @@
 // r79 item 11: an unmatched call that is not of the dangerous class runs in mode auto, so an unknown agent is no longer asked about.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
 import { toolDefault } from "../defaults.ts";
 import { NO_MODEL_NOTICE } from "../classifier.ts";

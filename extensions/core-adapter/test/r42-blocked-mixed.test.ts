@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
+import { strRaw } from "../strof.ts";
 
 type T = Parameters<typeof r11Rig>[0];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -39,7 +40,7 @@ const rig = async (_t: T): Promise<Rig> => {
   const start = shared.trace().length;
   return { ...shared, events: (name: string) => shared.trace().slice(start).filter((x) => x.event === name) };
 };
-const shape = (r: Rig, ev: string) => r.events(ev).map((x) => `${x.on}/${x.kind}`).sort();
+const shape = (r: Rig, ev: string) => r.events(ev).map((x) => `${strRaw(x.on)}/${strRaw(x.kind)}`).sort();
 
 /** Opens a wait on the parent (ask.md) and returns a closer for it. */
 async function parentWait(r: Rig): Promise<() => Promise<void>> {

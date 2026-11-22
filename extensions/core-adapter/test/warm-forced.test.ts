@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
-import { contentText, getCurrentSystemMessage, getCurrentTools, getSystemMessageText, normalizeContext } from "@earendil-works/pi-ai";
+import { contentText, getCurrentSystemMessage, getSystemMessageText, normalizeContext } from "@earendil-works/pi-ai";
 import { forcedProjection, replayWarm } from "../warmreplay.ts";
 
 type Msg = Record<string, unknown>;

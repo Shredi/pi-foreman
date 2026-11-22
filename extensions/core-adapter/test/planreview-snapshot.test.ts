@@ -36,11 +36,6 @@ const writeBatch = async (a: Adapter, file: string, id: string, text: string) =>
   await write(a, file, id, text);
 };
 /** A full launch (its own message) that has started. */
-async function launch(a: Adapter, id: string): Promise<string> {
-  const input = await message(a, id);
-  await started(a, id, input!);
-  return String(input!.task);
-}
 
 test("PlanReviews unit: a snapshot belongs to its launch; a refused launch drops it; only an open launch of the same batch is refreshed", () => {
   const r = new PlanReviews();

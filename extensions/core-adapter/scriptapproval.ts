@@ -138,7 +138,7 @@ const chars = (s: string): number => Array.from(s).length;
 export function cleanText(s: string): string {
   return s
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
-    .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
     .replace(/\x1b[@-_]?/g, "")
     .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, " ")
     .replace(/\s+/g, " ")

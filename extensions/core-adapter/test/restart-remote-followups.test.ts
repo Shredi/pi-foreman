@@ -19,7 +19,7 @@ type R = { continue?: boolean; entries?: { customType?: string }[] } | undefined
 const settle = async (a: Adapter): Promise<R> => {
   const once = async (): Promise<R> => (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
   const r = await once();
-  return (r?.entries ?? []).some((e) => e.customType === "pi-foreman-stop-gate") ? await once() : r;
+  return (r?.entries ?? []).some((e) => e.customType === "pi-foreman-stop-gate") ? once() : r;
 };
 const hold = (a: Adapter, params: Record<string, unknown>) => a.tool("foreman_hold")!.execute("h", params, undefined, undefined, a.ctx);
 const live = (w: World): Record<string, unknown> => {

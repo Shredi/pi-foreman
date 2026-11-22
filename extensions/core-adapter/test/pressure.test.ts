@@ -123,7 +123,7 @@ test("sampler: ticks at start and every interval through the injected runner; ne
   ticker();
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(traces, [{ event: "pressure_sampler", reason: "sampler_error" }], "traced once");
-  s.stop();
+  await s.stop();
 });
 
 test("narrowTasks keeps the first task and returns the call with the rest", () => {

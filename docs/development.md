@@ -30,7 +30,8 @@ node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-a
 node integrations/herdr-app/pi-foreman/bench.openprs.mjs   # Open PRs render cost (stubs hook built in): one row per shape with PRs, repos, sessions, HoverCards, full card builds, elements, median ms of 5 renders; `--main <path>` benches another main.js
 node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"   # npm run test:installer
 npm run test:ci                                   # pre-PR: every CI step a local machine can run, in CI's order; replay is the slow step
-npm run typecheck                                 # tsc --noEmit
+npm run typecheck                                 # tsc --noEmit (strict, allowJs)
+npm run lint:ts                                   # oxlint with types over extensions and setup
 node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
 
@@ -89,7 +90,7 @@ GitHub Actions runs a matrix of Linux, macOS and Windows on Python 3.13 for pull
 
 CI installs npm packages with `npm ci --ignore-scripts` from the committed lockfile (except the fresh-install jobs, which run plain `npm ci` and `npm install` and rely on `.npmrc`), every action is pinned to a full commit hash with a version comment (Renovate keeps both current, after a three day wait), and the replay job uses the locked Pi in `node_modules`, not a global one. A local `npm install` can write `git+ssh` back into `package-lock.json` for the two fork packages; `tests/installer/supply-chain-pins.test.mjs` fails when it does, so change the URL back to `git+https`.
 
-`npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It does not run the fresh-install jobs (they need the network). It runs every CI step a local machine can run, in CI's order: `unit` (`npm test`), `core-pin`, `ruff` (skipped with a line when ruff is missing), `conformance` (`pull_core.py --conformance`, skipped when pytest is missing), `node` (`npm run test:node`), `installer`, `typecheck`, `replay` (the replay suite against the `node_modules` Pi CLI) and `bench` (the smoke probe on the fake provider, skipped when `harbor` is not on PATH). It prints one line per step (the two test runners print their own output) and exits 1 on any failure; `--only <step>` runs one step. A `[pre-pr]` reviewer is asked to run every suite the repository's CI runs that can run locally and to name them in `review_verdict` `suites`.
+`npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It does not run the fresh-install jobs (they need the network). It runs every CI step a local machine can run, in CI's order: `unit` (`npm test`), `core-pin`, `ruff` (skipped with a line when ruff is missing), `conformance` (`pull_core.py --conformance`, skipped when pytest is missing), `node` (`npm run test:node`), `installer`, `typecheck`, `lint-ts` (`npm run lint:ts`), `replay` (the replay suite against the `node_modules` Pi CLI) and `bench` (the smoke probe on the fake provider, skipped when `harbor` is not on PATH). It prints one line per step (the two test runners print their own output) and exits 1 on any failure; `--only <step>` runs one step. A `[pre-pr]` reviewer is asked to run every suite the repository's CI runs that can run locally and to name them in `review_verdict` `suites`.
 
 ## Auto-merge
 
@@ -107,9 +108,11 @@ A PR merges itself once its required checks are green: press GitHub's own **Enab
 
 Cut a release with `gh release create <tag> --generate-notes`. The notes come from the merged PRs' titles and their `## Changelog` sections (one to three user-facing bullets each). PRs do not edit CHANGELOG.md; it is kept as history. Overlays read the GitHub release page to see what changed.
 
-## Lint
+Three checks, and `just lint` runs all three (CI runs the type check on the Linux leg of the `test` job, and ruff and oxlint on the Linux leg with Node 22):
 
-Ruff checks the Python (`ruff.toml`: target py313, rules E4, E7, E9, F and RUF100, `core/` and the bench task data excluded). The version is pinned in `.github/lint-requirements.txt` (`ruff==0.17.5`); Renovate keeps the pin current. Install that version any of these ways:
+- **Type check.** `tsconfig.json` sets `strict` and `allowJs`, with no `checkJs`: our `.mjs` modules are read for their types (a TS import of `profiles.mjs` gets the inferred shape) but their own code is not type-checked. Two temporary lists hold back files of the running judge-first-unknown round, each with a comment: the `exclude` in `tsconfig.json` (its new `extensions/core-adapter/test/judge-first-unknown*.test.ts` files) and the `ignorePatterns` block of `.oxlintrc.json` (its edited files). Both are removed after that round merges.
+- **TypeScript linter.** oxlint 1.94.0 with the type-aware add-on oxlint-tsgolint 7.0.2008 (both exact `devDependencies`, so `npm ci` installs one platform binary of each). `npm run lint:ts` runs `oxlint --type-aware --deny-warnings extensions setup`; the paths are the tsconfig scope, and the rest of the tree follows in a later round. `.oxlintrc.json` holds the rules: the `correctness` category plus a bug-oriented set of type-aware rules (no-floating-promises, no-misused-promises, await-thenable, no-base-to-string, restrict-template-expressions, unbound-method, switch-exhaustiveness-check and about fifteen more). Every rule that is off has a reason in the file. Two of the bundled rules are off on purpose: `eslint/no-control-regex` (ANSI escapes are intentional) and `unicorn/no-useless-spread` (a deliberate snapshot before a loop). The `no-unsafe-*` family, `no-unnecessary-condition` and `require-await` stay out with their counts. Fallback when the type-aware mode breaks: typescript-eslint with the same rule list, each name under the `@typescript-eslint/` prefix.
+- **Python linter.** Ruff checks the Python (`ruff.toml`: target py313, rules E4, E7, E9, F, B (bugbear), RUF100; `core/` and the bench task data excluded). The version is pinned in `.github/lint-requirements.txt` (`ruff==0.17.5`); Renovate keeps the pin current. Install that version any of these ways:
 
 ```sh
 pipx install ruff==0.17.5                  # or: uv tool install ruff@0.17.5
@@ -117,7 +120,9 @@ python -m pip install -r .github/lint-requirements.txt
 ruff check .                               # from the repo root; `just lint` runs the same
 ```
 
-CI runs the same check in the `test` job, on the Linux leg with Node 22 (`python lint (ruff)`: install from the pin file, print `ruff --version`, `ruff check .`). `# noqa` markers stay only where a rule needs a reason; RUF100 fails on a marker that no longer suppresses anything. Fix a finding in the code when it is one; mark it with the reason when it is deliberate.
+  CI runs it in the `test` job, on the Linux leg with Node 22 (`python lint (ruff)`: install from the pin file, print `ruff --version`, `ruff check .`). `# noqa` markers stay only where a rule needs a reason; RUF100 fails on a marker that no longer suppresses anything. Fix a finding in the code when it is one; mark it with the reason when it is deliberate.
+
+`npm run lint:ts` runs in CI as the `typescript lint (oxlint)` step, in the same job and leg as ruff. Fix a finding in the code, or add a rule-off with its reason to `.oxlintrc.json`; an inline disable needs a reason comment too. Next steps, in order: `no-unsafe-*` after typed JSON-parse helpers exist; lint paths beyond `extensions` and `setup` (about 100 findings in the plain `.mjs` folders); `noUncheckedIndexedAccess` (about 3,500 compiler errors).
 
 ## Task runner (just)
 

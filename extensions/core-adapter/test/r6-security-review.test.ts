@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { BlockedTracker } from "../herdr.ts";
 import { childHandoffDirs, ownHandoffDirs } from "../owned.ts";
 import { OwnAsk } from "../ownask.ts";
@@ -13,7 +12,6 @@ import { parentApproval, SelfRulings, snapshotRulings } from "../ruling.ts";
 import { redactCommand, sanitizeTrace } from "../trace.ts";
 
 const FAIL_AT = 5_000_000_000;
-const failed = onReviewVerdicts(initialReviewGate(), ["fail"], FAIL_AT);
 
 function rig() {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-sec-")));

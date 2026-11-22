@@ -98,7 +98,7 @@ test("hsReminderHold: only .workflow/ files: not held; a project file: held once
   git(w.project, "commit", "-q", "-m", "no ignore");
   const last = w.ceremonyEntries().at(-1)!;
   const data = JSON.parse(JSON.stringify(last.data));
-  data.highStakes = { ...(data.highStakes ?? {}), fired: { reasons: ["design"] } };
+  data.highStakes = { ...data.highStakes, fired: { reasons: ["design"] } };
   w.entries.push({ ...last, data } as never);
   const b = await w.adapter("resume");
   void a;

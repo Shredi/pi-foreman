@@ -29,7 +29,7 @@ function rig(waits: W[], runs = 0, cancel = true) {
 
 test("close: a pending own wait is cancelled and the close is accepted", () => {
   const r = rig([{ id: "w1", kind: "child", note: "p1" }, { id: "w2", kind: "timer", note: "" }]);
-  r.flow.request({ source: "herdr", file: "/x/r.md" }, r.ctx);
+  void r.flow.request({ source: "herdr", file: "/x/r.md" }, r.ctx);
   assert.ok(r.log.includes("cancelWaits"));
   assert.equal(r.flow.active, true);
   assert.ok(r.log.some((l) => l.startsWith("notify:") && l.includes("cancelled waits: w1, w2")));
@@ -42,7 +42,7 @@ test("close: a pending own wait is cancelled and the close is accepted", () => {
 
 test("close: an active child run still refuses before any wait is cancelled", () => {
   const r = rig([{ id: "w1", kind: "timer", note: "" }], 1);
-  r.flow.request({ source: "herdr", file: "/x/r.md" }, r.ctx);
+  void r.flow.request({ source: "herdr", file: "/x/r.md" }, r.ctx);
   assert.equal(r.flow.active, false);
   assert.ok(!r.log.includes("cancelWaits"));
   assert.ok(r.log.some((l) => l.includes("1 child run(s) still active")));
@@ -50,7 +50,7 @@ test("close: an active child run still refuses before any wait is cancelled", ()
 
 test("close: without cancelWaits a pending wait still refuses", () => {
   const r = rig([{ id: "w1", kind: "timer", note: "ci" }], 0, false);
-  r.flow.request({ source: "herdr", file: "/x/r.md" }, r.ctx);
+  void r.flow.request({ source: "herdr", file: "/x/r.md" }, r.ctx);
   assert.equal(r.flow.active, false);
   assert.ok(r.log.some((l) => l.includes("1 foreman_wait pending")));
 });

@@ -88,7 +88,7 @@ test("shippedState reads the defaults, or the declared state; the safety floor h
 
 test("deviations: absent leaf equals shipped, absent provider gives no row, unknown profile gives an empty list", () => {
   assert.deepEqual(deviations({ providers: { a: {} } }, "standard"), []);
-  assert.deepEqual(deviations({}, "orchestration").map((r: any) => r.id).sort(), ["footer-ui", "herdr", "idle-downshift", "pr-ops", "retro", "trace"]);
+  assert.deepEqual(deviations({}, "orchestration").map((r: any) => r.id).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), ["footer-ui", "herdr", "idle-downshift", "pr-ops", "retro", "trace"]);
   assert.deepEqual(deviations({ tools: { pr: false } }, "standard"), [{ id: "pr-ops", expected: "on", actual: "off" }]);
   assert.deepEqual(deviations({ providers: { a: { cache: { keepalive: { enabled: false } } } } }, "standard"), [{ id: "idle-cache", expected: "on", actual: "off" }]);
   assert.deepEqual(deviations({ providers: { a: {} } }, "orchestration").find((r: any) => r.id === "idle-cache"), { id: "idle-cache", expected: "off", actual: "on" });

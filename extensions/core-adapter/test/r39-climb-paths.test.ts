@@ -27,7 +27,7 @@ interface Rig {
   ended(runId: string, agent: string, summary: string): void;
 }
 
-async function rig(t: { after(fn: () => void): void }, o: { strong: boolean }): Promise<Rig> {
+async function rig(t: { after(fn: () => unknown): void }, o: { strong: boolean }): Promise<Rig> {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r39-climb-")));

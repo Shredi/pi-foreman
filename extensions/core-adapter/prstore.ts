@@ -12,6 +12,7 @@ import type { GithubHosts, PrKey } from "./prhost.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
 import type { GateInfo } from "./prphases.ts";
 import type { Bucket, CommentEntry, ExpectFacts, ExpectState, Mergeable, Run, SourceStatus, StoreRead, WatchSnapshot } from "./prwatch.ts";
+import { strRaw } from "./strof.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
@@ -135,7 +136,7 @@ export function usableLine(line: unknown): TrackedPr | null {
   if (!isObj(line) || !validRepo(line.repo) || !validNumber(line.number)) return null;
   const host = line.host;
   if (host !== undefined && !("hosts" in resolveGithubHosts({ tools: { prGithubHosts: [host] } }))) return null;
-  return { repo: line.repo, number: line.number, addedAt: finite(line.addedAt) ? line.addedAt : 0, ...(host !== undefined ? { host: String(host).toLowerCase() } : {}) };
+  return { repo: line.repo, number: line.number, addedAt: finite(line.addedAt) ? line.addedAt : 0, ...(host !== undefined ? { host: strRaw(host).toLowerCase() } : {}) };
 }
 
 export function writeTracked(agentDir: string, lines: unknown[]): void {

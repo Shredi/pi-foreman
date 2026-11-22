@@ -9,12 +9,10 @@ import { fileURLToPath } from "node:url";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
-import { slashForm } from "../pathnorm.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 
 type T = Parameters<typeof r11Rig>[0];
-const platform = process.platform;
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 const base = fs.realpathSync(mkTestTmp("pf-instroot-"));
 const wt = path.join(base, "pkg.worktrees", "r1");

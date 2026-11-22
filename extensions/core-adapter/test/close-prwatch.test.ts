@@ -6,6 +6,7 @@ import type { CloseDeps } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { Timers, WatchSnapshot } from "../prwatch.ts";
 import type { PrKey } from "../prhost.ts";
+import { strRaw } from "../strof.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const snap = (): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abcdef0123456789", base: "main", updatedAt: "t0", runs: [] });
@@ -33,7 +34,7 @@ function rig(opts: { fresh?: () => Promise<"open" | "merged" | "closed" | "unkno
     retro: async () => "",
     reply: (to, t) => void log.push(`reply:${to}:${t}`),
     notify: (t) => void log.push(`notify:${t}`),
-    trace: (r) => void log.push(`trace:${r.decision}`),
+    trace: (r) => void log.push(`trace:${strRaw(r.decision)}`),
     markCause: () => undefined,
     writeStub: () => undefined,
     exists: () => true,

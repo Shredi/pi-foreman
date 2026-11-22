@@ -102,7 +102,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     const handlers = new Map<string, Handler>();
     const tools = new Map<string, { execute: Fn }>();
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-    const channels = new Map<string, (d: unknown) => void>();
+    const channels = new Map<string, (d: unknown) => unknown>();
     /** The input of every subagent launch that went through a `tool_call` of this adapter, by call id (any helper, the test's own too): once the hook has run, its binding names the record folder (`bindingOf`). */
     const inputs = new Map<string, Record<string, unknown>>();
     const pi = {

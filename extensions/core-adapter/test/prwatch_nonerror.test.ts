@@ -14,10 +14,12 @@ test("pr_create: a non-Error throw while arming still returns the created PR and
   const spawner: Spawner = async (_c, _a, o) => {
     const op = JSON.parse(o.input ?? "{}").op;
     if (op === "pr_create") return { code: 0, stdout: JSON.stringify({ ok: true, action: "pr_create", number: 5, url: "https://github.com/acme/app/pull/5" }) + "\n", stderr: "", timedOut: false };
+    // oxlint-disable-next-line typescript/only-throw-error -- a non-Error throw is the case under test
     throw "plain string";
   };
   const timers: Timers = { set: () => 1, clear: () => {} };
   // R1: arming reads the store; a store reader that throws a non-Error is the failure under test
+  // oxlint-disable-next-line typescript/only-throw-error -- a non-Error throw is the case under test
   const watches = new PrWatches({ storeEntry: async () => { throw "plain string"; }, send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers });
   const tracker: PrTracker = { hostAllowed: async () => true, repoFor: async () => ({ host: "github.com", repo: "acme/app" }) };
   const session: PrPackSession = { python: "/py", isChild: false, packOn: true, config: {}, gateOn: false, reviewed: async () => [], watches, trace: () => {}, tracker };

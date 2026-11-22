@@ -443,7 +443,7 @@ export function sourceFiles(modDir) {
     }
   };
   walk(modDir, "");
-  return out.sort();
+  return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 const pkgModDir = (packageRoot, mod) => path.join(packageRoot, "integrations", "herdr-app", mod);

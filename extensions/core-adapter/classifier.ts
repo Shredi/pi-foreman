@@ -12,6 +12,7 @@ import { DEFAULT_REVIEW_TIMEOUT_MS, autoReviewTarget, errorKind, reviewTarget, w
 import type { RegistryLike, ReviewTarget } from "./review.ts";
 import { THINKING, clampLevel, splitLevel } from "./launchmodel.ts";
 import type { Thinking } from "./launchmodel.ts";
+import { strOf } from "./strof.ts";
 
 export const MAX_REASON = 200;
 export const MAX_OWNER_MESSAGE_CHARS = 600;
@@ -131,7 +132,7 @@ async function callModel(ctx: ClassifierCtx, target: ReviewTarget | null, system
     if ("thrown" in r) return { ok: false, cause: "provider_error", detail: errorKind(r.thrown, text) };
     if (r.stopReason === "error" || r.stopReason === "aborted") return { ok: false, cause: "provider_error", detail: errorKind(r.errorMessage ?? r.stopReason, text) };
     const c = r.content;
-    const out = Array.isArray(c) ? c.map((p) => (p && typeof p === "object" && (p as { type?: string }).type === "text" ? String((p as { text?: unknown }).text ?? "") : "")).join("") : "";
+    const out = Array.isArray(c) ? c.map((p) => (p && typeof p === "object" && (p as { type?: string }).type === "text" ? strOf((p as { text?: unknown }).text) : "")).join("") : "";
     return { ok: true, text: out };
   } finally {
     if (timer) clearTimeout(timer);

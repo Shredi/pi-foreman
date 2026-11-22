@@ -405,7 +405,7 @@ function messageRig(t: TestContext) {
   const r = rig(t);
   const runs = path.join(r.root, "runs");
   fs.mkdirSync(runs);
-  const asyncCall = (args: Record<string, unknown>): void => void fs.appendFileSync(r.sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "subagent", arguments: args }] } })}\n`);
+  const asyncCall = (args: Record<string, unknown>): void => fs.appendFileSync(r.sessionFile, `${JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "toolCall", name: "subagent", arguments: args }] } })}\n`);
   return { ...r, runs, asyncCall };
 }
 

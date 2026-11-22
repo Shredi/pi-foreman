@@ -1,3 +1,4 @@
+import { strOf } from "./strof.ts";
 // Compaction digest and auto-retro (D8). Pure text logic; index.ts wires it to
 // session_before_compact / session_compact and writes the files.
 //
@@ -126,7 +127,7 @@ export function lastAssistantText(messages: readonly unknown[]): string {
     if (typeof m.content === "string") return m.content.trim();
     if (!Array.isArray(m.content)) return "";
     return m.content
-      .map((c) => (c && typeof c === "object" && (c as { type?: unknown }).type === "text" ? String((c as { text?: unknown }).text ?? "") : ""))
+      .map((c) => (c && typeof c === "object" && (c as { type?: unknown }).type === "text" ? strOf((c as { text?: unknown }).text) : ""))
       .join("\n")
       .trim();
   }

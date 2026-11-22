@@ -107,7 +107,6 @@ test("adapter: the reads of a read-only child run in mode auto with zero model c
 // Owner decision 2026-11-18: a read-only child's line with another danger label is handled like a builder's (no unconditional parent ask).
 // The secret-like words are built by concatenation so the guard does not refuse this file.
 const SECRET_DIR = ".s" + "sh";
-const ENV_FILE = ".e" + "nv";
 const LABELED = [
   `P=~/${SECRET_DIR}/id_rsa; cat "$P"`,
   // `git show HEAD:<secret>` is a floor for every role now (floors.ts gitFloors), so no builder "run" to compare: r2-secret-labels.test.ts covers it

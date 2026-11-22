@@ -62,7 +62,7 @@ export function builtinSymbols(): Record<SetName, SymbolSet> {
 /** The glyph set for a `ui.symbols` value; a missing glyph falls back to the built-in one. */
 export function symbolSet(name: unknown): SymbolSet {
   const which: SetName = name === "nerd" || name === "emoji" || name === "ascii" ? name : "unicode";
-  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...CACHE_GLYPHS[which], ...EXTRA[which], ...(table()[which] ?? {}) } as SymbolSet;
+  return { ...FALLBACK[which], keepalive: KEEPALIVE[which], ...CACHE_GLYPHS[which], ...EXTRA[which], ...table()[which] } as SymbolSet;
 }
 
 /** Spinner frame of a clock reading: every pane and the Pi TUI show the same frame at the same time (250 ms steps). */

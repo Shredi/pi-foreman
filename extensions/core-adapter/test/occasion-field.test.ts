@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dupRefusalText, dupReview, initialReviewGate } from "../bound.ts";
+import { dupRefusalText, dupReview } from "../bound.ts";
 import { ReviewFacts } from "../diffscan.ts";
 import { applyLedgerItems } from "../ledgerblock.ts";
 import { launchOccasion, occasionOf, withOccasionMarker, type Occasion } from "../occasion.ts";
