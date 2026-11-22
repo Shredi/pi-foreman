@@ -101,7 +101,7 @@ import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPrefli
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { filler, fromJsonText } from "./jsontext.ts";
-import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readContextUse, readItemsSidecar, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeContextUse, writeItemsSidecar, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
+import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, MAX_SUITES, PRE_PR_SUITES_LINE, SUITE_COMMAND_MAX, SUITE_RESULTS, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readContextUse, readItemsSidecar, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeContextUse, writeItemsSidecar, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
 import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
@@ -134,7 +134,8 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, startValueOf, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
+import { reviewFactsFor } from "./prbody.ts";
+import { appendHeadLine, suitesLine, appendReview, capSet, startValueOf, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -260,7 +261,7 @@ import { closeLines } from "./reviewrounds.ts";
 import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
-import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PlanReviews, claimsHintLine, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
 import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
@@ -566,6 +567,8 @@ interface Session {
   scriptRun: { pid: number | undefined; since: number; stopRequested: boolean; shutdown: boolean; stop: ScriptRunDetached["stop"]; done: Promise<unknown> } | null;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
+  /** Foreman only: plan paths that got the claims-check advice (in memory; a reload may repeat it once, never a refusal). */
+  claimsHinted: Set<string>;
   /** Foreman only: read budget (budget.ts), in memory only. */
   budget: ReadBudget;
   /** Read-budget warn notices by tool call id, added to the result. */
@@ -1022,7 +1025,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       get parent() { return parentIntercomId(process.env); },
       remote: process.env[REMOTE_PARENT_ENV] === "1",
       notify: (text) => s.prCtx?.ui.notify(text, "info"),
-      reply: (to, text) => outboxSend(pi.events, to, text, "close"),
+      reply: (to, text, opts) => outboxSend(pi.events, to, text, "close", undefined, opts),
       trace: (r) => s.trace?.emit(r),
     });
     const s: Session = {
@@ -1077,6 +1080,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         draftFlow: () => draftFlowOn(s),
         draft: (key, cwd, draft) => prRun(s, cwd, "pr_draft", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), draft }, 30_000),
         label: (key, cwd, label, on) => prRun(s, cwd, "pr_label", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), label, on }, 30_000),
+        body: (key, cwd, block) => prRun(s, cwd, "pr_body", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), block }, 30_000),
+        bodyFacts: (head) => reviewFactsFor(gateReviews(s), head),
         readyLabel: () => {
           const v = get(s.config.config, "tools.prReadyLabel");
           return typeof v === "string" ? v : "";
@@ -1247,6 +1252,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       script: newScriptState(),
       scriptRun: null,
       planReviews: new PlanReviews(),
+      claimsHinted: new Set<string>(),
       budget: new ReadBudget(),
       readNotices: new Map(),
       childFiles: new Set(),
@@ -2463,6 +2469,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         seconds: () => noticeSeconds(get(s.config.config, "sessions.blockedNoticeSeconds")),
         carry: s.carry,
         contact: (child) => (watch as RemoteWatcher | null)?.lastContact(child),
+        childClosed: (label, notePath) => void waits.childNotice(s.id, label, "closed", notePath),
         send: (text, wake) => {
           let idle = true;
           try {
@@ -3455,15 +3462,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const top = await rootOf(cwd);
               const endTree = await worktreeTree(cwd, true);
               const tree = reviewedTree(startTreesWf, cwd, endTree);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}) };
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}), run: runId, ...(full?.suites.length ? { suites: full.suites } : {}) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
+              if (rec.verdict === "pass") void s.prWatches.bodyOpened(); // the reviews line of a PR this session opened follows a new PASS (prbody.ts)
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
               s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
               s.live?.flush(); // the pill's review facts
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
-              if (r.outputPath) appendHeadLine(r.outputPath, h);
+              if (r.outputPath) appendHeadLine(r.outputPath, h, suitesLine(rec.suites, rec.verdict === "pass" && rec.occasion === "pre-pr"));
               s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why, ...(h.via ? { via: h.via } : {}) });
               persistCeremonyState(s);
             });
@@ -5015,7 +5023,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
         }
         // every review task of a single launch ends with the ids review_verdict takes (the set the tool and the binding use), after the facts the plan review added
-        if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
+        if (actionOf(input) === null && launchEntries(input).length === 1) for (const e of agentEntries) if (REVIEW_ROLES.includes(e.agent as string) && typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${occasions.get(e) === "pre-pr" ? `${PRE_PR_SUITES_LINE}\n\n` : ""}${launchItemsLine(allowedItems(verdictItems.get(e), hsLaunch !== null))}\n`;
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null, ...(s.lastFailFindings ? { findings: s.lastFailFindings } : {}) } : null;
@@ -6017,6 +6025,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // a Summary that misses a part of its form is advice on its own line too, never a refusal
         const hints = ownerFormHints(written.plan.markdown);
         if (hints.length) planFormNote += `${planFormNote ? "\n" : ""}pi-foreman: advice: the Summary section misses parts of its form (${hints.join("; ")}): a **Goal:** paragraph, numbered steps, boxes at the end. This never blocks a review.`;
+        // before the first [plan-review] of a lineage: advice to have an inexpensive explorer check the code claims (once per plan path, tool result only)
+        if (issues.length === 0 && planReviewOn(owner.config.config, owner.ceremony.tier) && !owner.planReviews.lineage(written.plan.path) && !owner.claimsHinted.has(written.plan.path)) {
+          owner.claimsHinted.add(written.plan.path);
+          planFormNote += `${planFormNote ? "\n" : ""}${claimsHintLine(written.plan.path)}`;
+        }
       }
     } else if (owner && wroteFile) {
       // `rulings-<topic>.md` is the rulings sidecar of an HTML plan: the copy is derived again, with or without a plan page open
@@ -6694,7 +6707,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const script = path.join(PKG_ROOT, "scripts", "foreman_close.py");
         if (!handoff || !py || !req.pr) return { lines: ["cleanup: not started (no handoff dir or no usable Python)"] };
         return selfFinish({ cwd: s.cwd, handoff, sessionId: s.id, stateDir: path.join(s.agentDir, "pi-foreman", "state"), trusted: safeTrusted(c), pid: process.pid, status: (n) => prRun(s, s.cwd, "pr_status", { number: n }), sinceMs: Date.now() - process.uptime() * 1000, git: async (args, dir) => (await git(dir ?? s.cwd, args))?.trim() ?? null, closeScript: async (args) => (await runScript(s, "foreman_close.py", args, 120_000)).text, spawnCleanup: (args) => spawnDetached(py, ["-E", "-s", script, ...args], handoff) }, req.pr.n);
-      }, pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: (kind, arg) => remoteReplier({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, env: process.env })(kind, arg), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
+      }, pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: (file, pending) => void markOwnClosed(s.agentDir, process.env, path.resolve(s.cwd, file), pending), remoteReply: (kind, arg) => remoteReplier({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, env: process.env })(kind, arg), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
     },
   });
 
@@ -6900,8 +6913,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Review verdict",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. Then write your report for the foreman.",
-    parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
+    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. suites: the test suites you ran or skipped (command, result pass, fail or skip), as your task asks. Then write your report for the foreman.",
+    parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, suites: { type: "array", maxItems: MAX_SUITES, items: { type: "object", properties: { command: { type: "string", maxLength: SUITE_COMMAND_MAX, description: "One line, without HTML comment markers." }, result: { type: "string", enum: [...SUITE_RESULTS] } }, required: ["command", "result"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const refuse = (text: string, reason: string) => {

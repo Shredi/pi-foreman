@@ -296,19 +296,35 @@ export function applyInbound(reg: Registry, sender: string, msg: Inbound, now: D
 
 /**
  * A child's own close: its registry entry (matched by its handoff dir, the one `foreman session open` sets for it)
- * becomes `closed` before the parent's `foreman:closed` arrives. True when the registry changed.
+ * becomes `closed` (with its result path when given) before the parent's `foreman:closed` arrives. True when the registry changed.
  */
-export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>): boolean {
+export function markOwnClosed(agentDir: string, env: Record<string, string | undefined>, resultPath?: string, pending = false): boolean {
   const handoff = env.PI_FOREMAN_HANDOFF_DIR?.trim();
   if (!handoff) return false;
   const reg = readRegistry(agentDir);
   let changed = false;
   for (const s of reg.sessions) {
-    if (s.handoff && path.basename(s.handoff) === path.basename(handoff) && s.status !== "closed") {
-      s.status = "closed";
-      s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
-      changed = true;
+    if (!s.handoff || path.basename(s.handoff) !== path.basename(handoff)) continue;
+    if (s.status === "closed") {
+      // already closed: only a different result path (the kept copy after a merge cleanup) is written, and the pending marker goes with the final mark
+      if (!pending && s.resultPending !== undefined) {
+        delete s.resultPending;
+        changed = true;
+      }
+      if (!pending && resultPath && s.result !== resultPath) {
+        s.result = resultPath;
+        changed = true;
+      }
+      continue;
     }
+    s.status = "closed";
+    delete s.resultPending; // a stale marker of an earlier close (a restarted entry) must not hold this one
+    if (pending) {
+      s.resultPending = Date.now(); // a self-finish follows: the result path is not final yet (childblocked.ts waits for the final mark, up to PENDING_RESULT_MS)
+      if (resultPath) s.result = resultPath; // the fallback after a crash resolves with this path; the final mark overwrites it with the kept copy
+    } else if (resultPath) s.result = resultPath; // an idle parent never reads the quiet ack, so the entry has the path without applyInbound
+    s.worktreePending = true; // as the close flow marks it: the list pass retries the kept worktree (D120)
+    changed = true;
   }
   if (changed) writeRegistry(agentDir, reg);
   return changed;

@@ -229,6 +229,12 @@ class RestartLocalTest(LocalRestartBase):
         self.assertEqual(stored["status"], "open")
         self.assertNotIn("closedBy", stored)
 
+    def test_restart_drops_the_pending_result_marker(self):
+        self.write_entry(status="closed", note=fsn.PRUNE_NOTE, closedBy="prune", resultPending=123456)
+        code, out, err = self.restart()
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("resultPending", self.stored())
+
     def test_entry_pruned_before_the_change_is_restartable(self):
         self.entry.pop("closedBy", None)
         self.write_entry(status="closed", note=fsn.PRUNE_NOTE)

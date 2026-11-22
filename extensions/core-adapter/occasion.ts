@@ -12,7 +12,7 @@
 // shadows are recorded as findings only.
 import { launchEntries } from "./ladder.ts";
 import { REVIEW_ROLES, type Verdict } from "./rounds.ts";
-import type { VerdictFinding, VerdictItem, VerdictRecord } from "./verdict.ts";
+import type { VerdictFinding, VerdictItem, VerdictRecord, VerdictSuite } from "./verdict.ts";
 
 export type Occasion = "plan-review" | "pre-pr" | "second-opinion" | "item" | "high-stakes";
 /** The config-facing occasions (reviewByOccasion keys, panel gates); `high-stakes` is not one of them. */
@@ -175,6 +175,8 @@ export interface ReviewResult {
   items: VerdictItem[];
   /** The record's findings (defect, now, later); [] without a record. */
   findings: VerdictFinding[];
+  /** The test suites the record names (verdict.ts); [] without a record or without the field. */
+  suites: VerdictSuite[];
   /** The reviewer recorded `incomplete` (it could not run its checks): no verdict for the gates. */
   incomplete: boolean;
   /** The reason of an `incomplete` record. */
@@ -213,7 +215,7 @@ export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | nul
     const cwd = typeof r.cwd === "string" && r.cwd ? r.cwd : typeof data.cwd === "string" && data.cwd ? data.cwd : null;
     const rec = kids.length === 1 ? record ?? null : null;
     const verdict: Verdict | null = rec && rec.verdict !== "incomplete" ? rec.verdict : null;
-    out.push({ index, role, text, verdict, items: rec?.items ?? [], findings: rec?.findings ?? [], incomplete: rec?.verdict === "incomplete", reason: rec?.reason ?? null, model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, rung: entry?.rung ?? 0, counts: shadow === null && countsForItems(occasion) });
+    out.push({ index, role, text, verdict, items: rec?.items ?? [], findings: rec?.findings ?? [], suites: rec?.suites ?? [], incomplete: rec?.verdict === "incomplete", reason: rec?.reason ?? null, model: typeof r.model === "string" && r.model ? r.model : entry?.model ?? shadow, cwd, occasion, shadow, primary: shadow === null, rung: entry?.rung ?? 0, counts: shadow === null && countsForItems(occasion) });
   });
   return out;
 }

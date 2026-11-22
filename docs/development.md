@@ -29,7 +29,7 @@ node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test "extension
 node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"   # herdr-app mods (also in npm run test:node)
 node integrations/herdr-app/pi-foreman/bench.openprs.mjs   # Open PRs render cost (stubs hook built in): one row per shape with PRs, repos, sessions, HoverCards, full card builds, elements, median ms of 5 renders; `--main <path>` benches another main.js
 node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"   # npm run test:installer
-npm run test:ci                                   # pre-PR: what CI runs and npm test does not (replay, core conformance, installer, bench probe); replay is the slow step
+npm run test:ci                                   # pre-PR: every CI step a local machine can run, in CI's order; replay is the slow step
 npm run typecheck                                 # tsc --noEmit
 node setup.mjs --dry-run                          # installer preview, writes nothing (exits 1 until pi-foreman is installed as a package; see install.md#developing)
 ```
@@ -89,7 +89,7 @@ GitHub Actions runs a matrix of Linux, macOS and Windows on Python 3.13 for pull
 
 CI installs npm packages with `npm ci --ignore-scripts` from the committed lockfile (except the fresh-install jobs, which run plain `npm ci` and `npm install` and rely on `.npmrc`), every action is pinned to a full commit hash with a version comment (Renovate keeps both current, after a three day wait), and the replay job uses the locked Pi in `node_modules`, not a global one. A local `npm install` can write `git+ssh` back into `package-lock.json` for the two fork packages; `tests/installer/supply-chain-pins.test.mjs` fails when it does, so change the URL back to `git+https`.
 
-`npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It does not run the fresh-install jobs (they need the network). It runs the CI steps that `npm test` does not, in CI's order: the replay suite against the `node_modules` Pi CLI, `pull_core.py --conformance` (skipped with a line when pytest is missing), the installer suite, and the bench smoke probe on the fake provider (skipped when `harbor` is not on PATH). It prints one line per step and exits 1 on any failure; `--only <step>` runs one step.
+`npm run test:ci` (`scripts/foreman_ci.mjs`) is the pre-PR check. It does not run the fresh-install jobs (they need the network). It runs every CI step a local machine can run, in CI's order: `unit` (`npm test`), `core-pin`, `ruff` (skipped with a line when ruff is missing), `conformance` (`pull_core.py --conformance`, skipped when pytest is missing), `node` (`npm run test:node`), `installer`, `typecheck`, `replay` (the replay suite against the `node_modules` Pi CLI) and `bench` (the smoke probe on the fake provider, skipped when `harbor` is not on PATH). It prints one line per step (the two test runners print their own output) and exits 1 on any failure; `--only <step>` runs one step. A `[pre-pr]` reviewer is asked to run every suite the repository's CI runs that can run locally and to name them in `review_verdict` `suites`.
 
 ## Auto-merge
 
@@ -127,7 +127,7 @@ CI runs the same check in the `test` job, on the Linux leg with Node 22 (`python
 - Linux: the distro package (`apt install just`, `dnf install just`), `cargo install just`, or a prebuilt binary from the just releases
 - Windows: `winget install --id Casey.Just`
 
-`just` lists the recipes (`just --list`). `just ci` runs what CI runs and a local machine can: lint, typecheck, `test`, `test-node` and `ci-extra` (`npm run test:ci`). The Windows shell is PowerShell (`set windows-shell` in the `justfile`). Recipe names use `-` because `just` does not allow `:`.
+`just` lists the recipes (`just --list`). `just ci` runs what CI runs and a local machine can: it is `npm run test:ci`. The Windows shell is PowerShell (`set windows-shell` in the `justfile`). Recipe names use `-` because `just` does not allow `:`.
 
 ## Windows notes
 

@@ -26,9 +26,6 @@ typecheck:
 lint:
     ruff check .
 
-# Replay, core conformance, installer and bench probe (npm run test:ci).
-ci-extra:
+# Everything CI runs that a local machine can (npm run test:ci).
+ci:
     npm run test:ci
-
-# What CI runs that a local machine can: lint, typecheck, test, test-node, ci-extra.
-ci: lint typecheck test test-node ci-extra
