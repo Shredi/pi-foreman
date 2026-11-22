@@ -774,7 +774,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
         }
         if (v.startsWith("--")) {
           if (v === "--login") startup = true;
-          if (!["--login", "--noprofile", "--norc", "--posix", "--restricted", "--verbose", "--noediting"].includes(v)) return bad("wrapper_option");
+          if (!["--login", "--noprofile", "--norc", "--posix", "--restricted", "--verbose", "--noediting", "--version", "--help"].includes(v)) return bad("wrapper_option", true);
         } else if (/^[-+][A-Za-z]/.test(v)) {
           for (const ch of v.slice(1)) {
             if (ch === "c") cflag = true;
@@ -1653,12 +1653,17 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
         }
         const name = words.length ? baseName(words[0]) : "";
         const args = words.slice(1);
-        if (name === "env") {
-          for (let i = 0; i < args.length; i++) {
+        // `env` may sit behind another wrapper (`timeout 5 env BASH_ENV=x bash -c ..`): read its operands from the word on
+        const envAt = name === "env" ? 0 : args.findIndex((a) => baseName(a) === "env") + 1;
+        if (name === "env" || envAt > 0) {
+          for (let i = name === "env" ? 0 : envAt; i < args.length; i++) {
             const a = args[i];
             const m = CLEAN_ASSIGN.exec(a);
-            if (m) bind(m[1], "text");
-            else if (/^-[A-Za-z]*S|^--split-string/.test(a)) structural();
+            if (m) {
+              bind(m[1], "text");
+              // `env BASH_ENV=x bash -c ..` makes the wrapped shell read a startup file like a prefix assignment does
+              if (RUNS_FILE_VARS.has(m[1])) structural();
+            } else if (/^-[A-Za-z]*S|^--split-string/.test(a)) structural();
             else if (/^(?:-[A-Za-z]*[uCP]|--unset|--chdir)$/.test(a)) i++;
             else if (!a.startsWith("-")) break;
           }
