@@ -233,6 +233,8 @@ interface W {
   tail?: string;
   /** Whether the part of the word after its last `/` (the whole word without one) has no expansion, glob or brace in it: such a word names its program by that part (`~/bin/tool`). */
   lit?: boolean;
+  /** The word as the shell runs it (unquoted, unescaped) where an expansion left it opaque; names a tilde program in its segment. */
+  decoded?: string;
 }
 
 interface Opt {
@@ -315,7 +317,7 @@ function wordOf(w: Word, vars?: Map<string, string | undefined>): W {
     out = w.value;
     tail = w.value;
   }
-  return { text: w.text, value: reason ? null : out, reason, ...(reason && !computed && /[\\/]/.test(tail) ? { tail } : {}), ...(reason ? { lit: lastComponentLiteral(w) } : {}) };
+  return { text: w.text, value: reason ? null : out, reason, ...(reason && !computed && /[\\/]/.test(tail) ? { tail } : {}), ...(reason ? { lit: lastComponentLiteral(w), decoded: out } : {}) };
 }
 
 /**
@@ -732,7 +734,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
       // a tilde program stays path-qualified in its segment (`~/bin/cat` is no known `cat`); a wrapper (`~/../../usr/bin/env rm`) emitted the wrapped program, which keeps its own name
       const last = sc.run.out[n];
-      if (p.text.startsWith("~") && sc.run.out.length === n + 1 && last.wrappers.length === sc.wrappers.length && last.program.toLowerCase() === leaf.toLowerCase()) last.program = p.text;
+      if (p.text.startsWith("~") && sc.run.out.length === n + 1 && last.wrappers.length === sc.wrappers.length && last.program.toLowerCase() === leaf.toLowerCase()) last.program = p.decoded ?? p.text;
       // bash runs no builtin for a word holding a slash: the leaf walk (`~/bin/cd`, `~/bin/pushd`, `env -C`) cannot move the calling shell
       return cwd;
     }
@@ -761,6 +763,8 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     case "cd":
     case "pushd": {
       plain(prog, name, rest, c, cwd);
+      // bash runs no builtin for a word holding a slash (`/x/cd DIR`): the directory stays
+      if (/[\\/]/.test(prog)) return cwd;
       // `pushd` with an option moves nothing we track; `popd` is not tracked at all
       const one = rest.length === 1 && rest[0].value !== null && !(name === "pushd" && /^[-+]/.test(rest[0].value)) ? rest[0].value : null;
       return one === null ? null : (cdTarget(["cd", one], cwd ?? undefined, win32(sc.run)) ?? null);
