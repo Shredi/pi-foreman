@@ -10,7 +10,7 @@ import type { ClassifierCtx, JudgeCall, ProtectedCall, ProtectedCheckCtx } from 
 import { LAUNCH_TASK_ENTRY, cutTask, ledgerTaskText, readBrief, restoreLaunchTask, stripBriefFooter } from "../judgecontext.ts";
 import type { ProtectedMatch } from "../protected.ts";
 
-type Reply = string | Error | "hang" | ((text: string) => string);
+type Reply = string | Error | ((text: string) => string);
 function fakeRegistry(replies: Reply[]) {
   const calls: { system: string; text: string }[] = [];
   const registry = {
