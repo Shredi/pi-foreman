@@ -416,6 +416,7 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
   for (const s of subs) {
     if (sc.depth + 1 > MAX_DEPTH) {
       seg(sc, s.label, [], "depth");
+      markUnknown(sc);
       // the script inside was never walked: a consumer must not read the segment as a plain unresolved word
       if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     }
@@ -543,6 +544,8 @@ function walkNode(n: any, sc: Scope): string | null {
     }
     case "Case": {
       walkWords([n.word, ...n.items.flatMap((i: any) => i.pattern)], sc);
+      // a case may hold no command: its subject or a pattern with arithmetic on a value not shown to be a number is still a site, so the unit gets a segment to carry the mark
+      if (sc.unit !== undefined && sc.run.unsafe?.has(sc.unit)) seg(sc, "", [], null);
       return walkLists(n.items.map((i: any) => i.body), sc);
     }
     case "Function":
@@ -690,6 +693,7 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
   sc.run.strings.push(src);
   if (sc.depth + 1 > MAX_DEPTH) {
     seg(sc, label, [], "depth", c);
+    markUnknown(sc);
     withBodies(sc, opaqueBodies(src, false));
     return cwd;
   }
@@ -725,9 +729,9 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
   const prog = p.value;
   const name = baseName(prog);
-  const wrap = (inner: W[], w: string, at = cwd, pass = false, clears: string[] = []): string | null => {
+  const wrap = (inner: W[], w: string, at = cwd, pass = false, clears: string[] = [], login = false): string | null => {
     if (!inner.length) return plain(prog, name, [], c, cwd);
-    return run(inner, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, w], passAt: pass ? [...(sc.passAt ?? []), sc.wrappers.length] : sc.passAt, cleared: clears.length ? [...(sc.cleared ?? []), ...clears] : sc.cleared } }, at);
+    return run(inner, { ...c, sc: { ...sc, ...(login ? { startup: true } : {}), wrappers: [...sc.wrappers, w], passAt: pass ? [...(sc.passAt ?? []), sc.wrappers.length] : sc.passAt, cleared: clears.length ? [...(sc.cleared ?? []), ...clears] : sc.cleared } }, at);
   };
   const bad = (reason: OpaqueReason, unknown = false): string | null => {
     seg(sc, prog, rest.map((a) => a.value ?? a.text), reason, c, cwd);
@@ -860,7 +864,9 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const o = opts({ flags: "cl", arg: "a" });
       if (typeof o === "string" || !o.rest.length) return bad("shell_builtin", typeof o === "string");
       // a failed `exec cd` (execfail) leaves the shell where it was: the inner command's cwd is not taken over, as for `env`
-      wrap(o.rest, "exec", cwd, false, has(o.opts, "-c") ? ["*"] : []);
+      // `exec -l` and `exec -a -name` (argv0 starting with `-`) start the program as a login shell, which reads startup files like `bash -l`
+      const login = has(o.opts, "-l") || o.opts.some((x) => x.name === "-a" && (x.value ?? "").startsWith("-"));
+      wrap(o.rest, "exec", cwd, false, has(o.opts, "-c") ? ["*"] : [], login);
       return cwd;
     }
     case "stdbuf": {
