@@ -161,7 +161,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
     ...(o.planPhase && o.planPhaseOrigin === "parent" ? { planPhaseOrigin: "parent" as const } : {}),
-    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.work !== undefined ? { work: r.work } : {}), ...(r.occasion ? { occasion: r.occasion } : {}), ...(r.tree ? { tree: r.tree } : {}), ...(r.via ? { via: r.via } : {}), ...(r.at !== undefined ? { at: r.at } : {}) })),
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.work !== undefined ? { work: r.work } : {}), ...(r.occasion ? { occasion: r.occasion } : {}), ...(r.tree ? { tree: r.tree } : {}), ...(r.via ? { via: r.via } : {}), ...(r.at !== undefined ? { at: r.at } : {}), ...(r.run ? { run: r.run } : {}), ...(r.suites ? { suites: r.suites } : {}) })),
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
     ...(o.gate ? { gate: o.gate } : {}),
     ...(o.sentBack ? { sentBack: true } : {}),

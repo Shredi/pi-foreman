@@ -54,8 +54,8 @@ meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `pack
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
 
 **`pi-intercom` is a fork pin.** `package.json` and `packages.lock.json` pin it as
-`git+https://github.com/Shredi/pi-intercom.git#<sha>` (the explicit https form, so `npm ci` needs no SSH key), the `hc-transport-2` branch, which is upstream `pi-intercom` main at 4b387e8 (unreleased, not a tag) plus one commit: a
-`crossMachine.transport: "hc"` option that sends `name@machine` messages through `hc exec` instead of SSH. Upstream has
+`git+https://github.com/Shredi/pi-intercom.git#<sha>` (the explicit https form, so `npm ci` needs no SSH key), the `hc-transport-2` branch, which is upstream `pi-intercom` main at 4b387e8 (unreleased, not a tag) plus two commits: a
+`crossMachine.transport: "hc"` option that sends `name@machine` messages through `hc exec` instead of SSH, and an optional boolean `noWake` in the extension outbox request that delivers the message without starting a turn in an idle receiver (pi-foreman sends the merge notice and the `foreman:closed` ack that way; an older pin drops the field and the notices wake as before). Upstream has
 no such transport yet. `/foreman update-check` prints `pi-intercom: fork pin, see docs/install.md` for it and Renovate is
 switched off for it. To take an upstream update: watch upstream, rebase or port the commit onto the new upstream main or tag in a new
 branch, push it to the fork and run the fork's tests, then set the new commit in both files together (the two specs must be identical) and run `npm install`. pi-foreman

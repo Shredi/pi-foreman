@@ -113,7 +113,7 @@ no lookup and starts at once. A lookup that fails keeps the watch, and so the re
 
 ## Self-finish on merge
 
-A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and a PR merge starts no close: the session may have more work (more PRs, open ledger items) after a merge. When the watch reports `merged`, the session says so once per merged PR: a notice in its own pane and, unless the parent is remote (`PI_FOREMAN_REMOTE_PARENT=1`: pane only), one intercom line to the parent, `PR #n merged; <label> stays open: it sends Result from when its brief is done, then close it with foreman:close (a session never closes itself)` (trace `close` with `cause` `merge`, `decision` `noticed`). A reload announces nothing again. The child goes on with its brief, writes `result.md` (PR numbers, merge commits, anything left open) and sends `Result from <label>` when the brief is done; the parent reviews it and sends `foreman:close`. The close sequence is the one above, with these differences when a PR was merged:
+A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and a PR merge starts no close: the session may have more work (more PRs, open ledger items) after a merge. When the watch reports `merged`, the session says so once per merged PR: a notice in its own pane and, unless the parent is remote (`PI_FOREMAN_REMOTE_PARENT=1`: pane only), one intercom line to the parent (sent quiet, `noWake`: it starts no turn in an idle parent), `PR #n merged; <label> stays open: it sends Result from when its brief is done, then close it with foreman:close (a session never closes itself)` (trace `close` with `cause` `merge`, `decision` `noticed`). A reload announces nothing again. The child goes on with its brief, writes `result.md` (PR numbers, merge commits, anything left open) and sends `Result from <label>` when the brief is done; the parent reviews it and sends `foreman:close`. The close sequence is the one above, with these differences when a PR was merged:
 
 - **A close from any source.** The session remembers a watched PR it saw merged: the watch's `merged` event, or the fresh
   `pr_status` that ends the watch before a close (a PR closed without a merge is not remembered). The memory is saved with the
@@ -122,7 +122,7 @@ A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and 
   the result file, the same checks and the detached cleanup as the last step. A refused close (for example a child run still active) leaves the memory for the next close.
   Without a handoff dir nothing changes. When the cleanup of a parent's close does not start, the
   parent gets the reason as its own reply, `PR #n merged, closing (cleanup: not started (<reason>); ...)`, before the
-  `foreman:closed <file>[ CLOSE: x]` line, which never carries the reason; a remote parent's reply cannot carry a line, so the
+  `foreman:closed <file>[ CLOSE: x]` line (the ack is sent quiet, `noWake`; the reason line keeps waking), which never carries the reason; a remote parent's reply cannot carry a line, so the
   reason is in the result file only. The result file of a parent's close sits in the worktree's `.workflow/` and the cleanup
   removes it with the worktree. When the cleanup starts, the finished file (with `## Merge cleanup`) is first copied into the
   handoff dir under a name that is not taken (its own file name, with a number added when that exists; `result.md` and other

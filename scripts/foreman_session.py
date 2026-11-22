@@ -3229,7 +3229,7 @@ def restart_local(adir, entry, rctx=None, dry_run=False, say=print):
         hc_new = {"address": made["address"], "parent": made["parent"], "space": space}
         fields = {"status": "open", "hc": hc_new, "backend": "hc", "restartedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
                   "restartedEpoch": time.time(), "lastError": None}
-        drop = ("closedBy", "note", "reaped", "passRetryAt", "worktreePending")
+        drop = ("closedBy", "note", "reaped", "passRetryAt", "worktreePending", "resultPending")
         try:
             update_entry(adir, child, fields, drop)
         except Refused as busy:

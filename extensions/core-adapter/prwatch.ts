@@ -14,6 +14,8 @@ import { gatedRepo, mergeLabelOf, rulesKeyOf } from "./prphases.ts";
 import type { GateInfo, PhaseRule } from "./prphases.ts";
 import { labelTarget, readiness } from "./prready.ts";
 import type { ReviewFacts } from "./prready.ts";
+import { markOf, reviewsBlock, sameMark } from "./prbody.ts";
+import type { ReviewPass } from "./prbody.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
@@ -867,6 +869,10 @@ export interface WatchRecord {
   state: WatchState;
   /** pr_create armed this watch in this session (a PR opened as a draft under draft handling); absent: not owned (pr_watch, pr_follow). */
   owned?: boolean;
+  /** pr_create opened this PR in this session: the watch keeps the `## Reviews` line of the PR body current (prbody.ts), whether or not it handles the draft state. Absent: pr_watch, pr_follow. */
+  opened?: boolean;
+  /** The (head, run id) pair of the review line last written into the body (by pr_create or by the watch); absent: none. */
+  bodyMark?: { head: string; run: string };
 }
 export interface WatchEntry {
   v: 2;
@@ -913,7 +919,9 @@ export function parseWatchRecord(v: unknown): WatchRecord | null {
   if ("key" in r) {
     const key = parseKey(r.key);
     const state = parseState(r.state);
-    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}) } : null;
+    const bm = r.bodyMark as Record<string, unknown> | null | undefined;
+    const bodyMark = bm && typeof bm === "object" && typeof bm.head === "string" && bm.head && typeof bm.run === "string" ? { bodyMark: { head: bm.head, run: bm.run } } : {};
+    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}), ...(r.opened === true ? { opened: true } : {}), ...bodyMark } : null;
   }
   if (!finite(r.n) || !Number.isInteger(r.n) || r.n < 1 || !strings(r.commentIds)) return null;
   const state: WatchState = { head: "", failedIds: [], ci: "", mergeable: "", commentIds: r.commentIds, updatedAt: "", noCi: 0, noCiHead: "", readyHead: "", last: "watching" };
@@ -973,6 +981,10 @@ export interface PrWatchesDeps {
   draft?(key: PrKey, cwd: string, draft: boolean): Promise<SafeOpOutcome>;
   /** The host op `pr_label` (not a model-facing tool) for any open watch: put the label on (`on`) or take it off; the repository and host of the watch's key. */
   label?(key: PrKey, cwd: string, label: string, on: boolean): Promise<SafeOpOutcome>;
+  /** The host op `pr_body` (not a model-facing tool) for a watch of a PR the session opened: write the marker-wrapped reviews block into the PR body; the repository and host of the watch's key. */
+  body?(key: PrKey, cwd: string, block: string): Promise<SafeOpOutcome>;
+  /** The newest PASS on `head` (prbody.ts reviewFactsFor over the session's records), null when none; absent: no body updates. */
+  bodyFacts?(head: string): ReviewPass | null;
   /** tools.prReadyLabel ("" = off: no label call at all). Read on every use, so a config reload applies; absent: off. A repository's merge label (`phaseRules`) replaces it there. */
   readyLabel?(): string;
   /** The rules of tools.prPhases (prphases.ts parsePhases). Read on every use, so a config reload applies; absent: none. */
@@ -1027,6 +1039,14 @@ interface Watch {
   status: string;
   /** pr_create armed this watch in this session: its draft state is handled (tools.prDraft). */
   owned: boolean;
+  /** pr_create opened this PR in this session: the watch keeps the body's reviews line current (WatchRecord.opened). */
+  opened: boolean;
+  /** The pair of the review line last written into the body (WatchRecord.bodyMark). */
+  bodyMark?: { head: string; run: string };
+  /** A body call is on its way. */
+  bodying?: boolean;
+  /** Failed body calls of the current pair (not persisted): the first one gives a notice, the second ends the tries for that pair. */
+  bodyFail?: { head: string; run: string; n: number };
   /** A draft call is on its way. */
   drafting: boolean;
   /** A label call is on its way. */
@@ -1095,14 +1115,14 @@ export class PrWatches {
   }
 
   /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
-  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false): void {
+  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false, bodyMark?: { head: string; run: string }): void {
     const state = baselineOf(snap);
     const passed = this.passedSet();
     // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
     // (a head with no record is left for a tick to report, so the message is not swallowed here; the watch holds the stored data of `okAt`, so a tick on that
     // same data only re-arms and the message comes with the first tick that brings newer stored data)
     if (passed) reviewStep(state, snap.head, passed, false);
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}) });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
     w.seenAt = okAt;
     this.arm(w);
     this.persist();
@@ -1122,9 +1142,9 @@ export class PrWatches {
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false, bodyMark?: { head: string; run: string }): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}) });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
@@ -1172,7 +1192,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, drafting: false, labeling: false };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, opened: r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.merged = this.merged.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
@@ -1186,7 +1206,7 @@ export class PrWatches {
 
   /** The active watches as session-entry records. */
   records(): WatchRecord[] {
-    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}) }));
+    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}), ...(w.opened ? { opened: true } : {}), ...(w.bodyMark ? { bodyMark: w.bodyMark } : {}) }));
   }
 
   /** The watched PRs this session saw merged (the watch's merged event, or a pre-close fresh status), oldest first. */
@@ -1425,6 +1445,7 @@ export class PrWatches {
       // the draft target follows the session's facts, which can move while the store does not
       void this.reconcile(w, r.snap, r.okAt);
       void this.labelStep(w, r.snap);
+      void this.bodyStep(w, r.snap);
       return this.arm(w);
     }
     this.setStatus(w, "");
@@ -1447,6 +1468,7 @@ export class PrWatches {
     const leaving = !!delta && this.draftCall(w, snap, r.okAt) === false;
     void this.reconcile(w, snap, r.okAt);
     void this.labelStep(w, snap);
+    void this.bodyStep(w, snap);
     if (delta) {
       this.deps.send(prMessage(w.key.n, leaving ? this.leavingDelta(delta, child) : delta), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "event" });
@@ -1656,6 +1678,68 @@ export class PrWatches {
       this.deps.changed?.();
     } catch {
       w.labeling = false;
+    }
+  }
+
+  /**
+   * The reviews line of the body of a PR the session opened (prbody.ts), a step of its own beside the draft and label steps: on every tick of an `opened` watch and from the PASS hook
+   * (`bodyOpened`). The newest PASS on the head the host shows gives a (head, run id) pair; a pair other than the last written one is written through `pr_body` and stored. The pair, not the
+   * run id alone, is the key: a same-tree alias keeps the run id and has a new head. Independent of draft handling (`owned`). A host without `pr_body` (GitLab, templates) gives `pr_unsupported`: the
+   * watch stops updating, silently (pr_create's result said the line is written at create). A failed call gives one notice and is tried once more on the next tick; then the pair is left.
+   * Never throws; never blocks the watch.
+   */
+  private async bodyStep(w: Watch, snap: WatchSnapshot): Promise<void> {
+    try {
+      if (w.ended || !w.opened || w.bodying || !this.deps.body || !this.deps.bodyFacts || w.key.repo === "" || snap.state !== "open" || !snap.head) return;
+      const facts = this.deps.bodyFacts(snap.head);
+      if (!facts) return;
+      const mark = markOf(facts);
+      if (sameMark(w.bodyMark, mark)) return;
+      const f = w.bodyFail;
+      if (f && sameMark(f, mark) && f.n >= 2) return;
+      w.bodying = true;
+      let o: SafeOpOutcome;
+      try {
+        o = await this.deps.body(w.key, w.cwd || this.deps.cwd?.() || "", reviewsBlock(facts));
+      } catch (err) {
+        o = { kind: "error", message: String((err as Error)?.message ?? err) };
+      }
+      w.bodying = false;
+      if (w.ended) return;
+      if (o.kind === "ran") {
+        w.bodyFail = undefined;
+        w.bodyMark = mark;
+        this.persist();
+        this.deps.trace({ event: "pr_watch", outcome: o.result.changed === true ? "body_written" : "body_current" });
+        this.deps.changed?.();
+        return;
+      }
+      if (o.kind === "precondition" && o.precondition === "pr_unsupported") {
+        w.opened = false;
+        this.persist();
+        this.deps.trace({ event: "pr_watch", outcome: "body_unsupported" });
+        return;
+      }
+      const n = (f && sameMark(f, mark) ? f.n : 0) + 1;
+      w.bodyFail = { ...mark, n };
+      this.deps.trace({ event: "pr_watch", outcome: n >= 2 ? "body_failed_capped" : "body_failed" });
+      if (n === 1) this.deps.send(noticeMessage(w.key.n, `the reviews line of the PR body was not updated (${oneLine(o.message, 160)}); it is tried once more on the next tick`, "body_failed"), this.idle());
+      this.deps.changed?.();
+    } catch {
+      w.bodying = false;
+    }
+  }
+
+  /** A new PASS was recorded: bring the reviews line of every open watch of a PR the session opened up to date from the store now. Never throws. */
+  async bodyOpened(): Promise<void> {
+    for (const w of [...this.watches.values()]) {
+      if (w.ended || !w.opened) continue;
+      try {
+        const r = await this.stored(w.key);
+        if (r.kind === "entry") await this.bodyStep(w, r.snap);
+      } catch {
+        // the store is unreadable now: the tick tries again
+      }
     }
   }
 

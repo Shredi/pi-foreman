@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { world } from "./_r46world.ts";
 import { planFormIssues } from "../ownertext.ts";
+import { claimsHintLine } from "../planreview.ts";
 
 const OWNER = "## For the owner\n\n**Goal:** ship the widget.\n\n1. Make one small change.\n\n";
 const REST = "## Goal\nShip it.\n";
@@ -120,7 +121,7 @@ test("the write result of a plan carries the form faults; a clean plan adds noth
   assert.match(bad.note, /plan form is wrong/);
   fs.writeFileSync(w.planFile, clean);
   const ok = await a.call("write", { path: w.planFile, content: "x" });
-  assert.equal(ok.note, "", "the result is left as it was");
+  assert.equal(ok.note, `ok\n${claimsHintLine(fs.realpathSync.native(w.planFile))}`, "no plan-form advice, the claims hint only");
 });
 
 test("a [plan-review] launch naming the faulty plan by an @-prefixed path is refused", async (t) => {

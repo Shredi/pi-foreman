@@ -1615,5 +1615,73 @@ def op_pr_label(req):
     return {**answer, "changed": True}
 
 
+REVIEWS_OPEN = "<!-- pi-foreman:reviews -->"
+REVIEWS_CLOSE = "<!-- /pi-foreman:reviews -->"
+BODY_MAX = 65536
+BLOCK_MAX = 4000
+
+
+def _block_arg(args):
+    v = args.get("block")
+    if not isinstance(v, str) or not 1 <= len(v) <= BLOCK_MAX or "\0" in v:
+        raise _bad("block must be a string of 1 to %d characters" % BLOCK_MAX)
+    if not (v.startswith(REVIEWS_OPEN) and v.endswith(REVIEWS_CLOSE)) or v.count(REVIEWS_OPEN) != 1 or v.count(REVIEWS_CLOSE) != 1:
+        raise _bad("block must be one reviews block: %s ... %s" % (REVIEWS_OPEN, REVIEWS_CLOSE))
+    return v
+
+
+def merge_reviews_block(body, block):
+    """The PR body with the reviews block in place: the lines from the last opening marker line before the first closing marker line that follows an
+    opening one are replaced. A marker counts only as a whole line (prose naming the marker strings is never rewritten); a stray closing marker line is
+    skipped, so a second update finds the block the first one appended. Without a block the `## Reviews` section is appended. Every line outside stays."""
+    lines = body.split("\n")
+    opened = -1
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s == REVIEWS_OPEN + REVIEWS_CLOSE:  # an empty block on one line
+            return "\n".join(lines[:i] + [block] + lines[i + 1:])
+        if s == REVIEWS_OPEN:
+            opened = i
+        elif s == REVIEWS_CLOSE and opened >= 0:
+            return "\n".join(lines[:opened] + [block] + lines[i + 1:])
+    lead = "" if body == "" else ("" if body.endswith("\n") else "\n") + "\n"
+    return body + lead + "## Reviews\n\n" + block + "\n"
+
+
+def op_pr_body(req):
+    """Write the reviews block into the body of a pull request: read the body, replace the block between the markers (or append the `## Reviews`
+    section when they are missing) and write the body back; a body that does not change is not written (`changed: false`). GitHub only (gh); a GitLab or
+    template host answers pr_unsupported. Not a model-facing tool: the session's PR watch calls it with the watch's repository and host."""
+    args, cfg, pr_host = _setup(req, ("number", "repo", "host", "block"))
+    number = arg_number(args)
+    if number is None:
+        raise _bad("number is required")
+    block = _block_arg(args)
+    repo, hostname = arg_repo(args), arg_host(args)
+    root = workspace_root(req.get("cwd"))
+    host = _gh_only(pr_host, root, "pr_body")
+    rflag = repo_flag(host, repo, hostname)
+    subst = [repo or ""]
+    view = host_json(host, *run_host([host.program, "pr", "view", str(number)] + rflag + ["--json", "body"], root, subst), "body")
+    old = view.get("body") if isinstance(view, dict) else None
+    if not isinstance(old, str):
+        raise ActionError("pr_host_failed", "gh: printed no body")
+    new = merge_reviews_block(old, block)
+    answer = {"action": "pr_body", "number": number}
+    if new == old:
+        return {**answer, "changed": False}
+    if len(new.encode("utf-8")) > BODY_MAX:
+        raise _bad("the body with the reviews block would exceed %d bytes" % BODY_MAX)
+    path = _body_file(new)
+    try:
+        edit = [host.program, "pr", "edit", str(number)] + rflag + ["--body-file", _argpath(path)]
+        code, out, err = run_host(edit, root, subst + [_argpath(path)])
+        if code != 0:
+            host_error(host, "body", code, err)
+    finally:
+        _unlink(path)
+    return {**answer, "changed": True}
+
+
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
-       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft, "pr_label": op_pr_label}
+       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft, "pr_label": op_pr_label, "pr_body": op_pr_body}
