@@ -2818,6 +2818,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("session_shutdown", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
+    void s.stripSampler?.stop(); // first, before any await: another session takes the measuring lease on its next tick
+    s.stripSampler = null;
     closingSessions.add(s.id); // a dialog cut off from here on stays in its open-dialog file: the restart asks again
     shutdownAborts.get(s.id)?.abort(); // closes every open permission dialog of this session without an answer
     shutdownAborts.delete(s.id);
@@ -2863,7 +2865,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.live?.stop();
     s.openPrs?.stop();
     await s.pressureSampler?.stop();
-    await s.stripSampler?.stop();
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
     pythonCache.drop(s.id);

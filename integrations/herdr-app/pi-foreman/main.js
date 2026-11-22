@@ -14,6 +14,11 @@ import {
 import { prsStaleText, PR_STALE_WORDS } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
+const STRIP_NAME_W = 64; // status strip grid columns (px): name, percent, extra text; the bar takes the rest (at least STRIP_BAR_MIN)
+const STRIP_VALUE_W = 32;
+const STRIP_EXTRA_W = 58;
+const STRIP_GAP = 4; // the gap between the grid row's cells (px)
+const STRIP_BAR_MIN = 24;
 const LOCAL_MS = 3000;
 const REMOTE_MS = 15000;
 const RETRY_MS = 30000;
@@ -817,48 +822,51 @@ export default class ForemanAgents extends View {
         .hover((x) => x.bg(t.hover)).on_click(more).child(`+${n - shown.length} more`))));
   }
 
-  // The status strip above the list (local radar's `strip`): one header row (chevron; the cpu / memory / level line, folded the summary) and, unfolded,
-  // one row per disk and usage row in a Collapsible. Tones: a neutral measured value (`value`) is the PR green, other neutral text is muted, the rest from the PR palette. No strip, no element.
+  // The status strip above the list (local radar's `strip`): one header row (chevron; the load dot, level and reasons, folded the summary) and, unfolded,
+  // one grid row per CPU, memory, disk and usage row in a Collapsible: name, bar (or sparkline), percent, one extra text, in fixed columns so every row lines up.
+  // Tones: a neutral measured value is the PR green, other neutral text is muted, the rest from the PR palette. No strip, no element.
   statusStrip(t, now) {
     const strip = this.radar.get("local")?.ok ? this.radar.get("local").strip : null;
-    const rows = guard(() => (strip ? stripRows(strip, now) : []), []);
-    if (rows.length === 0) return null;
+    const model = guard(() => (strip ? stripRows(strip, now) : null), null);
+    if (!model) return null;
+    const { head: top, rows } = model;
     const fid = "strip";
     const folded = this.folded.has(fid);
     const color = { ...tones(t), neutral: t.muted };
-    // Text parts never shrink or clip (flex_none, no wrap); bars are boxes: a dim track, a fill in the tone, and for usage a thin pace marker.
-    const part = (g, barW) => {
-      const ink = g.value && g.tone === "neutral" ? color.green : color[g.tone] ?? t.muted;
-      if (g.bar) {
-        const track = div().relative().h(6).rounded(3).bg(t.dim + "44")
-          .when(barW, (el) => el.flex_none().w(barW)).when(!barW, (el) => el.flex_1().min_w(24).max_w(120))
-          .child(div().absolute().top(0).left(0).h(6).w(`${Math.round(g.bar.frac * 100)}%`).rounded(3).bg(ink));
-        return g.bar.marker === null ? track : track.child(div().absolute().top(-2).left(`${Math.round(g.bar.marker * 100)}%`).w(2).h(10).bg(t.foreground));
-      }
-      if (g.spark) return h_flex().flex_none().h(12).gap(1).items_end().children(g.spark.map((px) => div().flex_none().w(2).h(px).bg(ink)));
-      return div().flex_none().whitespace_nowrap().text_color(ink).child(g.text);
+    const inkOf = (tone, measured) => (measured && tone === "neutral" ? color.green : color[tone] ?? t.muted);
+    // Bars are boxes: a dim track, a fill in the tone, and for usage a thin pace marker.
+    const bar = (b, ink) => {
+      const track = div().relative().flex_1().min_w(STRIP_BAR_MIN).h(6).rounded(3).bg(t.dim + "44")
+        .child(div().absolute().top(0).left(0).h(6).w(`${Math.round(b.frac * 100)}%`).rounded(3).bg(ink));
+      return b.marker === null ? track : track.child(div().absolute().top(-2).left(`${Math.round(b.marker * 100)}%`).w(2).h(10).bg(t.foreground));
     };
-    // The head line wraps whole groups (cpu, mem, level) onto the next line when the sidebar is too narrow.
-    const line = (segs) => {
-      const items = [];
-      for (const g of segs) {
-        const last = items.at(-1);
-        if (g.group !== undefined && last?.group === g.group) last.segs.push(g); else items.push({ group: g.group, segs: [g] });
-      }
-      return h_flex().id("strip-line").flex_1().min_w(0).flex_wrap().items_center().gap_x(8).gap_y(1).text_size(10.5).text_color(t.muted)
-        .children(items.map((it) => h_flex().flex_none().gap(2).items_center().children(it.segs.map((g) => part(g, 48)))));
+    const spark = (heights, ink) => h_flex().flex_1().min_w(STRIP_BAR_MIN).h(12).gap(1).items_end().children(heights.map((px) => div().flex_1().min_w(1).h(px).bg(ink)));
+    const cell = (text, ink) => div().flex_none().whitespace_nowrap().text_color(ink).child(text);
+    const gridRow = (r) => {
+      const ink = inkOf(r.value.tone, r.value.measured);
+      return h_flex().id(`strip-${r.id}`).flex_none().min_w(0).overflow_hidden().min_h(16).gap(STRIP_GAP).items_center().text_size(10.5).text_color(t.muted)
+        .child(div().flex_none().w(STRIP_NAME_W).truncate().whitespace_nowrap().child(r.name))
+        .child(r.bar ? bar(r.bar, ink) : r.spark ? spark(r.spark, ink) : div().flex_1().min_w(STRIP_BAR_MIN))
+        .child(div().flex_none().w(STRIP_VALUE_W).flex().justify_end().whitespace_nowrap().text_color(ink).child(r.value.text))
+        .child(div().flex_none().w(STRIP_EXTRA_W).truncate().whitespace_nowrap().child(r.extra));
     };
-    const headSegs = folded ? stripSummary(strip) : rows[0].segs;
-    const body = folded ? [] : rows.slice(1);
+    const summary = () => h_flex().id("strip-line").flex_1().min_w(0).items_center().overflow_hidden().text_size(10.5).text_color(t.muted)
+      .children(stripSummary(strip).map((g) => cell(g.text, inkOf(g.tone, g.value === true))));
+    const label = () => {
+      const lv = top.level;
+      if (!lv) return div().flex_none().text_color(t.muted).child("Status");
+      return h_flex().id("strip-level").flex_1().min_w(0).items_center().gap(6).text_size(10.5)
+        .child(div().flex_none().whitespace_nowrap().text_color(top.stale ? t.muted : inkOf(lv.tone, true)).child(lv.text))
+        .when(Boolean(top.reasons), (el) => el.child(div().flex_1().min_w(0).truncate().whitespace_nowrap().text_color(inkOf(lv.tone, true)).child(top.reasons)));
+    };
     const toggle = (_e, cx) => { if (this.folded.has(fid)) this.folded.delete(fid); else this.folded.add(fid); cx.notify(); };
     const head = h_flex().id("strip-head").pl(8).pr(8).min_h(20).flex_none().gap(4).items_center().cursor_pointer()
       .hover((x) => x.bg(t.hover)).on_click(toggle)
       .child(this.foldSlot(t, fid, true, { folded }))
-      .child(line(headSegs));
-    return Collapsible.new().id("strip").flex().flex_col().flex_none().px(6).pb(4).open(body.length > 0).child(head)
-      .when(body.length > 0, (el) => el.content(v_flex().flex_none().pl(28).pr(8).gap(1)
-        .children(body.map((r) => h_flex().id(`strip-${r.id}`).flex_none().min_h(16).gap(6).items_center().text_size(10.5).text_color(t.muted)
-          .children(r.segs.map((g) => part(g)))))));
+      .child(folded ? summary() : label());
+    const open = !folded && rows.length > 0;
+    return Collapsible.new().id("strip").flex().flex_col().flex_none().px(6).pb(4).open(open).child(head)
+      .when(open, (el) => el.content(v_flex().flex_none().pl(16).pr(8).gap(3).min_w(0).overflow_hidden().children(rows.map(gridRow))));
   }
 
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.
