@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { planWait } from "../roundstate.ts";
-import { PLAN, tick, world } from "./_r46world.ts";
+import { PLAN, world } from "./_r46world.ts";
 
 const OWNER = "waits for: the owner's approval at its pane; nothing from you";
 const BUILD = "waits for: nothing; it goes on to build";
@@ -32,9 +32,11 @@ test("T9: the checkpoint of a changed plan, still pending at its dialog, is on f
   fs.writeFileSync(w.planFile, PLAN.replace("Ship it.", "Ship it twice."));
   assert.equal(await a.review("PASS"), null);
   let release: (v: string) => void = () => undefined;
-  (a.ctx as { ui: { select: () => Promise<string> } }).ui.select = () => new Promise<string>((r) => { release = r; });
-  const open = a.checkpoint(); // the dialog is open
-  await tick(100);
+  let opened: () => void = () => undefined;
+  const dialogOpen = new Promise<void>((r) => { opened = r; });
+  (a.ctx as { ui: { select: () => Promise<string> } }).ui.select = () => new Promise<string>((r) => { release = r; opened(); });
+  const open = a.checkpoint();
+  await dialogOpen; // the dialog is open: a fixed wait raced the page and link steps before it on a loaded runner, and release() then ran before the stub took it
   assert.equal(planWait(w.handoff).text, OWNER, "the file says the owner is asked while the dialog is open");
   release("approve");
   assert.equal((await open).decision, "approve");
