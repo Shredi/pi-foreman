@@ -48,7 +48,7 @@ test("unknown or invalid window: no point, no write", () => {
   for (const w of [undefined, null, 0, -1, Number.NaN, "200000"]) {
     assert.deepEqual(compactionPoint({ contextWindow: w }, { maxTokens: 100_000 }), { point: null, reserve: null, write: false, reason: "unknown-window" });
   }
-  assert.equal(compactionPoint(null, {}).point, null);
+  assert.equal(compactionPoint(null as never, {}).point, null);
 });
 
 test("runtimePoint: per-model override, then global reserve, then the default", () => {

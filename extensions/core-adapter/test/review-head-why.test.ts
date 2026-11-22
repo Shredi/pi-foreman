@@ -72,7 +72,7 @@ test("a PASS whose commit moved: review_recorded names head null and why; V clos
   const a = await w.adapter("startup");
   await a.writeLedger("# Ledger\n- [ ] 1. item\n- [ ] V. Verified by a reviewer\n");
   const r = await a.reviewLaunch("[pre-pr] review the branch");
-  assert.ok(!r.blocked, r.blocked);
+  assert.ok(!r.blocked, r.blocked ?? undefined);
   g.commit("chore: during");
   a.endRun(r.id, "Overall verdict: PASS");
   // The record waits on a git subprocess (headOf); slow on Windows, so poll instead of a fixed wait.

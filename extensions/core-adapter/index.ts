@@ -942,7 +942,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_e, ctx) => {
     const s = sessionFor(ctx);
     s?.live?.setBlocked(false);
-    s?.questionCalls.forEach(releaseQuestion);
+    s?.questionCalls.forEach((id) => releaseQuestion(id));
   });
   let isoSetting: unknown = "auto";
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now. A child removes it from its env
@@ -1860,7 +1860,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (e.gate) {
       s.steps = { ...e.gate.steps };
       // an entry from before the per-checkout gate: its single gate and mark are the session-wide entry (strict: it reads for every checkout without an entry)
-      const old = e.gate.reviewGate.last === null && !e.gate.reviewGate.revised ? {} : { [SESSION_WIDE]: e.gate.reviewGate };
+      const old: ReviewGates = e.gate.reviewGate.last === null && !e.gate.reviewGate.revised ? {} : { [SESSION_WIDE]: e.gate.reviewGate };
       s.reviewGates = e.gate.reviewGates ? { ...e.gate.reviewGates } : old;
       s.passMarks = e.gate.reviewGates ? { ...(e.gate.passMarks ?? {}) } : e.gate.passMark ? { [SESSION_WIDE]: e.gate.passMark } : {};
       s.passSnaps = {};
@@ -2836,7 +2836,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.pendingLaunches.clear();
     s?.mutating.clear();
     s?.commandCalls.clear();
-    s?.questionCalls.forEach(releaseQuestion);
+    s?.questionCalls.forEach((id) => releaseQuestion(id));
     s?.questionCalls.clear();
     s?.runningCalls.clear();
   });
@@ -3945,7 +3945,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           );
           gs.trace?.emit({
             event: "protected_check", rule: v.accepted === "deny" && v.entry ? `${rule};classifier.deny:${v.entry}` : rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
-            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, reason: v.reason, model: v.model, latencyMs: v.latencyMs, role, mode: checkMode,
+            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, model: v.model, latencyMs: v.latencyMs, mode: checkMode,
             ...(v.cause ? { cause: v.cause } : {}),
             globs: m.entries.map((e) => e.glob).join(","),
             ...denyFields(v.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
@@ -5210,7 +5210,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent") {
         const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}), verdictItems: verdictItems.get(input) ?? (launchEntries(input).length === 1 ? verdictItems.get(launchEntries(input)[0]) : undefined), resumeItems });
         if (b?.out && !s.isChild) s.launchNotices.set(event.toolCallId, [...(s.launchNotices.get(event.toolCallId) ?? []), `pi-foreman: the child's kept output folder is ${b.out} ($FOREMAN_OUT in its shell; it survives the run, swept after 7 days); read its logs there.`]);
-        if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
+        if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input) ?? "") ?? "")?.model ?? null : null) });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) {
         s.pendingLaunches.add(event.toolCallId);
@@ -7193,11 +7193,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         } catch {
           // unreadable: the core script reports it below
         }
-        if (u.item !== null) {
+        const item = u.item; // read here: a property's null check does not carry into the closure below
+        if (item !== null) {
           const rewrite = (): void => {
           if (!file || content === null) out.push(`${LEDGER_TOOL}: this session has no ledger of its own.`), (ok = false);
           else {
-            const r = rewriteItemText(content, u.item, u.text);
+            const r = rewriteItemText(content, item, u.text);
             if ("error" in r) out.push(r.error), (ok = false);
             else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
             else {

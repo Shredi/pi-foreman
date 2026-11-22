@@ -278,7 +278,7 @@ test("the idle warm equals the last real request after every stage of a scripted
 
   // ---- a run's end, the idle warm and the comparison -----------------------------------------------------------------------
   const view = (q: Request) => {
-    const o = { ...q.options, cacheRetention: retention(q.options.cacheRetention) };
+    const o: Record<string, unknown> = { ...q.options, cacheRetention: retention(q.options.cacheRetention) };
     for (const k of Object.keys(ALLOWED_DIFF)) delete o[k];
     const messages = normalizeContext(q.context as never).messages as Msg[];
     const head = getCurrentSystemMessage(messages as never);

@@ -14,7 +14,7 @@ test("idle-cache wildcard expands over zero, one and two providers", () => {
   const none = planChanges({ version: 1, providers: {} }, { disable: ["idle-cache"] });
   assert.deepEqual(none.errors, []);
   assert.deepEqual(leafPaths(none, "idle-cache"), []);
-  assert.match(none.changes.find((c: any) => c.feature === "idle-cache").notes[0], /no provider present/);
+  assert.match(none.changes.find((c: any) => c.feature === "idle-cache")!.notes[0], /no provider present/);
   assert.deepEqual(none.config.providers, {});
 
   const one = planChanges({ version: 1, providers: { a: {} } }, { disable: ["idle-cache"] });

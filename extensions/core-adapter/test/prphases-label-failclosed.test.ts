@@ -27,7 +27,7 @@ async function go(s: WatchSnapshot, phaseRules: () => readonly PhaseRule[], chil
     reviewFacts: () => "ok",
     reviewGate: () => true,
     draftFlow: () => false,
-    label: async (_k, _c, label, on): Promise<SafeOpOutcome> => (labels.push(`${on ? "+" : "-"}${label}`), { kind: "ran", result: { changed: true } }),
+    label: async (_k: PrKey, _c: string, label: string, on: boolean): Promise<SafeOpOutcome> => (labels.push(`${on ? "+" : "-"}${label}`), { kind: "ran", result: { changed: true } }),
     readyLabel: () => readyLabel,
     phaseRules,
     persist: () => {},

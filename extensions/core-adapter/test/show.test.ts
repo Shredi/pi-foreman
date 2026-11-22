@@ -336,7 +336,7 @@ test("show: an EPERM on rename is retried once after a delay, a second EPERM kee
   await show.idle();
   assert.deepEqual(seen, ["plan.json", "plan.json"]);
   assert.equal(json(show).v, 1);
-  assert.deepEqual(traces, []);
+  assert.deepEqual<Record<string, unknown>[]>(traces, []);
   const before = fs.readFileSync(path.join(show.dir, "plan.json"), "utf8");
   fs.writeFileSync(e.plan(), B);
   planJsonFails = 2;

@@ -149,7 +149,7 @@ async function makeRig(t: { after(fn: () => void): void }, o: { mode?: string; h
         return [];
       }
     },
-    async reset() {
+    async reset(this: Rig) {
       salt += 1;
       skip = 0;
       skip = this.trace().length;

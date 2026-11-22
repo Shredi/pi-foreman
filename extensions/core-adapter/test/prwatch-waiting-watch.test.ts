@@ -82,7 +82,7 @@ test("case 2: no pass, no label, no fallback line however long; the overdue line
   const x = harness(d(), { child: true, owned: true });
   await x.tick(d(), 0);
   await x.tick(d(), SETTLE * 3);
-  assert.deepEqual(x.sent, []);
+  assert.deepEqual<string[]>(x.sent, []);
   assert.deepEqual(x.drafts, []);
   await x.tick(d({ overdue: true }), BOUND);
   assert.deepEqual(x.drafts, [false]);
@@ -97,7 +97,7 @@ test("case 2: no pass, no label, no fallback line however long; the overdue line
 test("case 3, a child: the fallback line and the report line after the hold, no pass, no ready line, no label", async () => {
   const x = harness(caseThree({ runs: [run("check", "pending")] }), { child: true });
   await x.tick(caseThree(), 0);
-  assert.deepEqual(x.sent, []);
+  assert.deepEqual<string[]>(x.sent, []);
   await x.tick(caseThree(), SETTLE);
   assert.equal(x.sent.length, 1);
   assert.ok(x.sent[0].split("\n")[0].includes(FALLBACK));

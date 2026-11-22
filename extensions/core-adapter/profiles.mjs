@@ -145,6 +145,8 @@ const idsText = (list) => list.map((f) => f.id).join(", ");
  * Returns { config, changes: [{ feature, state, leaves: [{ path, value }], notes: [string] }], relaxations: [id], errors: [string] }.
  * `config` is a copy (the input is not modified) and also carries `profile` when one is given. A leaf is written only when it
  * differs from the file (an absent leaf counts as the shipped state). Errors leave `config` equal to the input.
+ * @param {any} userConfig arbitrary user JSON (the code reads it by path and the callers index into the copy)
+ * @param {{ profile?: string, enable?: string[], disable?: string[] }} [options]
  */
 export function planChanges(userConfig, { profile, enable = [], disable = [] } = {}, root = ROOT) {
   const features = loadFeatures(root);
@@ -322,7 +324,10 @@ export function installedAddons(globalPackages, projectPackages, root = ROOT) {
   return out;
 }
 
-/** The flag line that repeats a choice: { profile?, enable?, disable?, addons?, project? } -> `foreman setup --profile ...`. */
+/**
+ * The flag line that repeats a choice: { profile?, enable?, disable?, addons?, project? } -> `foreman setup --profile ...`.
+ * @param {{ profile?: string, enable?: string[], disable?: string[], addons?: string[], project?: boolean }} [choice]
+ */
 export function equivalentCommand({ profile, enable = [], disable = [], addons = [], project = false } = {}) {
   const parts = ["foreman setup"];
   if (project) parts.push("--project");

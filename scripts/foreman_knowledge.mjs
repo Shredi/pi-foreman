@@ -135,7 +135,13 @@ export function applyAccept(manifest, ids, results, today) {
 
 const stateFile = (agentDir) => path.join(agentDir, "pi-foreman", "state", "knowledge-check.json");
 
-/** The one-line nudge when the last check is older than `nudgeDays` (or never ran), else null. `now` is a Date or epoch milliseconds. */
+/**
+ * The one-line nudge when the last check is older than `nudgeDays` (or never ran), else null. `now` is a Date or epoch milliseconds.
+ * @param {string} agentDir
+ * @param {number} [nudgeDays]
+ * @param {Date | number} [now]
+ * @returns {string | null}
+ */
 export function knowledgeNudge(agentDir, nudgeDays = 30, now = Date.now()) {
   const t = now instanceof Date ? now.getTime() : now;
   let checkedAt = NaN;

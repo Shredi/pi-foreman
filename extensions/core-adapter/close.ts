@@ -145,10 +145,11 @@ export function remoteParentClose(details: unknown, env: Record<string, string |
   const refused = (reason: string): IntercomClose => ({ kind: "refused", reason, sender });
   if (d.message?.crossMachine) return refused("cross-machine messages cannot close a session");
   const file = path.join(handoffDir, CLOSE_ORDER_FILE);
-  let order: { parent?: unknown; path?: unknown; at?: unknown } | null = null;
+  type Order = { parent?: unknown; path?: unknown; at?: unknown };
+  let order: Order | null = null;
   try {
     const o = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
-    order = o && typeof o === "object" && !Array.isArray(o) ? (o as typeof order) : null;
+    order = o && typeof o === "object" && !Array.isArray(o) ? (o as Order) : null;
   } catch {
     order = null;
   }

@@ -82,7 +82,7 @@ export function splitChain(command: string): Chain | null {
       const end = s.indexOf("'", i + 1);
       if (end < 0) return null;
       startWord();
-      cur += s.slice(i + 1, end);
+      cur = (cur ?? "") + s.slice(i + 1, end);
       quoted = true;
       text += s.slice(i, end + 1);
       i = end + 1;
@@ -92,7 +92,7 @@ export function splitChain(command: string): Chain | null {
       const body = s.slice(i + 1, end);
       if (/[$`\\!]/.test(body)) return null;
       startWord();
-      cur += body;
+      cur = (cur ?? "") + body;
       quoted = true;
       text += s.slice(i, end + 1);
       i = end + 1;
@@ -144,7 +144,7 @@ export function splitChain(command: string): Chain | null {
       i = j;
     } else if (WORD.test(c)) {
       startWord();
-      cur += c;
+      cur = (cur ?? "") + c;
       text += c;
       i++;
     } else return null;
