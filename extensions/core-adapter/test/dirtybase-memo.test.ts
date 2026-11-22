@@ -1,4 +1,4 @@
-// Ledger session-own-changes 1, 5: the session's checkout memo (dirtybase.ts memoCheckout: a directory is resolved once per session, a null too)
+// Ledger session-own-changes 1, 5: the session's checkout memo (dirtybase.ts memoCheckout: a resolved directory is answered from the memo, a null is retried)
 // and the stat-safe walk to the nearest directory of a write (nearestDirectory: a path removed mid-walk never throws). Real temp repos; the
 // stat race is simulated by stubbing statSync for one path after the path was found by the existence check.
 import { test } from "node:test";
@@ -28,13 +28,25 @@ test("memoCheckout: a repeated lookup of a directory is answered from the memo (
   assert.equal(memo.size, 1);
 });
 
-test("memoCheckout: a directory that is no work tree is memoised as null; a fresh memo (a new session) resolves it again", async (t) => {
+test("memoCheckout: a null is not memoised; a directory that becomes a repository later resolves on the next lookup", async (t) => {
   const dir = tmp(t);
   const memo: CheckoutMemo = new Map();
   assert.equal(await memoCheckout(memo, dir), null);
+  assert.equal(memo.size, 0, "no null stored");
   gitIn(dir, "init", "-q", "-b", "main");
-  assert.equal(await memoCheckout(memo, dir), null, "the memo keeps the answer of this session");
-  assert.equal((await memoCheckout(new Map(), dir))?.key, checkoutKey(dir), "a new session resolves the directory afresh");
+  assert.equal((await memoCheckout(memo, dir))?.key, checkoutKey(dir), "the next lookup resolves the new repository");
+  assert.equal(memo.size, 1);
+});
+
+test("memoCheckout: a failed lookup (git cannot run in a missing directory) is retried once the directory exists", async (t) => {
+  const dir = tmp(t);
+  const sub = path.join(dir, "later");
+  const memo: CheckoutMemo = new Map();
+  assert.equal(await memoCheckout(memo, sub), null);
+  assert.equal(memo.size, 0);
+  fs.mkdirSync(sub);
+  gitIn(sub, "init", "-q", "-b", "main");
+  assert.equal((await memoCheckout(memo, sub))?.top, sub);
 });
 
 test("nearestDirectory: an existing directory is its own nearest; a missing path resolves to its nearest existing parent", (t) => {

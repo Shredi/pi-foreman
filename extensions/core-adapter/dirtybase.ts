@@ -101,14 +101,15 @@ export async function resolveCheckout(dir: string, platform: string = process.pl
   }
 }
 
-/** A session's memo of the checkout each directory belongs to (null: no work tree), so a second write in one directory runs no rev-parse. */
-export type CheckoutMemo = Map<string, { top: string; key: string } | null>;
+/** A session's memo of the checkout each directory belongs to, so a second write in one directory runs no rev-parse. Only resolved checkouts are kept. */
+export type CheckoutMemo = Map<string, { top: string; key: string }>;
 
-/** resolveCheckout through the session's memo: a directory is resolved once per session (a null is kept too, as "not a repo"). */
+/** resolveCheckout through the session's memo: a resolved directory is answered from the memo; a null (no work tree, git failure or timeout) is not stored, so the next write retries. */
 export async function memoCheckout(memo: CheckoutMemo, dir: string, platform: string = process.platform): Promise<{ top: string; key: string } | null> {
-  if (memo.has(dir)) return memo.get(dir) ?? null;
+  const hit = memo.get(dir);
+  if (hit) return hit;
   const c = await resolveCheckout(dir, platform);
-  memo.set(dir, c);
+  if (c) memo.set(dir, c);
   return c;
 }
 
