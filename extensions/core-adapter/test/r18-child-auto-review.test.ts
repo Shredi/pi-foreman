@@ -13,6 +13,7 @@ import { probeSpawner } from "./_probe-memo.ts";
 import { BINDING_NS, BINDINGS_ENV } from "../usage.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { shPath } from "./_shpath.ts";
+import { strRaw } from "../strof.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Block = { block?: boolean; reason?: string } | undefined;
@@ -108,7 +109,7 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }, repl
 }
 
 const V = (verdict: string, reason = "stub"): string => JSON.stringify({ verdict, reason });
-const gate = (c: { events: (n: string) => Record<string, unknown>[] }): string[] => c.events("guard").filter((x) => x.guard === "gate").map((x) => `${x.decision}:${x.rule}`);
+const gate = (c: { events: (n: string) => Record<string, unknown>[] }): string[] => c.events("guard").filter((x) => x.guard === "gate").map((x) => `${strRaw(x.decision)}:${strRaw(x.rule)}`);
 
 test("r18 child: a judge-first line goes to the judge; clear -> a gate allow record with the child role and session kind child", async (t) => {
   const c = await childRig(t, V("clear"));

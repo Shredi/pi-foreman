@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { cleanDialogText, dialogStyle, fileUrl, ownerDialog, shapedConfirm, shapedSelect } from "../ownerdialog.ts";
 import type { DialogSpec, DialogStyle } from "../ownerdialog.ts";
@@ -124,7 +123,7 @@ test("cleanDialogText: zero-width, Arabic letter mark, BOM and line/paragraph se
   const cps = [0x061c, 0x200b, 0x200c, 0x200d, 0xfeff, 0x2028, 0x2029];
   const out = cleanDialogText(cps.map((c, i) => `${String.fromCharCode(97 + i)}${String.fromCharCode(c)}`).join("") + "z");
   assert.equal(out.replace(/ +/g, " "), "a b c d e f g z");
-  assert.ok(![...out].some((ch) => cps.includes(ch.charCodeAt(0))));
+  assert.ok(!Array.from(out).some((ch) => cps.includes(ch.charCodeAt(0))));
 });
 
 test("link rule: a text link through a symlink names the resolved real file in the url", { skip: posixOnly }, (t) => {

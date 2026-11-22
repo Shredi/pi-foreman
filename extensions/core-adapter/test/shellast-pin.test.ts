@@ -14,6 +14,7 @@ import type { GateRoots } from "../pathrules.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { posix } from "./_platform.ts";
+import { strRaw } from "../strof.ts";
 
 const PIN_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "shellast-pin.json");
 const hasGit = spawnSync("git", ["--version"]).status === 0;
@@ -61,7 +62,7 @@ const GIT_ENV: Record<string, string> = {
 
 function g(cwd: string, ...args: string[]): void {
   const r = spawnSync("git", ["-c", "protocol.file.allow=always", ...args], { cwd, env: GIT_ENV });
-  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${strRaw(r.stderr)}`);
 }
 
 interface FixtureInfo {

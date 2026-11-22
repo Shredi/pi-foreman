@@ -293,7 +293,7 @@ class SyncTest(unittest.TestCase):
         head, before = g(self.work, "rev-parse", "HEAD"), self.remote_head()
         for after, label in (("pull", "before commit: "), ("commit", "committed, before push: ")):
             calls = []
-            def planting(args, cwd, stdin=None, after=after):
+            def planting(args, cwd, stdin=None, after=after, calls=calls):
                 calls.append(args[0])
                 res = real(args, cwd, stdin)
                 if args[0] == after:
@@ -442,6 +442,40 @@ class SyncTest(unittest.TestCase):
         self.assertFalse([a for a in argv if a.startswith("+")])
         # The push source is a full ref, so a branch named `+x` cannot form a forced refspec.
         self.assertIn('"refs/heads/%s:refs/heads/%s" % (branch, branch)', src)
+
+
+class CloseBlockBaselineTest(unittest.TestCase):
+    """The sync CLOSE block reads the session baseline like `foreman close`: a repository the session never worked in is not listed."""
+
+    def test_close_block_with_a_baseline_file_is_scoped(self):
+        import foreman_close as fcl
+        tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="sync_base_")))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        repos = []
+        for name in ("mine", "foreign"):
+            d = tmp / name
+            d.mkdir()
+            g(d, "init", "-q")
+            (d / "f").write_text("x\n")
+            (d / "dirt").write_text("d\n")
+            repos.append(d)
+        state = tmp / "state"
+        cfg = {"sync": {"repos": [{"path": str(repos[1])}]}}
+        lines = fs.close_block(str(state), SESSION, str(repos[0]), cfg, True)
+        self.assertEqual(lines[0], "CLOSE: open")
+        self.assertEqual(sum(1 for ln in lines if ln.startswith("uncommitted:")), 2, "no baseline file: every configured repository")
+        top = os.path.realpath(str(repos[0]))
+        listed = fs.status_paths(top)
+        d = state / "sessions" / SESSION
+        d.mkdir(parents=True)
+        (d / "baseline.json").write_text(json.dumps({"v": 1, "roots": [{"repo": top, "head": None, "paths": {p: fcl.hash_path(top, p) for p in listed}}]}))
+        lines = fs.close_block(str(state), SESSION, str(repos[0]), cfg, True)
+        self.assertEqual(lines[0], "CLOSE: ready")
+        self.assertFalse(any(ln.startswith("uncommitted:") for ln in lines))
+        self.assertTrue(any(ln.startswith("note: preexisting uncommitted in ") for ln in lines), lines)
 
 
 if __name__ == "__main__":

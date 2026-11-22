@@ -20,8 +20,12 @@ import type { ReviewRecord } from "./reviews.ts";
 import type { LoopStop } from "./reviewloop.ts";
 import type { PassMark, ReviewGate, StepCounts } from "./bound.ts";
 import { combined, type ReviewGates } from "./reviewgates.ts";
+import { factsOfEntry, type CheckoutFacts } from "./reviewmemory.ts";
+import type { DirtyBase } from "./dirtybase.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
+/** The per-checkout baseline of the session (dirtybase.ts), its own entry so a ceremony-state append never repeats it. */
+export const DIRTY_BASE_ENTRY = "pi-foreman-dirty-base";
 
 export type PlanSource = "dialog";
 /** Who started the plan phase: a parent's launch (`--plan-first`) or the owner (`/foreman plan`). */
@@ -114,6 +118,8 @@ export interface CeremonyStateEntry {
   hsReminded?: string[];
   /** The findings of the last normal-review FAIL for the next re-review task (ledgerblock.ts failFindingsText); absent: none. */
   lastFailFindings?: string;
+  /** What reviews left for the next one, per checkout (reviewmemory.ts); absent: none (an older entry has only `lastFailFindings`). */
+  reviewMemory?: Record<string, CheckoutFacts>;
   /** The count of subject changes to the bound ledger (index.ts ledgerRev, bound.ts PassMark.ledger); absent: 0. */
   ledgerRev?: number;
   /** The checkout fingerprint taken at session start (trivial.ts checkoutBaseline) for the no-change rule; absent: none. */
@@ -147,7 +153,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hold?: { note: string; since: string } | null; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null; baseline?: string | null }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork; hold?: { note: string; since: string } | null; hsReminded?: readonly string[] | null; ledgerRev?: number; lastFailFindings?: string | null; reviewMemory?: Record<string, CheckoutFacts>; baseline?: string | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -171,6 +177,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.ledgerRev ? { ledgerRev: o.ledgerRev } : {}),
     ...(o.baseline ? { baseline: o.baseline } : {}),
     ...(o.lastFailFindings ? { lastFailFindings: o.lastFailFindings } : {}),
+    ...(o.reviewMemory ? { reviewMemory: o.reviewMemory } : {}),
   };
 }
 
@@ -230,6 +237,8 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     const rev = count(d.ledgerRev);
     if (rev) out.ledgerRev = rev;
     if (typeof d.lastFailFindings === "string" && d.lastFailFindings !== "") out.lastFailFindings = d.lastFailFindings;
+    const mem = factsOfEntry(d.reviewMemory);
+    if (mem) out.reviewMemory = mem;
     return out;
   }
   return null;
@@ -316,4 +325,46 @@ function mapsOf(gates: unknown, marks: unknown): { reviewGates: ReviewGates; pas
 export function restorableApproval(plan: PersistedPlan | null, currentHash: string | null): PlanRecord | null {
   if (!plan || plan.status !== "approved" || plan.source !== "dialog" || currentHash === null || currentHash !== plan.hash) return null;
   return { topic: plan.topic, path: plan.path, hash: plan.hash, status: "approved", approvedAt: plan.at, by: plan.by, source: plan.source, note: "restored after reload" };
+}
+
+/** The data of a `pi-foreman-dirty-base` entry. */
+export function buildDirtyBase(map: DirtyBase): { v: 1; map: DirtyBase } {
+  const out: DirtyBase = {};
+  for (const [k, e] of Object.entries(map)) out[k] = { repo: e.repo, head: e.head, paths: e.paths ? { ...e.paths } : null };
+  return { v: 1, map: out };
+}
+
+function dirtyBaseOf(v: unknown): DirtyBase | null {
+  const d = v as { v?: unknown; map?: unknown } | null | undefined;
+  if (!d || typeof d !== "object" || d.v !== 1 || !d.map || typeof d.map !== "object" || Array.isArray(d.map)) return null;
+  const out: DirtyBase = {};
+  for (const [k, raw] of Object.entries(d.map as Record<string, unknown>)) {
+    const e = raw as { repo?: unknown; head?: unknown; paths?: unknown } | null;
+    if (!e || typeof e !== "object" || typeof e.repo !== "string" || (e.head !== null && typeof e.head !== "string")) return null;
+    let paths: Record<string, string> | null = null;
+    if (e.paths !== null) {
+      if (!e.paths || typeof e.paths !== "object" || Array.isArray(e.paths)) return null;
+      paths = {};
+      for (const [p, h] of Object.entries(e.paths as Record<string, unknown>)) {
+        if (typeof h !== "string") return null;
+        paths[p] = h;
+      }
+    }
+    out[k] = { repo: e.repo, head: e.head as string | null, paths };
+  }
+  return out;
+}
+
+/**
+ * The session's baseline map on a branch: the newest `pi-foreman-dirty-base` entry (malformed: null = legacy); without one, a branch that has a
+ * ceremony-state entry is a legacy session (null), and a branch with neither is new (`{}`, `fresh`) on `startup` and `new` and legacy (null) on any other start.
+ * `fresh` tells the caller to take the first baseline and append the entry.
+ */
+export function restoreDirtyBase(entries: unknown[], reason: string): { map: DirtyBase | null; fresh: boolean } {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as { type?: unknown; customType?: unknown; data?: unknown } | null;
+    if (e && e.type === "custom" && e.customType === DIRTY_BASE_ENTRY) return { map: dirtyBaseOf(e.data), fresh: false };
+  }
+  if (entries.some((e) => (e as { type?: unknown; customType?: unknown } | null)?.type === "custom" && (e as { customType?: unknown }).customType === CEREMONY_ENTRY)) return { map: null, fresh: false };
+  return reason === "startup" || reason === "new" ? { map: {}, fresh: true } : { map: null, fresh: false };
 }

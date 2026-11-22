@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
-import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 

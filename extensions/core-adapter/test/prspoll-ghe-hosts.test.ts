@@ -45,7 +45,10 @@ interface Rig {
 async function withRig(t: TestContext, fn: (r: Rig) => Promise<void>): Promise<void> {
   clearStoreCache();
   const res = await resolvePython({ configPath: null, envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
-  if (!res.ok || win) return void t.skip("no Python >= 3.13 here (or Windows): nothing to run the real safe_ops.py with");
+  if (!res.ok || win) {
+    t.skip("no Python >= 3.13 here (or Windows): nothing to run the real safe_ops.py with");
+    return;
+  }
   const python = res.info.executable;
   const dirs: string[] = [];
   try {

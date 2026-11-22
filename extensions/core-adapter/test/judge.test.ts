@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { Classifier, JUDGE_REASONING, NO_MODEL_NOTICE, judgeRequestText, judgeSystemPrompt, parseJudgeVerdict } from "../classifier.ts";
 import type { ClassifierCtx, JudgeCall } from "../classifier.ts";
 
-type Reply = string | Error | "hang";
+type Reply = string | Error; // the string "hang" never answers
 function fakeRegistry(replies: Reply[], found = true) {
   const calls: { system: string; text: string }[] = [];
   const registry = {

@@ -7,7 +7,34 @@ description: Writes, restructures and debugs agent skills (a folder with a SKILL
 
 A skill is a folder the agent reads on demand. Only a one-line catalog entry (name, description, location) is always in context; the body is read when the task matches; references are read when the body points at them.
 
-Beyond this page: for the fuller Anthropic guidance and its three checklists (core quality, scripts, testing), read `references/skills-best-practices.md`. When the skill is mostly prose guidance or the question is how to word a pointer, prune a body or phrase rules, read `references/writing-for-agents.md`. For the full source text in the foreman session only: when `foreman knowledge check` has run, read `<agentDir>/pi-foreman/knowledge/<id>.md` (ids `skills-best-practices`, `writing-for-agents`).
+Beyond this page: for the fuller Anthropic guidance and its three checklists (core quality, scripts, testing), read `references/skills-best-practices.md`. When you need the guide's use-case categories, success criteria, pattern examples or troubleshooting, read `references/skills-guide.md`. When the skill is mostly prose guidance or the question is how to word a pointer, prune a body or phrase rules, read `references/writing-for-agents.md`. For the full source text in the foreman session only: when `foreman knowledge check` has run, read `<agentDir>/pi-foreman/knowledge/<id>.md` (a PDF id is `<id>.pdf`; ids `skills-best-practices`, `writing-for-agents`, `skills-guide`).
+
+## Skill or role?
+
+Write a skill by default. A skill loads only when its task matches and combines with other skills. A role costs a launch, a context and a config entry, so add one only for:
+
+| You need | Do | Why |
+|---|---|---|
+| Domain facts, a playbook or a recurring procedure | Skill | loaded on demand, shared by every role that names it |
+| MCP tools for a child | Role ceiling `roles.<id>.mcp`, plus `mcp: [...]` on the launch | MCP servers attach to the launched child, not to the skill |
+| A distinct generic role: another model tier, a tool fence or an output contract | Role entry in config | the only case that needs its own role |
+
+The generic role ids are `foreman` (the main session), `explorer` (read-only search), `builder` (one scoped change) and `reviewer` (review of a diff or plan). Explorer and reviewer deny `mcp__*` by default, so MCP work goes to a builder. A role body holds the role, its output contract and the skills it names; domain facts stay in the skill.
+
+Set the role in config, in the layer "Giving a role a skill" (Pi section) names:
+
+```json
+{
+  "roles": {
+    "builder": {
+      "skills": ["<skill-name>"],
+      "mcp": ["<server-name>"]
+    }
+  }
+}
+```
+
+Set the model under `providers.<p>.roles.<role>.model`, never under `roles.<id>`. Then ask for the launch with the skill and the servers the child needs, for example: launch a builder with `mcp: ["<server-name>"]` and this skill. For the config layer and `foreman setup`, see "Giving a role a skill" under Pi.
 
 ## Folder rules
 
@@ -15,6 +42,7 @@ Beyond this page: for the fuller Anthropic guidance and its three checklists (co
 - `SKILL.md` is required. Optional siblings: `references/` (long docs), `scripts/` (runnable helpers), `assets/` (templates, fixtures).
 - `SKILL.md` starts with YAML frontmatter, then Markdown. Keep `name` equal to the directory name.
 - One skill, one job. Two unrelated jobs are two skills.
+- No `README.md` in the skill folder: the body and `references/` carry the documentation.
 
 ## Name and description
 
@@ -78,16 +106,31 @@ Match how exact the instruction is to how fragile the task is.
 - **Examples**: one good and one bad input/output pair beats a paragraph of rules. Use real shapes, not placeholders.
 - **Script wrapper**: when a step must be exact (a parse, a conversion, a lookup), put it in `scripts/` and tell the agent to run it and read its output, not to reimplement it. Document arguments and exit codes in the body in one line.
 - **Defaults and escape hatches**: state the default path first, then the exception and its condition.
+- **Multi-MCP coordination**: one phase per server; pass identifiers between phases and validate each phase before the next starts.
+- **Context-aware tool selection**: a short decision tree picks the tool from the context, and the skill says why it picked it.
+- **Domain rules before action**: check the domain rules (compliance, safety, naming) before the first write, and say what was checked.
+
+Body shape: Instructions (numbered steps, each with a success check), Examples (one good and one bad pair), Troubleshooting (Error, Cause, Solution) and References. `assets/SKILL-template.md` is the fill-in skeleton.
 
 Write instructions as imperatives. Explain why a rule exists when the reason changes what the agent does in edge cases.
 
 ## Testing
 
-Trigger tests: write a short list of prompts that should load the skill and a list that should not (include near misses that share vocabulary). Run each in a fresh session and check whether the skill was read. A skill that misses should-prompts needs the missing phrase in its description; one that fires on should-not prompts needs a "not for" clause or a narrower verb.
+Trigger tests, run after every description edit:
 
-Behaviour tests: run one realistic task with the skill loaded, in a fresh session. Check that the output follows the steps and that the agent read the references it needed, not all of them. Fix the body where it deviated, then rerun.
+1. Write three prompts that should load the skill and three that should not. Include near misses that share vocabulary with it.
+2. Make the skill visible (a placement under "Placement and precedence" below, or `roles.<id>.skills` for a child role). Run each prompt headless in a fresh session:
 
-Retest triggers after every description edit.
+   ```bash
+   pi -p --no-session --mode json "<prompt>"
+   ```
+
+   Text mode prints only the final answer, and `--no-session` keeps no transcript, so read the JSON event stream: a hit is a `read` tool call on the skill's `SKILL.md` path.
+3. Pass at five of six. A should-prompt that misses needs the missing phrase in the description; a should-not prompt that fires needs a "not for" clause or a narrower verb.
+4. Description probe: ask "When would you use the <skill-name> skill?" Whatever the answer leaves out is missing from the description.
+5. Fix by symptom. Undertriggering: add the phrases users type, technical terms and file types. Overtriggering: add a "not for" clause that names the right skill, narrow the verbs, drop generic ones such as "helps with". Instructions ignored: move the key rule to the top of Instructions, shorten the body, move detail into `references/`, or turn the prose check into a script.
+
+Behaviour test: run one realistic task in a fresh session with the skill loaded. Check that the output follows the steps and that the agent read only the references it needed. Fix the body where it deviated, then rerun the trigger set.
 
 Evals first, before long documentation:
 
@@ -112,6 +155,10 @@ Watch how the agent moves through the skill, then fix from what you see: an odd 
 - [ ] Should-trigger and should-not-trigger prompts were run; results recorded.
 - [ ] One behaviour run followed the steps.
 - [ ] No secrets, personal paths or machine names in the skill.
+- [ ] MCP work is stated as a launch with `mcp: [...]` on the role, not as a skill setting.
+- [ ] No domain facts in a role body; the role names the skill that holds them.
+- [ ] `metadata.visibility: search` considered for a rarely used domain skill.
+- [ ] Per-model wording follows `skills/prompting-guides`; no per-model notes are kept here.
 
 ## Pi
 
@@ -153,8 +200,4 @@ When two skills share a name, the earlier one wins. Pi's loader takes the frontm
 
 ### Frontmatter the loader honours
 
-`name`, `description`, `disable-model-invocation` (hides the skill from the catalog; it is then used only when named explicitly). `metadata` is ignored by Pi; pi-foreman reads `metadata.visibility` (see above). Other keys (`compatibility`, `allowed-tools`, `context`, `agent`) are ignored silently. A YAML error drops the skill and logs a warning, so check the warning when a skill is missing. A description over 1024 characters warns.
-
-### Trigger-test recipe
-
-For each prompt on the should and should-not lists, run a headless prompt in a fresh session: `pi -p "<prompt>"`. Make the skill visible (placement above, or `roles.<id>.skills` for a child role), then check whether the run read the skill's `SKILL.md` location, from the tool-call trace or the session transcript. Record hit or miss per prompt, adjust the description, repeat.
+`name`, `description`, `disable-model-invocation` (hides the skill from the catalog; it is then used only when named explicitly). `metadata` is ignored by Pi; pi-foreman reads `metadata.visibility` (see above). Other keys (`compatibility`, `allowed-tools`, `context`, `agent`) are ignored silently. A YAML error drops the skill and logs a warning, so check the warning when a skill is missing. Quote a description that contains a colon followed by a space: YAML reads an unquoted one as a nested key and fails. A description over 1024 characters warns.

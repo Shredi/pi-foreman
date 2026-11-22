@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tick, world } from "./_r46world.ts";
+import { world } from "./_r46world.ts";
 
 const WITH = "# Widget\n\n## For the owner\nWe ship the widget.\nIt takes one builder.\n\n## Goal\nShip it.\n";
 
@@ -22,14 +22,11 @@ test("checkpoint dialog: the owner section comes before the plan summary", async
 });
 
 test("checkpoint dialog: a plan without the section gets the warning line first and is not refused", async (t) => {
-  const w = world(t);
+  // D7: a verdict counts only for the plan text the reviewer read, and a [plan-review] launch is refused for a plan without the section (plan_form), so a plan
+  // without it can never carry a plan-review verdict. The plan-review gate is off here (planReview.heavy false); the warning and the approval are what is pinned.
+  const w = world(t, { ceremony: { planReview: { heavy: false } } });
   const a = await w.adapter("startup");
-  // The launch needs the section (plan form by code); the plan loses it while the reviewer runs, so the verdict is for the plan without it.
-  const launch = await a.reviewLaunch();
-  assert.equal(launch.blocked, null);
   fs.writeFileSync(w.planFile, "# Widget\n\n## Goal\nShip it.\n");
-  a.endRun(launch.id, "Overall verdict: PASS");
-  await tick();
   const r = await a.checkpoint();
   assert.equal(r.decision, "approve");
   const n = w.notes.find((m) => /Plan: Widget/.test(m))!;

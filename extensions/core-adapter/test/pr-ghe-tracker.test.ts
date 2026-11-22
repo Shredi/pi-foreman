@@ -235,7 +235,7 @@ test("restore: a listed ghe watch stays, an unlisted one ends with the list-name
     const b = restorer(dir, { error: HOSTS_UNSET });
     b.w.restore({ status: "ok", watches: recs, bad: 0 });
     await flush();
-    assert.deepEqual(b.w.list().map((w) => w.n).sort(), [1, 2]); // kept armed; only the number-only key is lost
+    assert.deepEqual(b.w.list().map((w) => w.n).sort((a, b) => a - b), [1, 2]); // kept armed; only the number-only key is lost
   } finally {
     rmTestTmp(dir);
   }

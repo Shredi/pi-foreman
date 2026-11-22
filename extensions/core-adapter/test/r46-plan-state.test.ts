@@ -4,7 +4,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import { planChanged, planRequired, sharedWorld, tick, world } from "./_r46world.ts";
 
 const ADDENDUM = "\n## Addendum 1: a ruling\nGo ahead.\n";

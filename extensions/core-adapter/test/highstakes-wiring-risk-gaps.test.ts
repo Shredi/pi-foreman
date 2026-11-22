@@ -81,7 +81,7 @@ for (const sizing of [true, false]) {
   });
 }
 
-test("heavy with no builder and no change asks for none; a builder launched while heavy makes the review due at the launch; builders in three worktrees ask for exactly one review", async (t) => {
+test("heavy with no builder and no change asks for none; a builder launched while heavy makes the review due at the launch; builders in three worktrees ask for one review each", async (t) => {
   const { w, a } = await setup(t, { tier: "heavy" });
   assert.doesNotMatch(await settle(a), /high-stakes/);
   assert.doesNotMatch(await pr(a), /high_stakes/);
@@ -104,10 +104,16 @@ test("heavy with no builder and no change asks for none; a builder launched whil
   refused(text);
   assert.match(text, /the task is heavy/);
   await hsPass(a, wts[1]);
-  for (const head of ["w1", "w2", "w3"]) assert.doesNotMatch(await pr(a, { head }), /high_stakes/, "one review covers every worktree");
-  assert.doesNotMatch(await settle(a), /high-stakes/);
-  const again = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wts[2] });
-  assert.match(again.blocked ?? "", /\[high_stakes_done\]/, "exactly one");
+  for (const head of ["w1", "w2", "w3"]) assert.doesNotMatch(await pr(a, { head }), /high_stakes/, "the PR gate asks for nothing");
+  // review-routing D5: the pass in w2 covers w2 only; the finish reminder is one message that names the checkouts still due (w1 and w3)
+  const left = await settle(a);
+  assert.match(left, /a \[high-stakes\] review is due/);
+  assert.equal((left.match(/a \[high-stakes\] review is due/g) ?? []).length, 1, "one reminder");
+  assert.match(left, /[\\/]w1\b/);
+  assert.match(left, /[\\/]w3\b/);
+  assert.doesNotMatch(left, /[\\/]w2\b/);
+  const again = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wts[1] });
+  assert.match(again.blocked ?? "", /\[high_stakes_done\]/, "exactly one per checkout");
 });
 
 // the heavy-only lowering (the PR gate and the finish gate stop asking after the owner's /ceremony below heavy) is asserted in highstakes-owner-tier.test.ts,

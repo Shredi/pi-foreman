@@ -39,6 +39,8 @@ export interface WorldOpts {
   config?: Record<string, unknown>;
   /** The adapter's spawner (default: the version-probe memo over the real one); a file whose cases do not test the python guards passes _light-spawner.ts. */
   spawner?: Spawner;
+  /** The session's cwd is this subdirectory of the project (made when the world is built), not the project root. */
+  subdir?: string;
   /** Collects the custom messages the adapter sends (`pi.sendMessage`) with their options. */
   sent?: { message: { customType: string; content: string }; options: unknown }[];
 }
@@ -81,6 +83,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     else delete process.env.PI_FOREMAN_PARENT_INTERCOM;
   };
   applyEnv();
+  if (o.subdir) fs.mkdirSync(path.join(project, o.subdir), { recursive: true });
   const planFile = path.join(project, ".workflow", "scratch", "plan-widget.md");
   fs.writeFileSync(planFile, PLAN);
   fs.writeFileSync(path.join(handoff, "plan.md"), PLAN);
@@ -99,7 +102,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     const handlers = new Map<string, Handler>();
     const tools = new Map<string, { execute: Fn }>();
     const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
-    const channels = new Map<string, (d: unknown) => void>();
+    const channels = new Map<string, (d: unknown) => unknown>();
     /** The input of every subagent launch that went through a `tool_call` of this adapter, by call id (any helper, the test's own too): once the hook has run, its binding names the record folder (`bindingOf`). */
     const inputs = new Map<string, Record<string, unknown>>();
     const pi = {
@@ -127,7 +130,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     coreAdapter(pi as never, { env: {}, pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: o.spawner ?? probeSpawner(), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
-      cwd: project,
+      cwd: o.subdir ? path.join(project, o.subdir) : project,
       model: { provider: "fake", id: "foreman" },
       mode: "tui",
       hasUI: !o.headless,

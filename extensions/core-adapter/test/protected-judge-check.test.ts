@@ -23,7 +23,7 @@ const matchOf = (line: string): ProtectedMatch => {
   return m;
 };
 
-type Reply = string | Error | "hang";
+type Reply = string | Error; // the string "hang" never answers
 function fakeRegistry(replies: Reply[], found = true) {
   const calls: string[] = [];
   const registry = {

@@ -26,6 +26,6 @@ const OPEN: Array<[string, string]> = [
 for (const [name, command] of OPEN) {
   test(`expected-open (R9): ${name} with a shell-built target is not refused`, async () => {
     const { root, dirs } = rig();
-    assert.equal(await selfRulingRefusal("bash", { command }, root, dirs), undefined, command);
+    assert.equal(selfRulingRefusal("bash", { command }, root, dirs), undefined, command);
   });
 }

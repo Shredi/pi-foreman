@@ -12,6 +12,7 @@ import type { Timers } from "./prwatch.ts";
 import type { UsageLine } from "./usage.ts";
 import { WarmBudget, warmHit, type BudgetCheck, type Rates } from "./warmbudget.ts";
 import { warmCompact } from "./warmcompact.ts";
+import { strOf } from "./strof.ts";
 
 /** A warm is sent this share of the TTL after the last touch, but never later than `WARM_MARGIN_S` before the TTL ends. */
 export const WARM_TICK_SHARE = 0.9;
@@ -104,7 +105,7 @@ export interface SelfWarmDeps {
 
 const MAX_ERROR = 200;
 /** A replay error as one short line for the trace: control characters stripped, capped. The provider's error text only, never prompt content. */
-export const cleanError = (m: unknown): string => String(m ?? "").replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_ERROR);
+export const cleanError = (m: unknown): string => strOf(m).replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_ERROR);
 
 const realTimers: Timers = {
   set: (fn, ms) => {

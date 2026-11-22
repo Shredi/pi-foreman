@@ -15,6 +15,7 @@ import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { getCurrentSystemMessage, getCurrentTools, getSystemMessageText, normalizeContext } from "@earendil-works/pi-ai";
 import { r11Rig } from "./_r11rig.ts";
 import { subagentsHandlers } from "./_subagents-handlers.ts";
+import { strRaw } from "../strof.ts";
 
 type Msg = { role: string } & Record<string, unknown>;
 type Json = Record<string, unknown>;
@@ -146,7 +147,10 @@ test("the idle warm equals the last real request after every stage of a scripted
     const merged = new Map<string, unknown>();
     for (const m of msgs) {
       if (m.role !== "system") continue;
-      for (const [k, v] of Object.entries((m.sections ?? {}) as Record<string, unknown>)) v === null ? merged.delete(k) : merged.set(k, v);
+      for (const [k, v] of Object.entries((m.sections ?? {}) as Record<string, unknown>)) {
+        if (v === null) merged.delete(k);
+        else merged.set(k, v);
+      }
     }
     return [...merged.keys()];
   };
@@ -278,7 +282,7 @@ test("the idle warm equals the last real request after every stage of a scripted
 
   // ---- a run's end, the idle warm and the comparison -----------------------------------------------------------------------
   const view = (q: Request) => {
-    const o = { ...q.options, cacheRetention: retention(q.options.cacheRetention) };
+    const o: Record<string, unknown> = { ...q.options, cacheRetention: retention(q.options.cacheRetention) };
     for (const k of Object.keys(ALLOWED_DIFF)) delete o[k];
     const messages = normalizeContext(q.context as never).messages as Msg[];
     const head = getCurrentSystemMessage(messages as never);
@@ -315,7 +319,7 @@ test("the idle warm equals the last real request after every stage of a scripted
   await real();
   await reply("starting");
   let q = await warmEquals("first prompt");
-  assert.ok(!toolNames(q).includes("secret_a") && toolNames(q).includes("read"), `the deferred tools are hidden from the request: ${toolNames(q)}`);
+  assert.ok(!toolNames(q).includes("secret_a") && toolNames(q).includes("read"), `the deferred tools are hidden from the request: ${strRaw(toolNames(q))}`);
   assert.match(q.system ?? "", /Deferred tools/, "the deferred hint rides in the system text");
 
   // 2. a second extension forces the system prompt
@@ -335,7 +339,7 @@ test("the idle warm equals the last real request after every stage of a scripted
   await real();
   await reply("found it");
   q = await warmEquals("hidden tool found");
-  assert.ok(toolNames(q).includes("secret_a") && !toolNames(q).includes("secret_b"), `the found tool is declared, the other stays hidden: ${toolNames(q)}`);
+  assert.ok(toolNames(q).includes("secret_a") && !toolNames(q).includes("secret_b"), `the found tool is declared, the other stays hidden: ${strRaw(toolNames(q))}`);
 
   // 4. a subagent notice
   await say(notice("run-1", "tc1"));
@@ -443,7 +447,7 @@ test("the idle warm equals the last real request after every stage of a scripted
   ran.add("cache_warming_decision");
   assert.ok(decisions.some((d) => (d as { action?: string } | undefined)?.action === "stop"), "the adapter stops Pi's own cache warming");
   const events = requestChangingEvents();
-  assert.ok(events.includes("context") && events.includes("before_agent_start") && events.includes("context_with_system"), `the request-changing events are read from ${piTypes}: ${events}`);
+  assert.ok(events.includes("context") && events.includes("before_agent_start") && events.includes("context_with_system"), `the request-changing events are read from ${piTypes}: ${strRaw(events)}`);
   const withHandlers = events.filter((e) => handlers(e).length > 0);
   assert.deepEqual(withHandlers.filter((e) => !DRIVEN.has(e) && !(e in NOT_DRIVEN)), [], "the adapter registers a handler for a request-changing event this script neither drives nor justifies; drive it in the script or add it to NOT_DRIVEN with its reason");
   assert.deepEqual([...DRIVEN].filter((e) => !events.includes(e)), [], "DRIVEN names an event Pi's types no longer have as request-changing");
@@ -455,7 +459,7 @@ test("the idle warm equals the last real request after every stage of a scripted
   // that returns early on the missing payload escapes this probe, and the script's own events are covered by the stages above.
   const everyEvent = [...fs.readFileSync(piTypes, "utf8").matchAll(/on\(event: "([a-z_]+)", handler:/g)].map((m) => m[1]);
   const undriven = everyEvent.filter((e) => handlers(e).length > 0 && !ran.has(e) && !SCRIPT_FIRED.has(e)).sort((a, b) => Number(a === "session_shutdown") - Number(b === "session_shutdown"));
-  assert.ok(undriven.includes("turn_start") && undriven.includes("model_select"), `the probe reaches the events the script does not drive: ${undriven}`);
+  assert.ok(undriven.includes("turn_start") && undriven.includes("model_select"), `the probe reaches the events the script does not drive: ${strRaw(undriven)}`);
   for (const name of undriven) {
     during = name;
     for (const h of handlers(name)) await Promise.resolve(h({ type: name }, r.ctx)).catch(() => undefined);

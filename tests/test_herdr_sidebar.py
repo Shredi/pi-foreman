@@ -837,7 +837,8 @@ class PushTest(unittest.TestCase):
         self.push()
         self.assertEqual(glyphs(), ["⏳", "✓"])
         toks = [r["tokens"] for r in self.herdr.reports()]
-        self.assertTrue(all(a != b for a, b in zip(toks, toks[1:])), toks)
+        # zip strict=False: adjacent pairs
+        self.assertTrue(all(a != b for a, b in zip(toks, toks[1:], strict=False)), toks)
         with open(self.stamp, encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "p1")
 
@@ -1214,7 +1215,7 @@ class TreePropertyTest(unittest.TestCase):
                         text = text[sidebar.DETAIL_INDENT:]
                     lines.append((key, k, text))
         by_key = {key: i for i, (key, k, _) in reversed(list(enumerate(lines))) if k == "fm_hd"}
-        for key, k, text in lines:
+        for _key, _k, text in lines:
             self.assertLessEqual(sidebar.cell_width(text), budget, text)
             stripped = text.lstrip("│├└─ " + B)
             self.assertNotIn("…", text[:len(text) - len(stripped)])
@@ -1242,7 +1243,7 @@ class TreePropertyTest(unittest.TestCase):
                 self.assertTrue(j < len(lines) and col(lines[j][2], c) in ("├", "└"), (key, text))
             if pos["conn"] == sidebar.CONN_LAST and c + 3 <= budget and i + 1 < len(lines):
                 self.assertNotEqual(col(lines[i + 1][2], c), "│", (key, lines[i + 1]))
-        for i, (key, k, text) in enumerate(lines):
+        for _i, (key, k, text) in enumerate(lines):
             pos = tree[key]
             if k == "fm_hd":
                 want = len(pos["P"]) + (6 if pos["conn"] else 3) + sidebar.slot_width(sidebar.aux_symbols(symbols)) - 2

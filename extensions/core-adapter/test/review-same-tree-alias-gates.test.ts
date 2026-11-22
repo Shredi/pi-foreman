@@ -9,7 +9,7 @@ import { commitTreeNoWorkflow } from "../commentonly.ts";
 import { buildCeremonyState, CEREMONY_ENTRY } from "../planstate.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
-import { tick, world } from "./_r46world.ts";
+import { world } from "./_r46world.ts";
 import { execFileSync } from "node:child_process";
 
 import { liveRecords } from "../reviewcover.ts";

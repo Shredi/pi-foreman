@@ -8,7 +8,6 @@ import { r11Rig } from "./_r11rig.ts";
 import { defaultSpawner } from "../spawn.ts";
 
 const A = { provider: "pa", id: "big" };
-const B = { provider: "pb", id: "small" };
 const ROLES = (p: string) => Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `${p}/${r}-m` }]));
 
 const config = {

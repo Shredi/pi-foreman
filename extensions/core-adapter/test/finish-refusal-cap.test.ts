@@ -33,7 +33,7 @@ test("two refusals per unchanged state, then the finish goes through with the no
   const third = await settle(a);
   assert.notEqual(third?.continue, true, "the third turn end goes through");
   assert.deepEqual(types(third), ["pi-foreman-ceremony-incomplete"]);
-  assert.match(String((third?.entries?.[0] as { content?: string }).content), /finished with ceremony incomplete: missing builder, reviewer/);
+  assert.match(String((third?.entries?.[0] as { content?: string } | undefined)?.content), /finished with ceremony incomplete: missing builder, reviewer/);
   assert.equal(await settle(a), undefined, "the message is appended once per state");
   assert.equal(await count(w, "finish_refused"), 2);
   assert.ok((await count(w, "ceremony_incomplete")) >= 1);
@@ -50,7 +50,7 @@ test("two refusals per unchanged state, then the finish goes through with the no
   await new Promise((r) => setTimeout(r, 50));
   const again = await settle(a);
   assert.equal(again?.continue, true, "the new state is refused again");
-  assert.match(String((again?.entries?.[0] as { content?: string }).content), /requires reviewer;/);
+  assert.match(String((again?.entries?.[0] as { content?: string } | undefined)?.content), /requires reviewer;/);
   await a.ownerPrompt();
   const c = await w.adapter("resume");
   assert.equal((await settle(c))?.continue, true);

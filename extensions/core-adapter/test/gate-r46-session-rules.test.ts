@@ -28,7 +28,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { child?: boolean; review
   fs.mkdirSync(path.join(sessionDir, "subagent-artifacts"), { recursive: true });
   const file = path.join(sessionDir, "2026-01-01T00-00-00_abc.jsonl");
   fs.writeFileSync(file, "{}\n");
-  (r.ctx.sessionManager as { getSessionFile: () => string }).getSessionFile = () => file;
+  (r.ctx.sessionManager as unknown as { getSessionFile: () => string }).getSessionFile = () => file;
   return { ...r, titles, sessions, outer, sessionDir, file };
 }
 

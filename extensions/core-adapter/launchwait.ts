@@ -238,6 +238,8 @@ export class LaunchBatch {
   private readonly started = new Set<string>();
   /** Counts assistant messages seen: a pressure gate narrows once per message. */
   generation = 0;
+  /** Every tool call of the current message (name and arguments as the model wrote them). */
+  toolCalls: { id: string; name: string; arguments: unknown }[] = [];
 
   /** Launch calls of the current message. */
   get size(): number {
@@ -260,8 +262,10 @@ export class LaunchBatch {
     this.ids = [];
     this.picked = [];
     this.started.clear();
+    this.toolCalls = [];
     if (!Array.isArray(content)) return;
     for (const c of content) {
+      if (isObj(c) && c.type === "toolCall" && typeof c.id === "string" && typeof c.name === "string") this.toolCalls.push({ id: c.id, name: c.name, arguments: c.arguments });
       if (isObj(c) && c.type === "toolCall" && c.name === "subagent" && typeof c.id === "string" && isLaunch(c.arguments)) {
         this.ids.push(c.id);
         if (pick(c.arguments)) this.picked.push(c.id);

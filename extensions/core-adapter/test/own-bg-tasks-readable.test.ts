@@ -2,13 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { formatWaits, readAddonTasks } from "../bg.ts";
 import { ownTaskReadable } from "../roundsurface.ts";
 import { OWN_TOOLS, toolDefault } from "../defaults.ts";
 import { trackedTmp } from "./_tmpbase.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 const w = fs.realpathSync(trackedTmp("pf-own-bg-"));
 const ws = path.join(w, "ws");

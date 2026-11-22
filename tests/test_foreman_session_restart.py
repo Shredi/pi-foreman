@@ -38,7 +38,8 @@ def has_session_arg(argv, path, win=None):
     """`--session <path>` in a `hc run` argv: two exact adjacent argv elements on POSIX, the exact quoted pair `'--session' '<path>'` ending the PowerShell launch text on win32 (the words before it are pi, or the pi fallback, plus an optional model)."""
     if sys.platform == "win32" if win is None else win:
         return (" ".join(argv)).endswith(" %s %s" % (word("--session", win=True), word(path, win=True)))
-    return any(a == "--session" and b == path for a, b in zip(argv, argv[1:]))
+    # zip strict=False: adjacent pairs
+    return any(a == "--session" and b == path for a, b in zip(argv, argv[1:], strict=False))
 
 
 PARENT_ID = "pid-parent-0001"

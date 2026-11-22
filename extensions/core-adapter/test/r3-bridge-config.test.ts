@@ -17,7 +17,7 @@ import { bridgeLoadOrder, projectBridgeConfigRisks, userBridgeConfigRisks } from
 const PRINT = { mode: "print", hasUI: false };
 const noTrace = () => undefined;
 
-function tmp(t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string {
+function tmp(t: { after(fn: () => unknown): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(async () => {
     await beforeRm?.(dir);
@@ -111,7 +111,10 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridge with unapproved drift", async (t) => {
   const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "CLAUDE_CONFIG_DIR", "GIT_CONFIG_COUNT"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  for (let i = 0; i < 8; i++) saved[`GIT_CONFIG_KEY_${i}`] = process.env[`GIT_CONFIG_KEY_${i}`], saved[`GIT_CONFIG_VALUE_${i}`] = process.env[`GIT_CONFIG_VALUE_${i}`];
+  for (let i = 0; i < 8; i++) {
+    saved[`GIT_CONFIG_KEY_${i}`] = process.env[`GIT_CONFIG_KEY_${i}`];
+    saved[`GIT_CONFIG_VALUE_${i}`] = process.env[`GIT_CONFIG_VALUE_${i}`];
+  }
   t.after(() => {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   });

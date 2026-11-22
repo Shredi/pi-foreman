@@ -31,7 +31,7 @@ test("a steer file written during a wait is delivered once", (t) => {
   const got: string[] = [];
   const stop = w.start((x) => got.push(x), 10, tm);
   tm.tick();
-  assert.deepEqual(got, []);
+  assert.deepEqual<string[]>(got, []);
   put(dir, "steer-1.md", "use approach B", 2000);
   tm.tick();
   assert.equal(got.length, 1);
@@ -59,7 +59,7 @@ test("a file already present at the first wait is not delivered; a non-steer fil
   tm.tick();
   put(dir, "notes2.md", "y", 5000);
   tm.tick();
-  assert.deepEqual(got, []);
+  assert.deepEqual<string[]>(got, []);
   // a second wait on the same watcher does not redeliver a delivered steer
   put(dir, "steer.md", "go", 6000);
   tm.tick();

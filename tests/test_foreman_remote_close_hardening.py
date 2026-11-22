@@ -367,7 +367,7 @@ class OpenAddressTest(HBase):
         for address in ("other/t1", "a/b/c", "t1@x", "", "x" * 65, "t 1"):
             with self.subTest(address=address):
                 self.tmp_registry_reset()
-                code, out, err = self.open_with(lambda r: r["hc"].update(address=address), HC_TERMINAL_ID="t0")
+                code, out, err = self.open_with(lambda r, address=address: r["hc"].update(address=address), HC_TERMINAL_ID="t0")
                 self.assertEqual(code, 1)
                 self.assertIn("remote reported no usable terminal address", err)
                 self.assertIn("alpha", err)
@@ -388,7 +388,7 @@ class OpenAddressTest(HBase):
         for address in ("t1", "alpha/t1"):
             with self.subTest(address):
                 self.tmp_registry_reset()
-                code, out, err = self.open_with(lambda r: r["hc"].update(address=address))
+                code, out, err = self.open_with(lambda r, address=address: r["hc"].update(address=address))
                 self.assertEqual(code, 0, err)
                 self.assertEqual(self.parent_registry()[0]["hc"]["address"], "alpha/t1")
 
@@ -407,7 +407,7 @@ class OpenAddressTest(HBase):
         for value in ("x" * 1025, "/h/a\nb", "/h/a\x1bb", "-rf", "/h/\x7f"):
             with self.subTest(value=value[:12]):
                 self.tmp_registry_reset()
-                code, out, err = self.open_with(lambda r: r.update(handoff=value))
+                code, out, err = self.open_with(lambda r, value=value: r.update(handoff=value))
                 self.assertEqual(code, 1)
                 self.assertIn("malformed", err)
                 self.assertEqual(self.parent_registry(), [])

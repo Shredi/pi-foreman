@@ -70,7 +70,7 @@ test("an answered owner dialog writes no ruling-<n>.md into any handoff dir, chi
   const asParent = rig.handoff("kid", "parent");
   fs.writeFileSync(path.join(asParent, "ask.md"), "# Ask 2: other\n");
   for (const r of [plain, notes]) assert.equal(await result(rig, r), undefined);
-  for (const dir of [asChild, asParent]) assert.deepEqual(fs.readdirSync(dir).filter((f) => /^ruling/.test(f)), [], dir);
+  for (const dir of [asChild, asParent]) assert.deepEqual(fs.readdirSync(dir).filter((f) => f.startsWith("ruling")), [], dir);
 });
 
 test("ownerAnswered reads the package's shape next to the old decision", () => {

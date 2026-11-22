@@ -6,7 +6,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { isRulingName, SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
@@ -42,13 +41,13 @@ const PASS: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASS) {
   test(`r14 self-ruling names pass: ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
+    assert.equal(run(r, line(bash(r))), undefined, line(bash(r)));
   });
 }
 
 test("r14 self-ruling names pass: write and edit tools on <H>/asks.md", async () => {
   const r = rig();
-  for (const tool of ["write", "edit"]) assert.equal(await selfRulingRefusal(tool, { path: path.join(r.H, "asks.md") }, r.root, r.dirs), undefined, tool);
+  for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "asks.md") }, r.root, r.dirs), undefined, tool);
 });
 
 test("r14 self-ruling names: ruling names are anchored basenames", () => {
@@ -66,6 +65,6 @@ const DENY: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of DENY) {
   test(`r14 self-ruling names deny: ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
+    assert.equal(run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
   });
 }

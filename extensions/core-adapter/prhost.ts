@@ -36,8 +36,6 @@ export const keyString = (k: PrKey): string => `${k.host.toLowerCase()}/${k.repo
 export const isGithubKey = (k: PrKey): boolean => k.host.toLowerCase() === "github.com" && k.repo !== "";
 /** The GitHub hosts of the PR tracker (tools.prGithubHosts): the list, or the reason the tracker tools do nothing. */
 export type GithubHosts = { hosts: string[] } | { error: string };
-/** What a direct caller that passes no hosts gets. */
-const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 const HOSTS_UNSET = "no GitHub hosts configured: run `foreman setup` (tools.prGithubHosts)";
 /** The strict host form of the schema's pattern for tools.prGithubHosts (not the laxer HOST_RE). */
 const TRACKER_HOST_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$/;
@@ -128,7 +126,7 @@ export interface PrHostDeps {
   /** A PR op (30 s timeout), in `cwd`. */
   run(op: PrOp, args: Record<string, unknown>, cwd?: string): Promise<SafeOpOutcome>;
   /** Hosts of the checkout's remotes (default: `git remote -v`). */
-  remoteHosts?(cwd: string): Promise<string[]>;
+  remoteHosts?: (cwd: string) => Promise<string[]>;
 }
 
 export class PrHost {

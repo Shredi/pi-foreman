@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { PrWatches } from "../prwatch.ts";
 import type { StoreRead, Timers, WatchRecord } from "../prwatch.ts";
-import { clearStoreCache, readStoreEntry, trackedStateFile } from "../prstore.ts";
+import { clearStoreCache, readStoreEntry } from "../prstore.ts";
 
 const state = { head: "", failedIds: [], ci: "", mergeable: "" as const, commentIds: [], updatedAt: "", noCi: 0, noCiHead: "", readyHead: "", last: "watching" };
 const rec = (host: string, repo: string, n: number): WatchRecord => ({ key: { host, repo, n }, cwd: "/work", startedAt: 1, state });

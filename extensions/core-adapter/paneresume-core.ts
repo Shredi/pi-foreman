@@ -62,7 +62,7 @@ export function writeNote(agentDir: string, note: PaneNote): void {
 }
 
 /** The parsed note file: undefined when there is none, null when it is unreadable or not JSON. */
-export function readNoteRaw(agentDir: string, terminal: string): unknown | null | undefined {
+export function readNoteRaw(agentDir: string, terminal: string): unknown {
   let text: string;
   try {
     text = fs.readFileSync(notePath(agentDir, terminal), "utf8");
@@ -188,7 +188,7 @@ export interface SessionRead {
  * The newest session name and the newest identity entry that names `sessionId` in a session file; the launch keys of that entry are
  * validated one by one, an invalid one is dropped and listed in `dropped`.
  */
-export function readSessionFile(file: string, sessionId: string, agentDir: string): SessionRead {
+export function readSessionFile(file: string, sessionId: string, _agentDir: string): SessionRead {
   let name: string | null = null;
   let entry: Record<string, unknown> | null = null;
   let text = "";

@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { equalKeySentence, equalOnStrongRisk, rankTie } from "../ranks.ts";
+import { strRaw } from "../strof.ts";
 
 const ranks = [{ match: "alpha*", tier: 0 }, { match: "beta*", tier: 0 }, { match: "gamma*", tier: 2 }];
 const cfg = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({ providers: { p: { ranks } }, ...extra });
@@ -9,7 +10,7 @@ const cfg = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
 test("equalOnStrongRisk is true only for a literal true", () => {
   assert.equal(equalOnStrongRisk(undefined), false);
   assert.equal(equalOnStrongRisk({}), false);
-  for (const v of [false, "true", 1, null, {}]) assert.equal(equalOnStrongRisk({ ladder: { equalOnStrongRisk: v } }), false, String(v));
+  for (const v of [false, "true", 1, null, {}]) assert.equal(equalOnStrongRisk({ ladder: { equalOnStrongRisk: v } }), false, strRaw(v));
   assert.equal(equalOnStrongRisk({ ladder: { equalOnStrongRisk: true } }), true);
 });
 

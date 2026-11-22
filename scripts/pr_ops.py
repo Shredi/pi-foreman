@@ -146,9 +146,9 @@ def run_host(argv, root, subst=()):
         r = subprocess.run(argv, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, timeout=PR_TIMEOUT)
     except subprocess.TimeoutExpired:
-        raise ActionError("timeout", "%s did not answer within %d s" % (name, PR_TIMEOUT))
+        raise ActionError("timeout", "%s did not answer within %d s" % (name, PR_TIMEOUT)) from None
     except OSError as exc:
-        raise ActionError("pr_host_failed", "%s: %s" % (name, redact(str(exc))[:160]))
+        raise ActionError("pr_host_failed", "%s: %s" % (name, redact(str(exc))[:160])) from exc
     return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
 
 
@@ -194,7 +194,7 @@ def host_json(host, code, out, err, op):
     try:
         return json.loads(out)
     except ValueError:
-        raise ActionError("pr_host_failed", "%s: printed no JSON" % host.label)
+        raise ActionError("pr_host_failed", "%s: printed no JSON" % host.label) from None
 
 
 # --------------------------------------------------------------- arguments

@@ -121,7 +121,7 @@ export function importFile(store: Store, repo: string | null, file: string, now 
     if (fs.statSync(file).size > IMPORT_MAX_BYTES) return { ...emptyCounts(), oversized: true };
     return importText(store, repo, fs.readFileSync(file, "utf8"), now);
   } catch (err) {
-    if (/^locked/.test((err as Error).message)) throw err;
+    if (String((err as Error).message).startsWith("locked")) throw err;
     return emptyCounts();
   }
 }

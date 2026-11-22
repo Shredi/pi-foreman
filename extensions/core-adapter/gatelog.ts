@@ -131,13 +131,13 @@ function shapeToken(tok: string, roots: ShapeRoots, st: { prog: string; pending:
     const attachedP = tok[1] === "p" && (ATTACHED_P.has(st.prog) || st.user || !/^[A-Za-z]{0,3}$/.test(tok.slice(2)));
     if ((CRED_SHORT[st.prog] ?? "").includes(tok[1]) || attachedP) return `-${tok[1]}<v>`;
   }
-  const url = /^([a-z][a-z0-9+.-]*:\/\/)(?:<v>@)?([^\s\/?#:@]+)/i.exec(tok);
+  const url = /^([a-z][a-z0-9+.-]*:\/\/)(?:<v>@)?([^\s/?#:@]+)/i.exec(tok);
   if (url) return url[1] + url[2];
   if (tok.includes("<v>")) return tok;
   const eq = tok.startsWith("-") ? tok.indexOf("=") : -1;
   const head = eq > 0 ? tok.slice(0, eq + 1) : "";
   const t = tok.slice(head.length);
-  if (/[\/\\]/.test(t) || t.startsWith("~") || FILE.test(t.replace(/(:\d+)+$/, ""))) return head + classOf(t, roots);
+  if (/[/\\]/.test(t) || t.startsWith("~") || FILE.test(t.replace(/(:\d+)+$/, ""))) return head + classOf(t, roots);
   if (t.length > 20 && /\d/.test(t) && /[a-z]/.test(t) && /[A-Z]/.test(t)) return head + "<v>";
   return tok;
 }

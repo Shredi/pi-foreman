@@ -29,7 +29,7 @@ function deps(dir: string, over: Partial<SessionDeps> = {}): SessionDeps & { sen
     pkgRoot: "/pkg",
     python: "py",
     spawner: async (_cmd: string, args: string[]) => (spawned.push(args), { code: 0, stdout: "delivered", stderr: "", timedOut: false }),
-    send: async (to, text) => (sent.push([to, text]), "sent"),
+    send: async (to: string, text: string) => (sent.push([to, text]), "sent"),
     ...over,
     sent,
     spawned,

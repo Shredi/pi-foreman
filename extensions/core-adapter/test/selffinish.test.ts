@@ -16,6 +16,7 @@ import { selfFinish, spawnDetached, verifyMerged } from "../selffinish.ts";
 import type { SelfFinishDeps } from "../selffinish.ts";
 import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
 import { BARE_ORIGIN_OFF, gitTemplate } from "./_git-template.ts";
+import { strRaw } from "../strof.ts";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -35,7 +36,7 @@ function flowRig(fin: SelfFinish | (() => Promise<SelfFinish>)) {
     retro: async () => "",
     reply: (to, t) => void log.push(`reply:${to}:${t}`),
     notify: (t) => void log.push(`notify:${t}`),
-    trace: (r) => void log.push(`trace:${r.decision}`),
+    trace: (r) => void log.push(`trace:${strRaw(r.decision)}`),
     markCause: () => undefined,
     writeStub: (f, t) => void (files.set(f, t), log.push("stub")),
     exists: (f) => files.has(f),
@@ -54,7 +55,7 @@ const FILE = "/h/20261102-120000-demo/result.md";
 const closeReq = { source: "intercom-parent" as const, file: FILE, shown: FILE, replyTo: "parent-1" };
 
 async function drive(r: ReturnType<typeof flowRig>) {
-  r.flow.request(closeReq, r.ctx);
+  void r.flow.request(closeReq, r.ctx);
   r.flow.onInput(r.flow.closeText(), "extension");
   r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
@@ -99,7 +100,7 @@ test("pr-merged: a PR closed unmerged starts no close and no cleanup", async () 
     trace: () => undefined,
     intervalMs: () => 5000,
     now: () => 0,
-    timers: { set: (fn) => (setImmediate(fn), 0), clear: timers.clear },
+    timers: { set: (fn) => (setImmediate(fn), 0), clear: (h) => timers.clear(h) },
     child: () => true,
     onMerged: (i) => void merged.push(i),
   });

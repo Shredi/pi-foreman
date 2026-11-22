@@ -38,6 +38,7 @@ import { resolveToolPath } from "./payload.ts";
 import { planPathsOf } from "./planreview.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep } from "./triage.ts";
+import { strRaw } from "./strof.ts";
 
 export const SHOW_TOOL = "foreman_show";
 export const SHOW_DIR = "show";
@@ -52,6 +53,9 @@ export const NOTE_MAX_BYTES = 256 * 1024;
 export const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const JSON_MAX_BYTES = 64 * 1024;
 const RETRY_MS = 50;
+/** Whether `message` is a `Plan from <label>: <path>` or `foreman:plan <path>` notice. */
+export const isPlanNotice = (message: unknown): boolean => typeof message === "string" && PLAN_NOTICE.test(message);
+
 /** `Plan from <label>: <path>` and the alias `foreman:plan <path>` (a child's plan notice). */
 const PLAN_NOTICE = /^(?:Plan from \S+: |foreman:plan )/;
 
@@ -147,7 +151,7 @@ function realDir(dir: string): void {
   if (!fs.lstatSync(dir).isDirectory()) throw Object.assign(new Error("show dir is not a directory"), { code: "ENOTDIR" });
 }
 
-const codeOf = (e: unknown): string => String((e as { code?: unknown } | null)?.code ?? (e instanceof Error ? e.name : "error"));
+const codeOf = (e: unknown): string => strRaw((e as { code?: unknown } | null)?.code ?? (e instanceof Error ? e.name : "error"));
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
 
@@ -393,6 +397,7 @@ export class Show {
         try {
           resolve(await this.writeNote(title, markdown, html));
         } catch (e) {
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- forwards the original rejection reason unchanged
           reject(e);
           throw e;
         }

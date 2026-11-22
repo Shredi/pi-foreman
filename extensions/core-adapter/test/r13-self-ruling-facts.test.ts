@@ -5,7 +5,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
@@ -43,19 +42,19 @@ const PASS: Array<[string, (r: Rig) => string]> = [
   ["node -e reading and writing the own usage file", (r) => `node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('${r.S}/usage.json','utf8'));d.n=1;fs.writeFileSync('${r.S}/usage.json',JSON.stringify(d))"`],
   ["heredoc body with $25 and [ appended to own scratch", (r) => `cat >> ${r.S}/plan.md <<'EOF'\n- Ask at $25 [x] ruling.md\nEOF`],
   ["glob and $ words in read positions next to <H>", (r) => `ls ${r.H}/*.md $X; grep -l APPROVED ${r.H}/ruling*.md`],
-  ["write ruling.md in own scratch", (r) => `echo x > $FOREMAN_SCRATCH/ruling.md`],
+  ["write ruling.md in own scratch", () => `echo x > $FOREMAN_SCRATCH/ruling.md`],
 ];
 
 for (const [name, line] of PASS) {
   test(`r13 named pass: ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
+    assert.equal(run(r, line(bash(r))), undefined, line(bash(r)));
   });
 }
 
 test("r13 named pass: ack_write_in_own_handoff_dir_passes (write tool)", async () => {
   const r = rig();
-  for (const tool of ["write", "edit"]) assert.equal(await selfRulingRefusal(tool, { path: path.join(r.H, "ruling-x.ack") }, r.root, r.dirs), undefined, tool);
+  for (const tool of ["write", "edit"]) assert.equal(selfRulingRefusal(tool, { path: path.join(r.H, "ruling-x.ack") }, r.root, r.dirs), undefined, tool);
 });
 
 const DENY: Array<[string, (r: Rig) => string]> = [
@@ -71,7 +70,7 @@ const PASS_R2: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASS_R2) {
   test(`r13 named pass (round 2): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
+    assert.equal(run(r, line(bash(r))), undefined, line(bash(r)));
   });
 }
 
@@ -79,7 +78,7 @@ for (const [name, line] of DENY) {
   test(`r13 deny: ${name}`, async () => {
     const r = rig();
     const cwd = name.includes("(cwd <H>)") ? r.H : r.root;
-    assert.equal(await run(r, line(bash(r)), "bash", cwd), SELF_RULING_REASON, line(bash(r)));
+    assert.equal(run(r, line(bash(r)), "bash", cwd), SELF_RULING_REASON, line(bash(r)));
   });
 }
 
@@ -92,7 +91,7 @@ const DENY_R3: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of DENY_R3) {
   test(`r13 deny (round 3): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
+    assert.equal(run(r, line(bash(r))), SELF_RULING_REASON, line(bash(r)));
   });
 }
 
@@ -105,7 +104,7 @@ const PASS_R14: Array<[string, (r: Rig) => string]> = [
 for (const [name, line] of PASS_R14) {
   test(`r14 pass (residual): ${name}`, async () => {
     const r = rig();
-    assert.equal(await run(r, line(bash(r))), undefined, line(bash(r)));
+    assert.equal(run(r, line(bash(r))), undefined, line(bash(r)));
   });
 }
 
@@ -114,5 +113,5 @@ for (const [name, line] of PASS_R14) {
 test("r13 deny (win32): a native backslash path to the parent's ruling, quoted or not", { skip: process.platform !== "win32" }, async () => {
   const r = rig();
   const f = path.join(r.H, "ruling.md");
-  for (const line of [`echo A > '${f}'`, `cp x "${f}"`, `echo A > ${f}`]) assert.equal(await run(r, line), SELF_RULING_REASON, line);
+  for (const line of [`echo A > '${f}'`, `cp x "${f}"`, `echo A > ${f}`]) assert.equal(run(r, line), SELF_RULING_REASON, line);
 });

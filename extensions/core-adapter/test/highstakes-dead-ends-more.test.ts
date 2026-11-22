@@ -137,7 +137,8 @@ test("a builder in A after the FAIL, then B's PASS (B builds on the FAIL) clears
   const fin = await settle(a);
   assert.doesNotMatch(fin, /revise or answer the high-stakes findings/, "the FAIL is cleared");
   assert.match(fin, /re-review needed/, fin);
-  assert.doesNotMatch(fin, /wtb/, "only A is open");
+  // review-routing D5: the end reminder of a due high-stakes review names the checkouts it is due in (wtb has none yet); the re-review part names only A
+  assert.doesNotMatch(fin.split(" a [high-stakes] review is due")[0], /wtb/, "only A is open");
 });
 
 test("[high-stakes] in main with a PASS only in a worktree is refused as early", async (t) => {

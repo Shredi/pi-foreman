@@ -11,6 +11,7 @@ import { launchEntries } from "./ladder.ts";
 import { splitLevel } from "./launchmodel.ts";
 import { cappedRung } from "./reviewerclimb.ts";
 import { OCCASIONS, occasionOf, type Occasion, type ReviewLaunch } from "./occasion.ts";
+import { strRaw } from "./strof.ts";
 
 const baseOf = (m: string): string => splitLevel(m).base;
 
@@ -129,7 +130,7 @@ export function shadowLaunch(input: Json, pendings: readonly PendingView[], o: S
   });
   if (o.isChild) return refuse("child");
   const action = input.action;
-  if (Array.isArray(input.tasks) || Array.isArray(input.chain) || (action !== undefined && action !== null && String(action).trim() !== "")) return refuse("not_single");
+  if (Array.isArray(input.tasks) || Array.isArray(input.chain) || (action !== undefined && action !== null && strRaw(action).trim() !== "")) return refuse("not_single");
   if (input.agent !== "reviewer") return refuse("not_reviewer");
   if (cfg.shadows.length === 0) return refuse("panel_off");
   const configured = cfg.shadows.find((m) => baseOf(m) === base);

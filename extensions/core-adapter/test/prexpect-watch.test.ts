@@ -76,7 +76,7 @@ test("a watch armed during the gap later reports the real pass, and the ready la
   const gap = { missing: ["ci"] };
   const x = harness({ child: true, owned: true, label: true, start: snap({ runs: [run("quick", "passed")], expect: gap }) });
   for (const at of [0, SETTLE * 2, BOUND - 1000]) await x.tick(snap({ runs: [run("quick", "passed")], expect: gap }), at);
-  assert.deepEqual(x.sent, []);
+  assert.deepEqual<string[]>(x.sent, []);
   assert.deepEqual(x.labels, []);
   const all = snap({ runs: [run("quick", "passed"), run("ci", "passed")] });
   await x.tick(all, BOUND);
@@ -100,7 +100,7 @@ for (const [title, part, done] of variants) {
     assert.deepEqual(x.drafts, [], "still inside the bound: the leave step waits");
     await x.tick(draft(true), BOUND);
     assert.deepEqual(x.drafts, [false], "at the bound it leaves draft through the real leave path");
-    assert.deepEqual(x.sent, [], "no line and no pass at that point");
+    assert.deepEqual<string[]>(x.sent, [], "no line and no pass at that point");
     const open = snap({ ...part, draft: false, expect: { ...part.expect!, overdue: true } });
     await x.tick(open, BOUND * 2);
     assert.deepEqual(x.sent.filter((m) => m.includes(OVERDUE)).length, 1, "the line follows on the non-draft PR");
@@ -138,7 +138,7 @@ test("a readable required list with zero runs: no no-checks line, the label rule
   const s = snap({ runs: [], required: ["ci-ok"], expect: facts, draft: true, mergeState: "draft" });
   const x = harness({ child: true, owned: true, label: true, start: s });
   for (const at of [0, SETTLE, SETTLE * 3, BOUND - 1000]) await x.tick(s, at);
-  assert.deepEqual(x.sent, [], "no no-checks line and no ready line");
+  assert.deepEqual<string[]>(x.sent, [], "no no-checks line and no ready line");
   assert.deepEqual(x.drafts, [], "the leave-draft step waits");
   assert.deepEqual(x.labels, []);
   const live = x.watches.reviewLive();

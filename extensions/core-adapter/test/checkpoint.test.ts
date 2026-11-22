@@ -10,7 +10,7 @@ import type { PlanRecord } from "../checkpoint.ts";
 
 const PLAN = "# Add the widget\n\n## Goal\nShip the widget.\nKeep it small.\n\n## Approach\nx\n\n## Risks\ny\n";
 
-function workspace(t: { after: (fn: () => void) => void }, beforeRm?: (root: string) => Promise<void>) {
+function workspace(t: { after: (fn: () => unknown) => void }, beforeRm?: (root: string) => Promise<void>) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-ckpt-")));
   t.after(async () => {
     await beforeRm?.(root);

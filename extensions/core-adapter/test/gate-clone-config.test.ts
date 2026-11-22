@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { lineFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
-import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
+import { r11Rig } from "./_r11rig.ts";
 
 const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo", "/s/scr", "/tmp"], protectedBranches: ["release"], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const floor = (line: string, e: FloorEnv = env): string | null => lineFloors(line, parseShell(line, { cwd: e.cwd }), e)?.rule ?? null;

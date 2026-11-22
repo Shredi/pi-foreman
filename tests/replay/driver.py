@@ -391,7 +391,7 @@ class PiRpc:
         try:
             rec = self.records.get(timeout=left)
         except queue.Empty:
-            raise TimeoutError("no RPC record in time; %s" % self._diagnostics())
+            raise TimeoutError("no RPC record in time; %s" % self._diagnostics()) from None
         if rec is None:
             raise EOFError("pi exited (code %s); %s" % (self.proc.poll(), self._diagnostics()))
         self.seen.append(rec)

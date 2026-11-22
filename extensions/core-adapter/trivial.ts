@@ -21,6 +21,7 @@ import { diffWithFacts, git, isTestPath, type DiffFact } from "./diffscan.ts";
 import { worktreeTree } from "./commentonly.ts";
 import { scratchParts } from "./editmode.ts";
 import { workflowDirs } from "./triage.ts";
+import { checkoutKey, unchangedSince, type DirtyBase } from "./dirtybase.ts";
 
 export type TrivialReason = "test_file" | "files" | "signature" | "schema" | "bound" | "no_test" | "unmeasured";
 
@@ -154,7 +155,7 @@ function readSmall(file: string): string | null {
 }
 
 /** `.workflow/` and the foreman's scratch dir (workspace-relative; read as relative to the repo root) are not work. */
-function skipper(scratchDir: string): (f: string) => boolean {
+export function skipper(scratchDir: string): (f: string) => boolean {
   const prefix = scratchDir.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   return (f) => isWorkflow(f) || (prefix !== "" && (f === prefix || f.startsWith(`${prefix}/`)));
 }
@@ -164,20 +165,29 @@ const lineCount =(t: string): number => (t === "" ? 0 : t.split(/\r?\n/).length 
 /**
  * The check over every directory a builder worked in (`dirs`: directory and base; none = `cwd`
  * at HEAD). Null when the work is trivial; a git failure is `unmeasured` (fails closed).
+ * `dirtyBase` (dirtybase.ts): a path of a checkout it has an entry for counts only when its content differs from the one recorded
+ * at the session's first work there; a checkout without a usable entry (and `null`, a session saved before the baseline) is counted
+ * whole, and a returned verdict says so. `undefined` = no baseline concept (no note).
  */
-export async function checkTrivial(dirs: readonly [string, string | null][], cwd: string, bound: TrivialBound, scratchDir = ""): Promise<{ reason: TrivialReason; detail: string } | null> {
+export async function checkTrivial(dirs: readonly [string, string | null][], cwd: string, bound: TrivialBound, scratchDir = "", dirtyBase?: DirtyBase | null, platform: string = process.platform): Promise<{ reason: TrivialReason; detail: string } | null> {
   const targets: [string, string | null][] = dirs.length > 0 ? [...dirs] : [[cwd, null]];
   const merged: TrivialFacts = { source: [], tests: [], lines: 0, newFiles: 0, signatures: [], covered: true };
+  const unbased: string[] = [];
   for (const [dir, base] of targets) {
     const top = (await git(dir, ["rev-parse", "--show-toplevel"]))?.trim();
     if (!top) return { reason: "unmeasured", detail: `no git work tree at ${path.basename(dir) || dir}` };
-    const r = await diffWithFacts(top, base);
+    const entry = dirtyBase ? dirtyBase[checkoutKey(top, platform)] : undefined;
+    const unchanged = entry?.paths ? await unchangedSince(top, entry.paths) : new Set<string>();
+    if (dirtyBase !== undefined && !entry?.paths) unbased.push(path.basename(top) || top);
+    const r = await diffWithFacts(top, base, unchanged.size > 0 ? (f) => unchanged.has(f) : undefined);
     const others = await git(top, ["ls-files", "--others", "--exclude-standard", "-z"]);
     const tracked = await git(top, ["ls-files", "-z"]);
     if (r.diff === null || others === null || tracked === null) return { reason: "unmeasured", detail: "git diff failed" };
-    const untracked = others.split("\0").filter(Boolean).slice(0, MAX_UNTRACKED).map((p) => ({ path: p, lines: lineCount(readSmall(path.join(top, p)) ?? "") }));
+    const skip = skipper(scratchDir);
+    const counts = (f: string): boolean => skip(f) || unchanged.has(f);
+    const untracked = others.split("\0").filter((p) => p !== "" && !counts(p)).slice(0, MAX_UNTRACKED).map((p) => ({ path: p, lines: lineCount(readSmall(path.join(top, p)) ?? "") }));
     const list = tracked.split("\0").filter(Boolean);
-    const f = trivialFacts(r.diff, r.facts, untracked, list, hasTestCommand(list, (n) => readSmall(path.join(top, n))), skipper(scratchDir));
+    const f = trivialFacts(r.diff, r.facts, untracked, list, hasTestCommand(list, (n) => readSmall(path.join(top, n))), counts);
     for (const s of f.source) if (!merged.source.includes(s)) merged.source.push(s);
     merged.tests.push(...f.tests);
     merged.lines += f.lines;
@@ -185,7 +195,8 @@ export async function checkTrivial(dirs: readonly [string, string | null][], cwd
     merged.signatures.push(...f.signatures);
     merged.covered = merged.covered && (f.source.length === 0 || f.covered);
   }
-  return trivialVerdict(merged, bound);
+  const v = trivialVerdict(merged, bound);
+  return v && unbased.length > 0 ? { reason: v.reason, detail: `${v.detail} (no session baseline for ${unbased.join(", ")}: changes made before the session were counted)` } : v;
 }
 
 /**
@@ -232,7 +243,7 @@ export async function checkoutBaseline(cwd: string, scratchDir: string, platform
   const tree = status === null ? null : await worktreeTree(cwd, true);
   const top = tree === null ? null : (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
   const staged = top ? await git(top, ["ls-files", "--stage", "-z"]) : null;
-  if (!top || staged === null) return null;
+  if (!top || staged === null || status === null) return null;
   const dirtyPaths = statusPaths(status);
   const subs = staged.split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1)).filter((p) => p !== "" && dirtyPaths.has(p));
   const inner: string[] = [];

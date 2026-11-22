@@ -134,7 +134,8 @@ test("a FAIL records the failed ids and the next item review defaults to them (r
   await settle();
   assert.ok(done(w.text(), 2), w.text());
   const third = await w.review({}, "[pre-pr] review the change");
-  assert.deepEqual(bindingOf(third.input)?.items, [1, 3, 4], "after a pass: every open item except V");
+  // review-routing D3: a [pre-pr] without items takes the ids judged in its checkout (2 and 3 here), not every open item
+  assert.deepEqual(bindingOf(third.input)?.items, [2, 3], "after a pass: the items this checkout's reviews judged");
   assert.doesNotMatch(String(third.input.task), /\[pi-foreman re-review\]/);
 });
 

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { get, loadMergedConfig } from "../config.ts";
 import { retiredHighStakesLines } from "../doctorcache.ts";
 import { defaultSpawner } from "../spawn.ts";
-import { build, commitIn, git, hsRun, launch, end, persisted, pr, prNote, settle, setup, tick, worktree } from "./_hsrig.ts";
+import { build, commitIn, git, hsRun, launch, persisted, pr, prNote, settle, setup, worktree } from "./_hsrig.ts";
 
 const TAGGED = { size: { files: ["src/b/x.ts"] }, risk: ["design"] };
 

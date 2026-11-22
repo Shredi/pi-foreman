@@ -37,7 +37,7 @@ export function isTestPath(file: string): boolean {
   const p = file.replace(/\\/g, "/");
   const base = p.slice(p.lastIndexOf("/") + 1);
   return (
-    /_test\.go$/.test(base) ||
+    base.endsWith("_test.go") ||
     /(^|[._-])(test|spec)s?\.[a-z]+$/i.test(base) ||
     /^test_.*\.py$/.test(base) ||
     /_tests?\.(py|rs)$/.test(base) ||
@@ -286,10 +286,28 @@ async function callerTest(cwd: string, hits: string[], name: string, goPackageOn
   return ok[0] ?? null;
 }
 
-/** The work diff of `cwd` against `base` (null when git fails) and its facts; the trivial check (trivial.ts) reads both. */
-export async function diffWithFacts(cwd: string, base: string | null): Promise<{ diff: string | null; facts: DiffFact[]; base: string }> {
+/** `diff` without the per-file blocks (`diff --git` boundaries, file = the rename target) whose file `drop` returns true for. */
+export function dropDiffBlocks(diff: string, drop: (file: string) => boolean): string {
+  const out: string[] = [];
+  let keep = true;
+  for (const raw of diff.split("\n")) {
+    if (raw.startsWith("diff --git ")) {
+      const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(raw);
+      keep = !(m && drop(m[2]));
+    }
+    if (keep) out.push(raw);
+  }
+  return out.join("\n");
+}
+
+/**
+ * The work diff of `cwd` against `base` (null when git fails) and its facts; the trivial check (trivial.ts) reads both.
+ * `drop` removes the blocks of files it returns true for before the scan, so they neither yield facts nor spend the name budget.
+ */
+export async function diffWithFacts(cwd: string, base: string | null, drop?: (file: string) => boolean): Promise<{ diff: string | null; facts: DiffFact[]; base: string }> {
   const ref = base && /^[0-9a-f]{7,64}$/.test(base) ? base : "HEAD";
-  const diff = await git(cwd, ["diff", "--no-color", "--no-ext-diff", "--unified=0", "-M", ref, "--"]);
+  let diff = await git(cwd, ["diff", "--no-color", "--no-ext-diff", "--unified=0", "-M", ref, "--"]);
+  if (diff !== null && drop) diff = dropDiffBlocks(diff, drop);
   if (diff === null || !diff.trim()) return { diff, facts: [], base: ref };
   // Non-exported functions count only when a test file mentions them: one `git grep` per candidate.
   const cache = new Map<string, string | null>();
@@ -436,6 +454,11 @@ export class ReviewFacts {
   private cwdOf(step: Json, input: Json, fallback: string): string {
     const c = typeof step.cwd === "string" && step.cwd ? step.cwd : typeof input.cwd === "string" && input.cwd ? input.cwd : fallback;
     return path.resolve(fallback, c);
+  }
+
+  /** The directory of each builder step of a launch (the same resolution as the base record). */
+  builderDirs(input: Json, cwd: string): string[] {
+    return steps(input).filter((s) => s.agent === "builder").map((s) => this.cwdOf(s, input, cwd));
   }
 
   /** Directories with a recorded builder base, and the base (the trivial check reads them at finish). */

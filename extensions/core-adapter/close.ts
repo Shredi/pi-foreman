@@ -145,10 +145,11 @@ export function remoteParentClose(details: unknown, env: Record<string, string |
   const refused = (reason: string): IntercomClose => ({ kind: "refused", reason, sender });
   if (d.message?.crossMachine) return refused("cross-machine messages cannot close a session");
   const file = path.join(handoffDir, CLOSE_ORDER_FILE);
-  let order: { parent?: unknown; path?: unknown; at?: unknown } | null = null;
+  type Order = { parent?: unknown; path?: unknown; at?: unknown };
+  let order: Order | null = null;
   try {
     const o = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
-    order = o && typeof o === "object" && !Array.isArray(o) ? (o as typeof order) : null;
+    order = o && typeof o === "object" && !Array.isArray(o) ? (o as Order) : null;
   } catch {
     order = null;
   }
@@ -358,7 +359,7 @@ export class CloseFlow {
     const text = `pi-foreman: close refused: ${reason}`;
     this.d.notify(text, "warning");
     if (source === "remote-parent") void Promise.resolve(this.d.remoteReply?.("refused", reason)).catch((e: unknown) => this.d.notify(`pi-foreman: ${e instanceof Error ? e.message : String(e)}`, "warning"));
-    else if (replyTo) this.d.reply(replyTo, text);
+    else if (replyTo) void this.d.reply(replyTo, text); // outboxSend always resolves
   }
 
   private waitsBlock(req: CloseRequest): boolean {
@@ -804,9 +805,15 @@ export function registerClose(
     if (!r) return false;
     const flow = flowFor(s, ctx);
     const replyTo = remote ? undefined : r.sender;
-    if (r.kind === "refused") return void flow.refuse(r.reason, source, replyTo), false;
+    if (r.kind === "refused") {
+      flow.refuse(r.reason, source, replyTo);
+      return false;
+    }
     const file = resultPath(r.path, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
-    if ("error" in file) return void flow.refuse(file.error, source, replyTo), false;
+    if ("error" in file) {
+      flow.refuse(file.error, source, replyTo);
+      return false;
+    }
     const started = Promise.resolve(flow.request({ source, file: file.path, shown: file.shown, replyTo }, ctx, viaWake, inRun)).catch(() => undefined).then(() => true as const);
     return inRun ? started : true;
   };
@@ -815,12 +822,15 @@ export function registerClose(
   // wakePending stays false.
   pi.on("message_end", async (event, ctx) => {
     const m = event.message as { role?: string; stopReason?: unknown };
-    if (m.role === "assistant") return void flows.get(sid(ctx))?.flow.onModelReply(m.stopReason);
+    if (m.role === "assistant") {
+      flows.get(sid(ctx))?.flow.onModelReply(m.stopReason);
+      return;
+    }
     const hit = intercomInbound({ hook: "message_end", message: event.message });
     if (!hit || process.env.PI_SUBAGENT_CHILD === "1" || inRunSeen.has(hit.id)) return;
     const s = await deps.session(ctx);
     if (s.isChild) return;
-    fromIntercom(s, ctx, hit.details, false);
+    void fromIntercom(s, ctx, hit.details, false); // not in a run: a boolean, never a promise
   });
   // Pi 1.2+ idle session: the intercom message starts a triggerTurn run. A foreman:close that passes the
   // checks makes that run the close turn: its prompt rides along as a custom message (the result can only

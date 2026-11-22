@@ -62,7 +62,7 @@ class NestedCleanupTest(unittest.TestCase):
     def test_dry_run_reports_group_inner_first(self):
         r = self.rig
         shutil.rmtree(r.foreign, True)
-        for inner in (r.stray_inner, ):
+        for _inner in (r.stray_inner, ):
             pass
         self.rec(r.tree)
         self.rec(r.linked_sub)

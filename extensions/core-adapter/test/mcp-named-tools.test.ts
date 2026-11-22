@@ -10,6 +10,7 @@ import { namedCapText, planMcpLaunch, wholeOnlyServers } from "../mcplaunch.ts";
 import { allowedMcp, allowedMcpNamed, filterMcpConfig, mcpCallAllowed, namedEntries } from "../mcpscope.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
+import { strRaw } from "../strof.ts";
 
 type T = { after(fn: () => void | Promise<void>): void };
 type Reg = { name: string; label: string; exposure?: string };
@@ -571,7 +572,7 @@ test("n: no sequence yields a line with two contradictory statements about one s
       const silent = [...line.matchAll(noTool)].map((m) => m[1]!);
       for (const server of ["alpha", "beta"]) {
         const facts = [new RegExp(`(all \\d+ tools|the only tool) of server ${server}\\b`).test(line), search.includes(server), silent.includes(server)];
-        assert.ok(facts.filter(Boolean).length <= 1, `${where}: ${server} ${facts}: ${line}`);
+        assert.ok(facts.filter(Boolean).length <= 1, `${where}: ${server} ${strRaw(facts)}: ${line}`);
       }
       if (/No other MCP tool is reachable/.test(line)) assert.ok(!/ are not declared/.test(line) && silent.length === 0, `${where}: ${line}`);
     }

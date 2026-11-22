@@ -34,8 +34,8 @@
 // exit 130, run duration median/p90.
 // Detach: env FOREMAN_TEST_DETACH=1 or a leading `--detach` starts the run in the background (stdout and stderr to <lockdir>/test-history/<id>.log) and
 // returns at once with the run id, the log path and the --wait command; a detached run ignores FOREMAN_TEST_TIMEOUT and --timeout (lock rules, FIFO,
-// give-up and the run cap stay). Each detach start removes done files and logs older than 7 days. Every run writes <lockdir>/test-history/<id>.done.json {exit, ended,
-// waitedMs, ranMs} on exit, before it removes its record.
+// give-up and the run cap stay). Each detach start removes done files and logs older than 7 days. Every run appends its history line first on exit, then writes
+// <lockdir>/test-history/<id>.done.json {exit, ended, waitedMs, ranMs} (a done file implies the history line), then removes its record.
 // `--wait <id> [--max <s>]` (default 240, at most 540) polls and ends with one state line `foreman_test_run: run <id> <state>`: done (exit = the run's exit,
 // last 40 log lines before the line), queued with position and holder or running (exit 3, the run goes on), starting (log younger than 30 s, no record
 // yet; exit 3), died (no done file and the record gone or its pid dead; exit 1), unknown run (exit 2). The run's own exit can equal 1, 2 or 3: the state
@@ -1016,18 +1016,6 @@ async function main(rawArgv, env = process.env) {
       if (left.length) process.stderr.write(`test-run: ${left.length} temp entries left by this run: ${left.slice(0, 5).join(", ")}\n`);
       removeRunRoot(runRoot);
     }
-    try {
-      fs.mkdirSync(historyDir, { recursive: true });
-      const doneFile = path.join(historyDir, `${id}.done.json`);
-      const tmp = path.join(historyDir, `.${id}.done.tmp`);
-      fs.writeFileSync(tmp, JSON.stringify({ id, exit: exitCode, ended: new Date(ended).toISOString(), waitedMs: (acquiredAt ?? ended) - started, ranMs: acquiredAt === undefined ? 0 : ended - acquiredAt }));
-      fs.renameSync(tmp, doneFile);
-    } catch {}
-    for (const f of [recordFile, stopFile]) {
-      try {
-        fs.rmSync(f, { force: true });
-      } catch {}
-    }
     appendHistory(historyDir, {
       id,
       mode: record.mode,
@@ -1041,6 +1029,18 @@ async function main(rawArgv, env = process.env) {
       ended: new Date(ended).toISOString(),
       exit: exitCode,
     });
+    try {
+      fs.mkdirSync(historyDir, { recursive: true });
+      const doneFile = path.join(historyDir, `${id}.done.json`);
+      const tmp = path.join(historyDir, `.${id}.done.tmp`);
+      fs.writeFileSync(tmp, JSON.stringify({ id, exit: exitCode, ended: new Date(ended).toISOString(), waitedMs: (acquiredAt ?? ended) - started, ranMs: acquiredAt === undefined ? 0 : ended - acquiredAt }));
+      fs.renameSync(tmp, doneFile);
+    } catch {}
+    for (const f of [recordFile, stopFile]) {
+      try {
+        fs.rmSync(f, { force: true });
+      } catch {}
+    }
   });
   const stopRequested = () => fs.existsSync(stopFile);
   const stoppedLine = `foreman_test_run: run ${id} stopped on request\n`;

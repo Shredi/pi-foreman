@@ -19,7 +19,10 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 test("session_start warns in the main session when pi-claude-bridge loads before pi-foreman", async (t) => {
   const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "CLAUDE_CONFIG_DIR", "GIT_CONFIG_COUNT"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  for (let i = 0; i < 8; i++) saved[`GIT_CONFIG_KEY_${i}`] = process.env[`GIT_CONFIG_KEY_${i}`], saved[`GIT_CONFIG_VALUE_${i}`] = process.env[`GIT_CONFIG_VALUE_${i}`];
+  for (let i = 0; i < 8; i++) {
+    saved[`GIT_CONFIG_KEY_${i}`] = process.env[`GIT_CONFIG_KEY_${i}`];
+    saved[`GIT_CONFIG_VALUE_${i}`] = process.env[`GIT_CONFIG_VALUE_${i}`];
+  }
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-lo-")));
   t.after(async () => {
     // One hook, in order: quiescence wait (the test already awaited session_shutdown), removal, env restore.

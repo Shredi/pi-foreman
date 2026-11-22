@@ -8,7 +8,7 @@ import type { ProtectedCall, ProtectedCheckCtx, ProtectedCheckResult } from "../
 const checkProtected = (call: ProtectedCall, c: ProtectedCheckCtx, cache: ProtectedCache = new ProtectedCache()): Promise<ProtectedCheckResult> => cache.check(call, c);
 import type { ProtectedMatch } from "../protected.ts";
 
-type Reply = string | Error | "hang";
+type Reply = string | Error; // the string "hang" never answers
 function fakeRegistry(replies: Reply[], found = true) {
   const calls: string[] = [];
   const registry = {

@@ -14,9 +14,9 @@ export function lightSpawner(o: { memoConfig?: boolean; noFindings?: boolean } =
   const base = probeSpawner();
   const memo = new Map<string, SpawnResult>();
   return async (command, args, options) => {
-    if (args.some((a) => /ledger_guard_spawn\.py$/.test(a))) return { ...ALLOW };
-    if (o.noFindings && args.some((a) => /foreman_findings\.py$/.test(a)) && args.includes("record")) return { ...ALLOW, stdout: '{"findings":[]}' };
-    if (o.memoConfig && args.some((a) => /foreman_config\.py$/.test(a)) && args.includes("merged")) {
+    if (args.some((a) => a.endsWith("ledger_guard_spawn.py"))) return { ...ALLOW };
+    if (o.noFindings && args.some((a) => a.endsWith("foreman_findings.py")) && args.includes("record")) return { ...ALLOW, stdout: '{"findings":[]}' };
+    if (o.memoConfig && args.some((a) => a.endsWith("foreman_config.py")) && args.includes("merged")) {
       const key = JSON.stringify(args);
       const hit = memo.get(key);
       if (hit) return { ...hit };

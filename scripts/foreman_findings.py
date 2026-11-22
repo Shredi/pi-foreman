@@ -59,7 +59,7 @@ def names_file(text, rel, files=()):
         if "/" in tok:
             if tok == rel or tok.endswith("/" + rel):
                 return True
-            if rel.endswith("/" + tok) and _unique(files, lambda f: f == tok or f.endswith("/" + tok)):
+            if rel.endswith("/" + tok) and _unique(files, lambda f, tok=tok: f == tok or f.endswith("/" + tok)):
                 return True
         elif tok == base and _unique(files, lambda f: f.rsplit("/", 1)[-1] == base):
             return True
@@ -636,7 +636,7 @@ def models_table(records, *, usage=None, rates=None, hunks=None, since=None, sou
                 used.add(tag)
                 row(r.get("model"), r.get("rung"))["_lines"].append(u)
     out = []
-    for (m, rung), x in sorted(rows.items(), key=lambda kv: (str(kv[0][0]), kv[0][1] if kv[0][1] is not None else -1)):
+    for (_m, _rung), x in sorted(rows.items(), key=lambda kv: (str(kv[0][0]), kv[0][1] if kv[0][1] is not None else -1)):
         usd = round(_reviewer_cost(x.pop("_lines"), rates), 4) if usage else None
         secs = x.pop("_secs")
         x.update(usd=usd, usdPerAccepted=round(usd / x["accepted"], 4) if usd is not None and x["accepted"] else None,

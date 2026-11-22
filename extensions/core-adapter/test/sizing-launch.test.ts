@@ -18,7 +18,7 @@ function providers(o: { strong?: boolean; ranks?: unknown[] } = {}): Record<stri
 }
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
-const big = (a: Rig, rel = "big.py"): void => void fs.writeFileSync(path.join(a.project, rel), BIG);
+const big = (a: Rig, rel = "big.py"): void => fs.writeFileSync(path.join(a.project, rel), BIG);
 const sizing = (a: Rig): Record<string, unknown>[] => a.events("launch_sizing");
 const builder = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({ agent: "builder", task: "build it", ...extra });
 

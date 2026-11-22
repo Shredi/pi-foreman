@@ -85,13 +85,14 @@ test("12: a high-stakes launch may name items the normal PASS closed, or none; a
   await builder(a);
   await review(a);
   await tick(200);
-  const normal = await launch(a, "reviewer", "[pre-pr] review the branch", { items: ["1"] });
-  assert.match(normal.blocked ?? "", /not open on the ledger/);
   const named = await launch(a, "reviewer", "[high-stakes] review the whole change", { items: ["1"] });
   assert.equal(named.blocked, null, String(named.blocked));
   await end(a, named, "reviewer", PASS);
   const none = await launch(a, "reviewer", "[high-stakes] review the whole change");
   assert.doesNotMatch(none.blocked ?? "", /not open/);
+  await builder(a); // a revision, so the item review below is no duplicate of the PASS
+  const normal = await launch(a, "reviewer", "review the branch items", { items: ["1"] });
+  assert.match(normal.blocked ?? "", /not open on the ledger/);
 });
 
 // ---------------------------------------------------------------- item 13

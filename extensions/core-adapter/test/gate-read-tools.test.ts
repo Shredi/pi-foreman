@@ -8,7 +8,6 @@ import type { GitFacts } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import { readToolsOf, unknownReadTools, warnUnknownReadTools } from "../readtools.ts";
-import { slashForm } from "../pathnorm.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf-readtools-"));
@@ -23,7 +22,6 @@ const facts: GitFacts = { currentBranch: () => "x", protectedBranches: () => ["m
 const platform = process.platform;
 const home = path.join(base, "home");
 // absolute rule spelling: `//` + slash form (`//tmp/x/**` on posix, `//d:/a/x/**` on win32)
-const absRule = (p: string) => `${platform === "win32" ? "//" : "/"}${slashForm(platform, p)}/**`;
 const env: FloorEnv = { cwd: wt, home, agentDir: path.join(base, "agent"), platform, protectedBranches: ["main"], currentBranch: () => "x", remoteHead: () => "main", writeRoots: [wt] };
 const MAP = { ffgrep: "path", fffind: "root", fffmulti: null } as const;
 
