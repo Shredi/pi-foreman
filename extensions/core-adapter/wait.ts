@@ -224,8 +224,9 @@ export const realTimers: Timers = {
 };
 
 /**
- * Batches resolved triggers into one wake (item 14). The first outcome opens the window; the
- * wake goes out when it closes or as soon as no wait is active. Later outcomes open a new one.
+ * Batches resolved triggers into one wake (item 14). Leading edge: an outcome with no window open is delivered at once; when
+ * another wait is still active a window opens then, and outcomes resolving inside it go out together when it closes (or as soon
+ * as no wait is active). After a window closes the next outcome is delivered at once again.
  */
 export class Governor {
   private pending: Outcome[] = [];
@@ -240,9 +241,9 @@ export class Governor {
     this.pending.push(o);
     if (this.d.active() === 0) return this.flush();
     if (this.timer !== null) return;
+    this.flush();
     const ms = this.d.windowMs();
-    if (ms <= 0) return this.flush();
-    this.timer = this.d.timers.set(() => this.flush(), ms);
+    if (ms > 0) this.timer = this.d.timers.set(() => this.flush(), ms);
   }
 
   /** After a cancel: no wait left means the window closes now. */
@@ -322,6 +323,8 @@ interface Entry {
 /** Active waits of one foreman session. */
 export class WaitRuntime {
   private readonly waits = new Map<string, Entry>();
+  /** Resolved waits whose wake is not delivered yet (batch window or held while busy): kept in the stored set, not active. */
+  private readonly undelivered = new Map<string, Outcome>();
   private seq = 0;
   private disposed = false;
   readonly governor: Governor;
@@ -449,10 +452,26 @@ export class WaitRuntime {
 
   resolve(id: string, outcome: string): void {
     if (this.disposed) return;
+    const w = this.waits.get(id);
+    if (!w) return;
+    const o: Outcome = { id: w.id, kind: w.kind, note: w.note, outcome: w.log ? `${outcome}; log ${w.log}` : outcome };
+    if (w.kind !== "pressure") this.undelivered.set(id, o);
     const e = this.drop(id);
     if (!e) return;
     this.d.trace({ event: "wait", decision: "resolved", toolFamily: e.kind });
-    this.governor.resolved({ id: e.id, kind: e.kind, note: e.note, outcome: e.log ? `${outcome}; log ${e.log}` : outcome });
+    this.governor.resolved(o);
+  }
+
+  /** The wake carrying these outcomes was sent: they leave the stored set. */
+  delivered(ids: string[]): void {
+    let any = false;
+    for (const id of ids) any = this.undelivered.delete(id) || any;
+    if (any) this.notify();
+  }
+
+  /** Resolved waits whose wake is not delivered yet (for the stored set). */
+  pendingOutcomes(): Outcome[] {
+    return [...this.undelivered.values()];
   }
 
   cancel(id: string): boolean {
@@ -693,6 +712,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       const msg = wakeMessage(outcomes);
       if (s.steer) msg.content = s.steer(msg.content);
       pi.sendMessage(msg, followUp ? { deliverAs: "followUp" } : { triggerTurn: true });
+      holder.rt.delivered(outcomes.map((o) => o.id));
     };
     const quiet = (o: Outcome): void => {
       const line = wakeMessage([{ ...o, outcome: `ended by the notice above: ${o.outcome}` }]);
@@ -716,7 +736,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
         for (const cb of [...(listeners.get(s.id) ?? [])]) cb();
         // dispose() silences changed(): a shutdown keeps the last stored set, which is what the resumed session reports as lost
         try {
-          pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, holder.rt.list()));
+          pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, [...holder.rt.list(), ...holder.rt.pendingOutcomes()]));
         } catch {
           // the session file is not writable now
         }

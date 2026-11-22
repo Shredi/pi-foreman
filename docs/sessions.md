@@ -247,7 +247,9 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
   `--session <id>`, `/reload`) ends them without a wake. The active set is stored in the session file (`pi-foreman-waits`
   entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
   `foreman_wait lost on restart: …` listing the lost ids, kinds and notes, and starts again what it still needs (trace `wait`
-  decision `lost`). Nothing is reattached; a pid is not reattached because the process may be gone or reused. `pr_watch`
+  decision `lost`). A wait that had already finished but whose wake was not delivered yet (batched in the window, or held while
+  the agent was busy) stays in the stored set with its outcome until the wake is sent; the notice names it too (`finished before
+  the restart, result not delivered: <outcome>`). Nothing is reattached; a pid is not reattached because the process may be gone or reused. `pr_watch`
   watches do resume, without a deadline (see [tools](tools.md#watch)).
 
 Worked example:
@@ -830,7 +832,7 @@ the presence file (`waits[].note`) and the Herdr sidebar line 2 show.
 | `retro.enabled`, `retro.report`, `retro.startNote`, `retro.workspaceKey`, `retro.expireDays` | Retro and report switches (see [retro](retro.md)). `retro.enabled` null is on in tui and rpc, off in json and print. `workspaceKey` is user or overlay config only. |
 | `steward.enabled`, `steward.minNew`, `steward.maxWaitHours`, `steward.checkMinutes`, `steward.maxProposals` | The optional report steward (see [retro](retro.md#steward)). `steward.enabled` (default false) allows `/foreman steward on`; the others set when the steward is woken (3 new reports, 24 hours, checked every 30 minutes) and how many rounds it proposes at once (3). |
 | `compaction.maxTokens` | Cap in tokens on where `foreman setup` makes Pi compact (default 200000, minimum 50000, null = no cap); a project can only lower it, and a session layer value is ignored with a warning (setup applies it). See [cache](cache.md#where-compaction-fires). `compaction.priceTiers` and `compaction.threshold` were removed: a warning, the keys are ignored. |
-| `wait.batchWindowSeconds` | Window in which wait notices are batched (default 300). |
+| `wait.batchWindowSeconds` | Window after a delivered wake in which further wait notices are batched (default 300); the first notice is delivered at once. |
 | `wait.maxActive` | Concurrent waits allowed (default 8); a project or session can only lower it. |
 | `wait.ci` | CI waits on or off (default `true`); a project or session can only set false. |
 | `close.autoClean`, `close.worktreeDir` | Cleanup at close and the worktree convention directory (see [close](close.md)). `autoClean` can only be turned off by a project or session; `worktreeDir` is user or overlay config only and accepts relative, absolute and `~` values with `<repo>` (see [close](close.md#the-worktree-root)). |
