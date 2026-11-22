@@ -16,9 +16,10 @@
  * No unbash type leaves this file.
  */
 
+import * as path from "node:path";
 import { forEachChild, parse } from "unbash";
 import type { Assignment, Command, CommandNode, CompoundList, ParsedScript as Script, Redirection, Statement, SyntaxNode, Word } from "unbash";
-import { RUNNERS } from "./effects.ts";
+import { READ_PROGS, RUNNERS, effectsNames } from "./effects.ts";
 import { cdTarget, childAssignValues, grammarStatements, headerOf, resolveVars } from "./shellvars.ts";
 import type { ChildAssign } from "./shellvars.ts";
 
@@ -84,12 +85,18 @@ export interface ShellSegment {
   programUnknown?: boolean;
   /** Set (not enumerable, handed on by `carryFacts`): the harness folder names (`FOREMAN_SCRATCH`, `FOREMAN_OUT`) the line may have rebound before or during this segment's run unit; a write through one is a write to an unknown place. */
   harnessRebound?: string[];
+  /**
+   * Set (not enumerable, handed on by `carryFacts`) on a segment whose program no table models (`modelled`): for each literal word after it, the words from there on read as a command of their own
+   * (`caffeinate rm -rf x` runs `rm -rf x`), with the text they were cut from. The segments are a trial walk's, never in the line's own list. Read only by the judge-first list (defaults.ts `danger-unknown-program`).
+   */
+  behind?: Array<{ text: string; segments: ShellSegment[] }>;
 }
 
 /** Hands the non-enumerable facts of `from` on to `copy` (a `{ ...seg }` copy drops them). */
 export function carryFacts<S extends object>(copy: S, from: ShellSegment): S {
   if (from.programUnknown !== undefined) Object.defineProperty(copy, "programUnknown", { value: from.programUnknown, enumerable: false, configurable: true, writable: true });
   if (from.harnessRebound !== undefined) Object.defineProperty(copy, "harnessRebound", { value: from.harnessRebound, enumerable: false, configurable: true, writable: true });
+  if (from.behind !== undefined) Object.defineProperty(copy, "behind", { value: from.behind, enumerable: false, configurable: true, writable: true });
   return copy;
 }
 
@@ -173,6 +180,53 @@ interface Run {
   seed?: string[];
   /** The run units holding arithmetic or a subscript not shown to be a number (`BoundDetail.unsafe`). */
   unsafe?: Set<number>;
+  /** A look-behind walk (`lookBehind`): no look-behind of its own starts inside it. */
+  behind?: boolean;
+  /** The folder flow of the walk, in walk order (see `Flow`). Set for the line's own walk; a trial copy of the run gets a copy of it. */
+  flow?: Flow;
+  /** The function bodies the line defines (`collectFuncs`), by name: a call walks each of them where it stands (`run`). Set for the line's own walk only. */
+  funcs?: Map<string, string[]>;
+  /** The body walks done so far, shared by every trial copy of the run (`MAX_BODY_WALKS`). */
+  budget?: { walks: number };
+  /** The segments of a command whose program names a function of `funcs` at the time it was walked; any other segment with such a program is marked unknown after the walk. */
+  resolved?: Set<ShellSegment>;
+}
+
+/**
+ * Whether the shell may be in a folder the walk cannot name because a `cd` or `pushd` took a target it cannot read (a variable, a substitution): `dyn`. It is kept while the folder stays unknown
+ * and cleared only by a `cd` to a literal absolute path that runs unconditionally (`cond` counts the conditional constructs around the walk: an `||` operand, a branch, a loop, an `eval` or function body).
+ * `any`: some `cd` or `pushd` of the line used such a target, so `popd`, `cd -` and a `pushd` without a literal target may land there too.
+ */
+interface Flow {
+  dyn: boolean;
+  any: boolean;
+  cond: number;
+}
+
+/** Runs `fn` where a `cd` in it does not leave it (a subshell, a substitution, a pipeline stage, a background job, a `bash -c` string); the flow state comes back as it was. */
+function isolated<T>(rn: Run, fn: () => T): T {
+  const fl = rn.flow;
+  if (!fl) return fn();
+  const saved = { dyn: fl.dyn, cond: fl.cond };
+  fl.cond = 0;
+  try {
+    return fn();
+  } finally {
+    fl.dyn = saved.dyn;
+    fl.cond = saved.cond;
+  }
+}
+
+/** Runs `fn` where it may not run (a branch, a loop, an `||` operand, an `eval` or function body): a `cd` in it never clears the flow state, one that sets it stays set. */
+function conditional<T>(rn: Run, fn: () => T): T {
+  const fl = rn.flow;
+  if (!fl) return fn();
+  fl.cond++;
+  try {
+    return fn();
+  } finally {
+    fl.cond--;
+  }
 }
 
 interface Scope {
@@ -201,6 +255,12 @@ interface Scope {
   src?: string;
   /** The run unit of the line the commands walked here belong to (see `unitNodes`). */
   unit?: number;
+  /** Inside an `xargs`: the replace string of `-I` / `-i` / `-J` / `--replace` (the input is put in its place), set for the wrapped command and what it runs. */
+  replace?: string;
+  /** The functions whose bodies are being walked, outermost first: a call of one of them is the recursion already being walked. */
+  fnStack?: string[];
+  /** Directly inside an `xargs`: the input may supply the program or the script where the words give none (cleared in a nested `-c` string). */
+  xargs?: boolean;
   /** The script being walked runs in a shell that reads startup files (`bash -l -c`, `sh -i -c`): they may rebind any name before it. */
   startup?: boolean;
 }
@@ -388,7 +448,28 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   // always set (true or false), like `stdinFed`: a copy that lost them reads undefined (see `carryFacts`)
   Object.defineProperty(out, "programUnknown", { value: sc.unit !== undefined && !!sc.run.unsafe?.has(sc.unit), enumerable: false, configurable: true, writable: true });
   Object.defineProperty(out, "harnessRebound", { value: reboundAt(sc), enumerable: false, configurable: true, writable: true });
+  // the shell is in a folder a variable or a substitution named: a file run by a relative name is not the file the walk's cwd says (not in a look-behind trial: a word after an unknown program is mostly an operand, `curl -o a https://x`)
+  if (sc.run.flow?.dyn && !sc.run.behind && runsRelative(program, argv)) Object.defineProperty(out, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
   sc.run.out.push(out);
+}
+
+/**
+ * Whether `program` with `argv` runs a file named relative to the folder the shell is in: a program word with a `/` that is no absolute or `~` path (`./x.sh`, `sub/x`), the first operand of an interpreter
+ * (`sh ./x.sh`, `bash x.sh`, `python3 ./x.py`) or the file operand of `source` / `.`.
+ */
+function runsRelative(program: string, argv: string[]): boolean {
+  const relative = (w: string): boolean => !w.startsWith("~") && !path.posix.isAbsolute(w) && !path.win32.isAbsolute(w);
+  if (/[\\/]/.test(program)) return relative(program);
+  const b = baseName(program);
+  if (b === "source" || b === ".") {
+    const f = argv[argv[0] === "--" ? 1 : 0];
+    return f !== undefined && relative(f);
+  }
+  if (INTERPRETERS.has(b)) {
+    const f = argv.find((a) => !a.startsWith("-"));
+    return f !== undefined && relative(f);
+  }
+  return false;
 }
 
 /** The harness names the line may have rebound at the run unit of `sc` (the names the caller handed in too); a segment outside any unit gets every name. */
@@ -429,7 +510,10 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
       if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     }
     else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined });
+    else {
+      const body = s.script.commands;
+      isolated(sc.run, () => walkList(body, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined }));
+    }
   }
 }
 
@@ -469,7 +553,8 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
 function walkList(stmts: readonly Statement[], sc: Scope): string | null {
   let cwd = sc.cwd;
   for (const st of stmts) {
-    const end = walkNode(st.command, { ...sc, cwd });
+    // a background job is a subshell
+    const end = st.background ? isolated(sc.run, () => walkNode(st.command, { ...sc, cwd })) : walkNode(st.command, { ...sc, cwd });
     if (!st.background) cwd = end;
   }
   return cwd;
@@ -479,13 +564,15 @@ function walkList(stmts: readonly Statement[], sc: Scope): string | null {
 function walkLists(lists: Array<CompoundList | undefined>, sc: Scope): string | null {
   let cwd = sc.cwd;
   let changed = false;
-  for (const l of lists) {
-    if (!l) continue;
-    if (walkList(l.commands, { ...sc, cwd }) !== cwd) {
-      changed = true;
-      cwd = null;
+  conditional(sc.run, () => {
+    for (const l of lists) {
+      if (!l) continue;
+      if (walkList(l.commands, { ...sc, cwd }) !== cwd) {
+        changed = true;
+        cwd = null;
+      }
     }
-  }
+  });
   return changed ? null : sc.cwd;
 }
 
@@ -509,7 +596,7 @@ function walkNode(n: any, sc: Scope): string | null {
       const id = (sc.run.pipes = (sc.run.pipes ?? 0) + 1);
       (n.commands as CommandNode[]).forEach((cmd, i) => {
         const before = sc.run.out.length;
-        walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0, pipe: { id, stage: i } });
+        isolated(sc.run, () => walkNode(cmd, { ...sc, docs, stdin: sc.stdin || i > 0, pipe: { id, stage: i } }));
         // a here-document of one command flows down the pipe: the shell at the end of `cat <<E | bash` reads its body as code
         const fed = sc.run.out.slice(before).flatMap((x) => x.heredocs ?? []);
         if (fed.length) docs = [...new Set([...docs, ...fed])];
@@ -519,7 +606,8 @@ function walkNode(n: any, sc: Scope): string | null {
     case "AndOr": {
       let cwd = sc.cwd;
       (n.commands as CommandNode[]).forEach((cmd, i) => {
-        const end = walkNode(cmd, { ...sc, cwd });
+        const go = (): string | null => walkNode(cmd, { ...sc, cwd });
+        const end = i > 0 && n.operators[i - 1] === "||" ? conditional(sc.run, go) : go();
         cwd = n.operators[i] === "||" && end !== cwd ? null : end;
       });
       return cwd;
@@ -533,7 +621,7 @@ function walkNode(n: any, sc: Scope): string | null {
       return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
     }
     case "Subshell":
-      walkList(n.body.commands, sc);
+      isolated(sc.run, () => walkList(n.body.commands, sc));
       return sc.cwd;
     case "BraceGroup":
       return walkList(n.body.commands, sc);
@@ -564,6 +652,15 @@ function walkNode(n: any, sc: Scope): string | null {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
       withBodies(sc, nodeBodies(n, sc.src ?? ""));
+      // the substitutions inside a `[[ ]]` test and a select's word list and body run: they are real segments next to the opaque one (which still keeps any allow off the line)
+      if (n.type === "TestCommand") {
+        const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
+        scriptsIn(n, acc);
+        walkSubs(acc.subs, sc);
+      } else if (n.type === "Select") {
+        walkWords(n.wordlist, sc);
+        walkLists([n.body], sc);
+      }
       return sc.cwd;
     }
   }
@@ -695,15 +792,32 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
   return cwd;
 }
 
-/** Parses `src` as a nested script (bash -c, eval, watch, flock -c) and walks it. */
+/** `runStringIn`, and a text that holds the replace string of an enclosing `xargs -I` is a text the input fills in: the walk marks it unknown. */
 function runString(label: string, src: string, c: Cmd, cwd: string | null): string | null {
-  const sc: Scope = { ...c.sc, cwd, wrappers: [...c.sc.wrappers, label] };
+  const replaced = !!c.sc.replace && src.includes(c.sc.replace);
+  const before = c.sc.run.out.length;
+  // `eval` runs in this shell: what its text does to the folder state stays (and what it clears does not count); any other string is a shell of its own
+  const evaluated = label === "eval";
+  const go = (): { end: string | null; inner: string | null } => runStringIn(label, src, c, cwd);
+  const { end, inner } = evaluated ? conditional(c.sc.run, go) : isolated(c.sc.run, go);
+  // an `eval` that moves the shell: the folder after it is not the one the walk keeps, so the line is judged
+  if (evaluated && inner !== cwd && c.sc.run.out.length > before) markUnknown(c.sc);
+  if (replaced) {
+    if (c.sc.run.out.length === before) seg(c.sc, label, [src], null, c);
+    markUnknown(c.sc);
+  }
+  return end;
+}
+
+/** Parses `src` as a nested script (bash -c, eval, watch, flock -c) and walks it. */
+function runStringIn(label: string, src: string, c: Cmd, cwd: string | null): { end: string | null; inner: string | null } {
+  const sc: Scope = { ...c.sc, cwd, xargs: false, wrappers: [...c.sc.wrappers, label] };
   sc.run.strings.push(src);
   if (sc.depth + 1 > MAX_DEPTH) {
     seg(sc, label, [], "depth", c);
     markUnknown(sc);
     withBodies(sc, opaqueBodies(src, false));
-    return cwd;
+    return { end: cwd, inner: cwd };
   }
   let script: Script | undefined;
   try {
@@ -713,14 +827,116 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
   }
   if (!script || (script as any).errors?.length) {
     seg(sc, label, [src], "parse_error", c);
-    return cwd;
+    return { end: cwd, inner: cwd };
   }
-  walkScript(script, src, { ...sc, depth: sc.depth + 1, wiped: sc.cleared, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
-  return cwd;
+  const inner = walkScript(script, src, { ...sc, depth: sc.depth + 1, wiped: sc.cleared, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
+  return { end: cwd, inner };
 }
 
-/** One command whose words are resolved: unwrap the wrappers, emit the segment of the program. */
+/** A `~` word whose last part is plain and that does not climb (`~/p`): the home folder spelled out, a literal target. */
+const tildeLiteral = (w: W): boolean => w.value === null && w.text.startsWith("~") && !!w.lit && !(w.decoded ?? w.text).split("/").includes("..");
+
+/**
+ * What a `cd`, `pushd` or `popd` does to the folder flow (see `Flow`): a target the walk cannot read (a variable, a substitution) sets it; once a line has done that, `popd`, `cd -` and a `pushd` with no literal target
+ * may land anywhere and set it too; a `cd` to a literal absolute path that runs unconditionally clears it.
+ */
+function noteFolder(fl: Flow | undefined, name: string, rest: W[]): void {
+  if (!fl) return;
+  if (rest.some((a) => a.value === null && !tildeLiteral(a))) {
+    fl.dyn = true;
+    fl.any = true;
+    return;
+  }
+  const one = rest.length === 1 ? rest[0].value : null;
+  if (name === "popd" || (name === "pushd" && (one === null || /^[-+]/.test(one))) || (name === "cd" && one === "-")) {
+    if (fl.any) fl.dyn = true;
+  } else if (name === "cd" && one !== null && fl.cond === 0 && (path.posix.isAbsolute(one) || path.win32.isAbsolute(one))) fl.dyn = false;
+}
+
+/** The most function bodies one line walks at their calls; past it the call is unknown. */
+const MAX_BODY_WALKS = 64;
+
+/**
+ * One command whose words are resolved. A program word that names a function the line defines runs every body of that name, in any order the line has them (a definition may come later, or twice): each
+ * body is walked here, at the call, as real segments, then the command is read as it stands (a function may also shadow a wrapper or a builtin, which keeps its own handling). The call is unknown (judge-first)
+ * when a body takes the call's words (`$1`, `$@`, `shift`), ends in another folder, cannot be read or walked, or the budget is spent.
+ */
 function run(words: W[], c: Cmd, cwd: string | null): string | null {
+  const sc = c.sc;
+  const name = words[0]?.value;
+  const bodies = name != null && !/[\\/]/.test(name) ? sc.run.funcs?.get(name) : undefined;
+  if (name == null || !bodies) return runWord(words, c, cwd);
+  const before = sc.run.out.length;
+  let unknown = false;
+  for (const body of bodies) {
+    // a call of a function from inside its own body is the walk already under way
+    if (sc.fnStack?.includes(name)) continue;
+    const budget = sc.run.budget;
+    if (!budget || budget.walks >= MAX_BODY_WALKS || sc.depth + 1 > MAX_DEPTH) {
+      unknown = true;
+      continue;
+    }
+    budget.walks++;
+    const r = walkBody(body, name, c, cwd);
+    if (!r.ok || r.end !== cwd || r.positional) unknown = true;
+  }
+  const end = runWord(words, c, cwd);
+  for (const x of sc.run.out.slice(before)) if (x.program === name) sc.run.resolved?.add(x);
+  if (unknown) markUnknown(sc);
+  return end;
+}
+
+/** The body text of every function the script defines, collected into the run's `funcs` (also definitions nested in other bodies and in substitutions). */
+function collectFuncs(script: Script, src: string, rn: Run): void {
+  const funcs = rn.funcs;
+  if (!funcs) return;
+  const visit = (n: SyntaxNode): void => {
+    if (n.type === "Function") {
+      const name = String((n as any).name.text);
+      const have = funcs.get(name) ?? [];
+      for (const b of nodeBodies(n, src)) if (!have.includes(b)) have.push(b);
+      funcs.set(name, have);
+    }
+    forEachChild(n, visit);
+  };
+  visit(script as SyntaxNode);
+}
+
+/** Whether the script takes the words of a call: a positional parameter (`$1`..`$9`, `${10}`, `$@`, `$*`, `$#`) or `shift`, read from the parser's nodes. */
+function usesPositional(script: Script): boolean {
+  let found = false;
+  const visit = (n: SyntaxNode): void => {
+    if (found) return;
+    const x = n as any;
+    if (x.type === "SimpleExpansion" && /^[0-9@*#]$/.test(String(x.text).slice(1))) found = true;
+    else if (x.type === "ParameterExpansion" && /^(?:\d+|[@*#])$/.test(String(x.parameter))) found = true;
+    else if (x.type === "Command" && x.name?.text === "shift") found = true;
+    else forEachChild(n, visit);
+  };
+  visit(script as SyntaxNode);
+  return found;
+}
+
+/** Walks one function body at its call: parsed as a nested script in the call's folder; `end` is the folder the body ends in, `ok` false when the body does not parse. */
+function walkBody(src: string, name: string, c: Cmd, cwd: string | null): { ok: boolean; end: string | null; positional: boolean } {
+  let script: Script | undefined;
+  try {
+    script = parse(src);
+  } catch {
+    script = undefined;
+  }
+  if (!script || (script as any).errors?.length) return { ok: false, end: cwd, positional: false };
+  const sc: Scope = { ...c.sc, cwd, xargs: false, depth: c.sc.depth + 1, fnStack: [...(c.sc.fnStack ?? []), name], redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason };
+  sc.src = src;
+  collectFuncs(script, src, sc.run);
+  prepare(script, src, sc);
+  // a body leaves its folder state set but never clears it: the call may not run it
+  const end = conditional(sc.run, () => walkList(script.commands, sc));
+  return { ok: true, end, positional: usesPositional(script) };
+}
+
+/** Emits the segment of one command whose words are resolved: unwrap the wrappers, emit the segment of the program. */
+function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
   const sc = c.sc;
   const p = words[0];
   const rest = words.slice(1);
@@ -741,10 +957,21 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     markUnknown(sc);
     return cwd;
   }
+  // under `xargs -I`, a program word that holds the replace string is the input
+  if (sc.replace && p.text.includes(sc.replace)) {
+    seg(sc, p.text, rest.map((a) => a.value ?? a.text), "unsupported", c, cwd);
+    markUnknown(sc);
+    return cwd;
+  }
   const prog = p.value;
   const name = baseName(prog);
   const wrap = (inner: W[], w: string, at = cwd, pass = false, clears: string[] = [], login = false): string | null => {
-    if (!inner.length) return plain(prog, name, [], c, cwd);
+    if (!inner.length) {
+      const r = plain(prog, name, [], c, cwd);
+      // under an `xargs` the input is the command (`xargs env`, `xargs nice`, `xargs timeout 5`)
+      if (sc.xargs) markUnknown(sc);
+      return r;
+    }
     return run(inner, { ...c, sc: { ...sc, ...(login ? { startup: true } : {}), wrappers: [...sc.wrappers, w], passAt: pass ? [...(sc.passAt ?? []), sc.wrappers.length] : sc.passAt, cleared: clears.length ? [...(sc.cleared ?? []), ...clears] : sc.cleared } }, at);
   };
   const bad = (reason: OpaqueReason, unknown = false): string | null => {
@@ -763,12 +990,15 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       plain(prog, name, rest, c, cwd);
       // bash runs no builtin for a word holding a slash (`/x/cd DIR`): the directory stays
       if (/[\\/]/.test(prog)) return cwd;
+      noteFolder(sc.run.flow, name, rest);
       // `pushd` with an option moves nothing we track; `popd` is not tracked at all
       const one = rest.length === 1 && rest[0].value !== null && !(name === "pushd" && /^[-+]/.test(rest[0].value)) ? rest[0].value : null;
       return one === null ? null : (cdTarget(["cd", one], cwd ?? undefined, win32(sc.run)) ?? null);
     }
     case "popd":
       plain(prog, name, rest, c, cwd);
+      if (/[\\/]/.test(prog)) return cwd;
+      noteFolder(sc.run.flow, name, rest);
       return null;
     case "zsh":
       return bad("foreign_shell");
@@ -800,14 +1030,22 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
           }
         } else break;
       }
-      if (!cflag) return plain(prog, name, rest, c, cwd, sflag);
+      // under an `xargs` the input is the script (`xargs bash`, `xargs sh -c`)
+      if (!cflag || !rest[i]) {
+        const r = plain(prog, name, rest, c, cwd, !cflag && sflag);
+        if (sc.xargs && !rest[i]) markUnknown(sc);
+        return r;
+      }
       const script = rest[i];
-      if (!script) return plain(prog, name, rest, c, cwd);
       if (script.value === null) return bad("nonliteral_script");
       return runString(name, script.value, startup ? { ...c, sc: { ...c.sc, startup: true } } : c, cwd);
     }
     case "eval": {
-      if (!rest.length) return plain(prog, name, rest, c, cwd);
+      if (!rest.length) {
+        const r = plain(prog, name, rest, c, cwd);
+        if (sc.xargs) markUnknown(sc);
+        return r;
+      }
       const s = strOf(rest);
       return s === null ? bad("nonliteral_script") : runString("eval", s, c, cwd);
     }
@@ -870,7 +1108,10 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
         seg({ ...sc, wrappers: [...sc.wrappers, "xargs"] }, "echo", [], null, c, cwd);
         return cwd;
       }
-      return wrap(o.rest, "xargs");
+      // the replace string of `-I`, `-i`, `-J`, `--replace`: the input stands in its place in the wrapped words
+      const rs = o.opts.find((x) => x.name === "-I" || x.name === "-J" || x.name === "--replace");
+      const replace = rs ? (rs.value ?? "{}") : has(o.opts, "-i") ? "{}" : undefined;
+      return run(o.rest, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, "xargs"], xargs: true, ...(replace ? { replace } : {}) } }, cwd);
     }
     case "time": {
       const o = opts({ flags: "pvalhq", arg: "fo", long: ["--portability", "--verbose", "--append", "--quiet"], longArg: ["--format", "--output"] });
@@ -931,18 +1172,85 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       }
       return o.rest.length > 1 ? wrap(o.rest.slice(1), "flock") : plain(prog, name, rest, c, cwd);
     }
-    case "busybox": {
+    case "busybox":
+    case "toybox": {
       // a literal applet word is the program (`busybox sh -c ..` reads as `sh -c ..`); anything else names a program this walker does not read
       const applet = rest[0];
       if (!applet || applet.value === null || applet.value.startsWith("-")) return bad("unsupported", true);
       bad("unsupported");
-      return wrap(rest, "busybox", undefined, true);
+      return wrap(rest, name, undefined, true);
+    }
+    case "alias": {
+      plain(prog, name, rest, c, cwd);
+      // a definition (`alias x='rm -rf ~'`): a later call of the name runs text this walk does not follow, so the line is judged; a literal value is also read as the command it names
+      const defs = rest.filter((a) => a.value === null || (!a.value.startsWith("-") && a.value.includes("=")));
+      if (defs.length) markUnknown(sc);
+      for (const a of defs) {
+        const v = a.value === null ? null : (a.assign ?? asAssign(a))?.value;
+        if (v) runString("alias", v, c, cwd);
+      }
+      return cwd;
+    }
+    case "source":
+    case ".": {
+      // the file operand (the first word after an optional `--`): a word the walk cannot read, or a stream, runs code that is not in the line; a literal file keeps its handling
+      const file = rest[rest[0]?.value === "--" ? 1 : 0];
+      if (file && sourcesStream(file)) return bad("unsupported", true);
+      return bad(runnerReason(name));
     }
     default:
       // a runner the walker does not unwrap (`ionice`, `chroot`, `unbuffer`, `parallel`): the program behind it was not walked
       if (RUNNERS.has(name) && !BUILTINS.has(name) && name !== "script") return bad(runnerReason(name), runnerReason(name) === "unsupported");
-      return plain(prog, name, rest, c, cwd);
+      if (sc.xargs && INTERPRETERS.has(name) && !rest.some((a) => a.value === null || !a.value.startsWith("-"))) {
+        // an interpreter with no script word under an `xargs`: the input names the script
+        const r = plain(prog, name, rest, c, cwd);
+        markUnknown(sc);
+        return r;
+      }
+      const r = plain(prog, name, rest, c, cwd);
+      lookBehind(name, rest, c, cwd);
+      return r;
   }
+}
+
+/** The programs the walker or a table already models: a runner, builtin, interpreter, foreign shell, `declare`-family or assigning builtin, a program the effect classification names, a read program of the floors. */
+const modelled = (name: string): boolean =>
+  RUNNERS.has(name) || BUILTINS.has(name) || INTERPRETERS.has(name) || FOREIGN.has(name) || DECLARE.has(name) || ASSIGNING.has(name) || name === "hash" || name === "unset" || READ_PROGS.has(name) || effectsNames(name);
+
+/** The most words of one unmodelled program that `lookBehind` starts a walk at; more literal words make the segment unknown. */
+const BEHIND_STARTS = 32;
+
+/**
+ * A program no table models may start the words after it (`caffeinate rm -rf x`, `taskset 1 rm -rf x`, `strace rm x`): the words from each literal one on are walked as a command of their own in a trial run
+ * (no look-behind inside it), and hang on the segment just emitted as `behind`. Nothing here adds a segment to the line's own list.
+ */
+function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
+  const sc = c.sc;
+  if (sc.run.behind || modelled(name)) return;
+  const starts = rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : []));
+  if (!starts.length) return;
+  const real = sc.run.out[sc.run.out.length - 1];
+  if (!real) return;
+  if (starts.length > BEHIND_STARTS) {
+    markUnknown(sc);
+    return;
+  }
+  const behind = starts.map((k) => {
+    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
+    run(rest.slice(k), { ...c, sc: { ...sc, run: trial } }, cwd);
+    return { text: rest.slice(k).map((a) => a.value ?? a.text).join(" "), segments: trial.out };
+  });
+  Object.defineProperty(real, "behind", { value: behind, enumerable: false, configurable: true, writable: true });
+}
+
+/**
+ * A `source` / `.` file operand that may be a stream or is not read: not literal (a variable, a substitution, a process substitution; a `~` word whose last part is plain keeps its handling unless
+ * it climbs with `..`), or `-`, or a literal that names stdin or a file descriptor once normalised (`/dev//stdin`, `/proc/self/fd//0`).
+ */
+function sourcesStream(w: W): boolean {
+  if (w.value === null) return !tildeLiteral(w);
+  const v = path.posix.normalize(w.value);
+  return v === "-" || v === "/dev/stdin" || v.startsWith("/dev/fd/") || v.startsWith("/proc/self/fd/") || /^\/proc\/[^/]+\/fd\//.test(v);
 }
 
 /** A pass-through wrapper whose words name a runner (`env sh`, `nohup bash`): the wrapped command runs text. */
@@ -1120,10 +1428,11 @@ function prepare(script: Script, src: string, sc: Scope): void {
   });
 }
 
-function walkScript(script: Script, src: string, sc: Scope): void {
+function walkScript(script: Script, src: string, sc: Scope): string | null {
   sc.src = src;
+  collectFuncs(script, src, sc.run);
   prepare(script, src, sc);
-  walkList(script.commands, sc);
+  return walkList(script.commands, sc);
 }
 
 /**
@@ -1247,7 +1556,7 @@ export function blankComments(command: string): string {
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, funcs: new Map(), budget: { walks: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   const unreadable = (): ShellSegment[] => {
@@ -1269,6 +1578,8 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     sc.run.unsafe = an.unsafe;
     sc.run.seed = opts.rebound;
     walkScript(script, command, sc);
+    // a segment that names a function the line defines, but was walked before the definition was known (one made inside a later `eval`): its body was not walked
+    for (const x of sc.run.out) if (x.opaque !== "function_def" && sc.run.funcs?.has(x.program) && !sc.run.resolved?.has(x)) Object.defineProperty(x, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
   } catch (e) {
     if (e instanceof RangeError) return unreadable();
     throw e;

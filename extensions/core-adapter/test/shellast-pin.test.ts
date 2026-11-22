@@ -262,9 +262,10 @@ const LONG_BASE: Record<string, string[]> = {
   "arith expansion": ["52ad3aaa98549eb9", "805d07a863f4836c", "ff1f3787637724ad", "903cd8a59e694e9b", "464233e4ae0ed696"],
   "test and chain": ["5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c"],
   "test deep parentheses": ["5f98d0f8f202c64c", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
-  "test many substitutions": ["5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c"],
-  "select many words": ["303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846"],
-  "select many substitutions": ["303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846"],
+  // guard gaps, item 1: the substitutions of a test and of a select are walked, so their segments are in the digest (one per substitution: the value depends on the size)
+  "test many substitutions": ["2c732ae2bc0cdc88", "6fa2b9b796781dae", "a6a0bce4867c7a76", "3d91c3d19fc944f4", "ae36dc84737db7a5"],
+  "select many words": ["a862d3398bd82c5a", "a862d3398bd82c5a", "a862d3398bd82c5a", "a862d3398bd82c5a", "a862d3398bd82c5a"],
+  "select many substitutions": ["9979b25e8238cdf1", "abed2a9a8c6b637f", "7582f16a21357969", "9552df8fd6c1f3c6", "11f4b758c1036e1c"],
   pipeline: ["0049aeccdff915c7", "ff5cd82e68b6b386", "dd982124efab464c", "233ba80c1194446a", "3a83537748428b16"],
   "nested groups": ["3d428ca24c18b1f0", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
   "nested subshells": ["3d428ca24c18b1f0", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],

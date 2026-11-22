@@ -22,9 +22,10 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   4: { dir: "stricter", why: "PowerShell system-folder and disk lines stay a hard deny where the Python guard only asked" },
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
-  8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'taskset 1 rm -rf ~'`, strace, `script -c`, also under `busybox sh -c`) runs; no text match, no program list (round judge-first-unknown: ionice, chroot and unbuffer are runners the walker does not unwrap and go to the judge, ledger item 1)" },
+  // class 8 (owner 2026-11-19: an unknown wrapper such as `taskset` or `strace` inside a `-c`/eval string runs) is closed by guard gaps item 6: those lines go to the judge first and need no class
   // round judge-first-unknown: a busybox/toybox applet the walker does not unwrap, or a wrapper behind one, is no known-safe program (ledger item 1) and now ends in a floor
   11: { dir: "stricter", why: "round judge-first-unknown: `busybox reboot`, `busybox sudo ls`, `busybox fdisk -l` and the like name a program this walker does not read, so the call is not known-safe" },
+  12: { dir: "stricter", why: "guard gaps, items 4 and 7: a function body is walked at its call as the line it stands for, and toybox is read like busybox: a delete outside the roots, a system delete or a push to an unreadable destination in one is a floor, as it is outside a function" },
   10: { dir: "stricter", why: "coproc bodies are read (the Python guard and the floors at f0d8b980 looked inside none): a system delete in one is a floor" },
 };
 
@@ -121,11 +122,13 @@ test("sudo/doas in a body or string is read behind the privilege program; a recu
   // round judge-first-unknown (ledger item 1): a busybox applet behind a shell string is a program the walker does not read, so these are refused now instead of judged
   for (const l of ["sh -c 'busybox rm -rf /opt/x'", "sh -c 'busybox nice rm -rf /opt/x'", "sh -c 'busybox env rm -rf /opt/x'", "sh -c 'busybox timeout 5 rm -rf /opt/x'",
     "sh -c 'busybox setsid rm -rf /opt/x'", "sh -c 'busybox nohup rm -rf /opt/x'", "busybox rm -rf /opt/x"]) both("bash", l, "floor");
-  for (const l of ["eval 'toybox rm -r /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f", "f(){ rm -rf /opt/x; }; f"]) both("bash", l, "judge");
+  // guard gaps, items 4 and 7: toybox is read like busybox and a function body is walked at its call, so these are the floor-refused deletes they stand for (judged before)
+  for (const l of ["eval 'toybox rm -r /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f", "f(){ rm -rf /opt/x; }; f"]) both("bash", l, "floor");
 });
 
 // round judge-first-unknown (ledger item 1): ionice, chroot and unbuffer are runners the walker does not unwrap, so the program behind them was not walked: judged now, no longer running
 test("class 8: an unknown wrapper inside a -c/eval string or a function body keeps running when it is no runner; an unwalked runner goes to the judge (no text match, no program list)", () => {
-  for (const l of ["sh -c 'taskset 1 rm -rf ~'", "sh -c 'strace rm -rf ~'"]) both("bash", l, "run");
+  // guard gaps, item 6: a program no table models may pass its words on (`taskset 1 rm -rf ~`), so it goes to the judge (ran before)
+  for (const l of ["sh -c 'taskset 1 rm -rf ~'", "sh -c 'strace rm -rf ~'"]) both("bash", l, "judge");
   for (const l of ["sh -c 'ionice rm -rf ~'", "sh -c 'chroot / rm -rf ~'", "sh -c 'unbuffer rm -rf ~'", "busybox sh -c 'ionice rm -rf ~'", "eval 'ionice rm -rf ~'", "f(){ ionice rm -rf ~; }; f"]) both("bash", l, "judge");
 });

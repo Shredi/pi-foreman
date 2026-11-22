@@ -13,13 +13,13 @@ const NOT = "not refused";
 
 /** The verdict each opaque or runner form had before the change, restart / privilege / disk. A form refused by the word match alone stays refused because its line is not clean. */
 const OPAQUE_PIN: Record<string, [string, string, string]> = {
-  "function body": [NOT, NOT, NOT],
+  "function body": ["refused (structure)", "refused (structure)", "refused (structure)"], // guard gaps, item 4: the body is walked at the call, as the line it stands for
   exec: ["refused (structure)", "refused (structure)", "refused (structure)"],
   "! negation": ["refused (structure)", "refused (structure)", "refused (structure)"],
   coproc: [NOT, NOT, NOT],
   "substitution in an assignment value": ["refused (structure)", "refused (both)", "refused (both)"],
   "substitution in a redirect target": ["refused (structure)", "refused (both)", "refused (both)"],
-  "[[ $( ) ]]": [NOT, "refused (word)", "refused (word)"],
+  "[[ $( ) ]]": ["refused (structure)", "refused (both)", "refused (both)"], // guard gaps, item 1: the substitution in a test is walked
   "variable as command word": [NOT, NOT, NOT],
   "unquoted pipe into sh": [NOT, NOT, NOT],
   "python -e": [NOT, NOT, NOT], // PR C: inline interpreter code is data for the floors, no shell runs it

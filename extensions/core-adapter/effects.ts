@@ -77,13 +77,19 @@ export function effectCtx(cwd: string, scratch: string[] = [], platform: string 
 }
 
 /** Programs that run other commands or change who/how they run: the whole command is refused. */
-export const RUNNERS = new Set(["eval", "exec", "source", ".", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "sudo", "doas", "su", "nohup", "nice", "ionice", "time", "command", "builtin", "stdbuf", "setsid", "chroot", "script", "watch", "parallel", "busybox", "pwsh", "powershell", "cmd", "unbuffer", "trap"]);
+export const RUNNERS = new Set(["eval", "exec", "source", ".", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "env", "sudo", "doas", "su", "nohup", "nice", "ionice", "time", "command", "builtin", "stdbuf", "setsid", "chroot", "script", "watch", "parallel", "busybox", "toybox", "pwsh", "powershell", "cmd", "unbuffer", "trap"]);
 
 /** True when `words` must not be judged deterministically at all (a runner or an `X=y` prefix). */
 export function refusedProgram(words: string[]): boolean {
   const w = words[0] ?? "";
   return /^[A-Za-z_][A-Za-z0-9_]*=/.test(w) || RUNNERS.has(w.replace(/^.*\//, "").toLowerCase());
 }
+
+/** Programs whose effects the classification reads by name: the read class, `sed`, the write verbs and `git` (a program run from a cwd outside the allowed places is then not read). */
+export const knownProgram = (prog: string): boolean => READ.has(prog) || prog === "sed" || prog in WRITE_FLAGS || prog === "git";
+
+/** The read-only programs the floors and the rulings treat as readers of their path operands. */
+export const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
 
 const RANK: Record<EffectClass, number> = { read: 0, "net-read": 1, "build-test": 2, "write-in": 3, "write-out": 4, unknown: 5 };
 export const SAFE_CLASSES: readonly EffectClass[] = ["read", "build-test", "write-in"];
@@ -581,6 +587,9 @@ function manifestOf(c: EffectCtx): Manifest {
 }
 
 const BUILD_TOOLS = new Set(["npm", "cargo", "go", "make", "pytest", "python", "python3", "node", "npx"]);
+
+/** A program the effect classification names: `knownProgram`, or a build and test tool. */
+export const effectsNames = (prog: string): boolean => knownProgram(prog) || BUILD_TOOLS.has(prog);
 // publish and pack run the prepack/prepare scripts even with --dry-run: not a read
 const NPM_DRY = new Set(["install", "i", "ci", "uninstall", "update", "dedupe", "prune"]);
 /** Build options that write where they choose or name a program to run: refused outright (model review). */
@@ -737,7 +746,7 @@ function segmentEffectBase(c: EffectCtx, cwd: string | null, seg: Segment): Segm
     return out("unknown", false, undefined, abs);
   }
   // a program run from a cwd outside the allowed places reads or writes there (`cd /etc && ls`)
-  const known = READ.has(prog) || prog === "sed" || prog in WRITE_FLAGS || prog === "git";
+  const known = knownProgram(prog);
   if (known && !contained(c, cwd, ".", false)) return out("unknown", true);
   if (READ.has(prog)) return readVerb(c, cwd, prog, args) ? out("read", true, "effect-read") : out("unknown", true);
   if (prog === "sed") {

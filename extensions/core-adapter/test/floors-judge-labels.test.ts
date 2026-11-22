@@ -17,7 +17,8 @@ const roots = (role: string): GateRoots => ({ worktree: wt, scratch: [], tmp: []
 const run = (command: string, role: string) => gateEvaluate("bash", { command }, wt, { env: (cwd) => baseFloorEnv(cwd, role === "foreman" ? {} : { child: true }), roots: () => roots(role) });
 
 const ROWS: [string, string][] = [
-  ["tmux send-keys -t x hi; f(){ rm -rf /srv/x; }; f", "danger-delete-unknown-target"],
+  // guard gaps, item 4: a function body is walked at its call, so `f(){ rm -rf /srv/x; }; f` is the floor-refused delete it stands for; a target the line cannot read keeps the judge label
+  ['tmux send-keys -t x hi; f(){ rm -rf "$T"; }; f', "danger-delete-unknown-target"],
   ['tmux send-keys -t x hi; printf x > "$T"', "danger-unknown-write-target"],
 ];
 
