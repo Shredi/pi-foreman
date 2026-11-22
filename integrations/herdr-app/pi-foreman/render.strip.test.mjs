@@ -88,6 +88,7 @@ test("strip: grid columns have fixed widths, names truncate, bars and the sparkl
   assert.equal(texts(byId("strip-mem")).join("|"), "Memory|71%|26 / 32 GB");
   const spark = byId("strip-cpu").kids[1];
   assert.deepEqual(spark.kids.map((k) => k.props.h), [1, 11]);
+  assert.ok(spark.kids.every((k) => k.props.flex_1 && k.props.min_w === 1 && k.props.w === undefined), "the spark bars stretch across the bar column");
   assert.equal(walk(root).some((e) => texts(e).some((s) => /[█░▁▂▃▄▅▆▇]/.test(s))), false, "no block glyphs");
   const q = byId("strip-quota:0");
   const qt = q.kids[1];

@@ -840,7 +840,7 @@ export default class ForemanAgents extends View {
         .child(div().absolute().top(0).left(0).h(6).w(`${Math.round(b.frac * 100)}%`).rounded(3).bg(ink));
       return b.marker === null ? track : track.child(div().absolute().top(-2).left(`${Math.round(b.marker * 100)}%`).w(2).h(10).bg(t.foreground));
     };
-    const spark = (heights, ink) => h_flex().flex_1().min_w(STRIP_BAR_MIN).h(12).gap(1).items_end().children(heights.map((px) => div().flex_none().w(2).h(px).bg(ink)));
+    const spark = (heights, ink) => h_flex().flex_1().min_w(STRIP_BAR_MIN).h(12).gap(1).items_end().children(heights.map((px) => div().flex_1().min_w(1).h(px).bg(ink)));
     const cell = (text, ink) => div().flex_none().whitespace_nowrap().text_color(ink).child(text);
     const gridRow = (r) => {
       const ink = inkOf(r.value.tone, r.value.measured);
