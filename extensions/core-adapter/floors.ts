@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, beforeParseError, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, beforeParseError, carryFacts, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
@@ -1417,10 +1417,10 @@ export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platfor
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
     const mux = rest !== null && /^(?:busybox|toybox)$/.test(base(seg.program)) && seg.stdinFed !== false;
     for (const t of texts) {
-      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1);
+      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
-        inner[0] = { ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) };
+        inner[0] = carryFacts({ ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) }, inner[0]); // judge-first-unknown round: keeps programUnknown / harnessRebound
       }
       out.push(...inner);
     }
@@ -1542,7 +1542,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         const ctext = remote.words.slice(at).join(" ");
         if (ctext !== rtext) {
           // each command of the compound stands where the plain path has the host: a word after the program, so the same rules read it as read `ssh h 'cmd'`
-          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
+          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform, rebound: seg.harnessRebound }).map((x) => carryFacts({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x));
           withHeredocs(cparsed, seg);
           texts.push([ctext, cparsed]);
           compound = cparsed;
@@ -1589,11 +1589,11 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
-      const inner = parsed.map((x, k) => (first && k === 0 ? { ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) } : x));
+      const inner = parsed.map((x, k) => (first && k === 0 ? carryFacts({ ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x) : x));
       const h = pythonKinds(body, inner, env, where, depth + 1, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers

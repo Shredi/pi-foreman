@@ -1,6 +1,8 @@
 // The pattern and script operands of the read commands (grep, rg, sed, awk, find, echo, printf, git grep / log): the words that are text, never paths.
 // Shared by floors.ts and gate.ts.
 
+import { carryFacts, type ShellSegment } from "./shellast.ts";
+
 export const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
 
 export function baseName(w: string): string {
@@ -156,7 +158,7 @@ export function relaxPatternWords<S extends { program: string; argv: string[]; r
     relaxed = true;
   }
   if (!relaxed) return seg;
-  return { ...seg, argv, opaque: seg.opaque === "glob_target" ? seg.opaque : null };
+  return carryFacts({ ...seg, argv, opaque: seg.opaque === "glob_target" ? seg.opaque : null }, seg as unknown as ShellSegment);
 }
 
 /**

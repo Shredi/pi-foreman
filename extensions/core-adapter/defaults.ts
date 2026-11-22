@@ -12,7 +12,7 @@ import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_N
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
 import { webReadAllow } from "./webread.ts";
-import type { ShellSegment } from "./shellast.ts";
+import { carryFacts, type ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
 
 /** Git facts the push and switch rules need; injected so tests stay hermetic. */
@@ -651,7 +651,7 @@ export function gitWriteForm(seg: ShellSegment): boolean {
 export function gitPlainSegment(seg: ShellSegment): ShellSegment | null {
   let i = 0;
   while (seg.argv[i] === "-C" || seg.argv[i] === "--no-pager" || seg.argv[i] === "-P" || seg.argv[i] === "--no-optional-locks") i += seg.argv[i] === "-C" ? 2 : 1;
-  return seg.argv[i]?.startsWith("-") ? null : { ...seg, argv: seg.argv.slice(i) };
+  return seg.argv[i]?.startsWith("-") ? null : carryFacts({ ...seg, argv: seg.argv.slice(i) }, seg);
 }
 
 /** `git worktree list` with only its read flags (`--expire` needs its `=value`): names no write target. */
@@ -1113,7 +1113,8 @@ export function unresolvedShellWriteWords(segments: ShellSegment[], platform: st
 
 /** One write word that does not resolve (see `unresolvedShellWriteWords`); a `$FOREMAN_SCRATCH` form without another variable or brace counts as resolved. */
 function unresolvedWord(seg: ShellSegment, platform: string, word: string): boolean {
-  const w = word.replace(/\$\{?FOREMAN_SCRATCH\}?/g, "");
+  // the variable is the scratch dir only while the line has not rebound it (`harnessRebound`); after that it is unknown
+  const w = seg.harnessRebound?.includes("FOREMAN_SCRATCH") ? word : word.replace(/\$\{?FOREMAN_SCRATCH\}?/g, "");
   const open = /[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(w);
   if (w !== word && !open) return false;
   return open || (seg.cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) || resolveWord(platform, seg.cwd ?? "/", w) === null;
@@ -1149,13 +1150,13 @@ export function segWriteWords(seg: ShellSegment): WriteTarget[] {
 
 /**
  * The write words `shellWriteTargets` skips because the parse cannot resolve them: a `$`, backtick or substitution, or a brace list (`f{,-1}`) in a redirect
- * target or a named destination. `$FOREMAN_SCRATCH` (also `${FOREMAN_SCRATCH}`) is the one variable that does not count, rebound on the line or not.
+ * target or a named destination. `$FOREMAN_SCRATCH` (also `${FOREMAN_SCRATCH}`) is the one variable that does not count, until the line may have rebound it (`harnessRebound`).
  */
 export function unresolvedWriteWords(segments: ShellSegment[]): string[] {
   const out: string[] = [];
   for (const seg of segments) {
     if (seg.program === "") continue;
-    for (const t of segWriteWords(seg)) if (/[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(t.w.replace(/\$\{?FOREMAN_SCRATCH\}?/g, ""))) out.push(t.w);
+    for (const t of segWriteWords(seg)) if (/[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(seg.harnessRebound?.includes("FOREMAN_SCRATCH") ? t.w : t.w.replace(/\$\{?FOREMAN_SCRATCH\}?/g, ""))) out.push(t.w);
   }
   return out;
 }
@@ -1295,6 +1296,7 @@ export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-remote", reason: "runs a command on another machine or in a container (ssh, docker or podman exec, kubectl exec), which the harness cannot check", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && remoteCommand(s, progOf(s)) !== null) },
   { name: "danger-kill-pattern", reason: "stops processes by name or pattern (pkill, killall), which can reach processes the session did not start; `kill <pid>`, `kill $!` and `kill %1` run", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && (progOf(s) === "pkill" || progOf(s) === "killall")) },
   { name: "danger-delete-unknown-target", reason: "a delete whose target the harness cannot read (a variable, a glob without a readable directory, a changed directory, input from another command, a PowerShell or cmd recursive delete)", test: (c, e) => !!c.segments && BASH_TOOL_NAMES.has(c.tool) && unknownTargetDelete(c.text ?? "", c.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null },
+  { name: "danger-unknown-program", reason: "the shell parse cannot say which program runs here (a program word built from a variable or substitution, a wrapper option the walker does not read, a builtin that runs another command, arithmetic on a value not shown to be a number)", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && s.programUnknown === true) },
 ];
 
 /** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */

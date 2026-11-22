@@ -20,7 +20,7 @@ import type { ReadToolMap, RuleCall, RuleEnv } from "./rulecall.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
-import { boundNames, heredocSpans, namedOutsideExpansion, parseShell } from "./shellast.ts";
+import { boundNames, harnessRebound, heredocSpans, namedOutsideExpansion, parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
 import { expandOutVar } from "./childscratch.ts";
@@ -454,7 +454,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
     // a child's `$FOREMAN_OUT` is its kept output dir (set in its process env): the raw-text guards read the line with the path in it (childscratch.ts expandOutVar,
     // which bails on an apostrophe); the parser also gets it as a harness constant below, like `$FOREMAN_SCRATCH`
     const cmd0 = commandOf(toolName, inp);
-    const cmd = cmd0 !== null && roots?.child && roots.out && !namedOutsideExpansion(cmd0, "FOREMAN_OUT") ? expandOutVar(cmd0, roots.out, env.platform) : cmd0;
+    const cmd = cmd0 !== null && roots?.child && roots.out && !namedOutsideExpansion(cmd0, "FOREMAN_OUT") && !harnessRebound(cmd0).some((u) => u.includes("FOREMAN_OUT")) ? expandOutVar(cmd0, roots.out, env.platform) : cmd0;
     if (cmd !== null) {
       // a child's $FOREMAN_SCRATCH and $FOREMAN_OUT are its own dirs (set in its process env); without the binding the variables would make every write there opaque
       const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0], ...(roots.out ? { FOREMAN_OUT: roots.out } : {}) } } : {};

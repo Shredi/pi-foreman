@@ -84,7 +84,8 @@ test("gh pr create stays child-pr-create; a variable program word is not refused
   for (const l of ["$X pr merge 1", "$X pr create"]) {
     const o = run(l, "builder");
     assert.deepEqual(res(o), {}, l);
-    assert.equal(o.danger, null, l);
+    // judge-first-unknown round: the unknown program word is judged first (danger-unknown-program), neither refusal applies
+    assert.equal(o.danger?.name, "danger-unknown-program", l);
   }
 });
 

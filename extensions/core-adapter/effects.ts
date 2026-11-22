@@ -22,6 +22,7 @@ import { isTestPath } from "./diffscan.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import { insideScratch, expandScratchVar, scratchScriptRun } from "./childscratch.ts";
 import { isReadOnlySed } from "./sedread.ts";
+import { harnessRebound } from "./shellast.ts";
 import { splitChain } from "./shellchain.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
@@ -804,6 +805,8 @@ export class ChainWrites {
 
 /** `command` with $FOREMAN_SCRATCH resolved once per scratch dir (the command itself when there is none). */
 export function scratchExpansions(command: string, scratch: string[], platform: string = process.platform): string[] {
+  // a line that may have rebound the variable (judge-first-unknown round: `harnessRebound`) does not hold the scratch dir in it: the text stays unresolved
+  if (scratch.length && harnessRebound(command).some((u) => u.includes("FOREMAN_SCRATCH"))) return [command];
   const out = scratch.map((d) => expandScratchVar(command, d, platform)).filter((t): t is string => t !== null);
   return out.length ? out : [command];
 }
