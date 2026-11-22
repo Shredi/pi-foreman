@@ -94,7 +94,7 @@ class TestRevisionRounds(ReplayCase):
             pi = rig.start()
             sid = pi.session_id()
             pi.prompt("[[replay:s1]] build it", answers=[{"value": "approve"}], timeout=60)
-            def rows():
+            def rows(rig=rig, sid=sid):
                 return [(x["kind"], x["model"]) for x in usage(rig, sid) if x["role"] == "builder"]
 
             # The first reviewer FAIL launches the revision builder; wait until its launch is in the usage log.

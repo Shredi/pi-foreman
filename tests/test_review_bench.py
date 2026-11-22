@@ -34,7 +34,8 @@ def rec(verdict, *findings, launch="l1"):
     fs = []
     for kind, text, *rest in findings:
         f = {"kind": kind, "text": text}
-        f.update({k: v for k, v in zip(("file", "line", "class"), rest) if v is not None})
+        # zip strict=False: optional trailing fields
+        f.update({k: v for k, v in zip(("file", "line", "class"), rest, strict=False) if v is not None})
         fs.append(f)
     return {"v": 1, "launchId": launch, "verdict": verdict, "items": [], "findings": fs}
 
@@ -391,7 +392,7 @@ class FakeClimb(unittest.TestCase):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, str(tmp), True)
         script = tmp / "script.json"
-        script.write_text(json.dumps({m.split("/")[1]: {"review-bench": [{"tools": [x]}, {"text": "done"}]} for m, x in zip(self.RUNGS, (first, second))}), "utf-8")
+        script.write_text(json.dumps({m.split("/")[1]: {"review-bench": [{"tools": [x]}, {"text": "done"}]} for m, x in zip(self.RUNGS, (first, second), strict=True)}), "utf-8")
         bench = rb.Bench(tmp / "out", [SAMPLES / "py-path-serve"], self.RUNGS, repeats=1, timeout=120, work=tmp / "work",
                          pi_cli=pi_cli(), fake_script=script, prices=fb.load_prices(), log=lambda s: None, mode="climb")
         bench.cells_dir.mkdir(parents=True)
