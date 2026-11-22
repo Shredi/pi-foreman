@@ -7,7 +7,7 @@ import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
 import { checkTrivial, checkoutBaseline, cleanTreeStatus, effectiveRequired, escalationNote, skipper, trivialBuilderPath } from "./trivial.ts";
-import { baselineAt, dirtyPaths, resolveCheckout, takeBaseline, unchangedSince, type DirtyBase } from "./dirtybase.ts";
+import { baselineAt, dirtyPaths, memoCheckout, nearestDirectory, resolveCheckout, takeBaseline, unchangedSince, type CheckoutMemo, type DirtyBase } from "./dirtybase.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -514,6 +514,8 @@ interface Session {
   dirtyBase: DirtyBase | null;
   /** Serialises the baseline takes of one session. */
   dirtyChain: Promise<void>;
+  /** The checkout each directory of the session's writes belongs to (memory; reset at session start). */
+  checkoutMemo: CheckoutMemo;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
@@ -1226,6 +1228,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       baseline: null,
       dirtyBase: null,
       dirtyChain: Promise.resolve(),
+      checkoutMemo: new Map(),
       ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
@@ -2073,7 +2076,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const dir of dirs) {
         try {
           if (s.dirtyBase === null) return;
-          const c = await resolveCheckout(dir, platform);
+          const c = await memoCheckout(s.checkoutMemo, dir, platform);
           if (!c || s.dirtyBase[c.key]) continue;
           const e = await baselineAt(c.top);
           if (!e) continue;
@@ -2095,8 +2098,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const r of raw) {
       const abs = resolveToolPath(r, cwd, os.homedir());
       if (!abs) continue;
-      let d = path.dirname(abs);
-      while (!(fs.existsSync(d) && fs.statSync(d).isDirectory()) && path.dirname(d) !== d) d = path.dirname(d);
+      const d = nearestDirectory(abs);
       if (!out.includes(d)) out.push(d);
     }
     return out;
@@ -2107,6 +2109,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild) return;
     const r = restoreDirtyBase((ctx.sessionManager.getBranch?.() ?? []) as unknown[], reason);
     s.dirtyBase = r.map;
+    s.checkoutMemo = new Map();
     if (r.fresh) {
       const b = await takeBaseline(ctx.cwd, platform).catch(() => null);
       if (b) s.dirtyBase = { [b.key]: { repo: b.repo, head: b.head, paths: b.paths } };

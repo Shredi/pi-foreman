@@ -101,6 +101,32 @@ export async function resolveCheckout(dir: string, platform: string = process.pl
   }
 }
 
+/** A session's memo of the checkout each directory belongs to (null: no work tree), so a second write in one directory runs no rev-parse. */
+export type CheckoutMemo = Map<string, { top: string; key: string } | null>;
+
+/** resolveCheckout through the session's memo: a directory is resolved once per session (a null is kept too, as "not a repo"). */
+export async function memoCheckout(memo: CheckoutMemo, dir: string, platform: string = process.platform): Promise<{ top: string; key: string } | null> {
+  if (memo.has(dir)) return memo.get(dir) ?? null;
+  const c = await resolveCheckout(dir, platform);
+  memo.set(dir, c);
+  return c;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false; // missing, or removed between a check and this stat: not a directory
+  }
+}
+
+/** The nearest existing directory above `abs` (its parent first); never throws: a path that vanishes mid-walk counts as missing. */
+export function nearestDirectory(abs: string): string {
+  let d = path.dirname(abs);
+  while (!isDirectory(d) && path.dirname(d) !== d) d = path.dirname(d);
+  return d;
+}
+
 /** The baseline of the checkout at `top` null when git fails. */
 export async function baselineAt(top: string): Promise<DirtyEntry | null> {
   const head = ((await git(top, ["rev-parse", "HEAD"])) ?? "").trim() || null; // an unborn branch has none
