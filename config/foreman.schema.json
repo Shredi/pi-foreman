@@ -472,7 +472,7 @@
             "cpu": { "type": "boolean", "description": "Show CPU % and its sparkline (default true)." },
             "memory": { "type": "boolean", "description": "Show memory used % (default true)." },
             "level": { "type": "boolean", "description": "Show the load guard's level dot (default true)." },
-            "disks": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1 }, "maxItems": 8, "description": "Paths whose disk free space is shown, one line per path (on Windows a bare drive letter such as C: is its root). null (default) = the workspace of the measuring session only; [] = no disk lines. A path that does not exist shows a dash." },
+            "disks": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1 }, "maxItems": 8, "description": "Paths whose disk free space is shown, one line per path (a drive letter such as C: is its root on Windows and /mnt/c elsewhere, the WSL drive mount). null (default) = the disk of the measuring session's folder only; [] = no disk lines. A path that does not exist shows a dash." },
             "sampleSeconds": { "type": "integer", "minimum": 5, "description": "Seconds between two measurements (default 10)." },
             "sparkline": { "type": "integer", "minimum": 2, "maximum": 120, "description": "Number of CPU values kept for the sparkline (default 12)." },
             "quotas": {
