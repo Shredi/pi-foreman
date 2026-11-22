@@ -39,6 +39,8 @@ const scope = (w: World): { v: number; legacy?: boolean; roots?: { repo: string;
   }
   return null;
 };
+/** The checkout top as git and the product report it: the native long form (win32 temp dirs keep an 8.3 short name in w.project). */
+const proj = (w: World): string => fs.realpathSync.native(w.project);
 const events = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
 
 function repoAt(dir: string): void {
@@ -74,10 +76,10 @@ test("a new session takes the cwd baseline once; a ceremony-state change appends
   const map = lastMap(w);
   const key = checkoutKey(w.project);
   assert.deepEqual(Object.keys(map), [key]);
-  assert.equal(map[key].repo, w.project);
+  assert.equal(map[key].repo, proj(w));
   assert.equal(map[key].paths?.["pre/one.txt"], "73cb3858a687a849", "sha256 of the file's content");
   assert.ok(map[key].paths && "pre/one.txt" in map[key].paths);
-  assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [w.project]);
+  assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [proj(w)]);
   await a.command("ceremony", "heavy"); // a ceremony-state append
   assert.ok(w.ceremonyEntries().length > 1);
   assert.equal(dirtyEntries(w).length, 1);
@@ -91,7 +93,7 @@ test("a reload keeps the baseline: no new entry, the same map, the scope file re
   const b = await w.adapter("reload");
   assert.equal(dirtyEntries(w).length, 1);
   assert.equal(JSON.stringify(lastMap(w)), before, "the stored hashes, not the current files");
-  assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [w.project]);
+  assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [proj(w)]);
   assert.equal(scope(w)?.legacy, undefined);
   const c = await w.adapter("resume");
   assert.equal(dirtyEntries(w).length, 1);
@@ -105,7 +107,7 @@ test("a fork keeps the parent's map and appends none", async (t) => {
   await w.adapter("fork");
   assert.equal(dirtyEntries(w).length, 1);
   assert.equal(JSON.stringify(lastMap(w)), before);
-  assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [w.project]);
+  assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [proj(w)]);
 });
 
 test("a cwd that is no repository still appends an empty entry; a reload reads it as new, not legacy", async (t) => {
@@ -122,14 +124,14 @@ test("a builder launch into a second repository adds its entry, with the state f
   const { w, a } = await rig(t);
   const other = path.join(w.project, "..", "other");
   repoAt(other);
-  const real = fs.realpathSync(other);
+  const real = fs.realpathSync.native(other);
   put(real, "pre.txt");
   const r = await a.agentLaunch("builder", "build it", { cwd: real });
   assert.equal(r.blocked, null, String(r.blocked));
   assert.equal(dirtyEntries(w).length, 2);
   const e = lastMap(w)[checkoutKey(real)];
   assert.deepEqual(Object.keys(e.paths ?? {}), ["pre.txt"]);
-  assert.deepEqual(scope(w)?.roots?.map((x) => x.repo).sort(), [real, w.project].sort());
+  assert.deepEqual(scope(w)?.roots?.map((x) => x.repo).sort(), [real, proj(w)].sort());
   put(real, "built.txt");
   await a.agentLaunch("builder", "again", { cwd: real });
   assert.equal(dirtyEntries(w).length, 2, "a checkout with an entry takes none");
@@ -139,7 +141,7 @@ test("an own write into a second repository adds its entry before the write runs
   const { w, a } = await rig(t);
   const other = path.join(w.project, "..", "other2");
   repoAt(other);
-  const real = fs.realpathSync(other);
+  const real = fs.realpathSync.native(other);
   put(real, "pre.txt");
   await a.checkCall("write", { path: path.join(real, "sub", "new.txt"), content: "n\n" });
   assert.equal(dirtyEntries(w).length, 2);
@@ -170,7 +172,7 @@ test("a legacy session (no dirty-base entry): builder launch and own write appen
   assert.deepEqual(scope(w), { v: 1, legacy: true });
   const other = path.join(w.project, "..", "other3");
   repoAt(other);
-  const real = fs.realpathSync(other);
+  const real = fs.realpathSync.native(other);
   const r = await a.agentLaunch("builder", "build it", { cwd: real });
   assert.equal(r.blocked, null, String(r.blocked));
   await a.checkCall("write", { path: path.join(real, "n.txt"), content: "n\n" });
@@ -265,7 +267,7 @@ test("a failed first baseline (git status fails) records a paths:null entry; the
   const { w, a } = await rig(t);
   const other = path.join(w.project, "..", "broken");
   repoAt(other);
-  const real = fs.realpathSync(other);
+  const real = fs.realpathSync.native(other);
   const index = path.join(real, ".git", "index");
   const good = fs.readFileSync(index);
   fs.writeFileSync(index, "corrupt");
@@ -284,7 +286,9 @@ test("a failed first baseline (git status fails) records a paths:null entry; the
 
 test("an unresolved directory that later resolves to a checkout is recorded as paths:null, not baselined", async (t) => {
   const { w, a } = await rig(t);
-  const plain = fs.realpathSync(fs.mkdirSync(path.join(w.project, "..", "plain"), { recursive: true }) ?? path.join(w.project, "..", "plain"));
+  const plainDir = path.join(w.project, "..", "plain");
+  fs.mkdirSync(plainDir, { recursive: true });
+  const plain = fs.realpathSync.native(plainDir);
   await a.checkCall("write", { path: path.join(plain, "sub", "a.txt"), content: "a\n" });
   assert.equal(dirtyEntries(w).length, 1, "no checkout yet: nothing recorded");
   gitIn(plain, "init", "-q", "-b", "main");

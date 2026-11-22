@@ -12,7 +12,7 @@ import { checkoutKey, memoCheckout, nearestDirectory, type CheckoutMemo } from "
 import { gitIn } from "./_submodules.ts";
 
 function tmp(t: { after(fn: () => void): void }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dirtybase-memo-")));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dirtybase-memo-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }

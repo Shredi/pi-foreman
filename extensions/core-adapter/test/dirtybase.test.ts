@@ -9,7 +9,7 @@ import { checkoutKey, dirDigest, hashPath, MAX_BASE_PATHS, parseStatusZ, takeBas
 import { gitIn } from "./_submodules.ts";
 
 function repo(t: { after(fn: () => void): void }): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dirtybase-")));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dirtybase-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   gitIn(dir, "init", "-q", "-b", "main");
   for (const [f, text] of [["README", "r\n"], ["gone.txt", "g\n"], ["old.txt", "o\n"]]) fs.writeFileSync(path.join(dir, f), text);
@@ -55,7 +55,7 @@ test("takeBaseline records modified, untracked, deleted, both sides of a staged 
 });
 
 test("takeBaseline on an unborn branch has no head; outside a repository it is null", async (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dirtybase-")));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-dirtybase-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   assert.equal(await takeBaseline(dir), null);
   gitIn(dir, "init", "-q", "-b", "main");
