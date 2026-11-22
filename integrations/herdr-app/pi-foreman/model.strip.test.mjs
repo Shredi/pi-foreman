@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseStrip, parseRadarDoc, sparkHeights, fillFraction, markerFraction, cutMiddle, resetText, stripRows, stripSummary } from "./model.js";
+import { parseStrip, parseRadarDoc, sparkHeights, fillFraction, markerFraction, cutMiddle, resetText, stripRows, stripSummary, diskName } from "./model.js";
 
 const doc = (strip, extra = {}) => JSON.stringify({ v: 1, roots: [], ...(strip === undefined ? {} : { strip }), ...extra });
 const full = () => ({
@@ -50,7 +50,9 @@ test("parseStrip: a missing cpu pct stays null and parts that are off stay off",
   assert.equal(s.level, null);
   assert.deepEqual(s.disks, []);
   assert.deepEqual(s.quotas, []);
-  assert.match(text(stripRows(s)[0].segs), /cpu .*—/);
+  const cpu = stripRows(s).rows[0];
+  assert.equal(cpu.name, "CPU");
+  assert.equal(cpu.value.text, "—");
 });
 
 test("sparkHeights: one px height per value, 1 to 12, oldest left, flat and empty histories", () => {
@@ -82,69 +84,98 @@ test("markerFraction: pace position on the track, null without pace", () => {
 });
 
 test("quota overrun: full fill, red, real percent text, marker at pace", () => {
-  const rows = stripRows(parseStrip({ version: 1, quotas: [{ label: "Week", used: 1.6, pace: 0.5, tone: "red" }] }));
-  const bar = rows[0].segs.find((g) => g.bar);
-  assert.deepEqual(bar.bar, { frac: 1, marker: 0.5 });
-  assert.equal(bar.tone, "red");
-  const pct = rows[0].segs.find((g) => g.text === "160%");
-  assert.equal(pct.tone, "red");
+  const row = stripRows(parseStrip({ version: 1, quotas: [{ label: "Week", used: 1.6, pace: 0.5, tone: "red" }] })).rows[0];
+  assert.deepEqual(row.bar, { frac: 1, marker: 0.5 });
+  assert.equal(row.value.text, "160%");
+  assert.equal(row.value.tone, "red");
 });
 
 test("resetText: weekday and time within 7 days, else day and month", () => {
   const now = new Date(2026, 10, 20, 12, 0).getTime();
-  assert.equal(resetText(new Date(2026, 10, 26, 21, 5).getTime(), now), "resets Thu 21:05");
-  assert.equal(resetText(new Date(2026, 10, 27, 12, 0).getTime(), now), "resets Fri 12:00", "exactly 7 days is within");
-  assert.equal(resetText(new Date(2026, 11, 1, 9, 0).getTime(), now), "resets 1 Dec");
+  assert.equal(resetText(new Date(2026, 10, 26, 21, 5).getTime(), now), "Thu 21:05");
+  assert.equal(resetText(new Date(2026, 10, 27, 12, 0).getTime(), now), "Fri 12:00", "exactly 7 days is within");
+  assert.equal(resetText(new Date(2026, 11, 1, 9, 0).getTime(), now), "1 Dec");
   assert.equal(resetText(null, now), "");
 });
 
-test("stripRows: head line, disk rows with dashes, quota rows with dash rows", () => {
+test("stripRows: head, then cpu, memory, disk and quota rows in columns with dash rows", () => {
   const now = new Date(2026, 10, 20, 12, 0).getTime();
-  const rows = stripRows(parseStrip(full()), now);
-  assert.deepEqual(rows.map((r) => r.id), ["head", "disk:0", "disk:1", "quota:0", "quota:1"]);
-  const head = rows[0].segs;
-  assert.equal(text(head), "cpu 42%mem 71%● ok");
-  assert.deepEqual(head.find((g) => g.spark).spark, [1, 6, 12]);
-  assert.deepEqual(head.find((g) => g.bar).bar, { frac: 0.71, marker: null });
-  assert.equal(head.find((g) => g.text === "71%").tone, "amber");
-  assert.deepEqual(head.map((g) => g.group), ["cpu", "cpu", "cpu", "mem", "mem", "mem", "level", "level"]);
-  assert.match(text(rows[1].segs), /^\/ +78%52 GB free$/);
-  assert.equal(rows[1].segs.find((g) => g.bar).bar.frac, 0.78);
-  assert.match(text(rows[2].segs), /^D: +—$/);
-  assert.match(text(rows[3].segs), /^Claude week +41%resets /);
-  assert.deepEqual(rows[3].segs.find((g) => g.bar).bar, { frac: 0.41, marker: 0.52 });
-  assert.match(text(rows[4].segs), /^team +—$/);
+  const { head, rows } = stripRows(parseStrip(full()), now);
+  assert.deepEqual(head, { level: { text: "● ok", tone: "neutral" }, reasons: "", stale: false });
+  assert.deepEqual(rows.map((r) => r.id), ["cpu", "mem", "disk:0", "disk:1", "quota:0", "quota:1"]);
+  assert.deepEqual(rows.map((r) => r.kind), ["cpu", "mem", "disk", "disk", "quota", "quota"]);
+  assert.deepEqual(rows.map((r) => r.name), ["CPU", "Memory", "Disk /", "Disk D:", "Claude week", "team"]);
+  assert.deepEqual(rows[0].spark, [1, 6, 12]);
+  assert.equal(rows[0].bar, null);
+  assert.deepEqual(rows[0].value, { text: "42%", tone: "neutral", measured: true });
+  assert.deepEqual(rows[1].bar, { frac: 0.71, marker: null });
+  assert.deepEqual(rows[1].value, { text: "71%", tone: "amber", measured: true });
+  assert.equal(rows[1].extra, "0 / 0 GB");
+  assert.deepEqual(rows[2].bar, { frac: 0.78, marker: null });
+  assert.equal(rows[2].value.text, "78%");
+  assert.equal(rows[2].extra, "52 GB free");
+  assert.equal(rows[3].bar, null, "a missing disk has an empty bar cell");
+  assert.deepEqual(rows[3].value, { text: "—", tone: "neutral", measured: false });
+  assert.equal(rows[3].extra, "not found");
+  assert.deepEqual(rows[4].bar, { frac: 0.41, marker: 0.52 });
+  assert.equal(rows[4].value.text, "41%");
+  assert.match(rows[4].extra, /^\w{3} \d\d:\d\d$|^\d+ \w{3}$/);
+  assert.equal(rows[5].bar, null);
+  assert.deepEqual(rows[5].value, { text: "—", tone: "neutral", measured: false });
+  assert.equal(rows[5].extra, "");
 });
 
-test("level dot: neutral when ok, amber at high and red at critical, with the reasons", () => {
-  const mk = (level, reasons) => stripRows(parseStrip({ version: 1, level: { level, reasons } }))[0].segs;
-  assert.deepEqual(mk("ok", []).map((s) => s.tone), ["neutral", "neutral"]);
+test("stripRows: the memory extra reads used and total in GB, empty without sizes", () => {
+  const mem = (m) => stripRows(parseStrip({ version: 1, mem: m })).rows[0].extra;
+  assert.equal(mem({ pct: 81, usedMB: 26 * 1024, totalMB: 32 * 1024, tone: "neutral" }), "26 / 32 GB");
+  assert.equal(mem({ pct: 81, tone: "neutral" }), "");
+});
+
+test("stripRows: the head is there with the level off, with only disks and with only quotas", () => {
+  const off = stripRows(parseStrip({ version: 1, cpu: { pct: 1, history: [], tone: "neutral" } }));
+  assert.equal(off.head.level, null, "the head reads Status");
+  assert.equal(off.rows[0].spark, null, "no history, no sparkline");
+  const disks = stripRows(parseStrip({ version: 1, disks: [{ label: "/", usedPct: 5, freeGB: 1, tone: "neutral" }] }));
+  assert.equal(disks.head.level, null);
+  assert.deepEqual(disks.rows.map((r) => r.id), ["disk:0"]);
+  const quotas = stripRows(parseStrip({ version: 1, quotas: [{ label: "Week", used: 0.2, tone: "green" }] }));
+  assert.equal(quotas.head.level, null);
+  assert.deepEqual(quotas.rows.map((r) => r.id), ["quota:0"]);
+  assert.equal(stripRows(parseStrip({ version: 1 })), null, "nothing to draw");
+});
+
+test("level dot: neutral when ok, amber at high and red at critical, with the reasons beside it", () => {
+  const mk = (level, reasons) => stripRows(parseStrip({ version: 1, level: { level, reasons } })).head;
+  assert.deepEqual(mk("ok", ["load"]), { level: { text: "● ok", tone: "neutral" }, reasons: "", stale: false });
   const high = mk("high", ["load", "mem"]);
-  assert.equal(high[0].tone, "amber");
-  assert.equal(text(high), "● load, mem");
+  assert.deepEqual(high.level, { text: "● high", tone: "amber" });
+  assert.equal(high.reasons, "load, mem");
   const crit = mk("critical", []);
-  assert.equal(crit[0].tone, "red");
-  assert.equal(text(crit), "● critical");
+  assert.deepEqual(crit.level, { text: "● critical", tone: "red" });
+  assert.equal(crit.reasons, "");
 });
 
-test("stale strip: one line with dashes, folded and unfolded", () => {
+test("stale strip: the no-session line, no rows, folded and unfolded", () => {
   const s = parseStrip({ stale: true });
-  const rows = stripRows(s);
-  assert.equal(rows.length, 1);
-  assert.match(text(rows[0].segs), /^status: no main session measuring/);
-  assert.match(text(rows[0].segs), /—/);
-  assert.equal(text(stripSummary(s)), "status: no main session measuring");
-  assert.deepEqual(stripRows(null), []);
+  const { head, rows } = stripRows(s);
+  assert.equal(head.stale, true);
+  assert.equal(head.level.text, "● no session measuring");
+  assert.equal(head.level.tone, "neutral");
+  assert.deepEqual(rows, []);
+  assert.equal(text(stripSummary(s)), "● no session measuring");
+  assert.equal(stripRows(null), null);
   assert.deepEqual(stripSummary(null), []);
 });
 
-test("folded summary: cpu, memory and the level dot", () => {
+test("folded summary: the level dot, cpu, memory and the first disk", () => {
   const sum = stripSummary(parseStrip(full()));
-  assert.equal(text(sum), "cpu 42%  mem 71%  ● ok");
-  assert.equal(sum[3].tone, "amber");
+  assert.equal(text(sum), "● ok  CPU 42%  Mem 71%  Disk 78%");
+  assert.equal(sum[4].tone, "amber");
   const high = stripSummary(parseStrip({ ...full(), level: { level: "high", reasons: ["load"] } }));
-  assert.equal(high.at(-1).tone, "amber");
-  assert.equal(text(stripSummary(parseStrip({ version: 1, mem: { pct: 5 } }))), "mem 5%");
+  assert.equal(high[0].tone, "amber");
+  assert.equal(text(stripSummary(parseStrip({ version: 1, mem: { pct: 5 } }))), "Mem 5%");
+  assert.equal(text(stripSummary(parseStrip({ ...full(), disks: [{ label: "/x", missing: true }] }))), "● ok  CPU 42%  Mem 71%  Disk —");
+  assert.equal(text(stripSummary(parseStrip({ version: 1, quotas: [{ label: "Week", used: 0.2, tone: "green" }] }))), "Status", "none of the parts is on");
 });
 
 test("parseRadarDoc keeps the strip of the local document and ignores a remote one", () => {
@@ -155,32 +186,33 @@ test("parseRadarDoc keeps the strip of the local document and ignores a remote o
   assert.equal("strip" in parseRadarDoc(doc("junk")), false);
 });
 
-test("stripRows: a long disk label is cut in the middle, a short one stays", () => {
-  const path = "/home/user/Documents/git/repo";
-  const rows = stripRows({ ...full(), disks: [{ label: path, usedPct: 10, freeGB: 1, tone: "neutral" }, { label: "/", usedPct: 1, freeGB: 1, tone: "neutral" }], quotas: [] });
-  const label = rows.find((r) => r.id === "disk:0").segs[0].text.slice(0, -1);
-  assert.equal(label.length, 18);
-  assert.equal(label[0], "/");
-  assert.ok(label.endsWith("git/repo"));
-  assert.equal(label.split("…").length, 2);
-  const short = rows.find((r) => r.id === "disk:1").segs[0].text;
-  assert.equal(short, "/".padEnd(18) + " ");
-  const fits = stripRows({ ...full(), disks: [{ label: "/Volumes/data", usedPct: 1, freeGB: 1, tone: "neutral" }], quotas: [] });
-  assert.ok(fits.find((r) => r.id === "disk:0").segs[0].text.startsWith("/Volumes/data"));
-  assert.ok(!fits.find((r) => r.id === "disk:0").segs[0].text.includes("…"));
+test("disk rows are named by a short name, never by the path", () => {
+  const row = (label, auto) => stripRows({ ...full(), cpu: null, mem: null, level: null, quotas: [], disks: [{ label, usedPct: 10, freeGB: 1, tone: "neutral", ...(auto ? { auto: true } : {}) }] }).rows[0].name;
+  assert.equal(row("/home/user/Documents/git/repo", true), "Disk");
+  assert.equal(row("/home/user/Documents/git/repo", false), "Disk repo");
+  assert.equal(row("/", false), "Disk /");
 });
 
-test("a long disk path keeps its real end through parse and the middle cut", () => {
+test("a disk keeps its auto flag through parse; a long path keeps its real end", () => {
   const path = "/home/user/src/project.worktrees/status-strip";
-  const s = parseStrip({ version: 1, disks: [{ label: path, usedPct: 87, freeGB: 119, tone: "neutral" }] });
+  const s = parseStrip({ version: 1, disks: [{ label: path, usedPct: 87, freeGB: 119, tone: "neutral", auto: true }, { label: "/", missing: true }] });
   assert.equal(s.disks[0].label, path, "parse does not cut a path from its start");
-  const label = stripRows(s).find((r) => r.id === "disk:0").segs[0].text.trim();
-  assert.ok(label.endsWith("-strip"), label);
-  assert.ok(label.endsWith("tatus-strip"), label);
-  assert.equal(label.length, 18);
-  assert.equal(label.split("…").length, 2);
+  assert.equal(s.disks[0].auto, true);
+  assert.equal(s.disks[1].auto, false);
   const huge = parseStrip({ version: 1, disks: [{ label: `/start/${"x".repeat(400)}/real-end`, usedPct: 1, freeGB: 1 }] }).disks[0].label;
   assert.ok(huge.length <= 200 && huge.endsWith("/real-end") && huge.startsWith("/start"));
+});
+
+test("diskName: auto is empty, drive forms and WSL mounts are C:, else the last folder", () => {
+  assert.equal(diskName("/anything/at/all", true), "");
+  assert.equal(diskName("/"), "/");
+  for (const raw of ["C:", "c:", "c:/", "C:\\", "/mnt/c", "/mnt/c/", "/mnt/C"]) assert.equal(diskName(raw), "C:", raw);
+  assert.equal(diskName("/mnt/d/"), "D:");
+  assert.equal(diskName("D:\\data"), "data");
+  assert.equal(diskName("\\\\server\\share"), "share");
+  assert.equal(diskName("/mnt/wsl/build"), "build");
+  assert.equal(diskName("/home/user/src/project.worktrees/sidebar-strip"), "sidebar-strip");
+  assert.equal(diskName("/Volumes/data/"), "data");
 });
 
 test("cutMiddle: short text stays, long text keeps both ends", () => {
@@ -188,18 +220,18 @@ test("cutMiddle: short text stays, long text keeps both ends", () => {
   assert.equal(cutMiddle("abcdefghijklmnopqrstuvwxyz", 10), "abc…uvwxyz");
 });
 
-test("a null cpu or memory percent is a grey dash in the rows and the summary", () => {
+test("a null cpu or memory percent is a dim dash in the rows and the summary", () => {
   const s = parseStrip({ ...full(), cpu: { pct: null, history: [], tone: "neutral" }, mem: { pct: null, tone: "neutral" } });
-  const head = stripRows(s).find((r) => r.id === "head").segs;
-  for (const g of head.filter((x) => x.text === "—")) assert.notEqual(g.value, true);
-  assert.ok(head.filter((x) => x.bar).every((x) => x.value !== true));
+  const rows = stripRows(s).rows;
+  for (const r of rows.slice(0, 2)) assert.deepEqual(r.value, { text: "—", tone: "neutral", measured: false });
+  assert.equal(rows[1].bar, null);
   const sum = stripSummary(s);
-  assert.equal(text(sum), "cpu —  mem —  ● ok");
+  assert.equal(text(sum), "● ok  CPU —  Mem —  Disk 78%");
   assert.equal(sum.filter((x) => x.text === "—").length, 2);
   assert.ok(sum.filter((x) => x.text === "—").every((x) => x.value !== true));
 });
 
 test("folded summary: labels are neutral, numbers and the level dot are values", () => {
-  const sum = stripSummary(parseStrip(full()));
-  assert.deepEqual(sum.map((g) => [g.text, !!g.value]), [["cpu ", false], ["42%", true], ["  mem ", false], ["71%", true], ["  ●", true], [" ok", true]]);
+  const sum = stripSummary(parseStrip({ ...full(), disks: [] }));
+  assert.deepEqual(sum.map((g) => [g.text, !!g.value]), [["● ok", true], ["  CPU ", false], ["42%", true], ["  Mem ", false], ["71%", true]]);
 });

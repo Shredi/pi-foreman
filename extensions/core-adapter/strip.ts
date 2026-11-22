@@ -164,14 +164,22 @@ export class StripSampler {
   start(): void {
     if (this.started || this.stopped || !stripConfigOf(this.d.config()).enabled) return;
     this.started = true;
+    process.once("exit", this.onExit);
     this.arm(0);
   }
+
+  /** Last resort when the process ends without `session_shutdown`: gives the lease back synchronously. */
+  private readonly onExit = (): void => {
+    if (this.token) dropLock(stripLeasePath(this.d.agentDir), this.token);
+    this.token = null;
+  };
 
   /** Stops the timer and gives the lease back; a script still running is left to its own timeout and its result is dropped. */
   stop(): Promise<void> {
     this.stopped = true;
     this.timers.clear(this.timer);
     this.timer = null;
+    process.removeListener("exit", this.onExit);
     if (this.token) dropLock(stripLeasePath(this.d.agentDir), this.token);
     this.token = null;
     return Promise.resolve();
@@ -276,7 +284,10 @@ export class StripSampler {
     const disks = cfg.disks === null ? [this.d.diskPath()] : cfg.disks;
     if (disks.length > 0) {
       const statfs = this.d.statfs ?? ((p: string) => fs.statfsSync(p) as StatFs);
-      doc.disks = disks.map((label) => diskDoc(label, () => statfs(diskPathOf(label, this.d.platform)), limits.minFreeDiskGB));
+      doc.disks = disks.map((label) => {
+        const d = diskDoc(label, () => statfs(diskPathOf(label, this.d.platform)), limits.minFreeDiskGB);
+        return cfg.disks === null ? { ...d, auto: true as const } : d;
+      });
     }
     const quotas = this.quotas(cfg, now);
     if (quotas.length > 0) doc.quotas = quotas;

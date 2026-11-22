@@ -514,19 +514,25 @@ The herdr-app Agents view can show a small strip above the session list: how bus
 limit is spent.
 
 ```
- cpu [spark] 42%   mem [bar] 71%   ● ok
- disk /            [bar] 78%   52 GB free
- Claude week       [bar|marker] 41%   resets Thu 21:00
+ ● high   load
+ CPU           [spark]          66%
+ Memory        [bar]            80%  26 / 32 GB
+ Disk          [bar]            87%  124 GB free
+ Claude week   [bar|marker]     61%  Fri 21:00
+ Fable week    [bar|marker]     13%  Fri 21:00
 ```
 
+Every row is laid out in the same columns: name, bar (the CPU row a sparkline), percent, and one extra text. Bars start and end at the same
+place and the percentages line up on the right; a name or extra text that is too long ends with "…" and never leaves the row. The head line holds only the load
+dot, the load word and its reason (with the dot turned off it reads "Status"). Folded, the strip is one line: the dot, `CPU`, `Mem` and the first disk.
 The spark line, the bars and the pace marker are drawn as small boxes, not as text characters; `[bar]` stands for a bar.
 
 A timer in the main Pi session measures every `sidebar.strip.sampleSeconds` (10 s) and writes
 `<agent dir>/pi-foreman/state/strip.json`; `foreman radar --json` passes it on as the top-level `strip` field (without the
 forecast samples). It shows the computer where Pi runs: for a Windows host with Pi inside WSL, point the `local` entry of the
 mod's `foreman` prop at a command that runs foreman inside WSL, and CPU and memory are those of the WSL machine. Without a
-main session the strip is `{"stale": true}` and shows dashes. Child sessions never measure. When several main sessions share
-an agent dir, one holds a lease (`strip.lease`) and measures; the others stand by and take over when it stops renewing it.
+main session the strip is `{"stale": true}` and the head reads "● no session measuring" (no rows). Child sessions never measure. When several main sessions share
+an agent dir, one holds a lease (`strip.lease`) and measures; the others stand by and take over when it stops renewing it. A session that closes gives the lease back first, before its other shutdown work, and another open session takes over within one tick; if the process ends without that (a closed Windows console), the others take over once the lease is stale, after about 30 to 40 seconds.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -534,12 +540,12 @@ an agent dir, one holds a lease (`strip.lease`) and measures; the others stand b
 | `sidebar.strip.cpu` | `true` | CPU % with sparkline |
 | `sidebar.strip.memory` | `true` | memory used % |
 | `sidebar.strip.level` | `true` | the load guard's dot (reason shown at high or critical) |
-| `sidebar.strip.disks` | `null` | paths whose disk is shown; `null` = the workspace of the measuring session (it can change when another session takes over), `[]` = none |
+| `sidebar.strip.disks` | `null` | paths whose disk is shown; `null` = the disk of the measuring session's folder, drawn as "Disk" (it can change when another session takes over), `[]` = none |
 | `sidebar.strip.sampleSeconds` | `10` | seconds between measurements (at least 5) |
 | `sidebar.strip.sparkline` | `12` | CPU values kept for the sparkline |
 | `sidebar.strip.quotas.claude` | `true` | built-in Claude week and 5-hour rows |
 | `sidebar.strip.quotas.sources` | `{}` | usage scripts by name, each `{ "command": "...", "seconds": 300 }` (see [overlays](overlays.md#usage-sources)) |
-| `sidebar.strip.quotas.hide` | `[]` | row keys (`<source>:<id>`, built-in `claude:7d`, `claude:5h`) to hide |
+| `sidebar.strip.quotas.hide` | `[]` | row keys (`<source>:<id>`, built-in `claude:7d`, `claude:7d_oi`, `claude:5h`) to hide |
 | `sidebar.strip.quotas.order` | `[]` | row keys shown first, in this order |
 
 ```json
@@ -552,18 +558,21 @@ an agent dir, one holds a lease (`strip.lease`) and measures; the others stand b
   `1 - available/total`, where available is the load guard's own number when its sample is fresh, else the operating system's free memory.
   Green while the load guard is calm (traffic-light colours: the herdr-app strip draws a calm cpu, memory, disk, level and usage value green; dashes, a missing disk, the stale line and the labels stay grey), amber past `resources.maxLoadPerCore`, red past twice that; memory and disks turn amber below
   `resources.minFreeMemMB` / `minFreeDiskGB` and red below half of it.
-- **Disks.** The free space comes from the system's free-space call for each path (on Windows a bare drive letter such as `C:`
-  is read as `C:\`; on btrfs the figure is what the system reports). A path that does not exist shows a dash, never an error.
+- **Disks.** The free space comes from the system's free-space call for each path (on btrfs the figure is what the system reports).
+  A drive letter (`C:`, `c:`, `C:\`, `C:/`) is read as `C:\` on Windows and as `/mnt/c`, the WSL drive mount, everywhere else; a longer
+  Windows path is not mapped. A row is named "Disk" for the default disk, "Disk C:" for a drive, "Disk /" for the root, else "Disk" and the last folder
+  (two disks with the same last folder get the same name). A path that does not exist shows a dash and "not found", never an error.
 - **Usage rows.** The fill is the share used; the marker `│` is the share of the period that has passed. Green up to 10
   points ahead of that pace, amber further ahead, red when the recent rate would use the limit up before the reset (from
   the row's own samples over the last seventh of the period) or at 100 % and beyond. A row without a reset has no marker.
   A value whose reset has passed, a failed script and a value above 200 % show a dash.
-- **Claude rows.** Claude replies carry the subscription windows as `anthropic-ratelimit-unified-<window>-utilization` and
+- **Claude rows.** Rows are named "Claude 5h", "Claude week" and "Fable week" (the `7d_oi` window); a variant such as `7d_xyz` reads
+  "Week (xyz)", `5h_xyz` "5h (xyz)", and any other window "Claude <id>". Claude replies carry the subscription windows as `anthropic-ratelimit-unified-<window>-utilization` and
   `-reset` headers. Every session notes them (at most every 30 s) in `strip-claude.json`; a row stays hidden until a
-  value has arrived on this computer. Only windows the reply reports appear (no per-model weekly row), and a window needs
+  value has arrived on this computer. Only windows the reply reports appear, and a window needs
   both headers. Sessions share the file only when they share the agent dir. If the bridge changes the headers the rows show dashes.
 - **JSON.** `version`, `at`, `sampleSeconds`, then the parts that are on: `cpu` `{pct?, history, tone}`, `mem`
-  `{pct, usedMB, totalMB, tone}`, `level` `{level, reasons}`, `disks` `[{label, usedPct, freeGB, tone}` or `{label, missing: true}]`,
+  `{pct, usedMB, totalMB, tone}`, `level` `{level, reasons}`, `disks` `[{label, usedPct, freeGB, tone, auto?}` or `{label, missing: true, auto?}]` (`auto: true` marks the default disk),
   `quotas` `[{key, label, used, pace?, resetsAt?, tone}]` (`used: null` = dash; tone `neutral`, `green`, `amber` or `red`).
 
 ## Bundled add-on: background tasks
