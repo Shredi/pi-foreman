@@ -1,8 +1,8 @@
 // The owner-pane dialog of the gate (r79 plan 7) and the texts of the child / headless denials. No model is involved in any of it.
 //
 // askOwner(): three options (allow once, deny with comment, deny and stop), the full command in the title (Pi's selector title
-// is a wrapping text without scrolling, so a command above SHOW_ALL_LINES lines shows its first HEAD_LINES and last TAIL_LINES and names a trace
-// file `<state>/gate-ask-<n>.txt` that holds all of it), every dialog opened whatever the presence state with a signal of its own that follows only
+// is a wrapping text without scrolling, so a command above SHOW_ALL_LINES lines shows its first HEAD_LINES and last TAIL_LINES, a line over
+// LINE_MAX_CHARS shows its start and end, and a trace file `<state>/gate-ask-<n>.txt` holds all of it), every dialog opened whatever the presence state with a signal of its own that follows only
 // the call's abort signal and the session shutdown (a dialog closed that way is `aborted`, never an answer), a dismissed dialog denies. Nothing is
 // remembered: there are no rule lists to remember into.
 import * as fs from "node:fs";
@@ -12,9 +12,12 @@ import type { PresenceLike, WaitTimers } from "./presencewait.ts";
 export const DIALOG_OPTIONS = ["allow once", "deny with comment", "deny and stop"] as const;
 export type DialogOption = (typeof DIALOG_OPTIONS)[number];
 export const DEFAULT_ASK_TIMEOUT_MS = 15 * 60 * 1000;
-export const SHOW_ALL_LINES = 60;
-export const HEAD_LINES = 40;
-export const TAIL_LINES = 20;
+export const SHOW_ALL_LINES = 12;
+export const HEAD_LINES = 8;
+export const TAIL_LINES = 3;
+export const LINE_MAX_CHARS = 300;
+export const LINE_HEAD_CHARS = 200;
+export const LINE_TAIL_CHARS = 80;
 
 /** Leading texts of every gate deny (floors, rules, whitelist, dialog answers, self-modification, handler failure); the ledger trace reads them. */
 export const GATE_DENY_PREFIXES = [
@@ -84,20 +87,40 @@ function nextTraceN(dir: string): number {
   return n + 1;
 }
 
-/** The command as the title shows it: all of it up to SHOW_ALL_LINES lines, else head, an omission line naming the trace file, and tail. */
+/** A line over LINE_MAX_CHARS shown as its first LINE_HEAD_CHARS and last LINE_TAIL_CHARS characters around the count of what is hidden. */
+function clipLine(line: string): { text: string; cut: boolean } {
+  const chars = Array.from(line);
+  if (chars.length <= LINE_MAX_CHARS) return { text: line, cut: false };
+  const omitted = chars.length - LINE_HEAD_CHARS - LINE_TAIL_CHARS;
+  return { text: `${chars.slice(0, LINE_HEAD_CHARS).join("")}… [${omitted} characters omitted] …${chars.slice(-LINE_TAIL_CHARS).join("")}`, cut: true };
+}
+
+/** The command as the title shows it: all of it up to SHOW_ALL_LINES lines, else head, an omission line and tail; a line over LINE_MAX_CHARS is clipped. When anything is cut and a stateDir is set, the full text goes to a trace file the display names; a failed write leaves the cap without the file. */
 export function commandDisplay(payload: string, stateDir?: string): { text: string; file?: string } {
-  const lines = payload.split("\n");
-  if (lines.length <= SHOW_ALL_LINES) return { text: printable(payload) };
-  if (!stateDir) return { text: printable(payload) };
-  try {
-    fs.mkdirSync(stateDir, { recursive: true });
-    const file = path.join(stateDir, `gate-ask-${nextTraceN(stateDir)}.txt`);
-    fs.writeFileSync(file, payload, { encoding: "utf8", mode: 0o600 });
-    const omitted = lines.length - HEAD_LINES - TAIL_LINES;
-    return { text: printable([...lines.slice(0, HEAD_LINES), `... [${omitted} lines omitted; the full text is in ${file}]`, ...lines.slice(-TAIL_LINES)].join("\n")), file };
-  } catch {
-    return { text: printable(payload) };
+  const all = payload.split("\n");
+  const linesCut = all.length > SHOW_ALL_LINES;
+  const kept = linesCut ? [...all.slice(0, HEAD_LINES), ...all.slice(-TAIL_LINES)] : all;
+  const clipped = kept.map(clipLine);
+  const charsCut = clipped.some((l) => l.cut);
+  if (!linesCut && !charsCut) return { text: printable(payload) };
+  let file: string | undefined;
+  if (stateDir) {
+    try {
+      fs.mkdirSync(stateDir, { recursive: true });
+      file = path.join(stateDir, `gate-ask-${nextTraceN(stateDir)}.txt`);
+      fs.writeFileSync(file, payload, { encoding: "utf8", mode: 0o600 });
+    } catch {
+      file = undefined;
+    }
   }
+  const lines = clipped.map((l) => l.text);
+  if (linesCut) {
+    const omitted = all.length - HEAD_LINES - TAIL_LINES;
+    lines.splice(HEAD_LINES, 0, file ? `... [${omitted} lines omitted; the full text is in ${file}]` : `... [${omitted} lines omitted]`);
+  } else if (file) {
+    lines.push(`... [the full text is in ${file}]`);
+  }
+  return { text: printable(lines.join("\n")), file };
 }
 
 export function ownerTitle(a: OwnerAsk, command: string): string {

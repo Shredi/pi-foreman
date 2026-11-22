@@ -269,7 +269,7 @@ What the text floors read, so that data is not mistaken for a command:
 
 When a call escalates and a human is at the pane, `pi-foreman: <tool> asks` opens a select dialog. The title carries the cause, the judge's reason if it was unsure, the cwd and the **full command**, heredoc bodies included. The cause is one of: `danger-<name>: <reason>`, `self-modification <rule>` or a floor-ask text.
 
-A command of up to 60 lines is shown whole. A longer one shows its first 40 and last 20 lines plus a line naming a trace file `<agentDir>/pi-foreman/state/gate-ask-<n>.txt` that holds the full text. Control characters are shown as `?`. The text that reaches the agent never hides anything.
+A command of up to 12 lines is shown whole. A longer one shows its first 8 and last 3 lines around a line `... [N lines omitted; the full text is in <agentDir>/pi-foreman/state/gate-ask-<n>.txt]`. A line over 300 characters shows its first 200 and last 80 characters around `… [N characters omitted] …`. Whenever anything is cut, the full text goes to that trace file and the display names it (with only characters cut, the last line is `... [the full text is in <file>]`). Without a state dir, or when the trace file cannot be written, the cap still applies and the display names no file. Control characters are shown as `?`. The text that reaches the agent never hides anything.
 
 | Option | Result |
 |---|---|
