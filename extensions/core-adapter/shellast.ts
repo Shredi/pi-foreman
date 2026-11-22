@@ -183,6 +183,8 @@ interface Scope {
   passAt?: number[];
   /** Names an env-clearing wrapper (`env -i`, `env -`, `env -u NAME`, `exec -c`) took out of the environment of what it runs; `*` is every name. A nested `-c` string under it sees them empty. */
   cleared?: string[];
+  /** `cleared` as it stood where a nested `-c` string began: only that string's own shell expands the names itself, so they count as rebound there (`reboundAt`). */
+  wiped?: string[];
   /** The harness constants the script being walked reads as constants (set by `prepare`). */
   consts?: string[];
   depth: number;
@@ -391,7 +393,9 @@ function reboundAt(sc: Scope): string[] {
   if (rn.trial) return [];
   if (sc.startup) return HARNESS_NAMES;
   const own = sc.unit === undefined ? (rn.rebound ? HARNESS_NAMES : []) : (rn.rebound?.[sc.unit] ?? []);
-  return [...new Set([...(rn.seed ?? []), ...own])];
+  // a name the wrapped run clears or unsets (`env -i`, `env -u FOREMAN_SCRATCH`, `exec -c`) is empty for it: no longer the folder
+  const wiped = HARNESS_NAMES.filter((n) => sc.wiped?.includes("*") || sc.wiped?.includes(n));
+  return [...new Set([...(rn.seed ?? []), ...own, ...wiped])];
 }
 
 /** Marks the segment just emitted as one whose program the walk did not state (`ShellSegment.programUnknown`). */
@@ -707,7 +711,7 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
     seg(sc, label, [src], "parse_error", c);
     return cwd;
   }
-  walkScript(script, src, { ...sc, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
+  walkScript(script, src, { ...sc, depth: sc.depth + 1, wiped: sc.cleared, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
   return cwd;
 }
 
