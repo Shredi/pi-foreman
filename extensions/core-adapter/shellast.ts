@@ -816,7 +816,8 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
           c.reason = pick(c.reason, "assignment");
         } else {
           if (!harmless(a)) c.reason = pick(c.reason, "assignment");
-          if (RUNS_FILE_VARS.has(a.name)) startup = true;
+          // a harness folder name set here is rebound for the wrapped program, whatever wrapper or `env` sits between
+          if (RUNS_FILE_VARS.has(a.name) || HARNESS_NAMES.includes(a.name)) startup = true;
         }
         args = args.slice(1);
       }
