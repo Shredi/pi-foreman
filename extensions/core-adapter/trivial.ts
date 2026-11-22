@@ -232,7 +232,7 @@ export async function checkoutBaseline(cwd: string, scratchDir: string, platform
   const tree = status === null ? null : await worktreeTree(cwd, true);
   const top = tree === null ? null : (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
   const staged = top ? await git(top, ["ls-files", "--stage", "-z"]) : null;
-  if (!top || staged === null) return null;
+  if (!top || staged === null || status === null) return null;
   const dirtyPaths = statusPaths(status);
   const subs = staged.split("\0").filter((l) => l.startsWith("160000 ")).map((l) => l.slice(l.indexOf("\t") + 1)).filter((p) => p !== "" && dirtyPaths.has(p));
   const inner: string[] = [];

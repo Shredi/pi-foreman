@@ -1,0 +1,43 @@
+{
+  "plugins": ["typescript", "eslint", "unicorn", "oxc"],
+  "categories": { "correctness": "error" },
+  // Not enabled on purpose (reasons, so nobody re-adds them blindly):
+  // - typescript/no-unsafe-*: ~380 findings in src, mostly JSON.parse results. Owner decision 2026-11-22: a later round adds typed parse helpers first.
+  // - typescript/no-unnecessary-condition: ~400 findings, noisy with loose external types.
+  // - typescript/require-await: ~1400 findings, mostly async test helpers.
+  // - typescript/no-non-null-assertion, typescript/no-confusing-void-expression: style, not bugs.
+  // - tsconfig noUncheckedIndexedAccess: ~3500 compiler errors, a later round.
+  "rules": {
+    // ANSI escape sequences in regexes are intentional.
+    "eslint/no-control-regex": "off",
+    // A spread copy before a loop that changes the collection is a deliberate snapshot; the rule cannot see the mutation.
+    "unicorn/no-useless-spread": "off",
+    "typescript/no-floating-promises": ["error", { "allowForKnownSafeCalls": [{ "from": "package", "package": "node:test", "name": ["test", "it", "describe", "suite", "before", "after", "beforeEach", "afterEach"] }] }],
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/no-base-to-string": "error",
+    "typescript/restrict-template-expressions": "error",
+    "typescript/unbound-method": "error",
+    "typescript/no-misused-spread": "error",
+    "typescript/require-array-sort-compare": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+    "typescript/return-await": "error",
+    "typescript/no-for-in-array": "error",
+    "typescript/no-implied-eval": "error",
+    "typescript/no-array-delete": "error",
+    "typescript/no-unsafe-unary-minus": "error",
+    "typescript/no-duplicate-type-constituents": "error",
+    "typescript/no-redundant-type-constituents": "error",
+    "typescript/no-meaningless-void-operator": "error",
+    "typescript/switch-exhaustiveness-check": "error"
+  },
+  "ignorePatterns": [
+    // running round judge-first-unknown, remove after it merges:
+    "extensions/core-adapter/defaults.ts",
+    "extensions/core-adapter/floors.ts",
+    "extensions/core-adapter/test/gate-read-relax-npx.test.ts",
+    "extensions/core-adapter/test/r2-self-ruling-source.test.ts",
+    "extensions/core-adapter/test/judge-first-unknown*.test.ts"
+  ]
+}

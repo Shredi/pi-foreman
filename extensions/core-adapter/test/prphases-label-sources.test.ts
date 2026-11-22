@@ -29,7 +29,7 @@ function rig(first: WatchSnapshot, phaseRules: () => readonly PhaseRule[]) {
     reviewFacts: () => "ok",
     reviewGate: () => true,
     draftFlow: () => false,
-    label: async (_k, _c, label, on): Promise<SafeOpOutcome> => (labels.push(`${on ? "+" : "-"}${label}`), { kind: "ran", result: { changed: true } }),
+    label: async (_k: PrKey, _c: string, label: string, on: boolean): Promise<SafeOpOutcome> => (labels.push(`${on ? "+" : "-"}${label}`), { kind: "ran", result: { changed: true } }),
     readyLabel: () => "ready",
     phaseRules: (() => phaseRules()) as never,
     persist: () => {},
@@ -45,8 +45,15 @@ function rig(first: WatchSnapshot, phaseRules: () => readonly PhaseRule[]) {
   } as never);
   watches.start(K, first, null, false);
   const tick = async (s?: WatchSnapshot) => {
-    if (s) (cur = s, (at += 1000));
-    for (let i = 0; i < 4; i++) (fns.shift()?.(), await flush(), await flush());
+    if (s) {
+      cur = s;
+      at += 1000;
+    }
+    for (let i = 0; i < 4; i++) {
+      fns.shift()?.();
+      await flush();
+      await flush();
+    }
   };
   return { labels, tick, watches };
 }

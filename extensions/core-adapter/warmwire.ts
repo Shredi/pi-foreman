@@ -31,15 +31,15 @@ export interface WarmWireOpts {
   /** Final-warm gate + ctx.compact (idleCompact in index.ts). */
   compact(): { point: number | null; model: string | null } | null;
   /** Context tokens of the session (final-warm gate, compactMinTokens). */
-  contextTokens?(): number | null;
+  contextTokens?: () => number | null;
   /** Context window of the session's model (final-warm gate). */
-  contextWindow?(): number | null;
+  contextWindow?: () => number | null;
   /** A claude-bridge config approval is pending (the replay is skipped). */
-  driftPending?(): boolean;
+  driftPending?: () => boolean;
   /** Names of the tools whose declarations are hidden from the request (the replay projects them out of the messages). */
   hidden?(): readonly string[];
   /** The footer's keep-alive glyph. */
-  setGlyph?(on: boolean): void;
+  setGlyph?: (on: boolean) => void;
 }
 
 /** `providers.claude-bridge.cache.keepalive.children: true`: children through the bridge warm. */

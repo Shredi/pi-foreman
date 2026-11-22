@@ -68,7 +68,7 @@ test("a rework marker stales every checkout", async (t) => {
 });
 
 test("a resumed reviewer's verdict applies to the checkouts of its target run; a resumed builder revises its target's checkout only", async (t) => {
-  const { a, b, w } = await two(t);
+  const { a, b } = await two(t);
   await build(a);
   const first = await launch(a, "reviewer", "[pre-pr] review the branch", { cwd: b });
   assert.equal(first.blocked, null);

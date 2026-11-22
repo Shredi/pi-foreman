@@ -7,6 +7,7 @@ import { sanitizeTrace } from "../trace.ts";
 import { closeFrom, CloseFlow, closeReportArgs, parseCloseReport, closePrompt, intercomClose, INTERCOM_WAKE_TEXT, parentIntercomId, parseCloseText, registerClose, resultPath } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 import { trackedTmp } from "./_tmpbase.ts";
+import { strRaw } from "../strof.ts";
 
 const root = fs.realpathSync.native(trackedTmp("pf-close-"));
 const ws = path.join(root, "ws");
@@ -69,7 +70,7 @@ function rig(waits: { id: string; kind: string; note: string }[] = [], runs = 0,
     retro: async () => (log.push("retro"), "approvals: 3"),
     reply: (to, t) => void log.push(`reply:${to}:${t}`),
     notify: (t) => void log.push(`notify:${t}`),
-    trace: (r) => void log.push(`trace:${r.decision}`),
+    trace: (r) => void log.push(`trace:${strRaw(r.decision)}`),
     markCause: () => void log.push("cause:close"),
     writeStub: (f, t) => void (files.set(f, t), log.push("stub")),
     exists: (f) => files.has(f),
@@ -83,7 +84,7 @@ function rig(waits: { id: string; kind: string; note: string }[] = [], runs = 0,
 
 test("close: refused while a foreman_wait is active; waits are not cancelled; intercom gets a reply", async () => {
   const r = rig([{ id: "w1", kind: "timer", note: "ci" }]);
-  r.flow.request({ source: "intercom-parent", file: "/x/r.md", replyTo: "parent-1" }, r.ctx, true);
+  void r.flow.request({ source: "intercom-parent", file: "/x/r.md", replyTo: "parent-1" }, r.ctx, true);
   assert.equal(r.flow.active, false);
   assert.ok(r.log.includes("trace:refused"));
   assert.ok(r.log.some((l) => l.startsWith("reply:parent-1:") && l.includes("w1 timer")));
@@ -92,7 +93,7 @@ test("close: refused while a foreman_wait is active; waits are not cancelled; in
 
 test("close: refused while child runs are active; never cancelled; intercom gets a reply", () => {
   const r = rig([], 2);
-  r.flow.request({ source: "intercom-parent", file: "/x/r.md", replyTo: "parent-1" }, r.ctx, true);
+  void r.flow.request({ source: "intercom-parent", file: "/x/r.md", replyTo: "parent-1" }, r.ctx, true);
   assert.equal(r.flow.active, false);
   assert.ok(r.log.includes("trace:refused"));
   assert.ok(r.log.some((l) => l.startsWith("reply:parent-1:") && l.includes("2 child run(s) still active")));
@@ -103,7 +104,7 @@ test("close: sequence waits for idle, one close turn, then sync, stub, shutdown"
   const r = rig();
   const file = "/x/.workflow/r.md";
   r.setIdle(false);
-  r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx, true);
+  void r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx, true);
   assert.ok(!r.log.some((l) => l.startsWith("prompt:")), "no turn while busy");
   await r.flow.onSettled(r.ctx);
   assert.ok(!r.log.some((l) => l.startsWith("prompt:")), "settled but not idle: still waiting");
@@ -126,7 +127,7 @@ test("close: the report runs after the stub; CLOSE and handovers reach the notif
   const orig = r.flow["d"].trace;
   r.flow["d"].trace = (t) => (traces.push(t), orig(t));
   const file = "/x/.workflow/r.md";
-  r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
+  void r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
   r.flow.onInput(closePrompt(file), "extension");
   r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
@@ -142,8 +143,8 @@ test("close: the report runs after the stub; CLOSE and handovers reach the notif
 test("close: no stub when the close turn wrote the result file; a second request while closing is refused", async () => {
   const r = rig();
   const file = "/x/.workflow/r.md";
-  r.flow.request({ source: "herdr", file }, r.ctx);
-  r.flow.request({ source: "herdr", file }, r.ctx);
+  void r.flow.request({ source: "herdr", file }, r.ctx);
+  void r.flow.request({ source: "herdr", file }, r.ctx);
   assert.equal(r.log.filter((l) => l.startsWith("prompt:")).length, 1);
   assert.ok(r.log.includes("trace:refused"));
   r.files.set(file, "written by the model");
@@ -167,7 +168,7 @@ test("close: result path text is a fixed charset ending in .md; the prompt carri
 test("close: a close turn that never starts is disarmed at the deadline; later runs never sync or shut down (review S5)", async () => {
   const r = rig();
   const file = "/x/.workflow/r.md";
-  r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
+  void r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
   // The close prompt is swallowed by another input handler: onInput never sees it, no run starts.
   r.flow.onAgentStart();
   assert.equal(r.timers.length, 1, "agent_start without the close prompt keeps the deadline");
@@ -183,7 +184,7 @@ test("close: a close run that settles without a reply is refused at once; a late
   for (const seen of [true, false]) {
     const r = rig();
     const file = "/x/.workflow/r.md";
-    r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
+    void r.flow.request({ source: "intercom-parent", file, replyTo: "parent-1" }, r.ctx);
     if (seen) {
       r.flow.onInput(closePrompt(file), "extension");
       r.flow.onAgentStart();
@@ -204,7 +205,7 @@ test("close: a close run that settles without a reply is refused at once; a late
 test("close: the start deadline is cleared at the close run's agent_start, so a slow first reply still closes (review N3b)", async () => {
   const r = rig();
   const file = "/x/.workflow/r.md";
-  r.flow.request({ source: "herdr", file }, r.ctx);
+  void r.flow.request({ source: "herdr", file }, r.ctx);
   r.flow.onInput(closePrompt(file), "extension");
   r.flow.onAgentStart();
   assert.equal(r.timers.length, 0, "deadline cleared at agent_start");

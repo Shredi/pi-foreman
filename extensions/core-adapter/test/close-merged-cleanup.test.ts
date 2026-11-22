@@ -17,6 +17,7 @@ import type { SafeOpOutcome } from "../safeops.ts";
 import { samePath, selfFinish } from "../selffinish.ts";
 import { storeFromPoll } from "./_storefake.ts";
 import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
+import { strRaw } from "../strof.ts";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -168,11 +169,14 @@ function rig(w: World, o: RigOpts = {}) {
     retro: async () => "",
     reply: (to, t) => void log.push(`reply:${to}:${t}`),
     notify: (t) => void log.push(`notify:${t}`),
-    trace: (r) => void log.push(`trace:${r.decision}`),
+    trace: (r) => void log.push(`trace:${strRaw(r.decision)}`),
     markCause: () => undefined,
     writeStub: (f, t) => {
       files.set(f, t);
-      if (o.disk) fs.mkdirSync(path.dirname(f), { recursive: true }), fs.writeFileSync(f, t);
+      if (o.disk) {
+        fs.mkdirSync(path.dirname(f), { recursive: true });
+        fs.writeFileSync(f, t);
+      }
     },
     exists: (f) => files.has(f),
     setTimer: () => () => undefined,

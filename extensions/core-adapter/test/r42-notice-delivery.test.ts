@@ -33,7 +33,7 @@ after(async () => {
   mock.timers.reset();
 }, { timeout: 20_000 });
 
-async function rig(t: T) {
+async function rig(_t: T) {
   sent.length = 0;
   await shared.fire("agent_end", {}); // ends the turn an earlier case left open, so its cause is not read by this one
   const start = shared.trace().length;

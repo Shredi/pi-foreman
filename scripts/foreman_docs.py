@@ -124,7 +124,8 @@ def pattern_matches(pattern, leaf):
     pat = split(pattern) if isinstance(pattern, str) else pattern
     if len(pat) > len(leaf):
         return False
-    return all(p == "*" or p == s for p, s in zip(pat, leaf))
+    # zip strict=False: a pattern is a prefix of the leaf, the leaf may be longer
+    return all(p == "*" or p == s for p, s in zip(pat, leaf, strict=False))
 
 
 def feature_leaves(feature, leaves):
@@ -202,7 +203,8 @@ CEREMONY_RULES = {
 def _keys_match(pattern, leaf, prefix=True):
     if len(pattern) > len(leaf) or (not prefix and len(pattern) != len(leaf)):
         return False
-    return all(p == "*" or p == s for p, s in zip(pattern, leaf))
+    # zip strict=False: a pattern is a prefix of the leaf, the leaf may be longer
+    return all(p == "*" or p == s for p, s in zip(pattern, leaf, strict=False))
 
 
 def _rule_text(rule, keys):

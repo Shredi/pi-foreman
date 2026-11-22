@@ -51,7 +51,7 @@ test("merge then close: the registry entry's result is the kept copy, and ChildB
   };
   const flow = new CloseFlow(deps);
   const ctx = { isIdle: () => true, shutdown: () => undefined };
-  flow.request({ source: "intercom-parent", file: wtFile, shown: wtFile, replyTo: "parent-1" }, ctx);
+  void flow.request({ source: "intercom-parent", file: wtFile, shown: wtFile, replyTo: "parent-1" }, ctx);
   flow.onInput(flow.closeText(), "extension");
   flow.onModelReply("stop");
   await flow.onSettled(ctx);

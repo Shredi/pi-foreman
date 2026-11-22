@@ -15,6 +15,7 @@ import { pathDecide, realDefault, realSpelling } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { posix, posixOnly } from "./_platform.ts";
+import { strRaw } from "../strof.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf-r2-symfx-"));
 after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -48,7 +49,7 @@ const got = (role: Role, tool: string, input: Record<string, unknown>): string =
   const env = (): FloorEnv => ({ cwd: wt, home, agentDir: agent, writeRoots: [wt, scr], scratch: [scr], child: role !== "main" });
   const o = gateEvaluate(tool, input, wt, { env, roots: () => roots(role), facts });
   const r = o.result as Record<string, unknown> | undefined;
-  return r?.block ? `block ${r.rule}` : r?.ask ? `ask ${r.rule}` : r?.allow ? `allow ${r.rule}` : `undecided ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
+  return r?.block ? `block ${strRaw(r.rule)}` : r?.ask ? `ask ${strRaw(r.rule)}` : r?.allow ? `allow ${strRaw(r.rule)}` : `undecided ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 };
 // expected verdicts in the order builder, reviewer, main
 type Exp = [string, string, string];
@@ -139,7 +140,7 @@ const gotAt = (wtRoot: string, scrRoot: string, role: Role, tool: string, input:
   const env = (): FloorEnv => ({ cwd: wtRoot, home, agentDir: agent, writeRoots: [wtRoot, scrRoot], scratch: [scrRoot], child: role !== "main" });
   const o = gateEvaluate(tool, input, wtRoot, { env, roots: () => rs, facts });
   const r = o.result as Record<string, unknown> | undefined;
-  return r?.block ? `block ${r.rule}` : r?.ask ? `ask ${r.rule}` : r?.allow ? `allow ${r.rule}` : `undecided ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
+  return r?.block ? `block ${strRaw(r.rule)}` : r?.ask ? `ask ${strRaw(r.rule)}` : r?.allow ? `allow ${strRaw(r.rule)}` : `undecided ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 };
 const under = path.join(base, "outer", G);
 const wtReal = path.join(under, "wt-real");

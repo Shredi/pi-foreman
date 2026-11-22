@@ -104,7 +104,7 @@ test("show: foreman_checkpoint rolls the snapshots (first roll has no prev, the 
   const e = env(t);
   fs.writeFileSync(e.plan(), A);
   const { show } = e.start();
-  show.checkpointed(e.plan());
+  void show.checkpointed(e.plan());
   await show.idle();
   let j = json(show);
   assert.equal(text(show, "plan.ruled.md"), A);
@@ -116,7 +116,7 @@ test("show: foreman_checkpoint rolls the snapshots (first roll has no prev, the 
   assert.equal(text(show, "plan.ruled.md"), A);
   assert.equal(json(show).ruledHash, planVersionHash(Buffer.from(A)));
   assert.equal(json(show).hash, planVersionHash(Buffer.from(B)));
-  show.checkpointed(e.plan());
+  void show.checkpointed(e.plan());
   await show.idle();
   j = json(show);
   assert.equal(text(show, "plan.ruled.md"), B);
@@ -141,10 +141,10 @@ test("show: a roll at the ruled version is a no-op", async (t) => {
   const e = env(t);
   fs.writeFileSync(e.plan(), A);
   const { show } = e.start();
-  show.checkpointed(e.plan());
+  void show.checkpointed(e.plan());
   await show.idle();
   const before = fs.readFileSync(path.join(show.dir, "plan.json"), "utf8");
-  show.checkpointed(e.plan());
+  void show.checkpointed(e.plan());
   await show.idle();
   assert.equal(fs.readFileSync(path.join(show.dir, "plan.json"), "utf8"), before);
   assert.equal(fs.existsSync(path.join(show.dir, "plan.prev.md")), false);
@@ -220,10 +220,10 @@ test("show: a path change deletes both snapshots and clears ruledPath", async (t
   fs.writeFileSync(e.plan("one"), A);
   fs.writeFileSync(e.plan("two"), B);
   const { show } = e.start();
-  show.checkpointed(e.plan("one"));
+  void show.checkpointed(e.plan("one"));
   await show.idle();
   fs.writeFileSync(e.plan("one"), C);
-  show.checkpointed(e.plan("one"));
+  void show.checkpointed(e.plan("one"));
   await show.idle();
   assert.deepEqual(names(show), ["plan.json", "plan.prev.md", "plan.ruled.md"]);
   show.planWritten(e.plan("two"));
@@ -239,8 +239,8 @@ test("show: two sessions in one checkout publish into separate show dirs", async
   fs.writeFileSync(e.plan("two"), B);
   const a = e.start({}, "sess-a").show;
   const b = e.start({}, "sess-b").show;
-  a.checkpointed(e.plan("one"));
-  b.checkpointed(e.plan("two"));
+  void a.checkpointed(e.plan("one"));
+  void b.checkpointed(e.plan("two"));
   await Promise.all([a.idle(), b.idle()]);
   assert.notEqual(a.dir, b.dir);
   assert.equal(text(a, "plan.ruled.md"), A);
@@ -290,12 +290,12 @@ for (const [name, match] of steps) {
     const state = { on: false };
     fs.writeFileSync(e.plan(), A);
     const { show, traces } = e.start({ io: failing(match, "EIO", state) });
-    show.checkpointed(e.plan());
+    void show.checkpointed(e.plan());
     await show.idle();
     const before = fs.readFileSync(path.join(show.dir, "plan.json"), "utf8");
     fs.writeFileSync(e.plan(), B);
     state.on = true;
-    show.checkpointed(e.plan());
+    void show.checkpointed(e.plan());
     await show.idle();
     assert.equal(fs.readFileSync(path.join(show.dir, "plan.json"), "utf8"), before, "plan.json bytes");
     assert.deepEqual(traces.map((r) => [r.event, r.kind, r.errorKind]), [["show_error", "checkpoint", "EIO"]]);
@@ -307,7 +307,7 @@ for (const [name, match] of steps) {
     // the chain is not stalled: the next roll repairs (step 2 skips on ENOENT after a step-3 failure)
     state.on = false;
     fs.writeFileSync(e.plan(), C);
-    show.checkpointed(e.plan());
+    void show.checkpointed(e.plan());
     await show.idle();
     const j = json(show);
     assert.equal(text(show, "plan.ruled.md"), C);
@@ -336,7 +336,7 @@ test("show: an EPERM on rename is retried once after a delay, a second EPERM kee
   await show.idle();
   assert.deepEqual(seen, ["plan.json", "plan.json"]);
   assert.equal(json(show).v, 1);
-  assert.deepEqual(traces, []);
+  assert.deepEqual<Record<string, unknown>[]>(traces, []);
   const before = fs.readFileSync(path.join(show.dir, "plan.json"), "utf8");
   fs.writeFileSync(e.plan(), B);
   planJsonFails = 2;
@@ -389,7 +389,7 @@ test("show: a symlinked handoff plan is refused, path is cleared and the live pl
   assert.deepEqual(show.field(), { dir: show.dir });
   const files = fs.readdirSync(show.dir).flatMap((n) => (n === "pages" ? fs.readdirSync(path.join(show.dir, n)).map((p) => path.join(n, p)) : [n]));
   assert.equal(files.some((n) => fs.readFileSync(path.join(show.dir, n), "utf8").includes("not mine")), false);
-  show.checkpointed(hp); // a ruling point does not copy it either
+  void show.checkpointed(hp); // a ruling point does not copy it either
   await show.idle();
   assert.equal(fs.existsSync(path.join(show.dir, "plan.ruled.md")), false);
 });

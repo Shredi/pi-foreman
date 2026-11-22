@@ -160,7 +160,10 @@ test("PR watch end to end: policy check alone, then the full list pending, then 
     read = { snap: s, okAt };
     clock += 1000;
     const t = [...timers].reverse().find((x) => x.live);
-    if (t) (t.live = false), t.fn();
+    if (t) {
+      t.live = false;
+      t.fn();
+    }
     await new Promise((r) => setImmediate(r));
   };
   await tick(snap({ runs: [run("pr-policy", "passed")], required: REQ }), 2);

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { missingFloorTools, TOOL_FLOOR } from "../toolfloor.ts";
 import { r11Rig } from "./_r11rig.ts";
+import { strOf, strRaw } from "../strof.ts";
 
 type T = { after(fn: () => void | Promise<void>): void };
 
@@ -77,8 +78,8 @@ test("a floor tool that is also deferred is active before the hidden set is buil
   const all = ["read", "tool_search", "foreman_session_open", "subagent"];
   const r = await rigWith(t, { active: ["read", "tool_search"], all });
   assert.ok(r.active().includes("foreman_session_open"));
-  const names = String(r.rig.events("tools_deferred")[0]?.names ?? "").split(",");
-  assert.ok(names.includes("foreman_session_open"), `tools_deferred names: ${names}`);
+  const names = strOf(r.rig.events("tools_deferred")[0]?.names).split(",");
+  assert.ok(names.includes("foreman_session_open"), `tools_deferred names: ${strRaw(names)}`);
 });
 
 test("a child and plan mode leave the active set alone", async (t) => {

@@ -21,7 +21,7 @@ export function ownerSection(text: string): OwnerSection | null {
 
 const EXT = /\.(?:ts|tsx|js|mjs|cjs|py|md|json|ya?ml|toml|sh|css|html|lock|txt)$/i;
 const pathLike = (raw: string): boolean => {
-  const t = raw.replace(/^[("'<\[]+|[)"'>\],.;:!?]+$/g, "");
+  const t = raw.replace(/^[("'<[]+|[)"'>\],.;:!?]+$/g, "");
   if (!/[A-Za-z0-9]/.test(t)) return false;
   if (t.includes("/")) return /^(?:\/|\.{1,2}\/|~\/)/.test(t) || t.split("/").length > 2 || EXT.test(t);
   if (/^[A-Z][A-Za-z0-9]*\.js$/.test(t)) return false; // product names such as Node.js, Next.js
@@ -39,7 +39,7 @@ export function jargonHits(text: string, max = 3): string[] {
   for (const [n, line] of all.entries()) {
     if (fenced[n]) continue;
     for (const m of line.matchAll(/`[^`\n]+`/g)) add(m[0]);
-    for (const tok of line.split(/\s+/)) if (tok && pathLike(tok)) add(tok.replace(/^[("'<\[]+|[)"'>\],.;:!?]+$/g, ""));
+    for (const tok of line.split(/\s+/)) if (tok && pathLike(tok)) add(tok.replace(/^[("'<[]+|[)"'>\],.;:!?]+$/g, ""));
     for (const m of line.matchAll(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)) add(m[0]);
     for (const m of line.matchAll(/\b[a-z]{2,}(?:[A-Z][a-z0-9]+)+\b/g)) add(m[0]);
     for (const m of line.matchAll(/(?<![\w&])#\d+\b/g)) add(m[0]);

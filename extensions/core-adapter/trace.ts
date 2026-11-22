@@ -50,9 +50,9 @@ export function redactCommand(cmd: string): string {
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd
     .replace(/(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s*)?[^\s'"]+/gi, `$1${R}`)
-    .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`)
     .replace(/(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
-    .replace(/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
+    .replace(/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
     .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
     .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`) // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
@@ -79,7 +79,7 @@ export function scrubPaths(text: string): string {
   // null: not after a verb; else whether the verb's first operand (a pattern or script) is still to be kept
   let operand: null | { keepFirst: boolean } = null;
   let last = 0;
-  return text.replace(/[^\s'"`()<>\[\]{},;]+/g, (tok: string, at: number) => {
+  return text.replace(/[^\s'"`()<>[\]{},;]+/g, (tok: string, at: number) => {
     if (/[;<>\n]/.test(text.slice(last, at))) operand = null; // a shell separator or redirect ends the operands
     last = at + tok.length;
     if (/^[|&]+$/.test(tok)) {
@@ -99,7 +99,7 @@ export function scrubPaths(text: string): string {
       operand = { keepFirst: PATTERN_VERBS.has(t) };
       return tok;
     }
-    const pathLike = isOperand || /[\/\\]/.test(t) || t === "~" || file.test(t.replace(/(:\d+)+$/, ""));
+    const pathLike = isOperand || /[/\\]/.test(t) || t === "~" || file.test(t.replace(/(:\d+)+$/, ""));
     if (pathLike) return `[path]${core[2]}`;
     // `key=file.ext`: the value is a file name, the key stays
     const eq = t.indexOf("=");

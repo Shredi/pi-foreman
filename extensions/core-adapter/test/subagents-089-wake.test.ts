@@ -77,7 +77,7 @@ test("0.89 wake: a subagent-notify custom run resets no finish-refusal count", a
   const w = world(t, { ceremony: { default: "standard" } });
   const a = await w.adapter();
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [x] 1. done\n- [x] V. fresh-eyes verification passed\n");
-  const settle = (): Promise<unknown> => a.fire("agent_before_settle", { outcome: "completed", entries: [] });
+  const settle = async (): Promise<unknown> => a.fire("agent_before_settle", { outcome: "completed", entries: [] });
   const count = async (name: string): Promise<number> => (await w.traceEvents()).filter((e) => e.event === name).length;
   await settle();
   await settle();

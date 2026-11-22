@@ -140,7 +140,6 @@ test("main: a write into .git/hooks is left to the judge, into .git/config it me
 
 // ------------------------------------------------------------------ row 3, revision: the find/grep tools, glob roots, win32 roots
 
-const toolRun = (role: string, tool: string, input: Record<string, unknown>): GateResult => decide(role, tool, input, {}, roleRoots(role));
 
 test("the find and grep tools: / ~ the home dir and an ancestor of the workspace are judge-first for every role", () => {
   for (const role of ROLES) {

@@ -89,7 +89,7 @@ function ghOk(w: string[]): boolean {
   const pos = parseOpts(w.slice(3), spec, true);
   if (!pos) return false;
   if (key === "repo view") return pos.length <= 1 && pos.every((p) => REPO.test(p));
-  if (/ list$/.test(key)) return pos.length === 0;
+  if (key.endsWith(" list")) return pos.length === 0;
   if (pos.length > 1) return false;
   // ids; a pr may also be named by its branch (never a URL)
   return pos.every((p) => DIGITS.test(p) || (key.startsWith("pr ") && key !== "pr list" && BRANCH.test(p) && !p.startsWith("-")));

@@ -4,11 +4,13 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "noEmit": true,
-    "strict": false,
+    "strict": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*.ts", "setup/**/*.ts"]
+  "include": ["extensions/**/*.ts", "setup/**/*.ts"],
+  "exclude": ["node_modules", "extensions/core-adapter/test/judge-first-unknown*.test.ts"]
 }

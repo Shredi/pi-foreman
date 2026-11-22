@@ -2,7 +2,7 @@
 // Every test works in its own temp dir; none writes into a real store.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";

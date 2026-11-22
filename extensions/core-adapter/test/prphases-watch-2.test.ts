@@ -7,6 +7,7 @@ import { parsePhases, phasesStep } from "../prphases.ts";
 import type { PhaseRule } from "../prphases.ts";
 import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
+import { strRaw } from "../strof.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const A = "a".repeat(40);
@@ -146,7 +147,7 @@ test("a managed draft in a gated repository with only gate runs and confirmed no
     x.set(s);
     await x.tick();
   }
-  assert.ok(x.draftCalls.length > 0 && x.draftCalls.every((d) => d === false), `draft calls: ${x.draftCalls}`);
+  assert.ok(x.draftCalls.length > 0 && x.draftCalls.every((d) => d === false), `draft calls: ${strRaw(x.draftCalls)}`);
 });
 
 test("a pending-start watch sends `gate checks finished` exactly once", async () => {

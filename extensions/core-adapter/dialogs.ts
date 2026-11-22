@@ -4,6 +4,7 @@
 // The overlay family is decided at emit time from the raw command (`dialogFamily`) and kept in the existing `class` trace field; the trace
 // itself keeps only the redacted, path-scrubbed `command` (trace.ts), which is what the report prints as literal lines.
 import * as fs from "node:fs";
+import { strOf } from "./strof.ts";
 
 export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_refusal", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow", "checkpoint", "ask_user_question", "guard_ask", "drift_ask", "script"] as const;
 /** The families that are no blocking dialog: an ask the auto reviewer allowed without one, and a refusal. Everything else counts in `total`. */
@@ -53,20 +54,20 @@ export function dialogReport(traceFile: string): DialogReport {
     }
     if (rec.event === "auto_review_allow") {
       out.auto_review_allow.count++;
-      out.auto_review_allow.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
+      out.auto_review_allow.lines.push(typeof rec.command === "string" ? rec.command : strOf(rec.toolFamily));
       continue;
     }
     // the self-ruling refusal (index.ts guard record) is a block, not an overlay ask, and counts in its own family
     if (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") {
       out.self_ruling_refusal.count++;
-      out.self_ruling_refusal.lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
+      out.self_ruling_refusal.lines.push(typeof rec.command === "string" ? rec.command : strOf(rec.toolFamily));
       continue;
     }
     // R41 gate dialog (index.ts gateAsk): one record per owner dialog or round ruling wait, counted in the family of its command
     if (rec.event === "dialog" && rec.guard === "gate") {
       const fam = (DIALOG_FAMILIES as readonly string[]).includes(String(rec.class)) ? String(rec.class) : "other";
       out[fam].count++;
-      out[fam].lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
+      out[fam].lines.push(typeof rec.command === "string" ? rec.command : strOf(rec.toolFamily));
       continue;
     }
     if (rec.event === "dialog") {
@@ -81,13 +82,13 @@ export function dialogReport(traceFile: string): DialogReport {
     // a guard's ask dialog that a human answered (no-ui and child outcomes opened none here)
     if (rec.event === "ask" && (rec.decision === "approved" || rec.decision === "denied")) {
       out.guard_ask.count++;
-      out.guard_ask.lines.push(`${String(rec.guard ?? "")}:${String(rec.toolFamily ?? "")}`);
+      out.guard_ask.lines.push(`${strOf(rec.guard)}:${strOf(rec.toolFamily)}`);
       continue;
     }
     if (rec.event !== "overlay" || typeof rec.decision !== "string" || !rec.decision.startsWith("ask-")) continue;
     const fam = (DIALOG_FAMILIES as readonly string[]).includes(String(rec.class)) ? String(rec.class) : "other";
     out[fam].count++;
-    out[fam].lines.push(typeof rec.command === "string" ? rec.command : String(rec.toolFamily ?? ""));
+    out[fam].lines.push(typeof rec.command === "string" ? rec.command : strOf(rec.toolFamily));
   }
   return out;
 }

@@ -2,7 +2,6 @@
 // deny with comment, deny and stop), the no-UI deny. One decision-log record per decision; the log carries the shape, never the raw command.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";

@@ -102,7 +102,7 @@ async function ownerRig(_t: T, reply = V("unsure", "package-install")) {
   confirms.length = 0;
   selects.length = 0;
   await liveBlocked(shared, undefined); // the live file of an earlier case may still show its last dialog
-  shared.ctx.modelRegistry = registry(reply);
+  shared.ctx.modelRegistry = registry(reply) as never; // the shared rig types its stub registry as finding no model
   const start = shared.trace().length;
   return { ...shared, events: (name: string) => shared.trace().slice(start).filter((x) => x.event === name), confirms, selects };
 }

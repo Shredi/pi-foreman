@@ -62,7 +62,7 @@ const BLANK_RUN = /[\s\p{Zs}\p{Zl}\p{Zp}\u{2800}\u{3164}\u{115f}\u{1160}\u{ffa0}
 export function cleanDialogText(s: string): string {
   return String(s)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "")
-    .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "")
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/[^ -~]/g, (ch) => (isFormatChar(ch.charCodeAt(0)) ? " " : ch))
     .replace(FILLERS, " ")

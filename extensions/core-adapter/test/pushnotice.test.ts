@@ -202,7 +202,7 @@ test("notice: git -C other push and cd other && git push record the other cwd fo
   await n.d.onBash("git -C /other push origin a", " * [new branch]      a -> a", true, "/w");
   await n.d.onBash("cd /second && git push origin b", " * [new branch]      b -> b", true, "/w");
   await n.run();
-  assert.deepEqual(n.finds().map((c) => c.cwd).sort(), [path.resolve("/other"), path.resolve("/second")]);
+  assert.deepEqual(n.finds().map((c) => c.cwd).sort((a, b) => String(a).localeCompare(String(b))), [path.resolve("/other"), path.resolve("/second")]);
   assert.deepEqual(n.notes.sort(), ["a", "b"]);
 });
 
@@ -224,12 +224,12 @@ test("notice: CloseFlow starts the evaluation without waiting for it", () => {
     pushNotice: () => void log.push("notice-started"),
   };
   const flow = new CloseFlow(deps);
-  flow.request({ source: "herdr", file: "/x/r.md" }, { isIdle: () => true });
+  void flow.request({ source: "herdr", file: "/x/r.md" }, { isIdle: () => true });
   assert.ok(log.includes("notice-started"));
   assert.ok(log.includes("prompt"), "the close turn starts at once");
   assert.ok(log.indexOf("notice-started") < log.indexOf("prompt"));
   const refused = new CloseFlow({ ...deps, activeRuns: () => 1 });
   log.length = 0;
-  refused.request({ source: "herdr", file: "/x/r.md" }, { isIdle: () => true });
+  void refused.request({ source: "herdr", file: "/x/r.md" }, { isIdle: () => true });
   assert.ok(!log.includes("notice-started"), "a refused close starts nothing");
 });

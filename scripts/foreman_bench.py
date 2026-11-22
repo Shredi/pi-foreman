@@ -360,7 +360,8 @@ def _acc(out, model, u, p, role=None):
 
 
 def _req_usage(r):
-    return dict(zip(TOKEN_KINDS, (int(x or 0) for x in r[2:6])))
+    # zip strict=False: a short row pairs with what it has
+    return dict(zip(TOKEN_KINDS, (int(x or 0) for x in r[2:6]), strict=False))
 
 
 def cost_of(rec, prices):
@@ -843,7 +844,8 @@ def _fmt(s, nd=0):
 def _columns(head, lines):
     lines = [head] + lines
     widths = [max(len(str(l[i])) for l in lines) for i in range(len(head))]
-    return ["  ".join(str(c).ljust(w) for c, w in zip(l, widths)) for l in lines]
+    # zip strict=False: a short row pairs with what it has
+    return ["  ".join(str(c).ljust(w) for c, w in zip(l, widths, strict=False)) for l in lines]
 
 
 def format_summary(summary, first=None):

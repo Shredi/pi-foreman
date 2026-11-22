@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import {
   dueReasons, dueReminder, emptyState, findingsBlock, finishNeeds, HighStakes, highStakesConfig, hsEmpty, hsStateOfEntry, HS_RISKS, launchRefusal, mergeBaseOf, prRefusal, readyOverride,
-  reasonsText, repoKeyOf, required, reviewBaseOf, stakesTrace, taskLine, uncleared, unrevisedRefusal, used, FAIL_ENTRY, RUN_ENTRY, type HsLaunchInput, type HsRun, type HsState,
+  reasonsText, repoKeyOf, required, reviewBaseOf, stakesTrace, taskLine, uncleared, unrevisedRefusal, used, FAIL_ENTRY, type HsLaunchInput, type HsRun, type HsState,
 } from "../highstakes.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 

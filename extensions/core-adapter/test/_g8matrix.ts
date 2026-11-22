@@ -94,7 +94,7 @@ export const GAPS: Row[] = [
   { form: "ssh host", line: (g) => `ssh host ${w(g)}` },
   { form: "docker exec", line: (g) => `docker exec c ${w(g)}` },
   { form: "alias then call", line: (g) => `alias x='${w(g)}'; x` },
-  { form: "eval of a variable", line: (g) => `eval "$x"` },
+  { form: "eval of a variable", line: () => `eval "$x"` },
   { form: "powershell -Command", line: (g) => `powershell -Command "${w(g)}"` },
   { form: "cmd /c", line: (g) => `cmd /c ${w(g)}` },
   { form: "busybox applet", line: (g) => `busybox ${w(g)}` },

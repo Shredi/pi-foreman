@@ -38,7 +38,7 @@ function setup(t: { after: (f: () => void) => void }, now?: () => number) {
 }
 const run = async (flow: CloseFlow, wtFile: string): Promise<void> => {
   const ctx = { isIdle: () => true, shutdown: () => undefined };
-  flow.request({ source: "intercom-parent", file: wtFile, shown: wtFile, replyTo: "parent-1" }, ctx);
+  void flow.request({ source: "intercom-parent", file: wtFile, shown: wtFile, replyTo: "parent-1" }, ctx);
   flow.onInput(flow.closeText(), "extension");
   flow.onModelReply("stop");
   await flow.onSettled(ctx);

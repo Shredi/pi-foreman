@@ -23,7 +23,7 @@ function deps(over: Partial<SessionDeps> = {}): SessionDeps & { spawned: string[
     python: "/usr/bin/python3",
     spawner: async (_c: string, args: string[]) => (spawned.push(args), { code: 0, stdout: "handoff: x", stderr: "", timedOut: false }),
     send: async () => "sent",
-    confirm: async () => ((d.asked += 1), true),
+    confirm: async (): Promise<boolean> => ((d.asked += 1), true),
     spawned,
     asked: 0,
     ...over,

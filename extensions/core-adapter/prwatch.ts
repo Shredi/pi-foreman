@@ -1100,7 +1100,7 @@ export class PrWatches {
   }
   /** What the tracker's store says about `key` now (`down` without a store). Throws when the store reader does. */
   async stored(key: PrKey): Promise<StoreRead> {
-    return this.deps.storeEntry ? await this.deps.storeEntry(key) : { kind: "down" };
+    return this.deps.storeEntry ? this.deps.storeEntry(key) : { kind: "down" };
   }
   intervalSeconds(): number {
     return Math.round(this.deps.intervalMs() / 1000);

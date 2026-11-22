@@ -34,6 +34,7 @@ import { resolveBin, resolveGh } from "./ghbin.ts";
 import { pressureOutcome } from "./pressure.ts";
 import { WAKE_MESSAGE_TYPE } from "./usage.ts";
 import { WAITS_ENTRY, latestWaits, lostWaitsMessage, waitsEntry } from "./waitstate.ts";
+import { strOf } from "./strof.ts";
 
 export const WAIT_TOOL = "foreman_wait";
 /** The custom message type of the quiet line that ends a child wait taken by a notice inside a run (no turn cause: usage.ts causeOfCustom knows none). */
@@ -455,7 +456,7 @@ export class WaitRuntime {
   }
 
   cancel(id: string): boolean {
-    return this.cancelWith(id, "dropped");
+    return this.cancelWith(id);
   }
 
   /** The ids of the open critical pressure waits whose one relaunch argument equals `args` (deep JSON equality). */
@@ -468,7 +469,7 @@ export class WaitRuntime {
     return this.pressureIds(args).filter((id) => this.cancel(id));
   }
 
-  private cancelWith(id: string, how: "cancelled" | "dropped"): boolean {
+  private cancelWith(id: string): boolean {
     const e = this.drop(id);
     if (!e) return false;
     this.d.trace({ event: "wait", decision: "cancelled", toolFamily: e.kind });
@@ -499,7 +500,7 @@ export class WaitRuntime {
 
   /** Cancels every active wait (a close of the session); the cancelled ids. */
   cancelAll(): string[] {
-    return [...this.waits.keys()].filter((id) => this.cancelWith(id, "cancelled"));
+    return [...this.waits.keys()].filter((id) => this.cancelWith(id));
   }
 
   list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number; log?: string }[] {
@@ -539,7 +540,7 @@ export function ghRunView(runId: string, cwd: string): Promise<CiStatus> {
       if (err) return reject(new Error(String(stderr || "").trim() || err.message));
       try {
         const j = JSON.parse(String(stdout)) as Record<string, unknown>;
-        resolve({ status: String(j.status ?? ""), conclusion: String(j.conclusion ?? ""), url: String(j.url ?? "") });
+        resolve({ status: strOf(j.status), conclusion: strOf(j.conclusion), url: strOf(j.url) });
       } catch {
         reject(new Error("gh run view: unreadable JSON"));
       }

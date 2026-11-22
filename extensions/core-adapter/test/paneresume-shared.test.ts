@@ -52,7 +52,7 @@ function liveRig(t: { after(fn: () => void): void }) {
   t.after(() => rmTestTmp(root));
   return { agentDir: path.join(root, "agent"), cwd: path.join(root, "project") };
 }
-const NO = () => undefined;
+const NO = (): null => null;
 
 function task(cwd: string, session: string, id: string, extra: Record<string, unknown> = {}): void {
   const base = path.join(cwd, ".pi", "tasks", `${session}-4321`);

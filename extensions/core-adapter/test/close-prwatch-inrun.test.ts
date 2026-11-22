@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { CloseFlow } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
+import { strRaw } from "../strof.ts";
 
 const REFUSED = "pi-foreman: close refused: PR #7 open and watched (wait for the merge, or pr_unwatch)";
 const req = { source: "intercom-parent" as const, file: "/x/.workflow/r.md", replyTo: "parent-1" };
@@ -19,7 +20,7 @@ function rig(state: "open" | "merged") {
     retro: async () => "",
     reply: (to, t) => void log.push(`reply:${to}:${t}`),
     notify: (t) => void log.push(`notify:${t}`),
-    trace: (r) => void log.push(`trace:${r.decision}`),
+    trace: (r) => void log.push(`trace:${strRaw(r.decision)}`),
     markCause: () => void log.push("markCause"),
     writeStub: () => undefined,
     exists: () => true,

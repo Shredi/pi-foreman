@@ -115,7 +115,7 @@ test("prHostLabel: templates, explicit, none", () => {
 test("prpack: two same-turn pr_watch calls for one PR give one watch and one refusal; shutdown clears", async () => {
   const h = setup();
   const [a, b] = await Promise.all([h.call("pr_watch", { number: 7 }), h.call("pr_watch", { number: 7 })]);
-  assert.deepEqual([a.details.decision, b.details.decision].sort(), ["duplicate", "watching"]);
+  assert.deepEqual([a.details.decision, b.details.decision].sort((x, y) => String(x).localeCompare(String(y))), ["duplicate", "watching"]);
   assert.equal(h.watches.size(), 1);
   h.watches.clear();
   assert.equal(h.watches.size(), 0);

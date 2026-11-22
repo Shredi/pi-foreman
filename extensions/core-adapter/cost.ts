@@ -65,7 +65,7 @@ export function loadPrices(pkgRoot: string): PriceTable | null {
 export function tableRate(table: PriceTable | null | undefined, model: unknown, promptTokens: number, longWrite = false): Rate | null {
   if (!table || typeof model !== "string" || !model) return null;
   const bare = model.slice(model.lastIndexOf("/") + 1);
-  let row = table.models[bare];
+  let row: PriceRow | undefined = table.models[bare];
   if (!row) {
     const key = Object.keys(table.models).filter((k) => bare.startsWith(k + "-")).sort((a, b) => b.length - a.length)[0];
     row = key ? table.models[key] : undefined;

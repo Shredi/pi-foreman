@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { findingsDirOf } from "./findings.ts";
+import { strOf } from "./strof.ts";
 
 /** A row of the findings store, as far as the rounds need it. */
 export interface StoreRow {
@@ -122,7 +123,7 @@ export function roundsOf(rows: readonly StoreRow[], filter: RoundsFilter = {}): 
     const ts = timeOf(r.ts);
     const have = runs.get(key) ?? { ws, branch, run, plan, fail: false, highStakes: false, ts, seq: r.seq, sessions: new Set<string>() };
     if (ts && (!have.ts || ts < have.ts)) have.ts = ts;
-    if (String(r.verdict ?? "").toUpperCase() === "FAIL") have.fail = true;
+    if (strOf(r.verdict).toUpperCase() === "FAIL") have.fail = true;
     if (gate === "high-stakes") have.highStakes = true;
     const session = str(r.session);
     if (session) have.sessions.add(session);

@@ -3,6 +3,8 @@
 // path (hideStaleNotice, index.ts message_end) and the model-context filter (dropEndedRunNotices, index.ts context).
 // `admit` (shown once per runId and state, never after the run ended) has no production caller; notices.test.ts calls it.
 
+import { strOf, strRaw } from "./strof.ts";
+
 export class AttentionNotices {
   private readonly seen = new Set<string>();
   private readonly ended = new Set<string>();
@@ -62,7 +64,7 @@ export function dedupeToolCallNotices<M>(messages: readonly M[]): { messages: M[
   for (const m of messages) {
     const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
     if (ev && typeof ev.runId === "string" && typeof ev.toolCallId === "string" && ev.toolCallId) {
-      const key = `${ev.runId}:${ev.reason ?? ""}:${ev.toolCallId}`;
+      const key = `${ev.runId}:${strOf(ev.reason)}:${strRaw(ev.toolCallId)}`;
       if (seen.has(key)) continue;
       seen.add(key);
     }
@@ -93,7 +95,7 @@ export function staleNoticeRunIds<M>(messages: readonly M[], endedRunIds: Readon
   const runIds: string[] = [];
   for (const m of messages) {
     const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
-    if (!ev || typeof ev.runId !== "string" || !(endedRunIds.has(ev.runId) || suppressed.has(`${ev.runId}:${ev.toolCallId}`) || repeat?.(ev) === true)) return null;
+    if (!ev || typeof ev.runId !== "string" || !(endedRunIds.has(ev.runId) || suppressed.has(`${ev.runId}:${strRaw(ev.toolCallId)}`) || repeat?.(ev) === true)) return null;
     runIds.push(ev.runId);
   }
   return runIds;
@@ -107,7 +109,7 @@ export function dropSuppressedNotices<M>(messages: readonly M[], suppressed: Rea
   if (suppressed.size === 0) return null;
   const out = messages.filter((m) => {
     const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
-    return !(ev && typeof ev.runId === "string" && suppressed.has(`${ev.runId}:${ev.toolCallId}`));
+    return !(ev && typeof ev.runId === "string" && suppressed.has(`${ev.runId}:${strRaw(ev.toolCallId)}`));
   });
   return out.length === messages.length ? null : { messages: out, dropped: messages.length - out.length };
 }

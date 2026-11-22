@@ -26,7 +26,6 @@ const markV = async (a: Rig): Promise<string> => {
   const r = (await a.tool("foreman_ledger")!.execute("id", { action: "mark", items: ["V"] }, undefined, undefined, a.ctx)) as { content: { text: string }[]; isError?: boolean };
   return r.content.map((c) => c.text).join("\n");
 };
-const STALE = /revised after the last PASS|built, no review yet|last verdict FAIL/;
 
 async function two(t: Parameters<typeof setup>[0]) {
   const s = await setup(t);

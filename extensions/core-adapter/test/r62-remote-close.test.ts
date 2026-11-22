@@ -109,13 +109,13 @@ function flowRig(waits = 0) {
 test("replies: a remote-parent close answers through the notice command, never reply(); a refusal carries the raw reason", async () => {
   const r = flowRig();
   const file = "/x/.workflow/r.md";
-  r.flow.request({ source: "remote-parent", file }, r.ctx);
+  void r.flow.request({ source: "remote-parent", file }, r.ctx);
   r.flow.onInput(closePrompt(file), "extension");
   r.flow.onModelReply("stop");
   await r.flow.onSettled(r.ctx);
   assert.deepEqual(r.log.filter((l) => /^(remote|reply|shutdown)/.test(l)), ["remote:closed:ready", "shutdown"]);
   const busy = flowRig(1);
-  busy.flow.request({ source: "remote-parent", file }, busy.ctx);
+  void busy.flow.request({ source: "remote-parent", file }, busy.ctx);
   assert.deepEqual(busy.log.filter((l) => /^(remote|reply)/.test(l)), [expect("1 foreman_wait pending (w1 timer); cancel or let them finish, then close again")]);
   busy.flow.refuse("because", "remote-parent");
   assert.ok(busy.log.includes("remote:refused:because"));

@@ -720,7 +720,8 @@ def compose(snapshot, width, joins=None, lead=DEFAULT_LEAD, self_panes=None, lay
             "fm_block_s": str(int(blocked_s)) if blocked_s is not None else None,
             "fm_sort": sort,
         }
-        tokens.update(zip(PR_KEYS, _dots(place, node.get("dots"), budget, aux)))
+        # zip strict=False: fewer dots than keys leaves the rest unset
+        tokens.update(zip(PR_KEYS, _dots(place, node.get("dots"), budget, aux), strict=False))
         out[pane] = {k: _cap(tokens[k]) for k in KEYS}
 
     for n, sort, place in tree_rows(roots, joins, tree):
@@ -1253,8 +1254,8 @@ class Publisher:
             self.failures += 1
             if self.failures >= SOCKET_FAILURES_MAX:
                 log("herdr socket failed %d times in a row, exiting" % self.failures)
-                raise SystemExit(1)
-            raise HerdrError(str(exc))
+                raise SystemExit(1) from None
+            raise HerdrError(str(exc)) from exc
         self.failures = 0
         return res
 

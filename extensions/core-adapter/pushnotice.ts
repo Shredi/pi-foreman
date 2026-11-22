@@ -166,7 +166,7 @@ export interface PushNoticeDeps {
   run(op: PrOp, args: Record<string, unknown>, cwd?: string): Promise<SafeOpOutcome>;
   now?(): number;
   /** The branch of a quiet push (default: the checkout's branch when it has an upstream). */
-  quietBranch?(cwd: string): Promise<string>;
+  quietBranch?: (cwd: string) => Promise<string>;
   /** The configured base branch (safety.ops.baseBranch), if any. */
   baseBranch?(): string | null;
   /** Is the pushed branch in the base branch? null: cannot tell (no ref), no notice. */

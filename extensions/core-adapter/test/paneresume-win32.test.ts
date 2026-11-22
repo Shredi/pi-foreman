@@ -42,7 +42,7 @@ function world(t: TestContext, socket: string | null = "/s/sock") {
   writeNote(agentDir, note);
   fs.mkdirSync(path.join(agentDir, "pi-foreman", "state", "live"), { recursive: true });
   const live = (o: Record<string, unknown> = {}): void =>
-    void fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${SID}.json`), JSON.stringify({ state: "working", hcTerminal: "t1", pid: 4242, startedAt: new Date(startedAt).toISOString(), heartbeatAt: new Date(Date.now() - 5000).toISOString(), cwd, ...o }));
+    fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${SID}.json`), JSON.stringify({ state: "working", hcTerminal: "t1", pid: 4242, startedAt: new Date(startedAt).toISOString(), heartbeatAt: new Date(Date.now() - 5000).toISOString(), cwd, ...o }));
   live();
   return { root, agentDir, cwd, sessionFile, note, startedAt, live };
 }

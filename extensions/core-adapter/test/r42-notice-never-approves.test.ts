@@ -98,7 +98,7 @@ after(async () => {
   syncBuiltinESMExports();
 }, { timeout: 20_000 });
 
-test("a pending gate ask (the child's ask in the parent's pane) stays pending after a notice for another child; no ruling is written", async (t) => {
+test("a pending gate ask (the child's ask in the parent's pane) stays pending after a notice for another child; no ruling is written", async () => {
   selects.length = 0;
   sent.length = 0;
   const r = shared;

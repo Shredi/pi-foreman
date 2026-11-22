@@ -459,7 +459,7 @@ def cleanup(entries, state, sid, ops_cfg, auto_clean, dry_run):
     slots = [i for i, e in enumerate(entries) if e["kind"] == "worktree"]
     ordered = sorted((entries[i] for i in slots), key=lambda e: -len(os.path.realpath(e["path"]).split(os.sep)))
     entries = list(entries)
-    for i, e in zip(slots, ordered):
+    for i, e in zip(slots, ordered, strict=True):
         entries[i] = e
     recorded = {key(e["path"]) for e in entries if e["kind"] == "worktree"}
     checked, inners = {}, {}  # key -> (reason, chk) of a worktree entry; key -> its manifest-recorded nested entries

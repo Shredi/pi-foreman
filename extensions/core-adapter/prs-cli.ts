@@ -62,7 +62,7 @@ export interface PollResult {
 export interface PollDeps {
   agentDir: string;
   pkgRoot: string;
-  now(): number;
+  now: () => number;
   /** Resolves Python for the given python.path (null: none); no workspace check. */
   resolve(configPath: string | null): Promise<PythonResolution>;
   loadConfig(python: string | null): Promise<MergedConfig>;
@@ -73,7 +73,7 @@ export interface PollDeps {
   githubHosts?(config: Json): GithubHosts;
   deadlineMs?: number;
   /** Runs one PR source (prsources.ts runSource); absent: no source runs. */
-  runSource?(cfg: SourceCfg, ctx: PrContext): Promise<SourceResult>;
+  runSource?: (cfg: SourceCfg, ctx: PrContext) => Promise<SourceResult>;
   /** A trace emitter for the loaded config (`pr_source` events); absent: none. */
   trace?(config: Json): (rec: Record<string, unknown>) => void;
 }
@@ -411,7 +411,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
 async function sourceStep(deps: PollDeps, sx: SourceEnv, pick: TrackedPr[], polls: WatchPoll[], before: Record<string, StateEntry>, prs: Record<string, StateEntry>, newComments: CommentsDoc["prs"], deadline: number, reclass: (k: string, repo: string, snap: StoredSnap) => StoredSnap): Promise<void> {
   if (sx.cfgs.length === 0) {
     // no source configured: nothing of an earlier run stays
-    for (const [k, e] of Object.entries(prs)) if (e.sources) delete e.sources;
+    for (const e of Object.values(prs)) if (e.sources) delete e.sources;
     for (const c of Object.values(newComments)) if (c.sources) delete c.sources;
     return;
   }
