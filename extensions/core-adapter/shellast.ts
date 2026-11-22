@@ -1366,8 +1366,6 @@ const RUNS_FILE_VARS = new Set(["BASH_ENV", "ENV"]);
 const CLEAN_ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
 /** Wrappers a builtin hides behind (`command read N`). */
 const BUILTIN_WRAPPERS = new Set(["command", "builtin", "time"]);
-/** Wrappers an `env` layer may sit behind (`timeout 5 env BASH_ENV=x bash -c ..`). */
-const ENV_BEHIND = new Set(["timeout", "nice", "nohup", "command", "builtin", "time", "exec", "stdbuf", "setsid", "xargs", "watch", "flock", "ionice", "busybox", "chroot", "unbuffer", "parallel", "sudo", "doas"]);
 const ARITH_ASSIGN = /^(?:\*\*|<<|>>|[-+*/%&|^])?=$/;
 /** Variables bash evaluates an assigned value of as arithmetic, like a `declare -i` name. */
 const INT_SPECIALS = ["OPTIND", "OPTERR", "SECONDS", "RANDOM", "LINENO", "HISTCMD"];
@@ -1675,32 +1673,19 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
         }
         const name = words.length ? baseName(words[0]) : "";
         const args = words.slice(1);
-        // each `env` layer of the wrapper chain (`env env ..`, `timeout 5 env ..`) has its settings read, from the word after it
-        for (let k = 0; k < words.length; ) {
-          const layer = baseName(words[k]);
-          if (layer === "env") {
-            let i = k + 1;
-            for (; i < words.length; i++) {
-              const a = words[i];
-              if (/^-[A-Za-z]*S|^--split-string/.test(a)) {
-                structural();
-                continue;
-              }
-              if (/^(?:-[A-Za-z]*[uCP]|--unset|--chdir)$/.test(a)) i++;
-              else if (a.startsWith("-")) continue;
-              else if (a.includes("=")) {
-                const m = CLEAN_ASSIGN.exec(a);
-                if (m) bind(m[1], "text");
-                // `env BASH_ENV=x bash -c ..` makes the wrapped shell read a startup file like a prefix assignment does; a name that is no shell identifier (an exported function) may rebind anything
-                if (!m || RUNS_FILE_VARS.has(m[1])) structural();
-              } else break;
-            }
-            k = i;
-          } else if (ENV_BEHIND.has(layer)) {
-            const j = words.findIndex((w, i) => i > k && baseName(w) === "env");
-            if (j < 0) break;
-            k = j;
-          } else break;
+        // an `env` behind another wrapper is read by the walker's `env` case (it sets harnessRebound), not here
+        if (name === "env") {
+          for (let i = 0; i < args.length; i++) {
+            const a = args[i];
+            const m = CLEAN_ASSIGN.exec(a);
+            if (m) {
+              bind(m[1], "text");
+              // `env BASH_ENV=x bash -c ..` makes the wrapped shell read a startup file like a prefix assignment does
+              if (RUNS_FILE_VARS.has(m[1])) structural();
+            } else if (/^-[A-Za-z]*S|^--split-string/.test(a)) structural();
+            else if (/^(?:-[A-Za-z]*[uCP]|--unset|--chdir)$/.test(a)) i++;
+            else if (!a.startsWith("-")) break;
+          }
         }
         // fail closed: a plain argument that is a variable name may be bound by the command (`wait -p N`, `compgen -V N`); a subscript that assigns may bind any name
         // an option with its name attached (`wait -pHOME`) counts too: the tail after the leading letters
