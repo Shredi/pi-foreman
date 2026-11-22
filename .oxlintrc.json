@@ -31,13 +31,5 @@
     "typescript/no-redundant-type-constituents": "error",
     "typescript/no-meaningless-void-operator": "error",
     "typescript/switch-exhaustiveness-check": "error"
-  },
-  "ignorePatterns": [
-    // running round judge-first-unknown, remove after it merges:
-    "extensions/core-adapter/defaults.ts",
-    "extensions/core-adapter/floors.ts",
-    "extensions/core-adapter/test/gate-read-relax-npx.test.ts",
-    "extensions/core-adapter/test/r2-self-ruling-source.test.ts",
-    "extensions/core-adapter/test/judge-first-unknown*.test.ts"
-  ]
+  }
 }

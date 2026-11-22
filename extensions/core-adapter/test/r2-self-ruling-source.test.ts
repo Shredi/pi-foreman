@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
@@ -436,7 +435,7 @@ test("F1 a heredoc or here-string that names the ruling by its full path is refu
 // F2: one whole-run join of the literals of inline code.
 test("F2 a name joined from a long run of literals is still read", { skip: posixOnly }, () => {
   const r = rig();
-  const pieces = (name: string): string => [...name].map((c) => `'${c}'`).join("+");
+  const pieces = (name: string): string => Array.from(name).map((c) => `'${c}'`).join("+");
   for (const name of ["ruling.md", "brief-a.md"]) {
     assert.equal(run(r, `python3 -c "open(${pieces(name)},'w')"`, "bash", r.H), SELF_RULING_REASON, `${name} in ${name.length} pieces`);
   }

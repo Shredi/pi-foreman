@@ -191,7 +191,7 @@ test("outer-line state reaches the nested segments as harnessRebound", { skip: p
   for (const l of NESTED) {
     const segs = parseShell(l, { cwd: wt, platform: "linux" }).filter((x) => x.program === "rm" || x.program === "echo");
     assert.ok(segs.length > 0, l);
-    for (const sg of segs) assert.deepEqual([...sg.harnessRebound].sort(), ["FOREMAN_OUT", "FOREMAN_SCRATCH"], l);
+    for (const sg of segs) assert.deepEqual([...(sg.harnessRebound ?? [])].sort(), ["FOREMAN_OUT", "FOREMAN_SCRATCH"], l);
   }
   for (const l of ["IFS=/; echo $FOREMAN_OUT", "declare IFS=/; echo $FOREMAN_OUT", "export IFS=/; echo $FOREMAN_OUT", "f(){ local IFS=/; }; echo $FOREMAN_OUT", "IFS=/ read a; echo $FOREMAN_OUT"]) {
     assert.deepEqual(harnessRebound(l).at(-1)?.slice().sort(), ["FOREMAN_OUT", "FOREMAN_SCRATCH"], l);

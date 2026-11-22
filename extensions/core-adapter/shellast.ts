@@ -264,13 +264,11 @@ function wordOf(w: Word, vars?: Map<string, string | undefined>): W {
   };
   // the literal text after the last expansion, unquoted as `out` is: `$V/bin/r"m"` has the tail `/bin/rm` (a computed command word still names its program by it)
   let tail = "";
-  let expanded = false;
   // a glob, a substitution or another computed part: the word names no program by its tail (`$(npm root -g)/git` stays a computed command word)
   let computed = false;
   const brk = (r: OpaqueReason, comp = false): void => {
     note(r);
     tail = "";
-    expanded = true;
     if (comp) computed = true;
   };
   const ref = (name: string): void => {

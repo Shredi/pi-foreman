@@ -3,15 +3,14 @@
 // returns null and falls through to the review. Rule names: `default-<name>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
+import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { BRACE_LIMIT, READ_PROGS, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, nestedSegments, remoteCommand, secretPath, unknownTargetDelete } from "./floors.ts";
+import { BRACE_LIMIT, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments, remoteCommand, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
-import { webReadAllow } from "./webread.ts";
 import { carryFacts, type ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
 
@@ -89,7 +88,7 @@ function isRoleLaunch(input: unknown): boolean {
   return typeof i.agent === "string" && LAUNCH_ROLES.has(i.agent);
 }
 
-const quote = (w: string): string => (/^[A-Za-z0-9_.\/,:@%+=^-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
+const quote = (w: string): string => (/^[A-Za-z0-9_./,:@%+=^-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
 
 /** The effect context of the session: the worktree root, scratch, tmp (when allowed) and the extra read roots of its role. */
 export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): EffectCtx {
@@ -156,7 +155,7 @@ export function folderShellRelaxes(c: DangerCall, env: DangerEnv): boolean {
   return (c.segments ?? []).some((s) => s.opaque === null && s.program !== "" && writeTargets(s).some((w) => !SINK.has(w) && !nullDevice(env.platform, w) && s.cwd !== null && inAutoFolder(env, w, s.cwd)));
 }
 
-const NAME = /^[A-Za-z0-9._\/-]+$/;
+const NAME = /^[A-Za-z0-9._/-]+$/;
 const noDots = (w: string): boolean => !w.startsWith("-") && !w.includes("..") && !w.includes("//");
 
 /** Operands of fetch and pull: nothing, `origin`, or `origin <name>` (no colon refspec). */
@@ -312,10 +311,10 @@ const GH_CMDS: Record<string, ReadonlySet<string>> = {
 const GH_FLAGS = new Set(["--log", "--log-failed", "--name-only", "--paginate", "-i", "--include", "--comments"]);
 const GH_VALUES = new Set(["-R", "--repo", "--json", "-q", "--jq", "-L", "--limit", "-b", "--branch", "-s", "--state", "--author", "--job", "-j", "-n", "--name", "-D", "--dir", "--page", "--per-page"]);
 const JQ_BAD = /env|import|include|input/i;
-const POSITIONAL = /^[A-Za-z0-9_.\/#:@-]+$/;
+const POSITIONAL = /^[A-Za-z0-9_./#:@-]+$/;
 const API_FIELD_OPTS = new Set(["-f", "-F", "--field", "--raw-field"]);
 const API_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const API_VALUE = /^[A-Za-z0-9_.,:\/#-]*$/;
+const API_VALUE = /^[A-Za-z0-9_.,:/#-]*$/;
 const API_QUERY = /^[A-Za-z0-9_ {}():,"]+$/;
 const API_WRITE_WORD = /mutation|subscription/i;
 
@@ -364,7 +363,7 @@ function ghDefault(prog: string, argv: string[], cwd: string, ec: EffectCtx): bo
       if (val === null) return false;
       if ((w === "-q" || w === "--jq") && JQ_BAD.test(val)) return false;
       if (w === "-D" || w === "--dir") dir = val;
-      else if (w !== "-q" && w !== "--jq" && !/^[A-Za-z0-9_.,\/:@#-]*$/.test(val)) return false;
+      else if (w !== "-q" && w !== "--jq" && !/^[A-Za-z0-9_.,/:@#-]*$/.test(val)) return false;
       continue;
     }
     if (w.startsWith("-") || !POSITIONAL.test(w)) return false;
@@ -520,23 +519,7 @@ function positionals(argv: string[], valued: ReadonlySet<string> = new Set()): s
 const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
 const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "bg_run", "powershell"]);
 
-/** An operand that names another machine: `host:path`, `user@host:path`, `ssh://`, `rsync://`. */
-const remoteOperand = (w: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(w) || (!w.startsWith("-") && !/^[A-Za-z]:[\\/]/.test(w) && /^(?:[^@\s/:]+@)?[^\s/:@]+:/.test(w));
-
-const KUBE = new Set(["kubectl", "oc"]);
-const KUBE_VALUED = new Set(["-n", "--namespace", "--context", "--kubeconfig", "-s", "--server", "--cluster", "--user", "-l", "--selector", "-o", "--output"]);
-const KUBE_READ = new Set(["get", "describe", "logs", "explain", "version"]);
-const SYSTEMD_READ = new Set(["status", "list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "show", "is-active", "is-enabled", "is-failed", "cat"]);
-const LAUNCHCTL_READ = new Set(["list", "print", "print-disabled", "blame", "version", "help", "error"]);
-const CLOUD = new Set(["gcloud", "aws", "az", "flyctl", "fly", "vercel", "netlify", "wrangler"]);
-const CLOUD_BARE = new Set(["flyctl", "fly", "vercel", "netlify", "wrangler"]);
-const CLOUD_READ = new Set(["describe", "get", "list", "ls", "show", "logs", "status", "whoami"]);
-const CLOUD_WRITE = /^(?:delete|rm|remove|create|put|update|deploy|publish|push|apply|terminate|start|stop|run|invoke|cp|mv|sync|set|add|attach|detach|reboot|scale|promote|rollback|destroy|launch|import|up|down|restart|exec|ssh)$|^(?:delete|create|put|update|terminate|start|stop|run|invoke|remove)-/;
-const HELPFLAG = (a: string[]): boolean => a.some((w) => /^(?:--help|-h|--version|-v|-V|version|help)$/.test(w));
-
 const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B", "--base", "-H", "--head", "-t", "--title", "--body", "-q", "--jq", "--json", "-L", "--limit", "-s", "--state", "-a", "--assignee", "-l", "--label", "-m", "--milestone", "-A", "--author", "-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "--template", "-D", "--dir", "-n", "--name", "-j", "--job", "--page", "--per-page", "--cache", "-p"]);
-const GH_SAFE = new Set(["pr create", "pr view", "pr list", "pr diff", "pr checks", "pr status", "issue view", "issue list", "issue status", "label list", "repo view", "repo clone", "run view", "run list", "run watch", "run download", "release view", "release list", "release download", "auth status", "config get", "config list"]);
-const GLAB_SAFE = new Set(["mr create", "mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "label list", "release view", "release list", "repo view", "repo clone", "auth status", "config get"]);
 
 /** What the flags of a `gh api` / `glab api` call say; one parser for the dangerous class and the built-in read allow. */
 export interface ApiFlags {
@@ -578,56 +561,6 @@ export function apiFlags(a: string[]): ApiFlags {
     }
   }
   return f;
-}
-
-/** `gh api` / `glab api` writes: a last method other than GET, a method-override header other than GET / HEAD, or fields / input (which make gh send a POST). */
-function apiWrites(a: string[], graphql = false): boolean {
-  const f = apiFlags(a);
-  if (f.override !== null && f.override !== "GET" && f.override !== "HEAD") return true;
-  if (graphql) return f.method !== null && f.method !== "GET" && f.method !== "POST" ? true : !graphqlRead(f);
-  if (f.method !== null) return f.method !== "GET";
-  return f.fields || f.input;
-}
-
-/**
- * A `gh api graphql` call is a read when its query is a literal `-f|-F|--field|--raw-field query=<text>` without the word `mutation`. A query from a
- * file (`--input`, `query=@file`) or no literal query is opaque, so it counts as a write.
- */
-function graphqlRead(f: ApiFlags): boolean {
-  const query = f.query;
-  return !f.input && query !== null && query !== "" && !query.startsWith("@") && !/^\$|mutation/i.test(query);
-}
-
-const METHOD_READ = new Set(["GET", "HEAD"]);
-
-const PKG = new Set(["npm", "pnpm", "yarn", "bun"]);
-const PKG_VERBS = new Set(["install", "i", "ci", "add", "uninstall", "remove", "rm", "un"]);
-const SYS_PKG = new Set(["apt", "apt-get", "dnf", "yum", "choco", "winget", "scoop"]);
-const SYS_VERBS = new Set(["install", "remove", "uninstall", "purge", "upgrade", "autoremove", "reinstall", "erase", "add"]);
-const BREW_READ = new Set(["list", "ls", "info", "search", "outdated", "deps", "uses", "leaves", "doctor", "config", "--prefix", "--version", "--cellar", "--repository"]);
-
-/**
- * A8: `npx <bin>` that runs a bin already installed locally: the segment cwd is known and `node_modules/.bin/<bin>` exists under the nearest ancestor of the
- * cwd holding a `package.json` (npm's local prefix). No `-p`/`--package`, no `@version`, no `--yes`, no path-like bin: it runs what is installed, never a download.
- */
-function localNpx(s: ShellSegment): boolean {
-  if (s.cwd === null || s.wrappers.length > 0) return false;
-  let k = 0;
-  while (s.argv[k]?.startsWith("-")) {
-    if (!["--no", "--no-install", "--ignore-existing", "-q", "--quiet"].includes(s.argv[k])) return false;
-    k++;
-  }
-  const bin = s.argv[k];
-  if (!bin || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(bin)) return false;
-  let dir = path.resolve(s.cwd);
-  for (;;) {
-    if (fs.existsSync(path.join(dir, "package.json"))) break;
-    const up = path.dirname(dir);
-    if (up === dir) return false;
-    dir = up;
-  }
-  const bins = path.join(dir, "node_modules", ".bin");
-  return [bin, `${bin}.cmd`].some((n) => fs.existsSync(path.join(bins, n)));
 }
 
 /** The git subcommand and its words, past the global options. */
@@ -703,9 +636,6 @@ function gitBranchListMode(rest: string[]): boolean {
   }
   return mode && (pos === 0 || list);
 }
-
-const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
-const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
 /**
  * `git branch -d|-D <b>` with exactly one plain branch name, no other flag: allowed when `<b>` is merged (`facts.branchMerged`, `-d` and `-D` alike), is not
@@ -802,20 +732,12 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return rest[0] === "expire" || (child && rest[0] === "delete");
     case "gc":
       return flag(/^--prune(?:=|$)/);
+    case undefined:
     default:
       return false;
   }
 }
 
-/** A path below the harness folder the session itself works in: its handoff dirs, its scratch dirs, and the wait folder `<agent dir>/pi-foreman/state/wait` (wait.ts). */
-function sanctionedHarnessPath(abs: string, env: DangerEnv): boolean {
-  const r = env.roots;
-  const wait = [env.floor?.agentDir, env.floor?.home ? path.join(env.floor.home, ".pi", "agent") : undefined].filter((x): x is string => !!x).map((a) => path.join(a, "pi-foreman", "state", "wait"));
-  const dirs = [...r.handoffs, ...(r.openedHandoffs ?? []), ...(r.childHandoff ? [r.childHandoff] : []), ...(r.ownHandoff ? [r.ownHandoff] : []), ...(r.childHandoffs ?? []), ...r.scratch, ...wait];
-  return dirs.some((d) => rootHolds(d, abs, env.platform, r.realpath, r.worktree));
-}
-
-const DETACH = new Set(["nohup", "setsid", "disown"]);
 function injectSeg(s: ShellSegment): boolean {
   return injection(s, progOf(s)) !== null;
 }
@@ -900,7 +822,7 @@ function inlineCodeAt(s: ShellSegment): number {
 function inlineCodeAts(s: ShellSegment): number[] {
   const p = progOf(s);
   if (p === "deno") return s.argv[0] === "eval" ? [0] : [];
-  const key = /^python/.test(p) ? "python" : p.replace(/[0-9.]+$/, "");
+  const key = p.startsWith('python') ? "python" : p.replace(/[0-9.]+$/, "");
   const re = CODE_FLAG[key];
   if (!re) return [];
   const at: number[] = [];
@@ -956,7 +878,7 @@ function programTargets(s: ShellSegment): WriteTarget[] {
       const files = operands(a, new Set(["-e", "-f", "--expression", "--file"])).filter((w) => w !== "");
       if (scripts.length === 0 && optValues(a, ["-f"], ["--file"]).length === 0 && files.length > 0) scripts.push(files.shift() as string);
       // sed takes any unambiguous prefix of a long option (`--in`, `--in-pl=.bak`): every prefix of `--in-place` from `--i` on is it
-      const inPlace = a.some((w) => (/^--i/.test(w) && "--in-place".startsWith(w.split("=")[0])) || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
+      const inPlace = a.some((w) => (w.startsWith('--i') && "--in-place".startsWith(w.split("=")[0])) || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
       const wfiles: string[] = [];
       for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
       return named([...(inPlace ? files : []), ...wfiles]);
@@ -1000,7 +922,7 @@ function programTargets(s: ShellSegment): WriteTarget[] {
       const out = optValues(a, ["-o"], ["--output"]);
       const files = operands(a, new Set(["-d", "--directory", "-o", "--output", "-i", "--input", "-r", "--reject-file", "-p", "--strip", "-B", "-V", "-Y", "-z", "-F"]));
       // `--dry-run` (any prefix from `--dry`) changes no file: no implicit write of the cwd
-      const dry = a.some((w) => /^--dry/.test(w) && "--dry-run".startsWith(w));
+      const dry = a.some((w) => w.startsWith('--dry') && "--dry-run".startsWith(w));
       return [...(dir.length ? named(dir) : dry ? [] : implicitCwd()), ...named([...out, ...files])];
     }
     case "rsync": {
@@ -1268,8 +1190,6 @@ export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
   }
   return false;
 }
-
-const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
 /**
  * The judge-first list: calls the judge reads before they run (a clear runs, anything else asks the owner, or a child's parent). A call this list and the

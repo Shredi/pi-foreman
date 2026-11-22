@@ -26,7 +26,7 @@ const roots = (role: Role): GateRoots => ({
   worktree: wt, scratch: [scr, out], out, tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], childHandoff: handoff,
   child: true, role, tmpAccess: false, ...(role === "reviewer" ? { roundReadOnly: true } : {}),
 });
-type Res = { allow?: boolean; block?: boolean } | undefined;
+type Res = ({ allow?: boolean; block?: boolean } & { rule?: string }) | undefined;
 const gate = (command: string, role: Role): { result: Res; danger: string | null } => {
   const o = gateEvaluate("bash", { command }, wt, { env: (c) => baseFloorEnv(c, { child: true, scratch: [scr, out], out }), roots: () => roots(role) });
   return { result: o.result as Res, danger: o.danger?.name ?? null };
@@ -48,7 +48,7 @@ const KEEP = ["~/bin/tool x", "$V/bin/pip install x", "cd sub && ls", "./node_mo
 for (const role of ["builder", "reviewer"] as const) {
   test(`${role}: a quoted tilde program word gets what the unquoted one gets`, { skip: posixOnly }, () => {
     for (const l of QUOTED) {
-      const shape = (x: { result: Res & { rule?: string }; danger: string | null }) => ({ allow: !!x.result?.allow, block: !!x.result?.block, rule: x.result?.rule, danger: x.danger });
+      const shape = (x: { result: Res; danger: string | null }) => ({ allow: !!x.result?.allow, block: !!x.result?.block, rule: x.result?.rule, danger: x.danger });
       const q = shape(gate(l, role));
       const p = shape(gate(plainOf(l), role));
       assert.deepEqual(q, p, `${l}: ${JSON.stringify(q)} vs ${JSON.stringify(p)}`);

@@ -368,7 +368,7 @@ export function gitOptSpellings(words: string[], long: string, opts: { short?: s
       if (name.length < (opts.min ?? 3) || !long.startsWith(name)) continue;
       glued = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
     } else if (opts.short !== undefined && /^-[^-]/.test(w)) {
-      const chars = [...w];
+      const chars = Array.from(w);
       const at = chars.findIndex((ch, n) => n > 0 && "obucj".includes(ch));
       if (at < 0 || chars[at] !== opts.short) continue;
       glued = at + 1 < chars.length ? chars.slice(at + 1).join("") : undefined;
@@ -596,7 +596,7 @@ function unknownWriteTarget(seg: ShellSegment, prog: string): string | undefined
   // the old check read a `>` target that ends the command, nothing after it (`echo > $F arg` is none; the walker sets `redirectEnd`), quoted or not
   const last = seg.redirects[seg.redirects.length - 1];
   if (last && (seg.redirectEnd ?? true) && (last.op === ">" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target.replace(/^(["'])(.*)\1$/, "$2"))) return last.target;
-  if (prog === "dd") return a.find((w) => /^of=/.test(w) && /[$`]/.test(w));
+  if (prog === "dd") return a.find((w) => w.startsWith('of=') && /[$`]/.test(w));
   if ((prog === "chmod" || prog === "chown") && a.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) return operands().slice(1).find((w) => /[$`]/.test(w));
   if (prog === "truncate" && a.some((w) => w === "0" || w === "--size=0" || w === "-s0")) return operands().find((w) => /[$`]/.test(w));
   return undefined;
@@ -667,7 +667,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   const dests = overwriteDests(seg, prog);
   const dout = dests.find((w) => w !== "" && outside(w, seg.cwd ?? env.cwd, env));
   if (dout !== undefined) return hit("overwrite-outside", `A recursive copy or extract into '${dout}' overwrites files outside the worktree, your scratch dir and /tmp. Extract into your scratch dir or /tmp first.`);
-  if (prog === "rsync" && seg.argv.some((w) => /^--delete/.test(w))) {
+  if (prog === "rsync" && seg.argv.some((w) => w.startsWith('--delete'))) {
     const d = seg.argv.filter((w) => !w.startsWith("-")).slice(-1)[0];
     if (d !== undefined && outside(d, seg.cwd ?? env.cwd, env)) return hit("delete-outside", `\`rsync --delete\` into '${d}' deletes files outside the worktree, your scratch dir and /tmp.`);
   }
@@ -741,7 +741,7 @@ function scanRoots(seg: ShellSegment): string[] | null {
   }
   if (verb === "fd" || verb === "fdfind") {
     const cut = args.findIndex((w) => /^(?:-x|-X|--exec|--exec-batch)$/.test(w));
-    const sp = args.flatMap((w, i) => (w === "--search-path" && args[i + 1] !== undefined ? [args[i + 1]] : /^--search-path=/.test(w) ? [w.slice(14)] : []));
+    const sp = args.flatMap((w, i) => (w === "--search-path" && args[i + 1] !== undefined ? [args[i + 1]] : w.startsWith('--search-path=') ? [w.slice(14)] : []));
     return [...scanOperands(cut >= 0 ? args.slice(0, cut) : args, SCAN_VALUE_FLAGS.fd, seen).slice(1), ...sp];
   }
   if (verb === "du") return scanOperands(args, SCAN_VALUE_FLAGS.du, seen);
@@ -1069,7 +1069,7 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
-  if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
+  if (pathLike && read && x.endsWith('.pub') && sshPublicKey(x, env)) return null;
   if (pathLike && read && scratchGitConfigRead(x, env)) return null;
   let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   // win32: a short-name segment (`.ssh` as `SSH~1`) that fits a secret name is judged as that name
@@ -1152,7 +1152,7 @@ function psRecursiveDelete(words: string[]): string[] | null {
       if (psPathParam(named[1].toLowerCase())) ops.push(...named[2].split(",").filter(Boolean).concat(named[2] === "" ? [""] : []));
       continue;
     }
-    if (!/^-/.test(w) && !CMD_SWITCHES.test(w)) ops.push(...(w.includes(",") ? w.split(",").filter(Boolean) : [w]));
+    if (!w.startsWith('-') && !CMD_SWITCHES.test(w)) ops.push(...(w.includes(",") ? w.split(",").filter(Boolean) : [w]));
   }
   return ops;
 }
@@ -1306,7 +1306,7 @@ function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
     if (PS_REMOVERS.has(p)) {
       const rest = words.slice(1);
       if (/^(?:remove-item|ri)$/i.test(p) && rest.some((x) => /^@\w+$/.test(x))) hits.push({ ...UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false), ask: true });
-      if (p !== "rm" && recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
+      if (p !== "rm" && recursiveElsewhere && !rest.some((x) => !x.startsWith('-') && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
     }
     if ((p === "pwsh" || p === "powershell") && words.slice(1, ((i) => (i < 0 ? words.length : i))(words.findIndex((w) => /^-c(?:ommand)?$/i.test(w)))).some((w) => PS_ENCODED.test(w))) hits.push({ ...UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false), ask: true });
     if ((p === "pwsh" || p === "powershell") && depth < MAX_DEPTH) {
@@ -1472,7 +1472,7 @@ function sshHasCommand(words: string[]): boolean {
     const w = words[i];
     if (w === "--") return words.length - i - 1 + operands > 1;
     if (w.length > 1 && w.startsWith("-")) {
-      const at = [...w.slice(1)].findIndex((ch) => SSH_ARG.has(ch));
+      const at = Array.from(w.slice(1)).findIndex((ch) => SSH_ARG.has(ch));
       if (at >= 0 && at === w.length - 2) i++;
     } else operands++;
   }
