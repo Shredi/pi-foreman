@@ -805,11 +805,23 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       let at = cwd;
       const dir = val(o.opts, "-C", "--chdir");
       if (dir !== null) at = cdTarget(["cd", dir], cwd ?? undefined, win32(sc.run)) ?? null;
-      while (args.length && (args[0].assign ?? asAssign(args[0]))) {
-        if (!harmless((args[0].assign ?? asAssign(args[0]))!)) c.reason = pick(c.reason, "assignment");
+      // env's own rule: every operand with an `=` before the program is a setting; a name that is not a shell identifier (an exported function, `A-B=1`) is read by the program, which may rebind anything
+      let startup = false;
+      let odd = false;
+      while (args.length && !(args[0].value ?? args[0].text).startsWith("-") && (args[0].value ?? args[0].text).includes("=")) {
+        const a = args[0].assign ?? asAssign(args[0]);
+        if (!a) {
+          odd = true;
+          startup = true;
+          c.reason = pick(c.reason, "assignment");
+        } else {
+          if (!harmless(a)) c.reason = pick(c.reason, "assignment");
+          if (RUNS_FILE_VARS.has(a.name)) startup = true;
+        }
         args = args.slice(1);
       }
-      wrap(args, "env", at, true, clears);
+      wrap(args, "env", at, true, clears, startup);
+      if (odd) markUnknown(sc);
       return cwd;
     }
     case "timeout": {
@@ -902,8 +914,16 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       }
       return o.rest.length > 1 ? wrap(o.rest.slice(1), "flock") : plain(prog, name, rest, c, cwd);
     }
+    case "busybox": {
+      // a literal applet word is the program (`busybox sh -c ..` reads as `sh -c ..`); anything else names a program this walker does not read
+      const applet = rest[0];
+      if (!applet || applet.value === null || applet.value.startsWith("-")) return bad("unsupported", true);
+      bad("unsupported");
+      return wrap(rest, "busybox", undefined, true);
+    }
     default:
-      if (RUNNERS.has(name) && !BUILTINS.has(name) && name !== "script") return bad(runnerReason(name));
+      // a runner the walker does not unwrap (`ionice`, `chroot`, `unbuffer`, `parallel`): the program behind it was not walked
+      if (RUNNERS.has(name) && !BUILTINS.has(name) && name !== "script") return bad(runnerReason(name), runnerReason(name) === "unsupported");
       return plain(prog, name, rest, c, cwd);
   }
 }
@@ -1346,6 +1366,8 @@ const RUNS_FILE_VARS = new Set(["BASH_ENV", "ENV"]);
 const CLEAN_ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)\+?=/;
 /** Wrappers a builtin hides behind (`command read N`). */
 const BUILTIN_WRAPPERS = new Set(["command", "builtin", "time"]);
+/** Wrappers an `env` layer may sit behind (`timeout 5 env BASH_ENV=x bash -c ..`). */
+const ENV_BEHIND = new Set(["timeout", "nice", "nohup", "command", "builtin", "time", "exec", "stdbuf", "setsid", "xargs", "watch", "flock", "ionice", "busybox", "chroot", "unbuffer", "parallel", "sudo", "doas"]);
 const ARITH_ASSIGN = /^(?:\*\*|<<|>>|[-+*/%&|^])?=$/;
 /** Variables bash evaluates an assigned value of as arithmetic, like a `declare -i` name. */
 const INT_SPECIALS = ["OPTIND", "OPTERR", "SECONDS", "RANDOM", "LINENO", "HISTCMD"];
@@ -1653,20 +1675,32 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
         }
         const name = words.length ? baseName(words[0]) : "";
         const args = words.slice(1);
-        // `env` may sit behind another wrapper (`timeout 5 env BASH_ENV=x bash -c ..`): read its operands from the word on
-        const envAt = name === "env" ? 0 : args.findIndex((a) => baseName(a) === "env") + 1;
-        if (name === "env" || envAt > 0) {
-          for (let i = name === "env" ? 0 : envAt; i < args.length; i++) {
-            const a = args[i];
-            const m = CLEAN_ASSIGN.exec(a);
-            if (m) {
-              bind(m[1], "text");
-              // `env BASH_ENV=x bash -c ..` makes the wrapped shell read a startup file like a prefix assignment does
-              if (RUNS_FILE_VARS.has(m[1])) structural();
-            } else if (/^-[A-Za-z]*S|^--split-string/.test(a)) structural();
-            else if (/^(?:-[A-Za-z]*[uCP]|--unset|--chdir)$/.test(a)) i++;
-            else if (!a.startsWith("-")) break;
-          }
+        // each `env` layer of the wrapper chain (`env env ..`, `timeout 5 env ..`) has its settings read, from the word after it
+        for (let k = 0; k < words.length; ) {
+          const layer = baseName(words[k]);
+          if (layer === "env") {
+            let i = k + 1;
+            for (; i < words.length; i++) {
+              const a = words[i];
+              if (/^-[A-Za-z]*S|^--split-string/.test(a)) {
+                structural();
+                continue;
+              }
+              if (/^(?:-[A-Za-z]*[uCP]|--unset|--chdir)$/.test(a)) i++;
+              else if (a.startsWith("-")) continue;
+              else if (a.includes("=")) {
+                const m = CLEAN_ASSIGN.exec(a);
+                if (m) bind(m[1], "text");
+                // `env BASH_ENV=x bash -c ..` makes the wrapped shell read a startup file like a prefix assignment does; a name that is no shell identifier (an exported function) may rebind anything
+                if (!m || RUNS_FILE_VARS.has(m[1])) structural();
+              } else break;
+            }
+            k = i;
+          } else if (ENV_BEHIND.has(layer)) {
+            const j = words.findIndex((w, i) => i > k && baseName(w) === "env");
+            if (j < 0) break;
+            k = j;
+          } else break;
         }
         // fail closed: a plain argument that is a variable name may be bound by the command (`wait -p N`, `compgen -V N`); a subscript that assigns may bind any name
         // an option with its name attached (`wait -pHOME`) counts too: the tail after the leading letters
