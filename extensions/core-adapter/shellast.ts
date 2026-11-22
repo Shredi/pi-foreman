@@ -310,8 +310,12 @@ function wordOf(w: Word, vars?: Map<string, string | undefined>): W {
   };
   if (w.text.startsWith("~")) note("unresolved_var"); // bash expands an unquoted tilde
   if (w.parts) for (const p of w.parts) part(p);
-  else out = w.value;
-  return { text: w.text, value: reason ? null : out, reason, ...(reason && expanded && !computed && /[\\/]/.test(tail) ? { tail } : {}), ...(reason ? { lit: lastComponentLiteral(w) } : {}) };
+  else {
+    // a word the parser gives no parts (a tilde word): its text is the literal, so `~/../../usr/bin/env` names `env` by its last component
+    out = w.value;
+    tail = w.value;
+  }
+  return { text: w.text, value: reason ? null : out, reason, ...(reason && !computed && /[\\/]/.test(tail) ? { tail } : {}), ...(reason ? { lit: lastComponentLiteral(w) } : {}) };
 }
 
 /**
@@ -724,11 +728,16 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     // `$V/bin/pip`: the program is named by the literal basename after the expansion; the name goes through the same lookup a literal program does, so the segment is not opaque for its program word
     const leaf = p.tail?.split(/[\\/]/).pop();
     if (leaf) {
-      return run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
+      const n = sc.run.out.length;
+      const r = run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
+      // a tilde program stays path-qualified in its segment (`~/bin/cat` is no known `cat`); a wrapper (`~/../../usr/bin/env rm`) emitted the wrapped program, which keeps its own name
+      const last = sc.run.out[n];
+      if (p.text.startsWith("~") && sc.run.out.length === n + 1 && last.wrappers.length === sc.wrappers.length && last.program.toLowerCase() === leaf.toLowerCase()) last.program = p.text;
+      return r;
     }
     seg(sc, p.text, rest.map((a) => a.value ?? a.text), p.reason ?? "unresolved_var", c, cwd);
-    // a word with no plain last component names no program (`~/bin/tool` does)
-    if (!p.lit) markUnknown(sc);
+    // only a program reduced to a name above (a leaf) is read by the walk; any other opaque program word is unknown
+    markUnknown(sc);
     return cwd;
   }
   const prog = p.value;
