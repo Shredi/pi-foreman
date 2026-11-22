@@ -729,11 +729,12 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     const leaf = p.tail?.split(/[\\/]/).pop();
     if (leaf) {
       const n = sc.run.out.length;
-      const r = run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
+      run([{ text: p.text, value: leaf, reason: null }, ...rest], c, cwd);
       // a tilde program stays path-qualified in its segment (`~/bin/cat` is no known `cat`); a wrapper (`~/../../usr/bin/env rm`) emitted the wrapped program, which keeps its own name
       const last = sc.run.out[n];
       if (p.text.startsWith("~") && sc.run.out.length === n + 1 && last.wrappers.length === sc.wrappers.length && last.program.toLowerCase() === leaf.toLowerCase()) last.program = p.text;
-      return r;
+      // bash runs no builtin for a word holding a slash: the leaf walk (`~/bin/cd`, `~/bin/pushd`, `env -C`) cannot move the calling shell
+      return cwd;
     }
     seg(sc, p.text, rest.map((a) => a.value ?? a.text), p.reason ?? "unresolved_var", c, cwd);
     // only a program reduced to a name above (a leaf) is read by the walk; any other opaque program word is unknown
