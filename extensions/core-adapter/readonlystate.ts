@@ -271,7 +271,7 @@ async function readSettings(repo: RepoDirs, ctx: Ctx): Promise<Settings> {
       hooks.set(name, "unreadable");
     }
   }
-  return { dirs: sha(`${repo.top}\0${repo.gitDir}\0${repo.commonDir}`), files, hooksDirId: sha(hooksDir), hooks };
+  return { dirs: sha(`${repo.top}\0${repo.gitDir}\0${repo.commonDir}`), files, hooksDirId: hp && !hp.startsWith("~/") && !path.isAbsolute(hp) ? sha(`rel\0${hp}`) : sha(hooksDir), hooks };
 }
 
 /** Settings of a tree and of the submodules the start pictured (the end picture's first stage). */
