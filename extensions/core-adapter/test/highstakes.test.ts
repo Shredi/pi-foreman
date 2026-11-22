@@ -306,8 +306,8 @@ test("an uncleared FAIL refuses a new pass as early; after the clearing PASS the
   assert.equal(launchRefusal(input({ state: st({ runs: [run("fail", { revised: true, cleared: true })] }) })), null);
 });
 
-test("the done text says this session", () => {
-  assert.match(launchRefusal(input({ state: st({ runs: [run("pass")] }) }))?.text ?? "", /of this session are used up/);
+test("the done text says this checkout", () => {
+  assert.match(launchRefusal(input({ state: st({ runs: [run("pass")] }) }))?.text ?? "", /of this checkout are used up/);
 });
 
 test("unrevisedRefusal: a fresh normal reviewer is never refused (it gets the findings); a resume in the FAIL's checkout is refused until cleared", () => {

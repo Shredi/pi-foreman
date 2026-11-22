@@ -390,6 +390,18 @@ export function openLedgerItems(ledger: string | null): { nums: number[]; v: boo
   return { nums, v };
 }
 
+/** Every item id of a ledger text, open or closed (same line shape as `openLedgerItems`). */
+function ledgerItemIds(ledger: string | null): ItemId[] {
+  const out: ItemId[] = [];
+  let fenced = false;
+  for (const line of (ledger ?? "").split(/\r?\n/)) {
+    if (line.trimStart().startsWith("```")) fenced = !fenced;
+    const m = fenced ? null : LEDGER_LINE.exec(line);
+    if (m) out.push(m[2] === "V" ? "V" : Number(m[2]));
+  }
+  return out;
+}
+
 /** The launch `items` field: a list of item numbers and "V" (a bare value counts as a list of one). */
 export function parseItemsField(raw: unknown): { items: ItemId[] } | { error: string } {
   const list_ = Array.isArray(raw) ? raw : [raw];
@@ -409,24 +421,36 @@ export interface LaunchItems {
 }
 
 /**
- * The items of one review launch. `given`: the validated `items` field (undefined = absent). `failed`: the numeric ids of the last counted FAIL, used only
- * by the re-review default (`reReview`). Absent: every open item except V; with `reReview`, the failed ids that are still open, else every open item except V.
- * Given: each must be open (V only when the ledger's V is open), else `{unknown}` lists the open ids.
+ * The items of one review launch. `given`: the validated `items` field (undefined = absent). `failed`: the numeric ids of the last counted FAIL of the
+ * launch's checkout, used only by the re-review default (`reReview`). `judged`: the ids reviews of this checkout judged; `judgedElsewhere`: the ids reviews of
+ * other checkouts judged and this one did not (reviewmemory.ts), so a launch never takes another checkout's items. `occasion` `pre-pr` may name closed items.
+ * Absent: a `[pre-pr]` takes the ids judged here, else the open ids no other checkout judged, else none; any other launch takes every open item except V
+ * minus the ids other checkouts judged (every open item when that leaves none); with `reReview`, the failed ids that are still open come first.
+ * Given: each must be open (V only when the ledger's V is open) unless the occasion is `pre-pr`, else `{unknown}` lists the open ids.
  */
-export function launchItemsOf(ledger: string | null, given: readonly ItemId[] | undefined, o: { reReview?: boolean; failed?: readonly string[] } = {}): LaunchItems | { unknown: ItemId[]; open: string } {
+export function launchItemsOf(ledger: string | null, given: readonly ItemId[] | undefined, o: { reReview?: boolean; failed?: readonly string[]; occasion?: string; judged?: readonly string[]; judgedElsewhere?: readonly string[] } = {}): LaunchItems | { unknown: ItemId[]; open: string } {
   const open = openLedgerItems(ledger);
   const openText = [...open.nums.map(String), ...(open.v ? ["V"] : [])];
   const openList = openText.length > 0 ? list(openText) : "none";
+  const prePr = o.occasion === "pre-pr";
   if (given !== undefined) {
-    const unknown = given.filter((id) => (id === "V" ? !open.v : !open.nums.includes(id)));
+    const all = prePr ? ledgerItemIds(ledger) : null; // a [pre-pr] may name closed items, not ids the ledger lacks
+    const unknown = given.filter((id) => (all ? !all.includes(id) : id === "V" ? !open.v : !open.nums.includes(id)));
     if (unknown.length > 0) return { unknown, open: openList };
     return { items: [...given] };
+  }
+  const elsewhere = new Set((o.judgedElsewhere ?? []).map(Number));
+  const mine = [...new Set((o.judged ?? []).map(Number))].sort((a, b) => a - b);
+  if (prePr) {
+    if (mine.length > 0) return { items: mine };
+    return { items: open.nums.filter((n) => !elsewhere.has(n)) };
   }
   if (o.reReview) {
     const still = (o.failed ?? []).map(Number).filter((n) => open.nums.includes(n));
     if (still.length > 0) return { items: [...new Set(still)] };
   }
-  return { items: [...open.nums] };
+  const own = open.nums.filter((n) => !elsewhere.has(n));
+  return { items: own.length > 0 ? own : [...open.nums] };
 }
 
 /** The ids `review_verdict` takes for a launch: the launch's items, none for a `[high-stakes]` launch. The tool and the items line of the task both read this. */

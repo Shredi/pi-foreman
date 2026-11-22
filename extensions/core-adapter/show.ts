@@ -52,6 +52,9 @@ export const NOTE_MAX_BYTES = 256 * 1024;
 export const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const JSON_MAX_BYTES = 64 * 1024;
 const RETRY_MS = 50;
+/** Whether `message` is a `Plan from <label>: <path>` or `foreman:plan <path>` notice. */
+export const isPlanNotice = (message: unknown): boolean => typeof message === "string" && PLAN_NOTICE.test(message);
+
 /** `Plan from <label>: <path>` and the alias `foreman:plan <path>` (a child's plan notice). */
 const PLAN_NOTICE = /^(?:Plan from \S+: |foreman:plan )/;
 
