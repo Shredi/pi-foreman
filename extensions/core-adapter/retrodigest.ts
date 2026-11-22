@@ -1,4 +1,3 @@
-import { strOf } from "./strof.ts";
 // Compaction digest and auto-retro (D8). Pure text logic; index.ts wires it to
 // session_before_compact / session_compact and writes the files.
 //
@@ -10,6 +9,8 @@ import { strOf } from "./strof.ts";
 // RETRO_INSTRUCTIONS, so the one summary call also ends with `## Retro` (zero extra model calls).
 // session_compact extracts that section and appends it, with the traced friction counters, to
 // `.workflow/retro/<session>.md`.
+
+import { strOf } from "./strof.ts";
 
 export const DIGEST_MAX_LINES = 40;
 export const DIGEST_HINTS = 8;

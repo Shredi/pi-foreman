@@ -108,6 +108,8 @@ A PR merges itself once its required checks are green: press GitHub's own **Enab
 
 Cut a release with `gh release create <tag> --generate-notes`. The notes come from the merged PRs' titles and their `## Changelog` sections (one to three user-facing bullets each). PRs do not edit CHANGELOG.md; it is kept as history. Overlays read the GitHub release page to see what changed.
 
+## Lint
+
 Three checks, and `just lint` runs all three (CI runs the type check on the Linux leg of the `test` job, and ruff and oxlint on the Linux leg with Node 22):
 
 - **Type check.** `tsconfig.json` sets `strict` and `allowJs`, with no `checkJs`: our `.mjs` modules are read for their types (a TS import of `profiles.mjs` gets the inferred shape) but their own code is not type-checked. Two temporary lists hold back files of the running judge-first-unknown round, each with a comment: the `exclude` in `tsconfig.json` (its new `extensions/core-adapter/test/judge-first-unknown*.test.ts` files) and the `ignorePatterns` block of `.oxlintrc.json` (its edited files). Both are removed after that round merges.

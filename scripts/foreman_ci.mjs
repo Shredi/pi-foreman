@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `npm run test:ci`: every check CI runs that a local machine can run, in CI's order (unit, core-pin, ruff, conformance, node, installer, typecheck, lint-ts, replay, bench).
+// `npm run test:ci`: every check CI runs that a local machine can run, in CI's order except that lint-ts sits after typecheck here (in CI it runs next to ruff) (unit, core-pin, ruff, conformance, node, installer, typecheck, lint-ts, replay, bench).
 // The fresh-install job stays out (it needs the network). One line per step; exits 1 when a step fails.
 // The unit and node steps go through scripts/foreman_test_run.mjs and run with inherited output, so the runner's run id and lock-wait lines show; FOREMAN_TEST_TIMEOUT applies to each of them.
 // Replay is the slow step (scripts/replay_run.mjs runs the modules in parallel and prints its wall time). `--only <step>` runs one step (any name above).
