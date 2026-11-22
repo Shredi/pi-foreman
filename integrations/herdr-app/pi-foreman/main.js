@@ -14,9 +14,10 @@ import {
 import { prsStaleText, PR_STALE_WORDS } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
 
-const STRIP_NAME_W = 74; // status strip grid columns (px): name, percent, extra text; the bar takes the rest (at least STRIP_BAR_MIN)
+const STRIP_NAME_W = 64; // status strip grid columns (px): name, percent, extra text; the bar takes the rest (at least STRIP_BAR_MIN)
 const STRIP_VALUE_W = 32;
-const STRIP_EXTRA_W = 70;
+const STRIP_EXTRA_W = 58;
+const STRIP_GAP = 4; // the gap between the grid row's cells (px)
 const STRIP_BAR_MIN = 24;
 const LOCAL_MS = 3000;
 const REMOTE_MS = 15000;
@@ -843,7 +844,7 @@ export default class ForemanAgents extends View {
     const cell = (text, ink) => div().flex_none().whitespace_nowrap().text_color(ink).child(text);
     const gridRow = (r) => {
       const ink = inkOf(r.value.tone, r.value.measured);
-      return h_flex().id(`strip-${r.id}`).flex_none().min_w(0).overflow_hidden().min_h(16).gap(6).items_center().text_size(10.5).text_color(t.muted)
+      return h_flex().id(`strip-${r.id}`).flex_none().min_w(0).overflow_hidden().min_h(16).gap(STRIP_GAP).items_center().text_size(10.5).text_color(t.muted)
         .child(div().flex_none().w(STRIP_NAME_W).truncate().whitespace_nowrap().child(r.name))
         .child(r.bar ? bar(r.bar, ink) : r.spark ? spark(r.spark, ink) : div().flex_1().min_w(STRIP_BAR_MIN))
         .child(div().flex_none().w(STRIP_VALUE_W).flex().justify_end().whitespace_nowrap().text_color(ink).child(r.value.text))
@@ -865,7 +866,7 @@ export default class ForemanAgents extends View {
       .child(folded ? summary() : label());
     const open = !folded && rows.length > 0;
     return Collapsible.new().id("strip").flex().flex_col().flex_none().px(6).pb(4).open(open).child(head)
-      .when(open, (el) => el.content(v_flex().flex_none().pl(28).pr(8).gap(3).min_w(0).overflow_hidden().children(rows.map(gridRow))));
+      .when(open, (el) => el.content(v_flex().flex_none().pl(16).pr(8).gap(3).min_w(0).overflow_hidden().children(rows.map(gridRow))));
   }
 
   // The plain row of a repository whose row failed to build: its name and how many PRs it has.

@@ -73,12 +73,13 @@ test("strip: grid columns have fixed widths, names truncate, bars and the sparkl
     assert.ok(row.props.overflow_hidden, `${id}: the row clips`);
     assert.equal(row.kids.length, 4, `${id}: name, bar, value, extra`);
     const [name, bar, value, extra] = row.kids;
-    assert.equal(name.props.w, 74);
+    assert.equal(name.props.w, 64);
     assert.ok(name.props.truncate, `${id}: the name truncates`);
     assert.equal(value.props.w, 32);
     assert.ok(value.props.justify_end, `${id}: the value is right-aligned`);
-    assert.equal(extra.props.w, 70);
+    assert.equal(extra.props.w, 58);
     assert.ok(extra.props.truncate);
+    assert.equal(row.props.gap, 4, `${id}: the cells are 4 px apart`);
     assert.ok(bar.props.flex_1 && bar.props.min_w === 24, `${id}: the bar cell takes the rest`);
   }
   const memTrack = byId("strip-mem").kids[1];
