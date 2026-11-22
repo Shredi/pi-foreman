@@ -121,7 +121,7 @@ type Expect = [string, number, number, boolean?];
 // later guard (self_ruling, the shell write guard) still refuses is marked blocked: the gate's allow does not skip those.
 const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
-  own_async_results_python_read: ["dialog:danger:comment", 1, 1, true], // PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no judge verdict, so the owner is asked
+  own_async_results_python_read: ["dialog:danger:comment", 1, 2, true], // item 5: an unreadable verdict is asked for once more (2 calls); PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no judge verdict, so the owner is asked
   handoff_ruling_for_cat: [CLASSIFIED, 0, 0],
   cp_ruling_into_scratch: [OK, 0, 0],
   usage_ls_grep_node_version: [OK, 0, 0],
@@ -209,7 +209,7 @@ FX.verdicts.forEach((c, i) => {
   const want = "dialog:danger:comment";
   test(`r16 verdict ${c.name}: ${want}`, async () => {
     const r = await bash(`${DANGEROUS} # v${i}`, { reply: c.reply });
-    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [want, 1, 1, true]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [want, 1, 2, true]); // an unreadable verdict is asked for once more
   });
 });
 
@@ -236,7 +236,7 @@ test("r16 no UI: an escalate under a headless owner session is a silent deny wit
     Object.assign(ctx, env);
     try {
       const r = await bash(`${DANGEROUS} # nui-${env.mode}`, { reply: verdict("escalate", null as never) });
-      assert.deepEqual([r.dialogs, r.calls, r.block?.block], [0, 1, true]);
+      assert.deepEqual([r.dialogs, r.calls, r.block?.block], [0, 2, true]); // an unreadable verdict is asked for once more
       assert.match(r.block?.reason ?? "", /nobody is at this session/);
     } finally {
       Object.assign(ctx, { mode: "tui", hasUI: true });
