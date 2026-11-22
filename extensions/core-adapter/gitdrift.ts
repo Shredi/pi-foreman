@@ -651,7 +651,7 @@ export class GitDriftWatch {
     const prev = this.snap;
     if (!prev?.relTops) return;
     const cur = takeGitSnapshot(cwd, home);
-    if (cur.relTop === undefined || cur.hooksDirId !== prev.hooksDirId || prev.relTops.has(cur.relTop)) return;
+    if (!cur || cur.relTop === undefined || cur.hooksDirId !== prev.hooksDirId || prev.relTops.has(cur.relTop)) return;
     const tops = new Map<string, Map<string, string>>();
     for (const [t, m] of prev.relTops) if (fs.existsSync(t)) tops.set(t, m);
     while (tops.size >= MAX_REL_TOPS) tops.delete(tops.keys().next().value as string);
