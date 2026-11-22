@@ -305,7 +305,7 @@
       "id": "waits",
       "area": "sessions",
       "title": "Long waits",
-      "purpose": "The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices.",
+      "purpose": "The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit; the first notice wakes the agent at once, later ones inside the batch window are batched.",
       "doc": "docs/sessions.md#further-session-keys",
       "keys": ["wait"],
       "commands": ["/foreman waits"],
