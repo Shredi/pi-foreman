@@ -210,7 +210,7 @@ A candidate that passes is a read: it runs. A candidate that fails runs too (a n
 For a **child session** with a scratch dir, two more cases resolve outside that grammar, so a line with a heredoc, a pipe or other statements is no longer opaque for these variables alone:
 
 - **One literal assignment.** `NAME=/abs/path` or `NAME=$FOREMAN_SCRATCH[/sub]` at the start of a statement (line start, after `;` or a newline, or after `&&` following another such assignment: not in a pipeline, subshell, group, loop, function, `$(...)` or after `||`) resolves later `$NAME` and `${NAME}` words. `NAME` is assigned exactly once and the line mentions it in no other way (no `export`, `read`, `for NAME`, `${NAME:-x}`, no use before the assignment). It does not apply when the line runs `eval`, `source`, a function definition, a runner or a computed program name. `$PWD`, `~` and `$HOME` are not forms of it.
-- **`$FOREMAN_SCRATCH` itself** resolves on a heredoc or pipe line too, as long as the line mentions `FOREMAN_SCRATCH` only as `$FOREMAN_SCRATCH` or `${FOREMAN_SCRATCH}` and never rebinds it, under the same code-running guard.
+- **`$FOREMAN_SCRATCH` and `$FOREMAN_OUT` themselves** resolve on a heredoc or pipe line too, as long as the line mentions the name only as `$NAME` or `${NAME}` and never rebinds it (quoted or escaped spellings, namerefs and env-clearing wrappers count as a rebind or a cleared name and leave it unresolved), under the same code-running guard.
 
 The foreman and an opened session never get these two.
 
