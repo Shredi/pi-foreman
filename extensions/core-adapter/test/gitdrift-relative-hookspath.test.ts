@@ -141,3 +141,19 @@ test("readonlystate: a relative hooks path from two worktree roots gives one id"
   assert.equal(a.settings.hooksDirId, b.settings.hooksDirId);
   assert.equal(a.settings.hooksDirId, sha("rel\0scripts/git-hooks"));
 });
+
+test("relative hooksPath: a worktree used only through gate is recorded, a later planted hook is named", { skip }, async (t) => {
+  const { primary, wt, state } = setup(t);
+  const w = new GitDriftWatch();
+  assert.deepEqual(w.bind(state, primary, HOME), []);
+  for (let i = 0; i < 3; i++) {
+    assert.equal(await w.gate(wt, HOME, "git", PRINT, noTrace, `c${i}`), undefined);
+    w.after(primary, HOME, `c${i}`);
+  }
+  fs.writeFileSync(path.join(wt, "scripts", "git-hooks", "pre-push"), "#!/bin/sh\nexit 1\n");
+  fs.writeFileSync(path.join(wt, "scripts", "git-hooks", "pre-commit"), "#!/bin/sh\nexit 2\n");
+  const r = await gate(w, wt);
+  assert.ok(r && r.block);
+  assert.match(r.reason, /pre-push/);
+  assert.match(r.reason, /pre-commit/);
+});

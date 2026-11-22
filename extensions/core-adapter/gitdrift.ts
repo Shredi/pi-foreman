@@ -641,8 +641,23 @@ export class GitDriftWatch {
       this.tamper = null;
       this.set(takeGitSnapshot(cwd, home));
     }
+    else if (r.decision === "none") this.recordFirstSeenTop(cwd, home);
     if (callId) this.passed.add(callId);
     return undefined;
+  }
+
+  /** No drift in a checkout whose relative hooks dir has no stored map yet: store that top's hooks as its baseline (the rest of the stored snapshot stays). */
+  private recordFirstSeenTop(cwd: string, home: string): void {
+    const prev = this.snap;
+    if (!prev?.relTops) return;
+    const cur = takeGitSnapshot(cwd, home);
+    if (cur.relTop === undefined || cur.hooksDirId !== prev.hooksDirId || prev.relTops.has(cur.relTop)) return;
+    const tops = new Map<string, Map<string, string>>();
+    for (const [t, m] of prev.relTops) if (fs.existsSync(t)) tops.set(t, m);
+    while (tops.size >= MAX_REL_TOPS) tops.delete(tops.keys().next().value as string);
+    tops.set(cur.relTop, cur.hooks);
+    this.snap = { ...prev, relTops: tops };
+    writeState(this.stateFile, serializeGitSnapshot(this.snap));
   }
 
   /** After the foreman's own git call ran: its own config changes (push -u, branch -d) become the baseline. */
