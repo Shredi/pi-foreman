@@ -166,6 +166,20 @@
       "target": "skills/repo-audit/SKILL.md",
       "sha256": "f110231527c72c1f3a7696568b9abdb325ce8e0c8667db653f6b2851de5fcfe8",
       "checkedOn": "2026-11-18"
+    },
+    {
+      "id": "pstack-formal-verification",
+      "url": "https://raw.githubusercontent.com/cursor/plugins/main/pstack/skills/create-formal-verification-skill/SKILL.md",
+      "target": "skills/creating-verify-skills/SKILL.md",
+      "sha256": "30ef0ac27612ecd16fdc081112113221d673053cef3f8603db11932193861211",
+      "checkedOn": "2026-11-22"
+    },
+    {
+      "id": "pstack-statechart",
+      "url": "https://raw.githubusercontent.com/cursor/plugins/main/pstack/skills/statechart/SKILL.md",
+      "target": "skills/creating-verify-skills/SKILL.md",
+      "sha256": "ca7b3e43b1ddc4fb2425a33960f9390357323a869e1d921b6e2aff4f3004d55e",
+      "checkedOn": "2026-11-22"
     }
   ]
 }
