@@ -115,13 +115,13 @@ export function judgeReadScope(a: { cwd: string; worktree: string; out?: string;
 
 // ------------------------------------------------------------------ the path check
 
-const NAME_EXACT = new Set(["auth.json", "models.json", "models-store.json", "trust.json", "claude-bridge", ".git", ".claude", ".adb-mcp-backup", "cc-cli-logs", ".claude.json", ".envrc", ".pgpass", ".vault-token", ".history"]);
+const NAME_EXACT = new Set(["auth.json", "models.json", "models-store.json", "trust.json", "claude-bridge", ".git", ".claude", ".adb-mcp-backup", "cc-cli-logs", ".claude.json", ".envrc", ".pgpass", ".vault-token", ".history", "kubeconfig", ".htpasswd", "token.txt"]);
 const NAME_PREFIX = ["mcp.json", "claude-bridge", "claudecfg-", "claude-config"];
 
 /** True when a path segment names a file or folder that is never shown. */
 const withheldName = (seg: string): boolean => {
   const s = seg.toLowerCase();
-  return NAME_EXACT.has(s) || NAME_PREFIX.some((p) => s.startsWith(p)) || s.endsWith(".tfvars") || s.includes(".tfstate") || /^\..*_history$/.test(s);
+  return NAME_EXACT.has(s) || s.startsWith("secrets.") || /^service-account.*\.json$/.test(s) || s.endsWith(".token") || NAME_PREFIX.some((p) => s.startsWith(p)) || s.endsWith(".tfvars") || s.includes(".tfstate") || /^\..*_history$/.test(s);
 };
 
 interface Place {
@@ -266,7 +266,8 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, scope: 
   }
 }
 
-function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope): { outcome: ReadOutcome; body: string } {
+function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
+  if (budget.left <= 0) return { outcome: "budget", body: "not read: read budget used up" };
   readHooks.afterStat?.(res.real);
   let names: string[] = [];
   let dir: fs.Dir | undefined;
@@ -292,7 +293,14 @@ function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope): 
   }
   const listed = shown.slice(0, MAX_LISTING);
   const hidden = names.length - listed.length;
-  return { outcome: "dir", body: `${listed.join("\n")}${listed.length ? "\n" : ""}(${listed.length} entries shown${hidden > 0 ? `, ${hidden} not shown` : ""})` };
+  let body = redactCommand(`${listed.join("\n")}${listed.length ? "\n" : ""}(${listed.length} entries shown${hidden > 0 ? `, ${hidden} not shown` : ""})`);
+  if (body.length > budget.left) {
+    const mark = "\n[cut]";
+    if (budget.left <= mark.length) return { outcome: "budget", body: "not read: read budget used up" };
+    body = body.slice(0, budget.left - mark.length) + mark;
+  }
+  budget.left -= body.length;
+  return { outcome: "dir", body };
 }
 
 const HEADER_NOTE: Record<ReadOutcome, string> = { ok: "file", dir: "folder", "not-found": "not found", withheld: "withheld: not shown", outside: "outside the places you may read", changed: "changed while it was read: not shown", binary: "binary", budget: "not read: read budget used up" };
@@ -322,7 +330,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
     } else if (res.outcome === "dir") {
       rec.real = res.real;
       if (res.st) rec.mtimeMs = res.st.mtimeMs;
-      const r = listFolder(res as Resolution & { real: string }, scope);
+      const r = listFolder(res as Resolution & { real: string }, scope, budget);
       rec.outcome = r.outcome;
       body = r.body;
     } else if (/[\\/]$/.test(a.replace(/#L\d+-\d+$/, ""))) {
@@ -342,7 +350,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       }
     }
     records.push(rec);
-    blocks.push({ header: `${a} -> ${rec.real ?? "-"} (${HEADER_NOTE[rec.outcome]})`, body });
+    blocks.push({ header: redactCommand(`${a} -> ${rec.real ?? "-"} (${HEADER_NOTE[rec.outcome]})`), body: redactCommand(body) });
   }
   return { blocks, records };
 }
