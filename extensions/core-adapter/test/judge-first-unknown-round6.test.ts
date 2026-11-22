@@ -1,4 +1,4 @@
-// Judge-first-unknown round 6: a FOREMAN_SCRATCH/FOREMAN_OUT setting of an `env` behind another wrapper or `env` rebinds the folder for the wrapped -c.
+// Judge-first-unknown round 6: env-clearing wrappers (`env -i`, `env -`, `env -u VAR`, `exec -c`, also behind `nice`/`timeout`) empty FOREMAN_SCRATCH/FOREMAN_OUT for the wrapped -c, so a write through the name leaves the folders.
 // Gate level for builder and reviewer, and through the real tool_call handler (PI_OFFLINE=1).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
@@ -38,13 +38,13 @@ const BAD: string[] = [];
 const WRAPS = ["env -i", "env -", "env -iu X", "nice env -i", "timeout 5 env -i", "exec -c"];
 for (const v of ["FOREMAN_SCRATCH", "FOREMAN_OUT"]) {
   for (const w of [...WRAPS, `env -u ${v}`]) {
-    BAD.push(`${w} bash -c 'echo x > $${v}/Users/marc/.zshrc'`);
-    BAD.push(`${w} sh -c 'echo x > \${${v}}/Users/marc/.zshrc'`);
-    BAD.push(`${w} bash -c 'echo x > "$${v}/Users/marc/.zshrc"'`);
-    BAD.push(`${w} bash -c 'cp a $${v}/Users/marc/.zshrc'`);
-    BAD.push(`${w} bash -c 'echo x | tee $${v}/Users/marc/.zshrc'`);
-    BAD.push(`${w} bash -c 'sed -i s/a/b/ $${v}/Users/marc/.zshrc'`);
-    BAD.push(`${w} bash -c 'mkdir -p $${v}/Users/marc/d'`);
+    BAD.push(`${w} bash -c 'echo x > $${v}/home/fixture/.zshrc'`);
+    BAD.push(`${w} sh -c 'echo x > \${${v}}/home/fixture/.zshrc'`);
+    BAD.push(`${w} bash -c 'echo x > "$${v}/home/fixture/.zshrc"'`);
+    BAD.push(`${w} bash -c 'cp a $${v}/home/fixture/.zshrc'`);
+    BAD.push(`${w} bash -c 'echo x | tee $${v}/home/fixture/.zshrc'`);
+    BAD.push(`${w} bash -c 'sed -i s/a/b/ $${v}/home/fixture/.zshrc'`);
+    BAD.push(`${w} bash -c 'mkdir -p $${v}/home/fixture/d'`);
   }
 }
 const KEEP = [
@@ -54,13 +54,13 @@ const KEEP = [
   "mkdir -p $FOREMAN_SCRATCH/a && cp a $FOREMAN_SCRATCH/a/b",
 ];
 for (const role of ["builder", "reviewer"] as const) {
-  test(`${role}: env-set harness folder behind a wrapper is judged or refused`, { skip: posixOnly }, () => {
+  test(`${role}: a wrapper that empties the harness folder name is judged or refused`, { skip: posixOnly }, () => {
     for (const l of BAD) {
       const g = gate(l, role);
       assert.ok(!g.result?.allow && (g.danger !== null || g.result?.block), `${l}: ${JSON.stringify(g)}`);
     }
   });
-  test(`${role}: a harmless env setting keeps the folder`, { skip: posixOnly }, () => {
+  test(`${role}: a harmless env setting keeps the harness folder`, { skip: posixOnly }, () => {
     for (const l of KEEP) {
       const g = gate(l, role);
       assert.notEqual(g.danger, "danger-unknown-program", l);

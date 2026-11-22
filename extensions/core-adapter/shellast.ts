@@ -316,14 +316,14 @@ function wordOf(w: Word, vars?: Map<string, string | undefined>): W {
 
 /**
  * Whether the part of `w` after its last literal `/` (the whole word when it has none) is plain text: no expansion, quoted expansion, substitution, glob or brace in it. Read from the
- * parser's word parts. `$V/bin/pip` and `~/bin/tool` are plain, `$E`, `"$E"`, `${E}h`, `$V/bin/s$X` and `{rm,-rf}` are not.
+ * parser's word parts. `$V/bin/pip` and `~/bin/tool` are plain, `$E`, `"$E"`, `${E}h`, `$V/bin/s$X` and `{rm,-rf}`, `$'sh'` and `$"sh"` (parts `wordOf` does not decode) are not.
  */
 function lastComponentLiteral(w: Word): boolean {
   let lit = true;
   const go = (parts: readonly any[]): void => {
     for (const p of parts) {
-      if (p.type === "DoubleQuoted" || p.type === "LocaleString") go(p.parts);
-      else if (p.type === "Literal" || p.type === "SingleQuoted" || p.type === "AnsiCQuoted") {
+      if (p.type === "DoubleQuoted") go(p.parts);
+      else if (p.type === "Literal" || p.type === "SingleQuoted") {
         if (String(p.value).includes("/")) lit = true;
       } else lit = false;
     }
