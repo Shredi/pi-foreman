@@ -301,7 +301,7 @@ class BaselineTest(Base):
     def put(self, repo, rel, text="x\n"):
         p = Path(repo) / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(text)
+        p.write_bytes(text.encode("utf-8"))
 
     def entry(self, repo, paths=True):
         top = os.path.realpath(str(repo))
