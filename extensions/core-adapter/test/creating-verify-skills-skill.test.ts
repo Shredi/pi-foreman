@@ -62,3 +62,19 @@ test("creating-verify-skills names its directory, is searchable, stays within 20
 test("docs/roles.md names the creating-verify-skills skill", () => {
   assert.ok(fs.readFileSync(path.join(REPO, "docs", "roles.md"), "utf8").includes("skills/creating-verify-skills"));
 });
+
+test("the project-local verifying-permission-gate skill loads and names files that exist", () => {
+  const dir = path.join(REPO, ".agents", "skills", "verifying-permission-gate");
+  const result = loadSkills({ cwd: tmp, agentDir: process.env.PI_CODING_AGENT_DIR as string, skillPaths: [path.join(REPO, ".agents", "skills")], includeDefaults: false });
+  assert.deepEqual(result.diagnostics, []);
+  const skill = result.skills.find((s) => s.name === "verifying-permission-gate");
+  assert.ok(skill, JSON.stringify(result.skills.map((s) => s.name)));
+  assert.ok(skill.description.length > 0 && skill.description.length <= 1024);
+  for (const phrase of ["'verify the permission gate'", "'rerun the gate check'", "'sweep the gate seeds'"]) assert.ok(skill.description.includes(phrase), phrase);
+  const text = fs.readFileSync(path.join(dir, "SKILL.md"), "utf8");
+  assert.equal(parseFrontmatter(text).name, "verifying-permission-gate");
+  const named = new Set([...text.matchAll(/`((?:extensions|scripts)\/[A-Za-z0-9_./-]+\.(?:ts|mjs))`/g)].map((m) => m[1]));
+  for (const rel of ["extensions/core-adapter/test/gate-generator.test.ts", "extensions/core-adapter/test/_gate-gen.ts", "scripts/gate_sweep.mjs", "extensions/core-adapter/shellast.ts", "extensions/core-adapter/gate.ts", "extensions/core-adapter/index.ts"]) assert.ok(named.has(rel), `${rel} is named`);
+  for (const rel of named) assert.ok(fs.existsSync(path.join(REPO, rel)), `${rel} exists`);
+  assert.match(text, /Last confirmed at: `[0-9a-f]{40}`/);
+});

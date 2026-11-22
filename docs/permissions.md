@@ -479,6 +479,8 @@ Every other `gate.*` key is user or overlay only (`gate.protected.check` may tig
 
 ## Known limits
 
+A generator test (`extensions/core-adapter/test/gate-generator.test.ts`, [development](development.md#tests)) hides dangerous commands in shell constructs and fails when one runs silent; the shapes it still finds are listed with their sources in `KNOWN_GAPS` in `_gate-gen.ts` and are known limits of the shell reading.
+
 - Another extension loaded before the gate, or one that mutates `event.input` after it, could change the input between the decision and the execution. The gate is first in load order; the doctor warns when any extension precedes it.
 - Extension-registered providers: the classifier call goes through Pi's registry, so a provider an extension registers at runtime must be loaded before the first classification.
 - Subagents launched as a group or a chain, and children of a session without UI, are denied at once with the no-pane text: nobody can answer there.

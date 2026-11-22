@@ -44,7 +44,7 @@ When a change makes a twin stricter on purpose, the owner of that change edits t
 
 ## Self-check of the generator
 
-Each construct declares what it needs to run for real (a minimum interpreter version, the external programs it starts) as data on the construct. A self-check builds each construct with a marker payload (create a file in a temp folder), runs it in the real interpreter with a time limit and closed stdin, and asserts the marker ran. When the needs are not met on this machine, assert only that the syntax is accepted. A construct that does not run its payload is a generator fault; it fails here and not in the danger property, which is how a generator fault is told from a real finding. Give every real run its own empty working folder and check the marker by absolute path.
+Each construct declares what it needs to run for real (a minimum interpreter version, the external programs it starts) as data on the construct. A self-check builds each construct with a marker payload (create a file in a temp folder), runs it in the real interpreter with a time limit and closed stdin, and asserts the marker ran. When the needs are not met on this machine, assert only that the syntax is accepted. A construct that does not run its payload is a generator fault; it fails here and not in the danger property, which is how a generator fault is told from a real finding. Give every real run its own empty working folder and check the marker by absolute path. Run the self-check over a few hundred nested chains too, not only single constructs: nesting breaks quoting (a here-document or a quoted alias body cannot hold multi-line text, a `sh -c` payload cannot hold shell-specific syntax, an `xargs` input line mangles quotes unless read byte-wise), and the fix is a flag on the construct that the chain builder honors, never a narrower payload. Where this machine cannot run a construct, run the self-check once in a container with a newer shell and the missing tools.
 
 ## Shrinking
 
@@ -62,6 +62,7 @@ A table of known open findings. An entry has a shape (one construct, or an order
 - A failure with no entry fails the run.
 - Strict stale rule: collect the shrunk shapes of all failures of the deterministic set (depth 1, the pairs that have entries, and the default-seed sample). An entry that matches none fails the run with "gap `<id>` is closed: remove its line". Run this check only with the default seed, so a sweep with other seeds never reports a stale mark.
 - Add an entry only for a shape that fails in a measured run. A listed gap that does not reproduce gets no entry; report it as not reproduced.
+- A failure that shows only in a nested shape (found at a sweep seed) gets an entry with that ordered pair as its shape, so the deterministic set rebuilds it on every run and the stale rule can see it close.
 - A mark without payload names covers every payload of its shape; list that blind spot in the left-out list until the gap closes.
 
 ## Budget and the opt-in sweep
