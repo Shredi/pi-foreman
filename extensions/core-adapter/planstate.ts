@@ -21,8 +21,11 @@ import type { LoopStop } from "./reviewloop.ts";
 import type { PassMark, ReviewGate, StepCounts } from "./bound.ts";
 import { combined, type ReviewGates } from "./reviewgates.ts";
 import { factsOfEntry, type CheckoutFacts } from "./reviewmemory.ts";
+import type { DirtyBase } from "./dirtybase.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
+/** The per-checkout baseline of the session (dirtybase.ts), its own entry so a ceremony-state append never repeats it. */
+export const DIRTY_BASE_ENTRY = "pi-foreman-dirty-base";
 
 export type PlanSource = "dialog";
 /** Who started the plan phase: a parent's launch (`--plan-first`) or the owner (`/foreman plan`). */
@@ -322,4 +325,46 @@ function mapsOf(gates: unknown, marks: unknown): { reviewGates: ReviewGates; pas
 export function restorableApproval(plan: PersistedPlan | null, currentHash: string | null): PlanRecord | null {
   if (!plan || plan.status !== "approved" || plan.source !== "dialog" || currentHash === null || currentHash !== plan.hash) return null;
   return { topic: plan.topic, path: plan.path, hash: plan.hash, status: "approved", approvedAt: plan.at, by: plan.by, source: plan.source, note: "restored after reload" };
+}
+
+/** The data of a `pi-foreman-dirty-base` entry. */
+export function buildDirtyBase(map: DirtyBase): { v: 1; map: DirtyBase } {
+  const out: DirtyBase = {};
+  for (const [k, e] of Object.entries(map)) out[k] = { repo: e.repo, head: e.head, paths: e.paths ? { ...e.paths } : null };
+  return { v: 1, map: out };
+}
+
+function dirtyBaseOf(v: unknown): DirtyBase | null {
+  const d = v as { v?: unknown; map?: unknown } | null | undefined;
+  if (!d || typeof d !== "object" || d.v !== 1 || !d.map || typeof d.map !== "object" || Array.isArray(d.map)) return null;
+  const out: DirtyBase = {};
+  for (const [k, raw] of Object.entries(d.map as Record<string, unknown>)) {
+    const e = raw as { repo?: unknown; head?: unknown; paths?: unknown } | null;
+    if (!e || typeof e !== "object" || typeof e.repo !== "string" || (e.head !== null && typeof e.head !== "string")) return null;
+    let paths: Record<string, string> | null = null;
+    if (e.paths !== null) {
+      if (!e.paths || typeof e.paths !== "object" || Array.isArray(e.paths)) return null;
+      paths = {};
+      for (const [p, h] of Object.entries(e.paths as Record<string, unknown>)) {
+        if (typeof h !== "string") return null;
+        paths[p] = h;
+      }
+    }
+    out[k] = { repo: e.repo, head: e.head as string | null, paths };
+  }
+  return out;
+}
+
+/**
+ * The session's baseline map on a branch: the newest `pi-foreman-dirty-base` entry (malformed: null = legacy); without one, a branch that has a
+ * ceremony-state entry is a legacy session (null), and a branch with neither is new (`{}`, `fresh`) on `startup` and `new` and legacy (null) on any other start.
+ * `fresh` tells the caller to take the first baseline and append the entry.
+ */
+export function restoreDirtyBase(entries: unknown[], reason: string): { map: DirtyBase | null; fresh: boolean } {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as { type?: unknown; customType?: unknown; data?: unknown } | null;
+    if (e && e.type === "custom" && e.customType === DIRTY_BASE_ENTRY) return { map: dirtyBaseOf(e.data), fresh: false };
+  }
+  if (entries.some((e) => (e as { type?: unknown; customType?: unknown } | null)?.type === "custom" && (e as { customType?: unknown }).customType === CEREMONY_ENTRY)) return { map: null, fresh: false };
+  return reason === "startup" || reason === "new" ? { map: {}, fresh: true } : { map: null, fresh: false };
 }

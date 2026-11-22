@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { SteerWatch, foldSteer, pickupRuling, takeLateSteer } from "./steerwatch.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
-import { checkTrivial, checkoutBaseline, cleanTreeStatus, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
+import { checkTrivial, checkoutBaseline, cleanTreeStatus, effectiveRequired, escalationNote, skipper, trivialBuilderPath } from "./trivial.ts";
+import { baselineAt, dirtyPaths, memoCheckout, nearestDirectory, resolveCheckout, takeBaseline, unchangedSince, type CheckoutMemo, type DirtyBase, type DirtyEntry } from "./dirtybase.ts";
 import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
@@ -261,7 +262,7 @@ import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaun
 import { closeLines } from "./reviewrounds.ts";
 import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
+import { buildCeremonyState, buildDirtyBase, CEREMONY_ENTRY, DIRTY_BASE_ENTRY, restoreDirtyBase, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PLAN_SAME_BATCH_LINE, PlanReviews, claimsHintLine, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -510,6 +511,14 @@ interface Session {
   hsReminded: string[] | null;
   /** The checkout fingerprint at the session's first start (trivial.ts checkoutBaseline; persisted; a fork keeps its parent's; only a brand-new startup or new session takes one, a resume without a stored one has none); null: none, the no-change rule needs a clean status. */
   baseline: string | null;
+  /** The per-checkout baseline (dirtybase.ts; own session entry): null = a session saved before it (every check behaves as before), `{}` = new; a child has none. */
+  dirtyBase: DirtyBase | null;
+  /** Serialises the baseline takes of one session. */
+  dirtyChain: Promise<void>;
+  /** The checkout each directory of the session's writes belongs to (memory; reset at session start). */
+  checkoutMemo: CheckoutMemo;
+  /** Directories of the session's work whose checkout could not be resolved (git failed or no work tree). */
+  unresolvedDirs: Set<string>;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
@@ -1220,6 +1229,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       hs: new HighStakes(),
       hsReminded: null,
       baseline: null,
+      dirtyBase: null,
+      dirtyChain: Promise.resolve(),
+      checkoutMemo: new Map(),
+      unresolvedDirs: new Set(),
       ledgerRev: 0,
       hsSkipped: new Set(),
       hsOwn: null,
@@ -2031,6 +2044,144 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { line: folderLine(r), ...(primary ? { primary } : {}) };
   }
 
+  /** `<state>/sessions/<sid>/baseline.json`: the checkouts of the session's baseline for the close report (foreman_close.py reads it); a legacy session says so. */
+  function writeScope(s: Session): void {
+    if (s.isChild) return;
+    const sid = s.id.split("").filter((c) => /^[A-Za-z0-9_-]$/.test(c)).join("");
+    if (!sid) return;
+    const data = s.dirtyBase === null ? { v: 1, legacy: true } : { v: 1, roots: Object.values(s.dirtyBase).map((e) => ({ repo: e.repo, head: e.head, paths: e.paths })) };
+    const dir = path.join(s.agentDir, "pi-foreman", "state", "sessions", sid);
+    const tmp = path.join(dir, `.baseline.json.${process.pid}.tmp`);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(tmp, `${JSON.stringify(data)}\n`);
+      fs.renameSync(tmp, path.join(dir, "baseline.json"));
+    } catch {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // the close report then lists every configured repository, as before
+      }
+    }
+  }
+
+  /** The baseline map changed: its own entry, then the scope file. */
+  function saveDirtyBase(s: Session): void {
+    if (s.isChild || s.dirtyBase === null) return;
+    try {
+      pi.appendEntry(DIRTY_BASE_ENTRY, buildDirtyBase(s.dirtyBase));
+    } catch {
+      // the session file is not writable now: the map stays in memory
+    }
+    writeScope(s);
+  }
+
+  /** True when `dir` is `top` or below it (real paths when they exist). */
+  function insideCheckout(dir: string, top: string): boolean {
+    let d = dir;
+    try {
+      d = fs.realpathSync.native(dir);
+    } catch {
+      // keep the given path
+    }
+    const rel = path.relative(top, d);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  }
+
+  function containsUnresolved(s: Session, top: string): boolean {
+    for (const d of s.unresolvedDirs) if (insideCheckout(d, top)) return true;
+    return false;
+  }
+
+  /** The first work of the session in each checkout of `dirs` (nearest directory of a path, a builder's cwd): its baseline is taken once, before the work. */
+  async function noteCheckouts(s: Session, dirs: readonly string[]): Promise<void> {
+    if (s.isChild || s.dirtyBase === null || dirs.length === 0) return;
+    const job = async (): Promise<void> => {
+      for (const dir of dirs) {
+        if (s.dirtyBase === null) return;
+        let c: { top: string; key: string } | null = null;
+        try {
+          c = await memoCheckout(s.checkoutMemo, dir, platform);
+        } catch {
+          c = null;
+        }
+        if (!c) {
+          s.unresolvedDirs.add(dir); // work may follow here: a later checkout containing it is counted whole
+          continue;
+        }
+        if (s.dirtyBase[c.key]) continue;
+        let e: DirtyEntry | null = null;
+        if (!containsUnresolved(s, c.top)) {
+          try {
+            e = await baselineAt(c.top);
+          } catch {
+            e = null;
+          }
+        }
+        // no baseline (git failed, or an earlier lookup here failed while the session may have worked): counted whole, never baselined after the work
+        s.dirtyBase = { ...s.dirtyBase, [c.key]: e ?? { repo: c.top, head: null, paths: null } };
+        for (const d of [...s.unresolvedDirs]) if (insideCheckout(d, c.top)) s.unresolvedDirs.delete(d);
+        saveDirtyBase(s);
+      }
+    };
+    s.dirtyChain = s.dirtyChain.then(job, job);
+    await s.dirtyChain;
+  }
+
+  /** The nearest existing directory of each path the foreman's own write, edit, move or copy changes. */
+  function writeDirs(toolName: string, input: Record<string, unknown>, cwd: string): string[] {
+    const raw = toolName === "foreman_move" ? [input.src, input.dst] : toolName === "foreman_copy" ? [input.dst] : [input.path];
+    const out: string[] = [];
+    for (const r of raw) {
+      const abs = resolveToolPath(r, cwd, os.homedir());
+      if (!abs) continue;
+      const d = nearestDirectory(abs);
+      if (!out.includes(d)) out.push(d);
+    }
+    return out;
+  }
+
+  /** session_start: the baseline map of the branch (a new session takes the first one for its cwd), then the scope file. */
+  async function startDirtyBase(s: Session, ctx: ExtensionContext, reason: string): Promise<void> {
+    if (s.isChild) return;
+    const r = restoreDirtyBase((ctx.sessionManager.getBranch?.() ?? []) as unknown[], reason);
+    s.dirtyBase = r.map;
+    s.checkoutMemo = new Map();
+    s.unresolvedDirs = new Set();
+    if (r.fresh) {
+      const b = await takeBaseline(ctx.cwd, platform).catch(() => null);
+      if (b) s.dirtyBase = { [b.key]: { repo: b.repo, head: b.head, paths: b.paths } };
+      saveDirtyBase(s); // always: a reload must not read this session as a legacy one
+    } else writeScope(s);
+  }
+
+  /**
+   * Whether the session changed anything since its baseline (the reminder's condition): an own edit, a new commit, or a path of a baseline checkout whose content
+   * differs from the recorded one. True whenever that cannot be told (no baseline, a checkout without a path map, a builder's checkout without an entry, git failing).
+   */
+  async function sessionChanged(s: Session): Promise<boolean> {
+    const map = s.dirtyBase;
+    if (s.work.edits > 0 || !map || Object.keys(map).length === 0) return true;
+    try {
+      const skip = skipper(editModeOfSession(s).scratchDir);
+      for (const e of Object.values(map)) {
+        if (!e.paths) return true;
+        const head = ((await git(e.repo, ["rev-parse", "HEAD"])) ?? "").trim() || null;
+        const now = await dirtyPaths(e.repo);
+        if (now === null || head !== e.head) return true;
+        const same = await unchangedSince(e.repo, e.paths);
+        if (now.some((p) => !skip(p) && !same.has(p))) return true;
+      }
+      for (const [dir] of reviewFacts.recorded()) {
+        const c = await resolveCheckout(dir, platform);
+        if (!c || !map[c.key]) return true;
+      }
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
@@ -2419,6 +2570,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     if (!s.isChild && (event.reason === "startup" || event.reason === "new") && (!latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]))) s.baseline = await checkoutBaseline(ctx.cwd, editModeOfSession(s).scratchDir, platform); // a brand-new session only; a reload or resume keeps the stored one, a fork its parent's (without one: none)
+    await startDirtyBase(s, ctx, event.reason);
     restoreCeremonyState(s, ctx, event.reason);
     restoreSessionFolder(s, ctx, event.reason);
     restoreLedgerRoutes(s, ctx);
@@ -4194,6 +4346,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ms.trace?.emit({ event: "question_check", jargon: hint ? 1 : 0 });
       }
     }
+    if (ms && !ms.isChild && ms.dirtyBase !== null && GATED_TOOLS.has(event.toolName)) await noteCheckouts(ms, writeDirs(event.toolName, (event.input ?? {}) as Record<string, unknown>, ctx.cwd)); // the first own change of a checkout: its baseline is taken before the call runs
     let bashTimeout = null as ChildBashTimeout | null;
     let wantHold = null as { gate: LedgerGate; key: string; sid: string } | null;
     const res = await (async () => {
@@ -4966,6 +5119,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const configured = get(s.config.config, "safety.ops.baseBranch");
           return reviewBaseOf(dir, { baseBranch: typeof configured === "string" ? configured : null });
         };
+        await noteCheckouts(s, reviewFacts.builderDirs(input, ctx.cwd));
         await reviewFacts.noteBuilders(input, ctx.cwd);
         if (occasions.size > 0) {
           // Review bookkeeping to the run end (occasion.ts): occasion, shadow, model per entry; the files the findings are located in.
@@ -6599,7 +6753,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify(`pi-foreman: the turn ends on hold with steps missing: ${missing.join(", ")}. The final finish still needs them.`, "warning");
       }
       // work from an earlier prompt that no PASS covers: one reminder with the next turn (appended, never system text)
-      if (missing.includes("reviewer") && s.work.builders + s.work.edits > 0 && !s.reminderQueued) {
+      if (missing.includes("reviewer") && s.work.builders + s.work.edits > 0 && !s.reminderQueued && (await sessionChanged(s))) {
         s.reminderQueued = true;
         pi.sendMessage({ customType: "pi-foreman-review-reminder", content: "pi-foreman: unreviewed work: a reviewer PASS is still missing before finish or PR.", display: true }, { deliverAs: "nextTurn" });
       }
@@ -6719,7 +6873,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Trivial builder path (trivial.ts): at finish the builder's diff decides; a failed check escalates to standard. The refusal note, or "". */
   async function trivialFinishCheck(s: Session, ctx: ExtensionContext): Promise<string> {
     if (s.ceremony.tier !== "trivial" || !s.ceremony.trivialBuilder || !trivialBuilderPath(get(s.config.config, "ceremony.required"))) return "";
-    const v = await checkTrivial(reviewFacts.recorded(), ctx.cwd, readBound(get(s.config.config, "ceremony.trivialBound")), editModeOfSession(s).scratchDir);
+    if (s.ceremony.userTier) {
+      s.trace?.emit({ event: "trivial_check_skipped", reason: "user_tier" }); // the owner's tier holds at finish
+      return "";
+    }
+    const v = await checkTrivial(reviewFacts.recorded(), ctx.cwd, readBound(get(s.config.config, "ceremony.trivialBound")), editModeOfSession(s).scratchDir, s.dirtyBase, platform);
     if (!v) return "";
     setCeremony(s, escalate(s.ceremony, "standard", "auto", `trivial check: ${v.reason}`));
     s.trace?.emit({ event: "triage_escalated", from: "trivial", to: s.ceremony.tier, reason: v.reason });

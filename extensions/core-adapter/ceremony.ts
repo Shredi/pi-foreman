@@ -28,7 +28,7 @@ export interface CeremonyState {
   needsChange?: boolean;
   /** A builder ran at trivial on the builder path: the finish scans its diff (trivial.ts). */
   trivialBuilder?: boolean;
-  /** The tier the user set with `/ceremony`: sticky; the ledger header and foreman_triage never raise the tier above it, automatic escalations still do. Only the next `/ceremony` replaces it. */
+  /** The tier the user set with `/ceremony`: sticky; the ledger header and foreman_triage never raise the tier above it, automatic escalations still do, except the finish diff check (trivial.ts), which is skipped while it holds. Only the next `/ceremony` replaces it. */
   userTier?: Tier;
   /** The tier the latest ledger header named while `userTier` held the tier down (shown by tierLine). */
   ledgerSaid?: Tier;
