@@ -35,7 +35,8 @@ for (const child of [false, true]) {
   test(`${who}: the false-alarm line echo "wall $(( $(date +%s) - start ))s"; ls has no floor, no deny and no ask (opaque, not on the judge-first list: it runs)`, { skip: posixOnly }, () => {
     const o = run('echo "wall $(( $(date +%s) - start ))s"; ls', child);
     assert.deepEqual(res(o), {}, JSON.stringify(o.result));
-    assert.equal(o.danger, null, JSON.stringify(o.danger));
+    // judge-first-unknown round: arithmetic on `start`, a name not shown to be a number, is judged (danger-unknown-program); no floor, deny or ask
+    assert.equal(o.danger?.name, "danger-unknown-program", JSON.stringify(o.danger));
   });
 
   test(`${who}: git commit -m with any message gets the same gate decision whatever the message (messages are not read)`, { skip: posixOnly }, () => {

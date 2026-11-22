@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { childHandoffDirs } from "../owned.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
@@ -66,6 +65,8 @@ const REFUSED: Row[] = [
   ["unresolved cp destination, line names the dir", (r) => `cp x "$X"; ls ${r.H}`],
   ["brace list in the file name", (r) => `echo x > ${r.H}/ruling{,-1}.md`],
   ["bg_run", (r) => `echo x > ${r.H}/ruling.md`],
+  // judge-first-unknown round: moved here from NOT_REFUSED; `$FOREMAN_SCRATCH` is the harness folder only until the line may rebind it
+  ["$FOREMAN_SCRATCH rebound on the line", (r) => `FOREMAN_SCRATCH=/tmp/q; echo x > $FOREMAN_SCRATCH/ruling.md; ls ${r.H}`],
 ];
 
 for (const [name, line] of REFUSED) {
@@ -98,7 +99,6 @@ const NOT_REFUSED: Row[] = [
   ["unresolved write word on a line that names neither dir nor ruling file", () => `echo x > "$X"`],
   ["$FOREMAN_SCRATCH target", () => `echo x > $FOREMAN_SCRATCH/ruling.md`],
   ["${FOREMAN_SCRATCH} target beside the dir", (r) => `echo x > \${FOREMAN_SCRATCH}/ruling.md; ls ${r.H}`],
-  ["$FOREMAN_SCRATCH rebound on the line", (r) => `FOREMAN_SCRATCH=/tmp/q; echo x > $FOREMAN_SCRATCH/ruling.md; ls ${r.H}`],
 ];
 
 for (const [name, line] of NOT_REFUSED) {
@@ -435,7 +435,7 @@ test("F1 a heredoc or here-string that names the ruling by its full path is refu
 // F2: one whole-run join of the literals of inline code.
 test("F2 a name joined from a long run of literals is still read", { skip: posixOnly }, () => {
   const r = rig();
-  const pieces = (name: string): string => [...name].map((c) => `'${c}'`).join("+");
+  const pieces = (name: string): string => Array.from(name).map((c) => `'${c}'`).join("+");
   for (const name of ["ruling.md", "brief-a.md"]) {
     assert.equal(run(r, `python3 -c "open(${pieces(name)},'w')"`, "bash", r.H), SELF_RULING_REASON, `${name} in ${name.length} pieces`);
   }

@@ -22,7 +22,9 @@ const CLASSES: Record<number, { dir: "looser" | "stricter"; why: string }> = {
   4: { dir: "stricter", why: "PowerShell system-folder and disk lines stay a hard deny where the Python guard only asked" },
   5: { dir: "looser", why: "the Python guard's own tamper and in-band bypass strings are no concern of the floors" },
   7: { dir: "looser", why: "Python text match, no command runs: `bash -c 'echo \"f(){ rm -rf ~; }\"'` only prints the text of a function" },
-  8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'ionice rm -rf ~'`, taskset, chroot, strace, unbuffer, `script -c`, also under `busybox sh -c`) runs; no text match, no program list" },
+  8: { dir: "looser", why: "owner 2026-11-19: an unknown wrapper inside a `-c`/eval string (`sh -c 'taskset 1 rm -rf ~'`, strace, `script -c`, also under `busybox sh -c`) runs; no text match, no program list (round judge-first-unknown: ionice, chroot and unbuffer are runners the walker does not unwrap and go to the judge, ledger item 1)" },
+  // round judge-first-unknown: a busybox/toybox applet the walker does not unwrap, or a wrapper behind one, is no known-safe program (ledger item 1) and now ends in a floor
+  11: { dir: "stricter", why: "round judge-first-unknown: `busybox reboot`, `busybox sudo ls`, `busybox fdisk -l` and the like name a program this walker does not read, so the call is not known-safe" },
   10: { dir: "stricter", why: "coproc bodies are read (the Python guard and the floors at f0d8b980 looked inside none): a system delete in one is a floor" },
 };
 
@@ -116,10 +118,14 @@ test("the harmless lines still run", () => {
 
 test("sudo/doas in a body or string is read behind the privilege program; a recursive rm outside the roots in a body or behind a wrapper goes to the judge", () => {
   for (const l of ["f(){ sudo rm -rf ~; }; f", "f(){ doas find / -delete; }; f", "f(){ sudo shred /x; }; f", "f(){ sudo mkfs.ext4 /dev/sdb; }; f", "f(){ xargs -I{} sudo rm -rf {}; }; f"]) assert.notEqual(verdictOf("bash", l, false), "run", l);
-  for (const l of ["sh -c 'busybox rm -rf /opt/x'", "eval 'toybox rm -r /opt/x'", "sh -c 'busybox nice rm -rf /opt/x'", "sh -c 'busybox env rm -rf /opt/x'", "sh -c 'busybox timeout 5 rm -rf /opt/x'",
-    "sh -c 'busybox setsid rm -rf /opt/x'", "sh -c 'busybox nohup rm -rf /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f", "busybox rm -rf /opt/x", "f(){ rm -rf /opt/x; }; f"]) both("bash", l, "judge");
+  // round judge-first-unknown (ledger item 1): a busybox applet behind a shell string is a program the walker does not read, so these are refused now instead of judged
+  for (const l of ["sh -c 'busybox rm -rf /opt/x'", "sh -c 'busybox nice rm -rf /opt/x'", "sh -c 'busybox env rm -rf /opt/x'", "sh -c 'busybox timeout 5 rm -rf /opt/x'",
+    "sh -c 'busybox setsid rm -rf /opt/x'", "sh -c 'busybox nohup rm -rf /opt/x'", "busybox rm -rf /opt/x"]) both("bash", l, "floor");
+  for (const l of ["eval 'toybox rm -r /opt/x'", "f(){ env rm -rf /opt/x; }; f", "f(){ command rm -rf /opt/x; }; f", "f(){ rm -rf /opt/x; }; f"]) both("bash", l, "judge");
 });
 
-test("class 8: an unknown wrapper inside a -c/eval string or a function body keeps running (no text match, no program list)", () => {
-  for (const l of ["sh -c 'ionice rm -rf ~'", "sh -c 'taskset 1 rm -rf ~'", "sh -c 'chroot / rm -rf ~'", "sh -c 'strace rm -rf ~'", "sh -c 'unbuffer rm -rf ~'", "busybox sh -c 'ionice rm -rf ~'", "eval 'ionice rm -rf ~'", "f(){ ionice rm -rf ~; }; f"]) both("bash", l, "run");
+// round judge-first-unknown (ledger item 1): ionice, chroot and unbuffer are runners the walker does not unwrap, so the program behind them was not walked: judged now, no longer running
+test("class 8: an unknown wrapper inside a -c/eval string or a function body keeps running when it is no runner; an unwalked runner goes to the judge (no text match, no program list)", () => {
+  for (const l of ["sh -c 'taskset 1 rm -rf ~'", "sh -c 'strace rm -rf ~'"]) both("bash", l, "run");
+  for (const l of ["sh -c 'ionice rm -rf ~'", "sh -c 'chroot / rm -rf ~'", "sh -c 'unbuffer rm -rf ~'", "busybox sh -c 'ionice rm -rf ~'", "eval 'ionice rm -rf ~'", "f(){ ionice rm -rf ~; }; f"]) both("bash", l, "judge");
 });
