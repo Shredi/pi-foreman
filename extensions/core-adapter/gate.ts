@@ -504,7 +504,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const hits = JUDGE_FIRST.filter((r) => r.test(dcall, denv));
       const floorDanger = dangerOfFloor(h);
       const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reasonOf?.(dcall, denv) ?? hits[0].reason } : null);
-      const labels = [...new Set([...(floorDanger ? [floorDanger.name] : []), ...hits.map((r) => r.name)])];
+      const labels = [...new Set([...(floorDanger ? [floorDanger.name, ...(h?.also ?? [])] : []), ...hits.map((r) => r.name)])];
       return { result: undefined, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
     }
     const readField = readFieldOf(readTools, toolName);
