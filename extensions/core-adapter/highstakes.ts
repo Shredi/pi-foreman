@@ -338,14 +338,14 @@ export class HighStakes {
   }
 
   /** The checkout a run id belongs to (a high-stakes run, whatever the model now says; persisted, so a reload keeps it); null when it is no high-stakes run. */
+  ownerOf(runId: string): string | null {
+    return this.st.runIds.find((r) => r.id === runId)?.cwd ?? null;
+  }
+
   /** The head and tree stored with a run id at its launch; null when none were stored. */
   launchStartOf(runId: string): { head: string | null; tree: string | null } | null {
     const r = this.st.runIds.find((x) => x.id === runId);
     return r && "head" in r && "tree" in r ? { head: r.head ?? null, tree: r.tree ?? null } : null;
-  }
-
-  ownerOf(runId: string): string | null {
-    return this.st.runIds.find((r) => r.id === runId)?.cwd ?? null;
   }
 
   /** The run ended (with or without a verdict): it no longer counts as running. */

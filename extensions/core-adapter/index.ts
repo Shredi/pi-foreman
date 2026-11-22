@@ -2345,7 +2345,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (known) return known;
     const failed = startErrors.get(ctx.sessionManager.getSessionId());
     if (failed !== undefined) throw new Error(failed);
-    return await startSession(ctx);
+    return startSession(ctx);
   }
 
   function refreshLedgerTier(s: Session): void {

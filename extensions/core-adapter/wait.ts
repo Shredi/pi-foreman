@@ -231,6 +231,8 @@ export const realTimers: Timers = {
 export class Governor {
   private pending: Outcome[] = [];
   private timer: unknown = null;
+  /** The leading-edge wake of a pressure outcome waits one macrotask so outcomes resolving in the same tick join it. */
+  private lead: unknown = null;
   private readonly d: { windowMs: () => number; active: () => number; timers: Timers; send: (o: Outcome[]) => void };
 
   constructor(d: { windowMs: () => number; active: () => number; timers: Timers; send: (o: Outcome[]) => void }) {
@@ -240,7 +242,16 @@ export class Governor {
   resolved(o: Outcome): void {
     this.pending.push(o);
     if (this.d.active() === 0) return this.flush();
-    if (this.timer !== null) return;
+    if (this.timer !== null || this.lead !== null) return;
+    // Pressure polls of one level change resolve together in one tick: their leading-edge wake waits one macrotask so they share it.
+    if (o.kind !== "pressure") return this.openWindow();
+    this.lead = this.d.timers.set(() => {
+      this.lead = null;
+      this.openWindow();
+    }, 0);
+  }
+
+  private openWindow(): void {
     this.flush();
     const ms = this.d.windowMs();
     if (ms > 0) this.timer = this.d.timers.set(() => this.flush(), ms);
@@ -253,7 +264,9 @@ export class Governor {
 
   flush(): void {
     if (this.timer !== null) this.d.timers.clear(this.timer);
+    if (this.lead !== null) this.d.timers.clear(this.lead);
     this.timer = null;
+    this.lead = null;
     const out = this.pending;
     this.pending = [];
     if (out.length) this.d.send(out);
@@ -261,7 +274,9 @@ export class Governor {
 
   dispose(): void {
     if (this.timer !== null) this.d.timers.clear(this.timer);
+    if (this.lead !== null) this.d.timers.clear(this.lead);
     this.timer = null;
+    this.lead = null;
     this.pending = [];
   }
 }
@@ -291,6 +306,8 @@ export interface RuntimeDeps {
   idle?: () => boolean;
   /** Called after the set of active waits changed (a wait started, resolved or cancelled). */
   changed?: () => void;
+  /** Called when only the stored set changed (a resolved wait was delivered): persist without telling observers. */
+  persist?: () => void;
   /** Modification time (ms) of a file, else null; lets a ruling wait ignore a ruling older than its ask.md. */
   mtime?: (p: string) => number | null;
   /** True while a run is in progress (the adapter's own record, agent_start .. agent_end). Absent = never. */
@@ -466,7 +483,12 @@ export class WaitRuntime {
   delivered(ids: string[]): void {
     let any = false;
     for (const id of ids) any = this.undelivered.delete(id) || any;
-    if (any) this.notify();
+    if (!any || this.disposed) return;
+    try {
+      this.d.persist?.();
+    } catch {
+      // best effort
+    }
   }
 
   /** Resolved waits whose wake is not delivered yet (for the stored set). */
@@ -718,6 +740,14 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       const line = wakeMessage([{ ...o, outcome: `ended by the notice above: ${o.outcome}` }]);
       pi.sendMessage({ customType: WAIT_NOTE_TYPE, content: s.steer ? s.steer(line.content) : line.content, display: true }, { triggerTurn: false });
     };
+    // dispose() silences changed() and persist(): a shutdown keeps the last stored set, which is what the resumed session reports as lost
+    const persist = (): void => {
+      try {
+        pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, [...holder.rt.list(), ...holder.rt.pendingOutcomes()]));
+      } catch {
+        // the session file is not writable now
+      }
+    };
     holder.rt = new WaitRuntime({
       timers: realTimers,
       now: () => Date.now(),
@@ -734,13 +764,9 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       idle: s.idle,
       changed: () => {
         for (const cb of [...(listeners.get(s.id) ?? [])]) cb();
-        // dispose() silences changed(): a shutdown keeps the last stored set, which is what the resumed session reports as lost
-        try {
-          pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, [...holder.rt.list(), ...holder.rt.pendingOutcomes()]));
-        } catch {
-          // the session file is not writable now
-        }
+        persist();
       },
+      persist,
       wake: (outcomes) => {
         let idle = true;
         try {
