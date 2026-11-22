@@ -25,11 +25,13 @@ const run = (tool: string, command: string, child = false): string => {
 const HARD: Array<[string, string]> = [
   ["busybox rm -rf ~", "floor-rm-system"], ["toybox rm -rf ~", "floor-rm-system"], ["busybox sh -c 'rm -rf ~'", "floor-rm-system"], ["f(){ rm -rf ~; }; f", "floor-rm-system"],
   ["f(){ mkfs.ext4 /dev/sdb; }; f", "floor-disk"],
+  // round judge-first-unknown (ledger item 1): an applet behind busybox is a program the walker does not read; this line was judged before and is refused now
+  ["busybox sh -c 'rm -rf /opt/x'", "floor-delete-outside"],
 ];
 const JUDGED: Array<[string, string]> = [
   ["function g { rm -rf $1; }; g x", "danger-delete-unknown-target"], ["git clean -fd $X", "danger-delete-unknown-target"], ["git clean -fd -e keep", "danger-git"],
   ["docker exec c rm -rf /data", "danger-remote-command"], ["kubectl exec p -- rm -rf /data", "danger-remote-command"], ["cd $D && rm -rf build", "danger-delete-unknown-target"], ["find . -exec rm -rf {} +", "danger-delete-unknown-target"],
-  ["busybox sh -c 'rm -rf /opt/x'", "danger-delete-unknown-target"], ["ls | xargs shred", "danger-delete-unknown-target"], ["git -C sub clean -fd $X", "danger-delete-unknown-target"], ["echo hi > $F", "danger-unknown-write-target"], ["cat <<EOF > $F\nx\nEOF", "danger-unknown-write-target"],
+["ls | xargs shred", "danger-delete-unknown-target"], ["git -C sub clean -fd $X", "danger-delete-unknown-target"], ["echo hi > $F", "danger-unknown-write-target"], ["cat <<EOF > $F\nx\nEOF", "danger-unknown-write-target"],
   ["chmod -R 777 $X", "danger-unknown-write-target"], ["truncate -s 0 $X", "danger-unknown-write-target"], ["dd of=$X if=/dev/zero", "danger-unknown-write-target"], ["find $X -delete", "danger-delete-unknown-target"],
   ["ssh h 'ls; truncate -s 0 $X'", "danger-remote-command"],
 ];

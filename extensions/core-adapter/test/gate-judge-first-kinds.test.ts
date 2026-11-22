@@ -68,7 +68,8 @@ for (const [kind, line, foreman] of KINDS) {
 test("kinds PR C removed run with no judge call: an install, a pull request merge, an opaque line", async (t) => {
   for (const child of [false, true]) {
     const r = await rig(t, "unsure", { child });
-    for (const line of ["pip install x", "gh pr merge 1", "$(echo ls) -la"]) {
+    // judge-first-unknown round: `$(echo ls) -la` (a program word built by a substitution) is judged now (danger-unknown-program), so it is no longer in this list
+    for (const line of ["pip install x", "gh pr merge 1"]) {
       await r.call("bash", { command: line });
       assert.equal(r.calls.length, 0, `${child ? "child" : "foreman"}: ${line}`);
       assert.equal(r.asked.length, 0, line);

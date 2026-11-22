@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { opsOf, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
-import type { ShellSegment } from "./shellast.ts";
+import { carryFacts, type ShellSegment } from "./shellast.ts";
 import { shellWriteTargets } from "./defaults.ts";
 import { shortNameSpellings, toolPath } from "./pathnorm.ts";
 
@@ -195,7 +195,7 @@ export function shellSelfmod(lines: ShellSegment[], cwd: string, roots: GateRoot
   // a word that is `~` or starts `~/` names the home folder, as Pi's file tools read it (`toolPath`); the segments are copied with those words expanded
   const home = roots.home;
   const expand = (w: string): string => (home && (w === "~" || w.startsWith("~/") || (platform === "win32" && w.startsWith("~\\"))) ? (toolPath(w, cwd, home, platform) ?? w) : w);
-  const segs = home ? lines.map((s) => ({ ...s, argv: s.argv.map(expand), redirects: s.redirects.map((rd) => ({ ...rd, target: expand(rd.target) })) })) : lines;
+  const segs = home ? lines.map((s) => carryFacts({ ...s, argv: s.argv.map(expand), redirects: s.redirects.map((rd) => ({ ...rd, target: expand(rd.target) })) }, s)) : lines;
   // the named targets of the write-target code (in-place `sed -i`, `perl -i`, `dd of=` ...) join the fixed word list
   const targets = shellWriteTargets(segs, platform).filter((t) => t.named);
   for (const s of segs) {

@@ -65,7 +65,8 @@ test("the opaque and runner forms keep the verdict they had before the change", 
 test("documented gaps: forms no judge reads as the program are not refused today (not a protection; closing them is a later round)", () => {
   for (const row of GAP_ROWS) {
     // the disk-word port of the removed Python guard refuses `powershell -Command "fdisk ..."` and `cmd /c fdisk ...`: no gap any more, pinned as refused here
-    for (const g of GROUPS) assert.equal(judge(row.line(g), g).refused, (row.form === "powershell -Command" || row.form === "cmd /c") && g.name === "disk", `${g.name} / ${row.form}: ${JSON.stringify(row.line(g))}`);
+    // `busybox <applet>` is read as the applet's program now (judge-first round 4): `busybox reboot` is refused like `reboot`
+    for (const g of GROUPS) assert.equal(judge(row.line(g), g).refused, row.form === "busybox applet" || ((row.form === "powershell -Command" || row.form === "cmd /c") && g.name === "disk"), `${g.name} / ${row.form}: ${JSON.stringify(row.line(g))}`);
   }
 });
 

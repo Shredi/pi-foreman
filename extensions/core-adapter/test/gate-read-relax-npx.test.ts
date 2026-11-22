@@ -52,12 +52,13 @@ test("A8: every other unknown word keeps the segment opaque (no built-in allow)"
     // the script text of sed and awk is unknown
     'sed -n "$EXPR" src/a.ts',
     'awk "$PROG" src/a.ts',
-    '"$P" -n foo src/a.ts', // the program
     'cd "$D" && grep foo src/a.ts', // a cd operand
     'rg --pre "$X" foo src/a.ts',
   ]) {
     assert.equal(rule(l), "none", l);
   }
+  // judge-first-unknown round: a program word that is a variable is no longer a plain "none": the judge looks first
+  assert.equal(rule('"$P" -n foo src/a.ts'), "danger-unknown-program");
   // a redirect target that is a variable ends the command: the judge looks first (PR C)
   assert.equal(rule('grep -n "$PAT" src/a.ts > "$OUT"'), "danger-unknown-write-target");
 });

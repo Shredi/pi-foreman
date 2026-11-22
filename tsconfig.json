@@ -12,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["extensions/**/*.ts", "setup/**/*.ts"],
-  "exclude": ["node_modules", "extensions/core-adapter/test/judge-first-unknown*.test.ts"]
+  "exclude": ["node_modules"]
 }

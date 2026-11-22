@@ -108,6 +108,8 @@ const POSITIVE: Record<string, Case[]> = {
   "danger-harness-folder": [],
   "danger-kill-pattern": [sh("pkill node"), sh("killall x"), sh("env pkill x"), sh("$V/bin/pkill x"), sh("f(){ pkill x; }; f"), sh("busybox killall x")],
   "danger-delete-unknown-target": [sh("ls | xargs rm -rf"), sh("find build -exec rm -rf {} +")],
+  // judge-first-unknown round
+  "danger-unknown-program": [sh("E=sh; $E -c 'ls'"), sh("env --ign ls"), sh("builtin exec -c ls"), sh("echo $((a+1))"), sh("f(){ E=sh; $E -c 'ls'; }; f")],
 };
 
 const NEGATIVE: Record<string, Case[]> = {
@@ -123,6 +125,7 @@ const NEGATIVE: Record<string, Case[]> = {
   "danger-opaque": [sh("echo hi"), sh("ls src"), sh("cat a.txt | wc -l")],
   "danger-kill-pattern": [sh("kill 123"), sh("kill $!"), sh("kill %1"), sh("taskkill /PID 1"), sh("pgrep node"), sh("echo pkill x")],
   "danger-delete-unknown-target": [sh("echo hi"), sh("find build -name x -exec grep y {} +")],
+  "danger-unknown-program": [sh("env -u PATH ls"), sh("n=1; echo $((n+1))"), sh("~/bin/tool x"), sh("$V/bin/pip list"), sh("echo hi")], // judge-first-unknown round
   "danger-inline-code": [sh("python script.py"), sh("node file.js"), sh("python3 -m pytest"), sh("bash -c 'ls'"), sh("echo hi")],
   "danger-remote": [sh("docker ps"), sh("kubectl get pods"), sh("scp a.txt host:/x"), sh("echo ssh host")],
   "danger-mcp-act": [{ tool: "mcp__chrome__list_pages", input: {} }, { tool: "mcp__chrome__take_snapshot", input: {} }, { tool: "mcp__chrome__navigate_page", input: { type: "url", url: "https://example.com/" } }, { tool: "mcp__x__get_thing", input: {} }, { tool: "mcp__x__search_things", input: {} }, { tool: "mcp__x__read_file", input: {} }, { tool: "mcp__x__find_x", input: {} }, { tool: "mcp__x__describe_x", input: {} }, { tool: "read", input: { path: "a.txt" } }],
@@ -196,7 +199,8 @@ test("an opaque segment is no built-in allow, and (PR C) not on the judge-first 
   for (const l of ["$CMD arg", "echo ok; $PROG --flag"]) {
     const segs = parseShell(l, { cwd: wt });
     if (!segs.some((s) => s.opaque !== null)) continue;
-    assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv()), null, l);
+    // judge-first-unknown round: a program word with no plain last part is judge-first (danger-unknown-program)
+    assert.equal(dangerMatch({ tool: "bash", input: { command: l }, text: l, segments: segs }, denv())?.name, "danger-unknown-program", l);
     assert.equal(lineDefault(l, segs, dctx()), null, l);
   }
   // a shell fed on stdin inside a substitution is judge-first (danger-inline-code); it is still no built-in allow

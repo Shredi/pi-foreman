@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, beforeParseError, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, beforeParseError, carryFacts, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
@@ -368,7 +368,7 @@ export function gitOptSpellings(words: string[], long: string, opts: { short?: s
       if (name.length < (opts.min ?? 3) || !long.startsWith(name)) continue;
       glued = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
     } else if (opts.short !== undefined && /^-[^-]/.test(w)) {
-      const chars = [...w];
+      const chars = Array.from(w);
       const at = chars.findIndex((ch, n) => n > 0 && "obucj".includes(ch));
       if (at < 0 || chars[at] !== opts.short) continue;
       glued = at + 1 < chars.length ? chars.slice(at + 1).join("") : undefined;
@@ -596,7 +596,7 @@ function unknownWriteTarget(seg: ShellSegment, prog: string): string | undefined
   // the old check read a `>` target that ends the command, nothing after it (`echo > $F arg` is none; the walker sets `redirectEnd`), quoted or not
   const last = seg.redirects[seg.redirects.length - 1];
   if (last && (seg.redirectEnd ?? true) && (last.op === ">" || last.op === "&>") && /^\$\{?[A-Za-z_]\w*\}?$|^`/.test(last.target.replace(/^(["'])(.*)\1$/, "$2"))) return last.target;
-  if (prog === "dd") return a.find((w) => /^of=/.test(w) && /[$`]/.test(w));
+  if (prog === "dd") return a.find((w) => w.startsWith('of=') && /[$`]/.test(w));
   if ((prog === "chmod" || prog === "chown") && a.some((w) => /^-[A-Za-z]*R|^--recursive$/.test(w))) return operands().slice(1).find((w) => /[$`]/.test(w));
   if (prog === "truncate" && a.some((w) => w === "0" || w === "--size=0" || w === "-s0")) return operands().find((w) => /[$`]/.test(w));
   return undefined;
@@ -667,7 +667,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   const dests = overwriteDests(seg, prog);
   const dout = dests.find((w) => w !== "" && outside(w, seg.cwd ?? env.cwd, env));
   if (dout !== undefined) return hit("overwrite-outside", `A recursive copy or extract into '${dout}' overwrites files outside the worktree, your scratch dir and /tmp. Extract into your scratch dir or /tmp first.`);
-  if (prog === "rsync" && seg.argv.some((w) => /^--delete/.test(w))) {
+  if (prog === "rsync" && seg.argv.some((w) => w.startsWith('--delete'))) {
     const d = seg.argv.filter((w) => !w.startsWith("-")).slice(-1)[0];
     if (d !== undefined && outside(d, seg.cwd ?? env.cwd, env)) return hit("delete-outside", `\`rsync --delete\` into '${d}' deletes files outside the worktree, your scratch dir and /tmp.`);
   }
@@ -741,7 +741,7 @@ function scanRoots(seg: ShellSegment): string[] | null {
   }
   if (verb === "fd" || verb === "fdfind") {
     const cut = args.findIndex((w) => /^(?:-x|-X|--exec|--exec-batch)$/.test(w));
-    const sp = args.flatMap((w, i) => (w === "--search-path" && args[i + 1] !== undefined ? [args[i + 1]] : /^--search-path=/.test(w) ? [w.slice(14)] : []));
+    const sp = args.flatMap((w, i) => (w === "--search-path" && args[i + 1] !== undefined ? [args[i + 1]] : w.startsWith('--search-path=') ? [w.slice(14)] : []));
     return [...scanOperands(cut >= 0 ? args.slice(0, cut) : args, SCAN_VALUE_FLAGS.fd, seen).slice(1), ...sp];
   }
   if (verb === "du") return scanOperands(args, SCAN_VALUE_FLAGS.du, seen);
@@ -1069,7 +1069,7 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
-  if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
+  if (pathLike && read && x.endsWith('.pub') && sshPublicKey(x, env)) return null;
   if (pathLike && read && scratchGitConfigRead(x, env)) return null;
   let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   // win32: a short-name segment (`.ssh` as `SSH~1`) that fits a secret name is judged as that name
@@ -1152,7 +1152,7 @@ function psRecursiveDelete(words: string[]): string[] | null {
       if (psPathParam(named[1].toLowerCase())) ops.push(...named[2].split(",").filter(Boolean).concat(named[2] === "" ? [""] : []));
       continue;
     }
-    if (!/^-/.test(w) && !CMD_SWITCHES.test(w)) ops.push(...(w.includes(",") ? w.split(",").filter(Boolean) : [w]));
+    if (!w.startsWith('-') && !CMD_SWITCHES.test(w)) ops.push(...(w.includes(",") ? w.split(",").filter(Boolean) : [w]));
   }
   return ops;
 }
@@ -1306,7 +1306,7 @@ function psUnknownDeletes(text: string, depth: number): UnknownDelete[] {
     if (PS_REMOVERS.has(p)) {
       const rest = words.slice(1);
       if (/^(?:remove-item|ri)$/i.test(p) && rest.some((x) => /^@\w+$/.test(x))) hits.push({ ...UNKNOWN_DELETE("Remove-Item takes a splatted argument list", false), ask: true });
-      if (p !== "rm" && recursiveElsewhere && !rest.some((x) => !/^-/.test(x) && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
+      if (p !== "rm" && recursiveElsewhere && !rest.some((x) => !x.startsWith('-') && !CMD_SWITCHES.test(x))) hits.push({ ...UNKNOWN_DELETE("a delete fed by a recursive listing: the harness cannot read where it deletes", false), ask: true });
     }
     if ((p === "pwsh" || p === "powershell") && words.slice(1, ((i) => (i < 0 ? words.length : i))(words.findIndex((w) => /^-c(?:ommand)?$/i.test(w)))).some((w) => PS_ENCODED.test(w))) hits.push({ ...UNKNOWN_DELETE("an encoded PowerShell command cannot be read", false), ask: true });
     if ((p === "pwsh" || p === "powershell") && depth < MAX_DEPTH) {
@@ -1417,10 +1417,10 @@ export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platfor
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
     const mux = rest !== null && /^(?:busybox|toybox)$/.test(base(seg.program)) && seg.stdinFed !== false;
     for (const t of texts) {
-      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform }), env, depth + 1);
+      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
-        inner[0] = { ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) };
+        inner[0] = carryFacts({ ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) }, inner[0]); // judge-first-unknown round: keeps programUnknown / harnessRebound
       }
       out.push(...inner);
     }
@@ -1472,7 +1472,7 @@ function sshHasCommand(words: string[]): boolean {
     const w = words[i];
     if (w === "--") return words.length - i - 1 + operands > 1;
     if (w.length > 1 && w.startsWith("-")) {
-      const at = [...w.slice(1)].findIndex((ch) => SSH_ARG.has(ch));
+      const at = Array.from(w.slice(1)).findIndex((ch) => SSH_ARG.has(ch));
       if (at >= 0 && at === w.length - 2) i++;
     } else operands++;
   }
@@ -1520,7 +1520,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
     if (rest) {
       const restText = wordsText(rest);
       // what the outer segment was unwrapped from (xargs, a string) and its marker stay on the inner ones
-      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
+      const inner = parseShell(restText, { cwd: seg.cwd, platform: env.platform }).map((x) => carryFacts({ ...x, wrappers: [...seg.wrappers, ...x.wrappers], passThrough: [...(seg.passThrough ?? []), ...(x.passThrough ?? []).map((i) => i + seg.wrappers.length)], opaque: x.opaque ?? seg.opaque, redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x));
       // what feeds the unwrapped command's stdin (`busybox sh <<E`) stays with it
       withHeredocs(inner, seg);
       const h = pythonKinds(restText, inner, env, where, depth + 1, false, acc);
@@ -1542,7 +1542,7 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         const ctext = remote.words.slice(at).join(" ");
         if (ctext !== rtext) {
           // each command of the compound stands where the plain path has the host: a word after the program, so the same rules read it as read `ssh h 'cmd'`
-          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform }).map((x) => ({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }));
+          const cparsed = parseShell(ctext, { cwd: seg.cwd, platform: env.platform, rebound: seg.harnessRebound }).map((x) => carryFacts({ ...x, program: remote.words[0], argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x));
           withHeredocs(cparsed, seg);
           texts.push([ctext, cparsed]);
           compound = cparsed;
@@ -1589,11 +1589,11 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
-      const inner = parsed.map((x, k) => (first && k === 0 ? { ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) } : x));
+      const inner = parsed.map((x, k) => (first && k === 0 ? carryFacts({ ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x) : x));
       const h = pythonKinds(body, inner, env, where, depth + 1, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers

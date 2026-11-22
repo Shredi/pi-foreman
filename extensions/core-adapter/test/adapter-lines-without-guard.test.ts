@@ -56,7 +56,8 @@ for (const kind of ["main", "child"] as const) {
     const r = await rig(t, kind);
     const res = await r.c.call("bash", { command: 'echo "wall $(( $(date +%s) - start ))s"; ls' });
     assert.ok(!res?.block, JSON.stringify(res));
-    assert.equal(r.classifier(), 0, "no judge call");
+    // judge-first-unknown round: arithmetic on `start` (not shown to be a number) is judged first; the stub allows it, no dialog
+    assert.equal(r.classifier(), 1, "one judge call");
     assert.equal(r.dialogs(), 0);
     assert.doesNotMatch(JSON.stringify(r.c.trace()), GUARD);
   });

@@ -23,7 +23,9 @@ const run = (tool: string, command: string, child = false): string => {
 
 
 const REFUSED: Array<[string, string]> = [
-  ["busybox ash -c 'rm -rf ~'", "floor-rm-system"], ["busybox ash -c 'rm -rf $X'", "danger-delete-unknown-target"], ["busybox ash -c 'rm -rf /opt/x'", "danger-delete-unknown-target"],
+  ["busybox ash -c 'rm -rf ~'", "floor-rm-system"], ["busybox ash -c 'rm -rf $X'", "danger-delete-unknown-target"],
+  // round judge-first-unknown (ledger item 1): an applet behind busybox is a program the walker does not read; this line was judged before and is refused now
+  ["busybox ash -c 'rm -rf /opt/x'", "floor-delete-outside"],
   ["toybox ash -c 'rm -rf ~'", "floor-rm-system"], ["busybox xargs rm -rf", "danger-delete-unknown-target"], ["toybox xargs rm -rf", "danger-delete-unknown-target"],
   ["bash -c 'f(){ rm -rf ~; }; f'", "floor-rm-system"], ["eval 'f(){ rm -rf ~; }; f'", "floor-rm-system"], ['eval "f(){ rm -rf ~; }; f"', "floor-rm-system"],
   ["eval 'g(){ git clean -fd $X; }; g'", "danger-delete-unknown-target"], ["f(){ Remove-Item -Recurse $x; }; f", "danger-delete-unknown-target"],
