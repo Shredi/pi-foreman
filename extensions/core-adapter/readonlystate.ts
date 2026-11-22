@@ -38,6 +38,7 @@ export const GATED_LINE = "files not compared (settings changed)";
 /** The parent's git runs: no shell, no optional locks (status leaves the index untouched), no prompt, no hang past the per-run timeout. */
 export const spawnGit: GitRunner = (cwd, args, signal) =>
   new Promise((resolve, reject) => {
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- execFile's error is an Error at runtime; typed as a plain interface
     execFile("git", args, { cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" }, timeout: GIT_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 512 * 1024 * 1024, signal, windowsHide: true, encoding: "utf8" }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
   });
 

@@ -40,7 +40,11 @@ async function labels(s: WatchSnapshot): Promise<string[]> {
     timers,
   });
   watches.start(K, s, null, false);
-  for (let i = 0; i < 4; i++) (fns.shift()?.(), await flush(), await flush());
+  for (let i = 0; i < 4; i++) {
+    fns.shift()?.();
+    await flush();
+    await flush();
+  }
   return calls;
 }
 

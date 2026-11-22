@@ -10,6 +10,7 @@ import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { dialogsJson } from "../dialogs.ts";
 import { overrideHint, pressurePath, takePressureOverride } from "../pressure.ts";
+import { strRaw } from "../strof.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Answer = string | undefined;
@@ -45,7 +46,7 @@ interface Rig {
   project: string;
 }
 
-async function makeRig(t: { after(fn: () => void): void }, o: { mode?: string; hasUI?: boolean; child?: boolean } = {}): Promise<Rig> {
+async function makeRig(t: { after(fn: () => unknown): void }, o: { mode?: string; hasUI?: boolean; child?: boolean } = {}): Promise<Rig> {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-press-ovr-")));
@@ -149,7 +150,7 @@ async function makeRig(t: { after(fn: () => void): void }, o: { mode?: string; h
         return [];
       }
     },
-    async reset() {
+    async reset(this: Rig) {
       salt += 1;
       skip = 0;
       skip = this.trace().length;
@@ -182,7 +183,7 @@ async function makeRig(t: { after(fn: () => void): void }, o: { mode?: string; h
 }
 
 let shared: Promise<Rig> | undefined;
-const cleanups: (() => void)[] = [];
+const cleanups: (() => unknown)[] = [];
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();
 });
@@ -205,7 +206,7 @@ async function rig(t: TestContext, o: { mode?: string; hasUI?: boolean; child?: 
 }
 
 const events = (a: Rig, name: string): Record<string, unknown>[] => a.trace().filter((r) => r.event === name);
-const ov = (a: Rig): string[] => events(a, "pressure_override").map((r) => `${r.decision}${r.reason ? `:${r.reason}` : ""}`);
+const ov = (a: Rig): string[] => events(a, "pressure_override").map((r) => `${strRaw(r.decision)}${r.reason ? `:${strRaw(r.reason)}` : ""}`);
 const waitStarts = (a: Rig): number => events(a, "wait").filter((r) => r.decision === "start").length;
 const worker = (n: number, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ agent: "builder", task: `look ${salt}-${n}`, ...extra });
 const TIMERS = { apis: ["setTimeout" as const] };

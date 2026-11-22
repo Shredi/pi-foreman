@@ -63,7 +63,7 @@ test("an own ask nested inside a ui prompt stays one block", async () => {
 });
 
 test("typed input releases an orphaned dialog (no ui_prompt_end) but not a permission ask", async () => {
-  const { fire, events, sent } = install();
+  const { fire, sent } = install();
   await fire("ui_prompt_start", { kind: "select", title: "lost" });
   await fire("input", { text: "x", source: "extension" });
   assert.deepEqual(actives(sent), [true]);

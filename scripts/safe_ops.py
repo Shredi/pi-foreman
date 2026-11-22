@@ -279,12 +279,12 @@ def op_move(req):
         try:
             os.link(p.src, p.dst)  # fails if dst exists: atomic no-overwrite
         except FileExistsError:
-            raise Precondition("dst_exists", "the destination appeared before the move")
+            raise Precondition("dst_exists", "the destination appeared before the move") from None
         except (OSError, NotImplementedError):
             try:
                 _exclusive_copy_file(p.src, p.dst)  # hard links unsupported here
             except FileExistsError:
-                raise Precondition("dst_exists", "the destination appeared before the move")
+                raise Precondition("dst_exists", "the destination appeared before the move") from None
         os.unlink(p.src)
         return {"action": "rename_file", "src": p.rel_src, "dst": p.rel_dst}
     # Directory or untracked symlink: check-then-rename (documented TOCTOU limit, see module doc).
@@ -374,7 +374,7 @@ def op_copy(req):
         try:
             n = _exclusive_copy_file(p.src, p.dst, budget=cap)
         except FileExistsError:
-            raise Precondition("dst_exists", "the destination appeared before the copy")
+            raise Precondition("dst_exists", "the destination appeared before the copy") from None
         return {"action": "copy_file", "src": p.rel_src, "dst": p.rel_dst, "bytes": n}
     if not stat.S_ISDIR(st.st_mode):
         raise Precondition("src_not_regular", "the source is neither a regular file nor a directory")
@@ -382,7 +382,7 @@ def op_copy(req):
     try:
         os.mkdir(p.dst)  # fails if it exists
     except FileExistsError:
-        raise Precondition("dst_exists", "the destination appeared before the copy")
+        raise Precondition("dst_exists", "the destination appeared before the copy") from None
     created = [(p.dst, True)]
     budget = cap
     try:
@@ -406,7 +406,7 @@ def op_copy(req):
                 pass
         if isinstance(exc, (Precondition, ActionError)):
             raise
-        raise ActionError("copy_failed", "%s (partial copy rolled back)" % exc)
+        raise ActionError("copy_failed", "%s (partial copy rolled back)" % exc) from exc
     return {"action": "copy_dir", "src": p.rel_src, "dst": p.rel_dst, "files": sum(1 for _, d in entries if not d)}
 
 
@@ -575,7 +575,8 @@ def disposable(path, patterns):
                 continue
             if not dir_only and (len(parts) != len(segs) or is_dir):
                 continue
-            if all(fnmatch.fnmatchcase(fold(c), fold(g)) for c, g in zip(parts, segs)):
+            # zip strict=False: the glob may have fewer segments than the path
+            if all(fnmatch.fnmatchcase(fold(c), fold(g)) for c, g in zip(parts, segs, strict=False)):
                 return True
             continue
         # `name/` matches any component that is a directory (all but the last, or the last when git reported a

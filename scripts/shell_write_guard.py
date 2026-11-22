@@ -1647,7 +1647,7 @@ class Analyzer(object):
         for body in subst:
             self.ps_text(body, cwd, depth + 1)
         for u in units:
-            for op, word in u.redirs:
+            for _op, word in u.redirs:
                 if word.text != "$null":
                     _hit(s, "redirect", word, cwd)
             words = list(u.words)

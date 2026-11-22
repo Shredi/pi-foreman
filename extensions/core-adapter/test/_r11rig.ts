@@ -9,6 +9,7 @@ import coreAdapter from "../index.ts";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { probeSpawner } from "./_probe-memo.ts";
 import { reportOf, writeFromReport, writeSpec, type RecSpec } from "./_verdict-rig.ts";
+import { strRaw } from "../strof.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 export type Block = { block?: boolean; reason?: string } | undefined;
@@ -204,8 +205,8 @@ export function gateOutcome(recs: Record<string, unknown>[]): string {
   const g = recs.filter((x) => x.event === "guard" && x.guard === "gate");
   const last = g[g.length - 1];
   const dlg = recs.find((x) => x.event === "dialog" && x.guard === "gate");
-  if (dlg && !(last && last.decision === "allowed")) return `dialog:${dlg.cause}:${dlg.decision}`;
-  return last ? `${last.decision}:${last.rule}` : "pass";
+  if (dlg && !(last && last.decision === "allowed")) return `dialog:${strRaw(dlg.cause)}:${strRaw(dlg.decision)}`;
+  return last ? `${strRaw(last.decision)}:${strRaw(last.rule)}` : "pass";
 }
 
 /**

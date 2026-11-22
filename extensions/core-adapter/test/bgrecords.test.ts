@@ -61,7 +61,8 @@ test("clearAll clears every sent id and none that was never sent", () => {
 });
 
 test("gate: no hc terminal, PI_PROGRAM_STATUS=0, non-tui, no tty, dumb TERM: zero writes and no trace", () => {
-  for (const over of [{ env: {} }, { env: { HC_TERMINAL_ID: "m/t", PI_PROGRAM_STATUS: "0" } }, { env: { HERDR_PANE_ID: "p" }, mode: "rpc" }, { env: { HERDR_PANE_ID: "p" }, isTTY: false }, { env: { HERDR_PANE_ID: "p", TERM: "dumb" } }]) {
+  const overs: Parameters<typeof setup>[0][] = [{ env: {} }, { env: { HC_TERMINAL_ID: "m/t", PI_PROGRAM_STATUS: "0" } }, { env: { HERDR_PANE_ID: "p" }, mode: "rpc" }, { env: { HERDR_PANE_ID: "p" }, isTTY: false }, { env: { HERDR_PANE_ID: "p", TERM: "dumb" } }];
+  for (const over of overs) {
     const { r, out, traces } = setup(over);
     r.post("a", "working", "t", "m");
     r.onTerminal(frame("b", "completed"));

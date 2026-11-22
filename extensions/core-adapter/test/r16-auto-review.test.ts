@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { SHELL_WRITE_REFUSAL } from "../shellwriteguard.ts";
+import { strRaw } from "../strof.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 type Case = { name: string; line: string; gate?: string; note?: string };
@@ -102,9 +103,9 @@ async function run(tool: string, input: Record<string, unknown>, o: { reply?: st
   const dlg = recs.find((x) => x.event === "dialog" && x.guard === "gate");
   const last = g[g.length - 1];
   const outcome = dlg && !(last && last.decision === "allowed")
-    ? `dialog:${dlg.cause}:${dlg.decision}`
+    ? `dialog:${strRaw(dlg.cause)}:${strRaw(dlg.decision)}`
     : last
-      ? `${last.decision}:${last.rule}`
+      ? `${strRaw(last.decision)}:${strRaw(last.rule)}`
       : recs.some((x) => x.event === "guard" && x.guard === "self_ruling") ? "refused" : "pass";
   return { outcome, block, dialogs: dialogs - d0, calls: calls - c0, recs };
 }

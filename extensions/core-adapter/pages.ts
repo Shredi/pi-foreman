@@ -98,7 +98,7 @@ function safeHref(raw: string): string | null {
 function codeSpans(s: string, span: (code: string) => string): string {
   const runs: { at: number; len: number }[] = [];
   for (const m of s.matchAll(/`+/g)) runs.push({ at: m.index, len: m[0].length });
-  const next: number[] = new Array(runs.length).fill(-1);
+  const next: number[] = Array.from<number>({ length: runs.length }).fill(-1);
   const seen = new Map<number, number>();
   for (let k = runs.length - 1; k >= 0; k--) {
     next[k] = seen.get(runs[k].len) ?? -1;
@@ -401,7 +401,7 @@ function blockList(lines: string[], opts: MarkdownOpts, tight: boolean, depth: n
     }
     if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].includes("-")) {
       const head = splitRow(line);
-      const align = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-:$/.test(c) ? "right" : /^:-/.test(c) ? "left" : ""));
+      const align = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : c.endsWith("-:") ? "right" : c.startsWith(":-") ? "left" : ""));
       i += 2;
       const rows: string[][] = [];
       while (i < lines.length && lines[i].trim() && lines[i].includes("|")) rows.push(splitRow(lines[i++]));

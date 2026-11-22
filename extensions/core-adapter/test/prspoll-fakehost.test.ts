@@ -36,7 +36,10 @@ function shimDir(python: string): string {
 async function run(t: TestContext, inGitRepo: boolean): Promise<void> {
   clearStoreCache();
   const res = await resolvePython({ configPath: null, envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
-  if (!res.ok) return void t.skip("no Python >= 3.13 here: nothing to run the real safe_ops.py with");
+  if (!res.ok) {
+    t.skip("no Python >= 3.13 here: nothing to run the real safe_ops.py with");
+    return;
+  }
   const dirs: string[] = [];
   try {
     await runIn(res, inGitRepo, dirs);

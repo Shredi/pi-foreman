@@ -10,6 +10,8 @@
 // session_compact extracts that section and appends it, with the traced friction counters, to
 // `.workflow/retro/<session>.md`.
 
+import { strOf } from "./strof.ts";
+
 export const DIGEST_MAX_LINES = 40;
 export const DIGEST_HINTS = 8;
 const LINE_MAX = 160;
@@ -126,7 +128,7 @@ export function lastAssistantText(messages: readonly unknown[]): string {
     if (typeof m.content === "string") return m.content.trim();
     if (!Array.isArray(m.content)) return "";
     return m.content
-      .map((c) => (c && typeof c === "object" && (c as { type?: unknown }).type === "text" ? String((c as { text?: unknown }).text ?? "") : ""))
+      .map((c) => (c && typeof c === "object" && (c as { type?: unknown }).type === "text" ? strOf((c as { text?: unknown }).text) : ""))
       .join("\n")
       .trim();
   }

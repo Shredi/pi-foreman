@@ -293,7 +293,7 @@ class SyncTest(unittest.TestCase):
         head, before = g(self.work, "rev-parse", "HEAD"), self.remote_head()
         for after, label in (("pull", "before commit: "), ("commit", "committed, before push: ")):
             calls = []
-            def planting(args, cwd, stdin=None, after=after):
+            def planting(args, cwd, stdin=None, after=after, calls=calls):
                 calls.append(args[0])
                 res = real(args, cwd, stdin)
                 if args[0] == after:

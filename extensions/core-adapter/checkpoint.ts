@@ -501,7 +501,7 @@ export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null 
   return `${head} ${name} changed or is gone since the owner approved it. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`;
 }
 
-export const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 200);
+export const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 200);
 
 /** The title of a plan: its first column-0 `#` heading, else its topic (the `<topic>` of `plan-<topic>.md`), else null (callers pick their own fallback). */
 export function planTitle(lines: readonly string[], topic: string | null): string | null {

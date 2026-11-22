@@ -50,6 +50,7 @@ const MODULE_HOOK = /\.(?:mjs|cjs|js)$/i;
 const defer = <T>(p: Promise<T>, ms: number): Promise<T> =>
   new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+    // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- forwards the original rejection reason unchanged
     p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
   });
 

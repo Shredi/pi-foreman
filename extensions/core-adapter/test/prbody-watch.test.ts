@@ -72,7 +72,7 @@ test("a new PASS on the head the host shows: one write with the block, none on t
   x.h.facts.set(A, pass(A, "r1"));
   x.watches.start(K, snap(), null, false, true, mark(A, "r1"));
   await x.tick();
-  assert.deepEqual(x.calls, [], "the seeded pair: nothing to write on the first tick");
+  assert.deepEqual<typeof x.calls>(x.calls, [], "the seeded pair: nothing to write on the first tick");
   x.h.facts.set(B, pass(B, "r2"));
   x.set(snap({ head: B }));
   await x.tick();
@@ -125,7 +125,7 @@ test("a pr_watch or pr_follow watch (not created by pr_create) never gets a writ
   x.watches.start(K, snap(), null, false, false);
   await x.tick();
   await x.watches.bodyOpened();
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
   assert.equal(x.watches.records()[0].opened, undefined);
 });
 
@@ -134,7 +134,7 @@ test("a PASS on another head than the host's writes nothing", async () => {
   x.watches.start(K, snap(), null, false, true, mark(A, "r1"));
   x.h.facts.set(B, pass(B, "r2"));
   await x.tick();
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
 });
 
 test("a PASS recorded between ticks is written at once by the PASS hook (bodyOpened)", async () => {
@@ -154,7 +154,7 @@ test("a pending watch (no stored data yet) writes nothing until the host head is
   x.watches.startPending(K, undefined, undefined, false, true, mark(A, "r1"));
   x.h.facts.set(A, pass(A, "r2"));
   await x.watches.bodyOpened();
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
 });
 
 test("opened and the written pair survive a reload; the first tick after it writes nothing", async () => {
@@ -249,6 +249,6 @@ test("a watch without the body op or the facts source does nothing", async () =>
   x.h.facts.set(A, pass(A, "r1"));
   await x.tick();
   await x.watches.bodyOpened();
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
   assert.deepEqual(x.sent, []);
 });

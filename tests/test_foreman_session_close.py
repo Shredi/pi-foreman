@@ -265,7 +265,7 @@ class ForwardingTest(rt.RemoteBase):
     def test_a_malformed_probe_hc_field_is_unreachable(self):
         probe = {"protocol": fsn.REMOTE_PROTOCOL, "piVersion": "pi 9", "intercomMachineName": "alpha"}
         for bad in (5, None, ["x"]):
-            with mock.patch.object(fsn, "hc_exec_verb", side_effect=lambda *a, **k: dict(probe, hc=bad)):
+            with mock.patch.object(fsn, "hc_exec_verb", side_effect=lambda *a, bad=bad, **k: dict(probe, hc=bad)):
                 rc, out, err = self.run_main(*self.open_args())
             self.assertEqual(rc, 1, bad)
             self.assertIn("probe reply is malformed", err)

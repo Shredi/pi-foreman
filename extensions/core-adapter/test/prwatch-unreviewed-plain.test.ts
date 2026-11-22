@@ -31,7 +31,10 @@ function harness(passes: string[], gate: boolean | undefined) {
   const tick = async (head: string, okAt: number): Promise<void> => {
     read = { kind: "entry", snap: snap(head), okAt };
     const t = [...timers].reverse().find((x) => x.live);
-    if (t) (t.live = false), t.fn();
+    if (t) {
+      t.live = false;
+      t.fn();
+    }
     await new Promise((r) => setImmediate(r));
   };
   return { w, sent, tick };

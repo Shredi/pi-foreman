@@ -51,7 +51,7 @@ function rig(t: TestContext, sid = SID, terminal = "t1") {
   writeNote(agentDir, note);
   fs.mkdirSync(path.join(agentDir, "pi-foreman", "state", "live"), { recursive: true });
   const live = (o: Record<string, unknown> = {}): void =>
-    void fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${sid}.json`), JSON.stringify({ state: "working", hcTerminal: terminal, pid: 999_999_999, heartbeatAt: new Date(now - 5000).toISOString(), cwd, ...o }));
+    fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "live", `${sid}.json`), JSON.stringify({ state: "working", hcTerminal: terminal, pid: 999_999_999, heartbeatAt: new Date(now - 5000).toISOString(), cwd, ...o }));
   live();
   const events: string[] = [];
   const stdin = new FakeStdin(events);
@@ -211,7 +211,7 @@ test("an invalid HC_TERMINAL_ID exits silently without touching any file; usage 
   assert.equal(hcCalls, 0);
   assert.equal(fs.readFileSync(decoy, "utf8"), "keep");
   assert.equal(JSON.stringify(fs.readdirSync(panesDir(r.agentDir))), before);
-  assert.deepEqual(r.out, []);
+  assert.deepEqual<string[]>(r.out, []);
   for (const bad of [[], ["--shell-pid"], ["--shell-pid", "x"], ["--shell-pid", "0"], ["--shell-pid", "5", "extra"]]) assert.equal(await runPaneResume(bad, r.deps()), 2, bad.join(" "));
   assert.match(r.out.at(-1) as string, /^usage: foreman pane-resume --shell-pid <pid>$/);
 });
@@ -262,7 +262,7 @@ test("no tty keeps the note and prints nothing; a nested shell keeps it", async 
   r.stdin.isTTY = false;
   assert.equal(await runPaneResume(r.argv, r.deps()), 0);
   assert.ok(readNoteRaw(r.agentDir, "t1"));
-  assert.deepEqual(r.out, []);
+  assert.deepEqual<string[]>(r.out, []);
   const n = rig(t);
   assert.equal(await runPaneResume(["--shell-pid", "778"], n.deps()), 0);
   assert.ok(readNoteRaw(n.agentDir, "t1"));

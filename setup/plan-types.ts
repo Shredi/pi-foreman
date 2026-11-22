@@ -5,7 +5,7 @@ export type ComponentKind = "pi-self" | "pi-foreman" | "pi-package" | "npm-globa
 export interface Component {
   id: string;
   name: string;
-  kind: ComponentKind | string;
+  kind: string; // a ComponentKind or, for a component the plan does not know yet, any other text
   installed?: string;
   available?: string;
   pin?: string;

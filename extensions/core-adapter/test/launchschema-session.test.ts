@@ -69,7 +69,7 @@ test("real session: the request declares the launch fields on subagent, and a ca
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    extensionFactories: [first as never, (pi: never) => coreAdapter(pi), subagents.default as never],
+    extensionFactories: [first as never, ((pi: never) => coreAdapter(pi)) as never, subagents.default as never],
   });
   await resourceLoader.reload();
   const { session } = await createAgentSession({ cwd, agentDir, modelRuntime, model: modelRuntime.getModel("fake", "m1"), resourceLoader, sessionManager: SessionManager.inMemory(cwd), settingsManager });

@@ -19,7 +19,7 @@ const once = async (a: Adapter): Promise<R> => (await a.fire("agent_before_settl
 /** The turn end after the ledger stop hold (it fires once per session and ledger): the finish gate's answer. */
 const settle = async (a: Adapter): Promise<R> => {
   const r = await once(a);
-  return types(r).includes("pi-foreman-stop-gate") ? await once(a) : r;
+  return types(r).includes("pi-foreman-stop-gate") ? once(a) : r;
 };
 const types = (r: R) => (r?.entries ?? []).map((e) => e.customType);
 const events = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);

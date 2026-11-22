@@ -5,7 +5,6 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
 import { probeSpawner } from "./_probe-memo.ts";
@@ -14,8 +13,7 @@ import { addonPresent, formatWaits, lastLines, readAddonTasks } from "../bg.ts";
 import { checkLogPath, parseStart, registerWait } from "../wait.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
+const tmp = (t: { after(fn: () => unknown): void }, prefix: string, beforeRm?: (dir: string) => Promise<void>): string => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
   t.after(async () => {
     await beforeRm?.(dir);
@@ -23,11 +21,10 @@ const tmp = (t: { after(fn: () => void): void }, prefix: string, beforeRm?: (dir
   });
   return dir;
 };
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
-function waitHarness(t: { after(fn: () => void): void }, opts: { toolNames?: string[]; isChild?: boolean } = {}) {
+function waitHarness(t: { after(fn: () => unknown): void }, opts: { toolNames?: string[]; isChild?: boolean } = {}) {
   delete process.env.PI_SUBAGENT_CHILD;
   let shutdown: (() => Promise<unknown>) | undefined;
   const root = tmp(t, "pf-bg-", async (dir) => {
@@ -151,7 +148,7 @@ test("formatWaits: id, kind, note, age, left and the last 5 log lines; the add-o
 
 // -- guard parity through the real adapter hooks -----------------------------------------------------------
 
-function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Promise<boolean>; toolNames?: string[] } = {}) {
+function adapter(t: { after(fn: () => unknown): void }, opts: { confirm?: () => Promise<boolean>; toolNames?: string[] } = {}) {
   const keys = ["PATH", "Path", "PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "GIT_CONFIG_COUNT"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   t.after(() => {

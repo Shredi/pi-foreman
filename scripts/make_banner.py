@@ -44,7 +44,7 @@ def build_svg() -> str:
     a(f'<rect x="{fx}" y="{fcy - fh // 2}" width="{fw}" height="{fh}" rx="10" fill="{ACCENT}"/>')
     a(f'<text x="{fx + fw // 2}" y="{fcy + 6}" text-anchor="middle" font-family="{FONT}" '
       f'font-size="18" font-weight="700" fill="{BG}">foreman</text>')
-    for name, cy in zip(CREW, cys):
+    for name, cy in zip(CREW, cys, strict=True):
         a(f'<rect x="{nx}" y="{cy - nh // 2}" width="{nw}" height="{nh}" rx="10" fill="{BG}" '
           f'stroke="{ACCENT}" stroke-width="2"/>')
         a(f'<text x="{nx + nw // 2}" y="{cy + 6}" text-anchor="middle" font-family="{FONT}" '

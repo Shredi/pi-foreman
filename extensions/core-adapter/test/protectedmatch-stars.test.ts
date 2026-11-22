@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { protectedMatch } from "../protectedmatch.ts";
 
 function refClass(pat: readonly string[], from: number, to: number): string {
-  const esc = (s: string) => s.replace(/[\\\-\]\[^]/gu, "\\$&").replace(/\p{Cs}/gu, (h) => `\\u{${h.charCodeAt(0).toString(16)}}`);
+  const esc = (s: string) => s.replace(/[\\\-\][^]/gu, "\\$&").replace(/\p{Cs}/gu, (h) => `\\u{${h.charCodeAt(0).toString(16)}}`);
   let stuff: string;
   const cp = pat.slice(from, to);
   if (!cp.includes("-")) stuff = cp.map(esc).join("");

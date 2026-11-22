@@ -22,9 +22,6 @@ const run = (command: string, child: boolean): string => {
 const refused = (line: string): void => {
   for (const child of [false, true]) assert.notEqual(run(line, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
 };
-const runs = (line: string): void => {
-  for (const child of [false, true]) assert.equal(run(line, child), "allow", `${child ? "child" : "foreman"}: ${line}`);
-};
 
 test("a shell with -c under xargs reads the heredoc or here-string as its script", () => {
   refused("xargs -0 sh -c <<< 'rm -rf ~'");

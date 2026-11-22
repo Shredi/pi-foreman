@@ -39,7 +39,7 @@ function rig(o: Opts = {}) {
   const tool = path.join(bin, "usagecmd");
   fs.writeFileSync(tool, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   const clock = { now: T0 };
-  const cfg = { value: o.config ?? {} };
+  const cfg: { value: unknown } = { value: o.config ?? {} };
   const snap = { value: cpu(0, 0) };
   const traces: Record<string, unknown>[] = [];
   const runs: { program: string; args: string[] }[] = [];

@@ -26,7 +26,7 @@
 function fnmatchClass(pat: readonly string[], from: number, to: number): string {
   // Escapes the syntax characters, which stay valid under the `u` flag (an identity escape of anything else would throw there), and writes a lone surrogate as
   // `\u{…}`, so two lone halves made adjacent by a dropped range cannot read as one astral character. Applied per element, never to the joined text.
-  const esc = (s: string) => s.replace(/[\\\-\]\[^]/gu, "\\$&").replace(/\p{Cs}/gu, (h) => `\\u{${h.charCodeAt(0).toString(16)}}`);
+  const esc = (s: string) => s.replace(/[\\\-\][^]/gu, "\\$&").replace(/\p{Cs}/gu, (h) => `\\u{${h.charCodeAt(0).toString(16)}}`);
   let stuff: string;
   // Python indexes by code point; `pat` holds one code point per element, so ranges order by code point.
   const cp = pat.slice(from, to);

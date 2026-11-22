@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { endWith, type Ended } from "./_hsrig.ts";
-import { tick, world } from "./_r46world.ts";
+import { world } from "./_r46world.ts";
 
 type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 type World = ReturnType<typeof world>;
@@ -55,7 +55,6 @@ async function launch(a: Rig, agent: string, task: string, extra: Record<string,
   return { blocked: null as string | null, id, input, task, reason };
 }
 const end = (a: Rig, s: Ended, agent: string, output: string, summary?: string) => endWith(a, s, agent, output, () => a.endRunAs(s.id, agent, output, undefined, summary));
-const pr = async (a: Rig): Promise<string> => (await a.checkCall("create_pull_request", {}))?.reason ?? "";
 const traces = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
 const builder = async (a: Rig) => {
   const b = await launch(a, "builder", "build the widget");

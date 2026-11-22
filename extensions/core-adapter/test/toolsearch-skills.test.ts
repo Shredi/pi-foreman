@@ -15,7 +15,7 @@ function rig(codemode: boolean) {
   const unhidden: string[] = [];
   const found: { name: string; kind: string; unhidden: boolean }[] = [];
   const t = createToolSearchTool({ host: { getAllTools: () => tools, getActiveTools: () => [...active], setActiveTools: (n) => void (active = [...n]) }, hidden: () => hidden, unhide: (n) => { unhidden.push(...n); hidden = hidden.filter((h) => !n.includes(h)); }, skills: () => SKILLS, found: (h) => void found.push(h) });
-  return { run: async (query: string) => (await t.execute("t1", { query })), unhidden, found };
+  return { run: async (query: string) => t.execute("t1", { query }), unhidden, found };
 }
 
 test("a skill hit prints the <skill> entry with name, description and location (escaped)", async () => {

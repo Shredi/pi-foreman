@@ -11,7 +11,7 @@ import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { tmpRoots } from "../pathrules.ts";
-import { toolPath, slashForm } from "../pathnorm.ts";
+import { toolPath } from "../pathnorm.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { resolveToCwd } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/core/tools/path-utils.js";

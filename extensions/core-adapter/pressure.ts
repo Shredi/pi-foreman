@@ -242,9 +242,9 @@ export function overrideHint(code: "ok" | OverrideCode, shape: OverrideShape): s
   if (code === "shape") {
     return shape === "resume"
       ? "A resume cannot get an owner approval; wait."
-      : `If one of these launches cannot wait, launch it alone with ${OVERRIDE_FIELD}: \"<why>\"; the owner approves or declines it in a dialog.`;
+      : `If one of these launches cannot wait, launch it alone with ${OVERRIDE_FIELD}: "<why>"; the owner approves or declines it in a dialog.`;
   }
-  return `If this launch cannot wait, relaunch it with the top-level key ${OVERRIDE_FIELD}: \"<why it cannot wait>\"; the owner approves or declines it in a dialog. Do not retry it unchanged.`;
+  return `If this launch cannot wait, relaunch it with the top-level key ${OVERRIDE_FIELD}: "<why it cannot wait>"; the owner approves or declines it in a dialog. Do not retry it unchanged.`;
 }
 
 /** Trace hash of a task: the first 16 hex of its sha256 (the trace never carries the text). */

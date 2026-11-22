@@ -10,6 +10,7 @@ import { archiveDir, planMigration, renderPlan } from "./reports-migrate.ts";
 import { IMPORT_MAX_BYTES, importFile } from "./reportsimport.ts";
 import { mainCheckout } from "./workspacekey.ts";
 import { defaultSpawner } from "./spawn.ts";
+import { strRaw } from "./strof.ts";
 
 export const USAGE = [
   "usage: foreman reports list [--state open|planned|done|dropped|expired|all] [--json]",
@@ -123,7 +124,7 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
       }
       const lines = [DATA_LINE, `key ${e.key}${e.keys.length > 1 ? ` (group of ${e.keys.join(", ")})` : ""}`, `state ${e.state}${e.label ? ` round ${quoted(e.label, 60)}` : ""}${e.pr ? ` PR #${e.pr}` : ""}${e.reason ? ` reason ${quoted(e.reason, 200)}` : ""}`, `kind ${e.kind}, effect ${e.effect}, ${e.count} session${e.count === 1 ? "" : "s"}, first ${e.first}, last ${e.last}`, `subject ${quoted(e.subject, 400)}`, `what ${quoted(e.what, 400)}`];
       if (e.suggest) lines.push(`suggest ${quoted(e.suggest, 400)}`);
-      for (const r of readRows(store.file)) if (r.row === "report" && e.keys.includes(String(r.key))) lines.push(`- ${String(r.ts)} ${String(r.id)} ${r.role ? quoted(String(r.role), 40) : "-"} session ${quoted(String(r.session), 80)} branch ${quoted(String(r.branch), 80)}${typeof r.source === "string" ? ` ${quoted(r.source, 20)}` : ""}${typeof r.lastSeen === "string" ? ` last seen ${quoted(r.lastSeen, 40)}` : ""}${typeof r.count === "number" ? ` x${r.count}` : ""}`);
+      for (const r of readRows(store.file)) if (r.row === "report" && e.keys.includes(String(r.key))) lines.push(`- ${String(r.ts)} ${String(r.id)} ${r.role ? quoted(strRaw(r.role), 40) : "-"} session ${quoted(String(r.session), 80)} branch ${quoted(String(r.branch), 80)}${typeof r.source === "string" ? ` ${quoted(r.source, 20)}` : ""}${typeof r.lastSeen === "string" ? ` last seen ${quoted(r.lastSeen, 40)}` : ""}${typeof r.count === "number" ? ` x${r.count}` : ""}`);
       out(`${lines.join("\n")}\n`);
       return 0;
     }
@@ -181,7 +182,7 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
       return 0;
     }
   } catch (e) {
-    err(`foreman reports: ${/^locked/.test((e as Error).message) ? "the list is busy, try again" : (e as Error).message}\n`);
+    err(`foreman reports: ${String((e as Error).message).startsWith("locked") ? "the list is busy, try again" : (e as Error).message}\n`);
     return 1;
   }
   return usage(err);

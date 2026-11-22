@@ -10,6 +10,7 @@
 import { launchModel, splitLevel } from "./launchmodel.ts";
 import type { RoleResolution } from "./roles.ts";
 import { launchSteps } from "./rounds.ts";
+import { strRaw } from "./strof.ts";
 
 type Json = Record<string, unknown>;
 
@@ -84,7 +85,7 @@ export function actionOf(input: Json): string | null {
   if (!input || typeof input !== "object") return null;
   const a = input.action;
   if (a === undefined || a === null) return null;
-  if (typeof a !== "string") return String(a);
+  if (typeof a !== "string") return strRaw(a);
   const t = a.trim();
   return t === "" ? null : t;
 }

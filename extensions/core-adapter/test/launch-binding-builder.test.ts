@@ -140,7 +140,7 @@ test("stripChildBindingEnv deletes the variable (any case) or replaces it by the
   const env: Record<string, string | undefined> = { pi_subagent_extension_bindings: "x", A: "1" };
   stripChildBindingEnv(env);
   assert.deepEqual(env, { A: "1" });
-  env[BINDINGS_ENV] = "y";
+  Object.assign(env, { [BINDINGS_ENV]: "y" });
   stripChildBindingEnv(env, "consumed:t");
   assert.deepEqual(env, { A: "1", PI_SUBAGENT_EXTENSION_BINDINGS: "consumed:t" });
 });

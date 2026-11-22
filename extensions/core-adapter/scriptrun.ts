@@ -113,7 +113,7 @@ export interface ScriptRunDetached {
   detached: true;
   pid: number | undefined;
   finished: Promise<ScriptRunResult>;
-  stop(why: "stopped" | "aborted"): void;
+  stop: (why: "stopped" | "aborted") => void;
 }
 
 export interface ScriptRunResult {

@@ -48,11 +48,11 @@ test("mutating -C forms stay denied outside and into the checkout", { skip: posi
   for (const v of MUT) {
     const l = `git -C ${other} ${v}`;
     // an earlier floor (git config --edit) may deny first: any denial counts, the fences are the expected ones otherwise
-    assert.ok(rule(l) === "child-write-outside" || /^floor-/.test(rule(l) ?? ""), `${l}: ${rule(l)}`);
+    assert.ok(rule(l) === "child-write-outside" || (rule(l) ?? "").startsWith("floor-"), `${l}: ${rule(l)}`);
     const c = `git -C ${checkout} ${v}`;
-    assert.ok(FENCES.includes(rule(c) ?? "") || /^floor-/.test(rule(c) ?? ""), `${c}: ${rule(c)}`);
+    assert.ok(FENCES.includes(rule(c) ?? "") || (rule(c) ?? "").startsWith("floor-"), `${c}: ${rule(c)}`);
     const cd = `cd ${other} && git ${v}`;
-    assert.ok(rule(cd) === "child-write-outside" || /^floor-/.test(rule(cd) ?? ""), `${cd}: ${rule(cd)}`);
+    assert.ok(rule(cd) === "child-write-outside" || (rule(cd) ?? "").startsWith("floor-"), `${cd}: ${rule(cd)}`);
   }
 });
 

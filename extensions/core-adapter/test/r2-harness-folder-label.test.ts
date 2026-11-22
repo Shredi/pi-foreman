@@ -12,6 +12,7 @@ import { dangerSegment } from "../defaults.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { posixOnly } from "./_platform.ts";
+import { strRaw } from "../strof.ts";
 
 // the A rows put host paths (backslashes on a win32 host) into the shell text, where a posix shell parser drops unquoted backslashes: they run on a posix host only
 const base = fs.realpathSync.native(mkTestTmp("pf-r2-hf-label-"));
@@ -42,7 +43,7 @@ interface Got { verdict: string; labels: string[] }
 const got = (role: Role, line: string): Got => {
   const o = gateEvaluate("bash", { command: line }, work, { env: () => envOf(role !== "main"), roots: () => roots(role), facts });
   const r = o.result as Record<string, unknown> | undefined;
-  const verdict = r?.block ? `block ${r.rule}` : r?.allow ? `allow ${r.rule}` : "undecided";
+  const verdict = r?.block ? `block ${strRaw(r.rule)}` : r?.allow ? `allow ${strRaw(r.rule)}` : "undecided";
   return { verdict, labels: [...(o.dangers ?? [])].sort() };
 };
 const row = (role: Role, line: string, verdict: string, labels: string[]): void => assert.deepEqual(got(role, line), { verdict, labels }, `${role}: ${line.replaceAll(base, "<base>")}`);

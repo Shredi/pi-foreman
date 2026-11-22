@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { installBgRecords, BG_REQUEST_CHANNEL, BG_RESPONSE_CHANNEL } from "../bgrecords.ts";
 
-function rig(answer: (req: any, n: number) => any | undefined) {
+function rig(answer: (req: any, n: number) => any) {
   const handlers: Record<string, ((...a: any[]) => Promise<void>)[]> = {};
   const subs: Record<string, ((d: unknown) => void)[]> = {};
   let requests = 0;

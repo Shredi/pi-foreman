@@ -90,7 +90,7 @@ test("a new unreviewed head at a tick sends the PR back to draft; checks running
   await x.tick();
   x.h.read = { kind: "entry", snap: snap({ draft: false, runs: [{ id: "2", name: "ci", bucket: "pending", url: "u" }], updatedAt: "t3" }), okAt: 3000 };
   await x.tick();
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
   x.h.facts = "unreviewed";
   x.h.read = { kind: "entry", snap: snap({ draft: false, head: B, updatedAt: "t4" }), okAt: 4000 };
   await x.tick();
@@ -103,7 +103,7 @@ test("a watched PR (pr_watch), a followed PR and another session's PR never get 
   x.h.facts = "wip";
   await x.tick();
   await x.watches.reconcileOwned();
-  assert.deepEqual(x.calls, [], "a watch pr_create did not arm");
+  assert.deepEqual<typeof x.calls>(x.calls, [], "a watch pr_create did not arm");
   // a followed PR has no watch at all
   const f = harness();
   await f.watches.reconcileOwned();
@@ -126,7 +126,7 @@ test("flow off (tools.prDraft false, review gate off, PR feed off): no draft cal
   x.h.read = { kind: "entry", snap: snap({ draft: false }), okAt: 2000 };
   await x.tick();
   await x.watches.reconcileOwned();
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
 });
 
 test("a failing host is retried with a growing pause and a cap, with one notice; it never throws into the session", async () => {
@@ -222,7 +222,7 @@ test("a PR adopted with pr_watch gets no ready line without the rule, and one on
   assert.equal(x.sent.filter((m) => m.includes("ready to merge")).length, 1);
   await x.tick();
   assert.equal(x.sent.filter((m) => m.includes("ready to merge")).length, 1);
-  assert.deepEqual(x.calls, []);
+  assert.deepEqual<typeof x.calls>(x.calls, []);
 });
 
 test("no checks: draft confirmed, no ready line before the non-draft confirmation, then the no-checks line once", async () => {

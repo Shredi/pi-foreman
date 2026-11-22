@@ -13,6 +13,7 @@
 import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { under } from "./triage.ts";
+import { strOf } from "./strof.ts";
 
 export type ManifestKind = "worktree" | "scratch";
 export interface ManifestEntry {
@@ -211,7 +212,7 @@ export async function recordEntries(
     let reason: string | null = null;
     try {
       const r = await run(recordArgs(e, o));
-      if (r && typeof r === "object" && (r as { ok?: unknown }).ok === false) reason = String((r as { text?: unknown }).text ?? "").split("\n")[0];
+      if (r && typeof r === "object" && (r as { ok?: unknown }).ok === false) reason = strOf((r as { text?: unknown }).text).split("\n")[0];
     } catch (err) {
       reason = err instanceof Error ? err.message : String(err);
     }
