@@ -326,7 +326,8 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
 export function stateFileFor(stateDir: string, prefix: string, key: string): string {
   let real = key;
   try {
-    real = fs.realpathSync(key);
+    // native: also expands Windows 8.3 short names, so the long spelling git writes into a worktree's .git file maps to the same file
+    real = fs.realpathSync.native(key);
   } catch {
     real = path.resolve(key);
   }

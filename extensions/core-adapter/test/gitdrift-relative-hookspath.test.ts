@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { GitDriftWatch, deserializeGitSnapshot, diffGitSnapshots, serializeGitSnapshot, sha, takeGitSnapshot } from "../gitdrift.ts";
+import { GitDriftWatch, deserializeGitSnapshot, diffGitSnapshots, locateRepo, serializeGitSnapshot, sha, stateFileFor, takeGitSnapshot } from "../gitdrift.ts";
 import { spawnGit, takeReadonlyState } from "../readonlystate.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { strRaw } from "../strof.ts";
@@ -173,4 +173,17 @@ test("relative hooksPath: after() re-snapshots the gated checkout, a hook plante
   const r = await gate(w, primary);
   assert.ok(r && r.block);
   assert.match(r.reason, /hooks: added pre-push/);
+});
+
+test("relative hooksPath: the state file is the same from both checkouts and for a symlinked spelling", { skip }, (t) => {
+  const { primary, wt, state } = setup(t);
+  const common = (cwd: string) => stateFileFor(state, "gitdrift", locateRepo(cwd)!.commonDir);
+  assert.equal(common(wt), common(primary));
+  const link = path.join(path.dirname(primary), "primary-link");
+  try {
+    fs.symlinkSync(primary, link, "junction");
+  } catch {
+    return;
+  }
+  assert.equal(common(link), common(primary));
 });
