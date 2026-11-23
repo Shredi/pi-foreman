@@ -349,3 +349,25 @@ test("the not-found hint does not name a withheld ancestor folder", () => {
     assert.ok(!/\.env|\.git/.test(`${block.body}${rec.ancestor ?? ""}`), block.body);
   }
 });
+
+test("the not-found answer under a withheld folder is byte-identical whether that folder exists or not", () => {
+  const mk = (withheld: boolean) => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmp, "twin-")));
+    const proj = path.join(root, "home", "proj");
+    fs.mkdirSync(proj, { recursive: true });
+    if (withheld) {
+      fs.mkdirSync(path.join(proj, ".env"), { recursive: true });
+      fs.mkdirSync(path.join(proj, ".git", "refs"), { recursive: true });
+    }
+    return judgeReadScope({ cwd: proj, worktree: proj, agentDir: path.join(root, "agent"), home: path.join(root, "home"), config: {} }) as JudgeReadScope;
+  };
+  const withS = mk(true);
+  const withoutS = mk(false);
+  for (const asked of [".env/nope/../../x", ".git/refs/nope/../../../x", ".env/nope/../x/../../y"]) {
+    const a = one(asked, withS);
+    const b = one(asked, withoutS);
+    assert.equal(a.block.body.replace(/twin-\w+/g, "twin"), b.block.body.replace(/twin-\w+/g, "twin"), asked);
+    assert.equal(a.rec.outcome, b.rec.outcome, asked);
+    assert.ok(!/\.env|\.git/.test(`${a.block.body}${a.rec.ancestor ?? ""}`), a.block.body);
+  }
+});

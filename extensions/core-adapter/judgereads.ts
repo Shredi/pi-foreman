@@ -239,10 +239,18 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
   if (named || remote || secret) return { outcome: "withheld", real: target, window };
   if (tail.length) {
     if (!ancestorReadable(realAnc, scope)) return outside();
-    // A withheld folder is not named in the hint: the answer is a plain not-found.
-    const ancPlace = placeOf(realAnc, scope);
-    const ancWithheld = (ancPlace?.rel ?? []).some(withheldName) || secretPath(realAnc, scope.floorEnv, true) !== null;
-    return { outcome: "not-found", real: target, ...(ancWithheld ? {} : { ancestor: realAnc }), window };
+    // A withheld folder is never the hint: the hint is the nearest folder above it that is not withheld, so the answer is the same whether the withheld folder exists or not.
+    let hint = realAnc;
+    for (;;) {
+      const hp = placeOf(hint, scope);
+      if (!hp) return outside();
+      if (!hp.rel.some(withheldName) && secretPath(hint, scope.floorEnv, true) === null) break;
+      const up = path.dirname(hint);
+      if (up === hint) return outside();
+      hint = up;
+    }
+    if (!ancestorReadable(hint, scope)) return outside();
+    return { outcome: "not-found", real: target, ancestor: hint, window };
   }
   let st: fs.Stats;
   try {
