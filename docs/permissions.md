@@ -306,7 +306,7 @@ Presence (`presence.*`, the same idle-input probe that gates cache warms; see [c
 - A dialog opens whether you are at the machine or not, and it stays open until you answer it. Dismissing it denies. Nothing else closes it except an abort of the call or the end of the session; such a close is no answer and denies nothing you did not decide.
 - The dialog opens with no presence probe and no watchdog. `presence.enabled: false` only affects the cache warms.
 - In a session with UI that is not a child, and in a child with a route to its parent, the [protected-target judge](#protected-targets) decides the same way whether you are present, away, or presence is off, not sampled or stale.
-- For the other judges, children and sessions without UI are unchanged: the judge treats them as away (a confident write, deploy or network allow becomes an ask), and a session without UI has nobody to ask.
+- No other judge has an away rule, so children and sessions without UI are unchanged there; a session without UI has nobody to ask.
 - A floor decision (a deny, or a built-in or rule allow) is deterministic and runs no presence probe.
 
 ## Session kinds and who answers

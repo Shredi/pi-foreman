@@ -4368,7 +4368,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ? {
           ask: `Protect ${clean.kind} ${clean.glob}?`,
           ...(clean.note ? { summary: clean.note } : {}),
-          detail: [`Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode)`, `File: ${where}`, "For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply."],
+          detail: [`Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode)`, `File: ${where}`, "For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI, or a child with a route to its parent, writes and deploys too, except remote writes the harness itself sees, which always ask; a child with no route to its parent, or a session without UI, asks for writes and deploys. Floors and deny rules still apply."],
           answers: "Yes: the protection is written   No: nothing changes",
         }
       : {
