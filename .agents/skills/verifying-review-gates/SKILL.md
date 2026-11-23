@@ -1,17 +1,17 @@
 ---
 name: verifying-review-gates
-description: "Checks that the finish verdict over the per-checkout review gates and the `mark V` refusal still follow the rule after a change to extensions/core-adapter/reviewgates.ts, bound.ts or ledgercall.ts. Use when editing those files or the finish readers in index.ts, or when asked to 'verify the review gates', 'rerun the review gate check' or 'sweep the review gate seeds'. Not for the end-to-end finish tests and not for the dialog episode words of childblocked.ts."
+description: "Checks that the finish verdict over the per-checkout review gates and the `mark V` refusal still follow the rule after a change to extensions/core-adapter/reviewgates.ts, bound.ts or ledgercall.ts. Use when editing those files or the finish readers in index.ts, or when asked to 'verify the review gates', 'rerun the review gate check' or 'sweep the review gate seeds'. Also checks the ended-dialog wording of extensions/core-adapter/childblocked.ts (rule c). Not for the end-to-end finish tests."
 ---
 
 # Verifying the review gates
 
 ## Rule
 
-The finish gate passes only when every checkout with work has a standing PASS; a deleted checkout that is open is dropped only when another existing checkout got a PASS after its last work and last FAIL (D165). `mark V` is accepted only while a counted PASS exists and no checkout's last review failed; later revisions do not reopen V.
+The finish gate passes only when every checkout with work has a standing PASS; a deleted checkout that is open is dropped only when another existing checkout got a PASS after its last work and last FAIL (D165). `mark V` is accepted only while a counted PASS exists and no checkout's last review failed; later revisions do not reopen V. (c) After a dialog episode of a child ends, the parent's words say "answered" only with a stored answer at or after the episode start, and a restart of the session wins over any answer (D159).
 
 ## Harm
 
-A wrong drop lets a change finish with an unreviewed checkout; a missing drop traps the session behind a checkout that was deleted after its work was reviewed elsewhere; a wrong V rule lets the verifier item close with no review or refuses it after a PASS.
+A wrong drop lets a change finish with an unreviewed checkout; a missing drop traps the session behind a checkout that was deleted after its work was reviewed elsewhere; a wrong V rule lets the verifier item close with no review or refuses it after a PASS; a wrong dialog wording tells the parent the owner answered a dialog that a restart lost, so nothing asks the owner again.
 
 ## Tool and why
 
@@ -19,9 +19,9 @@ A seeded generator test on the pure entry points: the question is every order of
 
 ## Covered
 
-- Files and functions: `extensions/core-adapter/reviewgates.ts` (`gatesRevise`, `gatesVerdict`, `supersededGone`, `combined`), `extensions/core-adapter/bound.ts` (`onReviewVerdicts`, `onRevision`), `extensions/core-adapter/ledgercall.ts` (`planLedgerCall`, the V rule)
+- Files and functions: `extensions/core-adapter/reviewgates.ts` (`gatesRevise`, `gatesVerdict`, `supersededGone`, `combined`), `extensions/core-adapter/bound.ts` (`onReviewVerdicts`, `onRevision`), `extensions/core-adapter/ledgercall.ts` (`planLedgerCall`, the V rule), `extensions/core-adapter/childblocked.ts` (`ChildBlocked.tick`, the ended-episode words)
 - Check file: `extensions/core-adapter/test/review-gates-generator.test.ts`
-- Bounds and assumptions: every sequence of up to 4 events (build, PASS, FAIL, delete) over 2 checkouts (4680 sequences) plus 3000 seeded sequences of 2 to 12 events over 3 checkouts, checked after every step; default seed 1; one event per tick of a counter, so no two times tie. About 0.1 s.
+- Bounds and assumptions: every sequence of up to 4 events (build, PASS, FAIL, delete) over 2 checkouts (4680 sequences) plus 3000 seeded sequences of 2 to 12 events over 3 checkouts, checked after every step; default seed 1; one event per tick of a counter, so no two times tie. Rule c: every order of up to 3 answers and restarts inside one episode, with and without an older answer (30 scenarios), through the real `ChildBlocked` with a temp agent dir. About 0.2 s.
 - Last confirmed at: `c2574051096aec6dfb3984d728adf7dde46ee998`
 
 ## Left out
@@ -29,7 +29,7 @@ A seeded generator test on the pure entry points: the question is every order of
 - The finish assembly in `index.ts` (`liveGates` and its readers): covered by `review-gone-superseded.test.ts`.
 - The session-wide entry (key ""), a verdict with no verdict (`none`), a verdict over several roots, a high-stakes FAIL (`gatesMarkStood`) and `stoodAtFail`.
 - A deleted checkout that comes back, a checkout built or reviewed after its deletion, and any real git or file system.
-- Diff facts, the review records and the dialog episode words of `childblocked.ts` (rule c is its own test).
+- Diff facts and the review records. Of `childblocked.ts` only the ended-episode words: not the reminders, the remote and hold wordings, `dismissed`, or the re-ask (`reAskOpenDialogs`).
 - No open gap marks: every failure is a finding.
 
 ## Rerun
@@ -48,9 +48,10 @@ FOREMAN_REVIEW_GEN_SEED=1 FOREMAN_REVIEW_GEN_SEEDS=200 node scripts/foreman_test
 
 ## Seen failing
 
-Break made: `extensions/core-adapter/reviewgates.ts`, `supersededGone` stopped comparing the PASS time (`x.passAt > at` removed).
+Break made (rule c): `extensions/core-adapter/childblocked.ts`, `clearOf` checked the restart after the answer again. The check printed: `stale answer: true; episode: answer, restart: said answered, want restart`.
+Break made (rules a, b): `extensions/core-adapter/reviewgates.ts`, `supersededGone` stopped comparing the PASS time (`x.passAt > at` removed).
 The check printed: `seed 1 case 215: pass c0; build c1; delete c1: after step 3 (delete c1): dropped [/w/c1], want []`, with the rerun line.
-Reverted and green again: yes, the default command: 3 of 3 pass.
+Reverted and green again: yes, the default command: 6 of 6 pass.
 
 ## Reading a failure
 

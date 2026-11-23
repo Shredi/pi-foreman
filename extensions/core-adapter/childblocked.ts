@@ -123,10 +123,12 @@ export interface ChildBlockedDeps {
 function clearOf(rec: Sent, obs: Obs, decision?: string): Cleared {
   if (rec.hold) return "hold";
   if (obs.remote) return "remote";
+  // a restart ends the dialog: it comes first, so an answer stored before it is never reported as "answered"
+  if (obs.startedAt !== undefined && obs.startedAt > rec.since) return "restart";
   const a = obs.lastAnswer;
   if (a && a.at >= rec.since) return a.outcome === "dismissed" ? "dismissed" : "answered";
-  if (decision) return "answered"; // a checkpoint answer of an older live file that has no `lastAnswer`
-  if (obs.startedAt !== undefined && obs.startedAt > rec.since) return "restart";
+  // a checkpoint answer of an older live file that has no `lastAnswer`; only one given in this episode counts
+  if (decision && obs.answer && Date.parse(obs.answer.at) >= rec.since) return "answered";
   return "none";
 }
 

@@ -552,8 +552,8 @@ export function resumeScratch(h: ScratchHost, launchId: string, deps: ScratchFs 
 /**
  * Explorer run end: write the full report to `<scratch>/<session>/brief-<run>/explorer-brief.md`
  * and register that dir as a live scratch dir of every role (role "*"), so a builder or reviewer
- * reads it with the read tool without an ask (review link: child-scratch). The session sweep
- * removes it at shutdown. Returns the file path, or null when anything is off.
+ * reads it with the read tool without an ask (review link: child-scratch). The shutdown sweep keeps it (the 7-day sweep
+ * removes it). Returns the file path, or null when anything is off.
  */
 export function storeBrief(h: ScratchHost, runId: string, text: string, deps: ScratchFs = {}): string | null {
   const id = `brief-${safeId(runId)}`;
@@ -582,11 +582,27 @@ export function finishScratch(h: ScratchHost, launchId: string | null, deps: Scr
   h.trace?.emit({ event: "child_scratch", role: e.role, bytes: st.bytes, files: st.files, action: r.removed === true ? "removed" : r.reason === "missing" ? "gone" : `refused_${r.reason}` });
 }
 
-/** Session shutdown: remove the session's lane in the worktree base and in the temp folder (older runs) unless kept. */
+/**
+ * Session shutdown: remove the session's lane in the worktree base and in the temp folder (older runs) unless kept. A lane that holds
+ * explorer briefs (`brief-*`, D178: a builder launched later reads them) loses its other folders only; the 7-day `sweepOldScratch` removes the lane.
+ */
 export function sweepScratch(h: ScratchHost, deps: ScratchFs = {}): void {
   if (keepOf(h)) return;
   const d = depsOf(h, deps);
-  for (const dir of [sessionScratchDir(h.id, d), h.scratchWt ? sessionScratchDir(h.id, deps) : null]) if (dir) removeScratch(dir, reposOf(h), d);
+  for (const dir of [sessionScratchDir(h.id, d), h.scratchWt ? sessionScratchDir(h.id, deps) : null]) {
+    if (!dir) continue;
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      // no lane: removeScratch below reports it missing
+    }
+    if (!names.some((n) => n.startsWith("brief-"))) {
+      removeScratch(dir, reposOf(h), d);
+      continue;
+    }
+    for (const n of names) if (!n.startsWith("brief-")) removeScratch(path.join(dir, n), reposOf(h), d);
+  }
 }
 
 /** Session start (foreman): remove worktree-side session lanes older than 7 days. */

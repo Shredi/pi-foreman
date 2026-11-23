@@ -4463,7 +4463,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (ps && !ps.isChild) bashRulingSnaps.set(event.toolCallId, snapshotRulings(childDirsOf(ps)));
     }
     // R30 item 8: a child's bash call with no valid `timeout` gets the default, a larger one is capped (bashtimeout.ts).
-    if (ms?.isChild && event.toolName === "bash" && event.input && typeof event.input === "object") {
+    // D157: a session another session opened (handoff dir set, local or remote) counts as a child here; the top session does not.
+    if ((ms?.isChild || (ms && process.env[HANDOFF_DIR_ENV]?.trim())) && event.toolName === "bash" && event.input && typeof event.input === "object") {
       const bt = childBashTimeout(event.input as Record<string, unknown>, { seconds: get(ms.config.config, "ceremony.childBashTimeoutSeconds"), max: get(ms.config.config, "ceremony.childBashTimeoutMaxSeconds") });
       if (bt) {
         (event.input as Record<string, unknown>).timeout = bt.timeout;
@@ -5410,7 +5411,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
 
-      if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
+      if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input, fs.existsSync)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
       if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id), ledgerFor: (task, e) => (entryLedger.has(e) ? entryLedger.get(e) ?? null : taskLedger(task, ctx.cwd, boundLedger(s.markerDir, s.id), [s.cwd, ctx.cwd]).path) })) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
@@ -7336,7 +7337,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Review verdict",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. suites: the test suites you ran or skipped (command, result pass, fail or skip), as your task asks. Then write your report for the foreman.",
+    description: "Give the verdict of your review as data; the harness records gates and ledger marks only from this call. Call it once your checks are done. verdict: pass, fail, or incomplete (you could not run your checks; reason is required). items: a result (pass, fail, open) for each ledger item your task lists; V only when it is listed. findings: each problem with kind (defect = blocking, now or later = advice that never fails a review), text, and for a defect its file, line and class. A check that passed is not a finding: give it as an item result (pass), never as a defect. A pass carries no failed item and no defect; a fail needs one. A second call replaces the first. suites: the test suites you ran or skipped (command, result pass, fail or skip), as your task asks. Then write your report for the foreman.",
     parameters: { type: "object", properties: { verdict: { type: "string", enum: [...VERDICT_VALUES] }, items: { type: "array", maxItems: MAX_ITEMS, items: { type: "object", properties: { id: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V"] }] }, result: { type: "string", enum: [...ITEM_RESULTS] }, note: { type: "string", maxLength: 200, description: "One line." } }, required: ["id", "result"], additionalProperties: false } }, findings: { type: "array", maxItems: MAX_FINDINGS, items: { type: "object", properties: { kind: { type: "string", enum: [...FINDING_KINDS] }, text: { type: "string", maxLength: 300, description: "One line." }, file: { type: "string", maxLength: 200, description: "Repo-relative path." }, line: { type: "integer", minimum: 1 }, class: { type: "string", enum: [...FINDING_CLASSES] } }, required: ["kind", "text"], additionalProperties: false } }, suites: { type: "array", maxItems: MAX_SUITES, items: { type: "object", properties: { command: { type: "string", maxLength: SUITE_COMMAND_MAX, description: "One line, without HTML comment markers." }, result: { type: "string", enum: [...SUITE_RESULTS] } }, required: ["command", "result"], additionalProperties: false } }, reason: { type: "string", maxLength: 300, description: "One line; required when verdict is incomplete." } }, required: ["verdict"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);

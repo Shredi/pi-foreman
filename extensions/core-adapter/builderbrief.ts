@@ -14,7 +14,9 @@ export interface Brief {
   briefPath?: string | null;
 }
 
-export function briefBlock(b: Brief): string {
+/** `exists` (D178): a result or brief path it rejects is left out of the block (the folder may be gone by the time a builder launches). */
+export function briefBlock(b0: Brief, exists?: (p: string) => boolean): string {
+  const b: Brief = exists ? { ...b0, resultPath: b0.resultPath && exists(b0.resultPath) ? b0.resultPath : null, briefPath: b0.briefPath && exists(b0.briefPath) ? b0.briefPath : null } : b0;
   const cut = b.summary.length > BRIEF_MAX;
   const cutNote = !cut ? "" : b.briefPath ? `\n[... cut at ${BRIEF_MAX} characters]` : `\n[... cut at ${BRIEF_MAX} characters${b.resultPath ? "; the full report is under the result path" : ""}]`;
   const note = cutNote + (b.briefPath ? `\n[full brief at ${b.briefPath}]` : "");
@@ -40,16 +42,16 @@ export class ExplorerBrief {
    * Prepend the brief to the task of every fresh builder step of a `subagent` input (single, tasks,
    * chain); a resume carries no brief. Returns the trace records.
    */
-  apply(input: Record<string, unknown>): Record<string, unknown>[] {
+  apply(input: Record<string, unknown>, exists?: (p: string) => boolean): Record<string, unknown>[] {
     const b = this.latest;
     if (!b || typeof input.action === "string") return [];
     const out: Record<string, unknown>[] = [];
-    const block = briefBlock(b);
+    const block = briefBlock(b, exists);
     const visit = (e: unknown): void => {
       if (!isObj(e)) return;
       if (e.agent === "builder" && typeof e.task === "string") {
         e.task = block + e.task;
-        out.push({ event: "explorer_brief", role: "builder", chars: block.length, cut: b.summary.length > BRIEF_MAX, action: b.briefPath ? "file" : "none" });
+        out.push({ event: "explorer_brief", role: "builder", chars: block.length, cut: b.summary.length > BRIEF_MAX, action: b.briefPath && (!exists || exists(b.briefPath)) ? "file" : "none" });
       }
       for (const k of ["tasks", "chain", "parallel"]) if (Array.isArray(e[k])) e[k].forEach(visit);
     };

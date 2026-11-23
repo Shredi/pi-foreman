@@ -4,11 +4,18 @@
 //   A. the finish verdict (combined of the gates that are not dropped) is a PASS iff every kept checkout stands (a PASS with no work since), and one exists;
 //      a gone checkout is dropped iff it is open and another existing checkout got a PASS after its last work and last FAIL (D165)
 //   B. `mark V` is accepted iff a counted PASS exists in a kept checkout and no kept checkout's last review failed (later revisions do not reopen V)
-// Rule (c), the dialog episodes of childblocked.ts, is covered by its own test. Env: FOREMAN_REVIEW_GEN_SEED (default 1), FOREMAN_REVIEW_GEN_SEEDS (a sweep of N seeds).
+//   C. (dialog episodes of childblocked.ts: every order of a checkpoint answer and a session restart in one episode, with and without an answer older than
+//      the episode) the ended-episode words say "answered" only with an answer at or after the episode start, and a restart wins over any answer (D159). Env: FOREMAN_REVIEW_GEN_SEED (default 1), FOREMAN_REVIEW_GEN_SEEDS (a sweep of N seeds).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { combined, gatesRevise, gatesVerdict, supersededGone, type ReviewGates } from "../reviewgates.ts";
 import { planLedgerCall } from "../ledgercall.ts";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { ChildBlocked } from "../childblocked.ts";
+import { liveDir } from "../livestate.ts";
+import { writeRegistry } from "../session.ts";
 
 export type Ev = { op: "build" | "pass" | "fail" | "delete"; k: number };
 const KEYS = ["/w/c0", "/w/c1", "/w/c2"];
@@ -163,4 +170,81 @@ test("self-test: a drop rule that ignores the PASS time, one that never drops an
     assert.ok(found.length > 0 && /rerun: FOREMAN_REVIEW_GEN_SEED=1 /.test(found[0]));
     assert.ok(found[0].split("\n")[0].split("; ").length <= 5, found[0]);
   }
+});
+
+// ---- C: the words of an ended dialog episode (childblocked.ts) ----
+const MIN = 60_000;
+const T0 = Date.parse("2026-11-20T08:00:00.000Z");
+const iso = (ms: number): string => new Date(ms).toISOString();
+export type Words = "answered" | "restart" | "none";
+/** `stale`: the child had given an answer before the episode began; `events`: what happened inside the episode, in order. */
+export interface Scenario { stale: boolean; events: readonly ("answer" | "restart")[] }
+export interface EndedImpl { words: (s: Scenario) => Words }
+
+/** The real ChildBlocked: an episode starting at T0 is announced, the live file then shows the scenario's last answer and last start, and the next tick ends it. */
+function realWords(s: Scenario): Words {
+  const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gen-c-")));
+  try {
+    let now = T0 - 30 * MIN; // the watcher started before the stale answer, so that answer is not seeded away
+    const sent: string[] = [];
+    const cb = new ChildBlocked({ agentDir, sessionId: "parent-sess", opener: () => "fm-parent", seconds: () => 600, send: (text) => sent.push(text), now: () => now });
+    const handoff = path.join(agentDir, "pi-foreman", "handoffs", "20261120-080000-job");
+    fs.mkdirSync(handoff, { recursive: true });
+    fs.writeFileSync(path.join(handoff, "live.json"), JSON.stringify({ intercomId: "fm-job-1", piSessionId: "child-sess" }));
+    writeRegistry(agentDir, { version: 1, sessions: [{ label: "job", child: "fm-job-1", parent: "fm-parent", handoff, status: "open" }] });
+    const live = (f: Record<string, unknown>): void => {
+      fs.mkdirSync(liveDir(agentDir), { recursive: true });
+      fs.writeFileSync(path.join(liveDir(agentDir), "child-sess.json"), JSON.stringify({ heartbeatAt: iso(now), startedAt: iso(T0 - MIN), ...f }));
+    };
+    now = T0 + 11 * MIN;
+    live({ blockedOn: "owner", blockedKind: "approval", ownerBlockedSince: iso(T0) });
+    cb.tick();
+    now += MIN;
+    const at = (i: number): number => T0 + (i + 1) * MIN;
+    const answers = s.events.flatMap((e, i) => (e === "answer" ? [at(i)] : []));
+    const restarts = s.events.flatMap((e, i) => (e === "restart" ? [at(i)] : []));
+    const lastAnswer = answers.at(-1) ?? (s.stale ? T0 - 5 * MIN : undefined);
+    live({ ...(lastAnswer !== undefined ? { lastCheckpoint: { decision: "approve", at: iso(lastAnswer) } } : {}), ...(restarts.length ? { startedAt: iso(restarts.at(-1)!) } : {}) });
+    cb.tick();
+    const text = sent[1] ?? "";
+    return /was answered/.test(text) ? "answered" : /restart/.test(text) ? "restart" : "none";
+  } finally {
+    fs.rmSync(agentDir, { recursive: true, force: true });
+  }
+}
+const REAL_C: EndedImpl = { words: realWords };
+
+/** The model: events alone. A restart ends the dialog; else only an answer inside the episode answers it. */
+const wantWords = (s: Scenario): Words => (s.events.includes("restart") ? "restart" : s.events.includes("answer") ? "answered" : "none");
+
+export function scenarios(): Scenario[] {
+  const out: Scenario[] = [];
+  let layer: ("answer" | "restart")[][] = [[]];
+  for (let d = 0; d <= 3; d++) {
+    for (const events of layer) for (const stale of [false, true]) out.push({ stale, events });
+    layer = layer.flatMap((e) => (["answer", "restart"] as const).map((x) => [...e, x]));
+  }
+  return out;
+}
+
+export function failuresC(impl: EndedImpl): string[] {
+  return scenarios().flatMap((sc) => {
+    const got = impl.words(sc);
+    return got === wantWords(sc) ? [] : [`stale answer: ${sc.stale}; episode: ${sc.events.join(", ") || "nothing"}: said ${got}, want ${wantWords(sc)}`];
+  });
+}
+
+test("C: the ended-episode words follow the model for every order of answers and restarts, with and without an older answer", () => {
+  assert.deepEqual(failuresC(REAL_C), []);
+});
+
+test("C self-check: the scenarios reach each wording", () => {
+  const seen = new Set(scenarios().map(wantWords));
+  assert.deepEqual([...seen].sort(), ["answered", "none", "restart"]);
+});
+
+test("C self-test: the old order (any stored answer says answered, a restart only without one) is reported", () => {
+  const legacy: EndedImpl = { words: (sc) => (sc.stale || sc.events.includes("answer") ? "answered" : sc.events.includes("restart") ? "restart" : "none") };
+  const found = failuresC(legacy);
+  assert.ok(found.length > 0 && found.some((f) => /stale answer: true; episode: restart: said answered, want restart/.test(f)), found.join("\n"));
 });
