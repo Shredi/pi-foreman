@@ -1424,13 +1424,17 @@ const wordsText = (words: string[]): string => words.map((w) => (/^[\w@%+=:,./-]
  * `busybox`/`toybox` or a privilege program (the paths `pythonKinds` re-parses). For the judge-first rules that read a segment's own program (inline code, a remote command).
  */
 export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth = 0): ShellSegment[] {
-  return nestedSegmentsSeen(segs, env, depth, new Set());
+  return nestedSegmentsSeen(segs, env, depth, new Set(), { n: 0 });
 }
 
-function nestedSegmentsSeen(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth: number, seen: Set<string>): ShellSegment[] {
+/** Segments read per line below the top ones; past it a segment with a nested text is not read further but marked `programUnknown` (judge-first, never an allow). */
+export const NESTED_SEGMENT_BUDGET = 1500;
+
+function nestedSegmentsSeen(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth: number, seen: Set<string>, used: { n: number }): ShellSegment[] {
   const out: ShellSegment[] = [];
   for (const seg of segs) {
     out.push(seg);
+    used.n++;
     if (depth >= NORMALISE_DEPTH) continue;
     const rest = behindWrapper(seg);
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
@@ -1439,8 +1443,12 @@ function nestedSegmentsSeen(segs: ShellSegment[], env: { cwd: string; platform: 
       // a text read again with the same folder, names and depth gives the same segments (bodies defined inside bodies, walked at every call, repeat): read once
       const key = JSON.stringify([depth, seg.cwd ?? env.cwd, seg.harnessRebound ?? null, t]);
       if (!rest && seen.has(key)) continue;
+      if (used.n > NESTED_SEGMENT_BUDGET) {
+        out.push({ ...seg, programUnknown: true });
+        break;
+      }
       seen.add(key);
-      const inner = nestedSegmentsSeen(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1, seen);
+      const inner = nestedSegmentsSeen(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1, seen, used);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
         inner[0] = carryFacts({ ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) }, inner[0]); // judge-first-unknown round: keeps programUnknown / harnessRebound
@@ -1524,7 +1532,7 @@ const NORMALISE_DEPTH = 16;
  * are denies; everything else the old check refused is a judge-first hit, kept in `acc` so that a deny found later on the line still wins. `top` is the line itself: its own
  * segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null; seen?: Set<string> }): FloorHit | null {
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null; seen?: Set<string>; read?: number }): FloorHit | null {
   // a judge-first hit is kept, not returned: a deny later on the line still wins
   const settle = (h: FloorHit | null): FloorHit | null => {
     if (h?.kind !== "judge") return h;
@@ -1616,7 +1624,13 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       const key = JSON.stringify([body, opaque.cwd ?? env.cwd, opaque.harnessRebound ?? null, opaque.bodyConsts ?? null, opaque.program, where, depth, where !== "local" && segs.indexOf(opaque) === 0]);
       if ((acc.seen ??= new Set()).has(key)) continue;
       acc.seen.add(key);
+      // one budget for the line, carried through the recursion: bodies read again below bodies cannot grow without bound; past it the line is judge-first, unread
+      if ((acc.read ?? 0) > NESTED_SEGMENT_BUDGET) {
+        settle(judgeHit("delete-unknown-target", "This command defines function bodies too deep or too many to be read, so what it deletes cannot be read.", text));
+        continue;
+      }
       const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
+      acc.read = (acc.read ?? 0) + parsed.length + 1;
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;

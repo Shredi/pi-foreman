@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { BRACE_LIMIT, lineFloors, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments, remoteCommand, unknownTargetDelete } from "./floors.ts";
+import { BRACE_LIMIT, lineFloors, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments as nestedSegmentsOf, remoteCommand, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
@@ -1200,6 +1200,16 @@ export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
  * floors do not name runs. Floors add their own judge-first hits (`kind: "judge"`: git config and remotes, terminal injection, whole-disk scans, a push whose
  * destination cannot be read, the delete-outside and PowerShell units); the protected targets (protected.ts) go to their own check.
  */
+/** The nested segments of a call's segments, read once per segments array (the four danger tests share it; the array belongs to one gate call, so nothing outlives it). */
+const nestedMemo = new WeakMap<object, { cwd: string; platform: string; out: ShellSegment[] }>();
+const nestedSegments = (segs: ShellSegment[], e: DangerEnv): ShellSegment[] => {
+  const hit = nestedMemo.get(segs);
+  if (hit && hit.cwd === e.cwd && hit.platform === e.platform) return hit.out;
+  const out = nestedSegmentsOf(segs, e);
+  nestedMemo.set(segs, { cwd: e.cwd, platform: e.platform, out });
+  return out;
+};
+
 /** The segments the `danger-inline-code` entry names. */
 const inlineCodeHits = (c: DangerCall, e: DangerEnv): ShellSegment[] =>
   nestedSegments(c.segments ?? [], e).filter((s) => s.program !== "" && (inlineCode(s) || s.opaque === "nonliteral_script" || s.opaque === "stdin_fed" || (s.opaque === "writing_wrapper" && progOf(s) === "script") || (s.opaque === "foreign_shell" && c.tool !== "powershell")));

@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
-import { nestedSegments } from "../floors.ts";
+import { nestedSegments, NESTED_SEGMENT_BUDGET } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
@@ -95,6 +95,16 @@ test("item 12: bodies defined inside bodies are read once per place, not once pe
   assert.ok(segs.length < 100, `segments: ${segs.length}`);
   assert.ok(nestedSegments(segs, { cwd: wt, platform: "linux" }).length < 6000);
   for (const role of ["main", "builder"] as const) check(line, role, "J");
+});
+
+test("item 12: deeply nested definitions stop at the segment budget and go to the judge", () => {
+  for (const d of [150, 250]) {
+    const line = nestedDefs(d);
+    const nested = nestedSegments(parseShell(line, { cwd: wt }), { cwd: wt, platform: "linux" });
+    assert.ok(nested.length <= NESTED_SEGMENT_BUDGET * 2, `depth ${d}: ${nested.length}`);
+    assert.ok(nested.some((s) => s.programUnknown === true), `depth ${d}: no judge-first marker`);
+    for (const role of ["main", "builder"] as const) check(line, role, "J");
+  }
 });
 
 test("item 12: look-behind inside function bodies stays bounded", () => {
