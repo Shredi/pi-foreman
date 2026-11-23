@@ -369,7 +369,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       }
     }
     records.push(rec);
-    blocks.push({ header: redactCommand(`${a} -> ${rec.real ? askable(rec.real, scope) : "-"} (${HEADER_NOTE[rec.outcome]})`), body: redactCommand(body) });
+    blocks.push({ header: redactCommand(`${a} -> ${rec.real ? askable(rec.real, scope) : "-"} (${HEADER_NOTE[rec.outcome]})`), body: body.split("\n").map(redactCommand).join("\n") });
   }
   return { blocks, records };
 }

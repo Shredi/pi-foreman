@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { parseJudgeVerdict } from "../classifier.ts";
+import { judgeSystemPrompt, parseJudgeVerdict } from "../classifier.ts";
 import { MAX_FILE_BYTES, MAX_LISTING, MAX_READ_BUDGET, judgeReadScope, readHooks, readPaths, readsUnchanged } from "../judgereads.ts";
 import type { JudgeReadScope } from "../judgereads.ts";
 
@@ -132,4 +132,35 @@ test("a partly shown line carries [cut] and the hint skips to the next line", ()
   assert.match(block.body, /d \[cut\]\n/);
   assert.ok(block.body.startsWith("lines 1-1\n"));
   assert.match(block.body, /ask part\.txt#L2-/);
+});
+
+const headerCount = (body: string): number => {
+  const m = /^lines (\d+)-(\d+)\n/.exec(body);
+  assert.ok(m, body.slice(0, 40));
+  return Number(m[2]) - Number(m[1]) + 1;
+};
+
+test("masking works line by line: a key= before a multi-line quoted value swallows no lines", () => {
+  put(path.join(cwd, "swallow.sh"), 'TOKEN=\n"$(\nrm -rf ~/Documents\nrm -rf ~/Pictures\n)"\necho done\n');
+  const { block } = one("swallow.sh");
+  const n = headerCount(block.body);
+  assert.equal(n, 6);
+  assert.ok(block.body.split("\n").length >= n + 1, block.body);
+  assert.match(block.body, /rm -rf ~\/Documents/);
+  assert.match(block.body, /rm -rf ~\/Pictures/);
+  assert.match(block.body, /echo done/);
+});
+
+test("masking works line by line: the secret= variant keeps every line", () => {
+  put(path.join(cwd, "swallow2.sh"), 'secret=\n"a\nrm -rf ~/Documents\nrm -rf ~/Pictures\nb"\necho done\n');
+  const { block } = one("swallow2.sh");
+  assert.equal(headerCount(block.body), 6);
+  assert.match(block.body, /rm -rf ~\/Documents/);
+  assert.match(block.body, /rm -rf ~\/Pictures/);
+  assert.match(block.body, /echo done/);
+});
+
+test("only the reads-on judge prompt carries the [redacted] sentence", () => {
+  assert.ok(!judgeSystemPrompt().includes("[redacted]"));
+  assert.match(judgeSystemPrompt(true), /\[redacted\] in a file marks a masked value that may hide code; if what it hides matters for the verdict, answer unsure/);
 });
