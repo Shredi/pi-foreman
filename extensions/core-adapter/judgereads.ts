@@ -166,16 +166,41 @@ export function resolveReadable(asked: string, scope: JudgeReadScope): Resolutio
   const m = WINDOW.exec(asked);
   if (m) {
     const literal = resolvePath(asked, undefined, scope);
-    if (literal.outcome !== "not-found" && literal.outcome !== "outside") return { ...literal, literal: true };
+    // A name that exists (a link included) answers as itself; only a name that does not exist is read as a window.
+    if (literal.outcome !== "not-found" || literalExists(asked, scope)) return { ...literal, literal: true };
   }
   return resolvePath(m ? m[1] : asked, m ? { from: Math.max(1, Number(m[2])), to: Math.max(1, Number(m[3])) } : undefined, scope);
 }
 
-function resolvePath(asked: string, window: { from: number; to: number } | undefined, scope: JudgeReadScope): Resolution {
-  let p = asked;
+/** The asked path with a leading `~` expanded, as a raw string: no normalizing, so the OS resolves `..` after the links before it. */
+function expandAsked(asked: string, scope: JudgeReadScope): string {
   // A leading `~` is the home folder (headers and hints show it that way); `~user` and `$VAR` stay as they are. The expanded path is checked like any absolute one.
   const home = scope.floorEnv.home ?? os.homedir();
-  if (home && (p === "~" || p.startsWith("~/") || (scope.platform === "win32" && p.startsWith("~\\")))) p = path.join(home, p.slice(1));
+  if (home && (asked === "~" || asked.startsWith("~/") || (scope.platform === "win32" && asked.startsWith("~\\")))) return home + asked.slice(1);
+  return asked;
+}
+
+/** True when the asked name exists as it is (a dangling link included). */
+function literalExists(asked: string, scope: JudgeReadScope): boolean {
+  const p = expandAsked(asked, scope);
+  if (!p || p.includes("\0")) return false;
+  try {
+    fs.lstatSync(path.isAbsolute(p) ? p : scope.cwd + path.sep + p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The nearest existing folder is named only when a read there is allowed (same places and precedence as reads). */
+function ancestorReadable(real: string, scope: JudgeReadScope): boolean {
+  const place = placeOf(real, scope);
+  if (!place) return false;
+  return !place.agent || AGENT_ALLOW.some((n) => fold(scope.platform, n) === fold(scope.platform, place.rel[0] ?? ""));
+}
+
+function resolvePath(asked: string, window: { from: number; to: number } | undefined, scope: JudgeReadScope): Resolution {
+  const p = expandAsked(asked, scope);
   const outside = (): Resolution => ({ outcome: "outside" });
   if (!p || p.includes("\0")) return outside();
   let lex: string;
@@ -212,7 +237,7 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
   const remote = place.agent && fold(pf, place.rel[0] ?? "") === "pi-foreman" && fold(pf, place.rel[1] ?? "") === "remote";
   const secret = secretPath(target, scope.floorEnv, true) !== null || secretPath(lex, scope.floorEnv, true) !== null;
   if (named || remote || secret) return { outcome: "withheld", real: target, window };
-  if (tail.length) return { outcome: "not-found", real: target, ancestor: realAnc, window };
+  if (tail.length) return ancestorReadable(realAnc, scope) ? { outcome: "not-found", real: target, ancestor: realAnc, window } : outside();
   let st: fs.Stats;
   try {
     st = fs.lstatSync(target);

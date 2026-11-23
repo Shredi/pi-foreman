@@ -283,3 +283,51 @@ test("a .jsonl line is masked before its cut; the last line of a 1 MiB scan carr
   const b = one("big.txt#L2-2").block.body;
   assert.match(b, /\[cut\]/);
 });
+
+test("`..` after a link is resolved by the OS also in a ~/ path", () => {
+  const base = path.join(wt, "tilde");
+  put(path.join(base, "run.sh"), "echo benign\n");
+  put(path.join(base, "deep", "run.sh"), "echo EVIL-ran\n");
+  fs.mkdirSync(path.join(base, "deep", "er"), { recursive: true });
+  fs.symlinkSync(path.join(base, "deep", "er"), path.join(base, "d"));
+  const s = judgeReadScope({ cwd, worktree: wt, agentDir: agent, home: path.join(tmp, "home"), config: {} }) as JudgeReadScope;
+  const { block } = one("~/proj/tilde/d/../run.sh", s);
+  assert.match(block.body, /EVIL-ran/);
+  assert.ok(!block.body.includes("benign"));
+});
+
+test("a run.sh#L1-9 that is a link to an outside file or to agent-dir extensions/ answers as the link, not as the window", () => {
+  const base = path.join(cwd, "litlink");
+  put(path.join(base, "run.sh"), "plain 1\n");
+  const outsideFile = put(path.join(tmp, "outside-lit", "evil.sh"), "echo EVIL\n");
+  fs.symlinkSync(outsideFile, path.join(base, "run.sh#L1-9"));
+  const a = one("litlink/run.sh#L1-9");
+  assert.equal(a.rec.outcome, "outside");
+  assert.ok(!a.block.body.includes("plain"));
+  const ext = put(path.join(agent, "extensions", "x.ts"), "secret ext\n");
+  fs.symlinkSync(ext, path.join(base, "run2.sh#L1-9"));
+  put(path.join(base, "run2.sh"), "plain 2\n");
+  const b = one("litlink/run2.sh#L1-9");
+  assert.ok(b.rec.outcome === "outside" || b.rec.outcome === "withheld");
+  assert.ok(!b.block.body.includes("plain") && !b.block.body.includes("secret ext"));
+});
+
+test("the not-found hint names a folder only inside a readable place", () => {
+  fs.mkdirSync(path.join(tmp, "home", ".ssh"), { recursive: true });
+  fs.mkdirSync(path.join(tmp, "outside-dir"), { recursive: true });
+  fs.mkdirSync(path.join(agent, "extensions"), { recursive: true });
+  put(path.join(wt, "run.sh"), "x\n");
+  for (const asked of [
+    "~/.ssh/nope/../../proj/run.sh",
+    `${tmp}/outside-dir/nope/../../home/proj/run.sh`,
+    `${agent}/extensions/nope/../../../../proj/run.sh`,
+  ]) {
+    const r = one(asked);
+    assert.equal(r.rec.outcome, "outside", asked);
+    assert.ok(!r.block.body.includes("nearest"), asked);
+    assert.equal(r.rec.ancestor, undefined);
+  }
+  const ok = one("nope-folder/x.txt");
+  assert.equal(ok.rec.outcome, "not-found");
+  assert.match(ok.block.body, /nearest existing folder/);
+});
