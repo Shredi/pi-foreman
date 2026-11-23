@@ -46,7 +46,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { ReviewMemory } from "./reviewmemory.ts";
-import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
+import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, supersededGone, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -105,7 +105,7 @@ import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./
 import { filler, fromJsonText } from "./jsontext.ts";
 import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, MAX_SUITES, PRE_PR_SUITES_LINE, SUITE_COMMAND_MAX, SUITE_RESULTS, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readContextUse, readItemsSidecar, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeContextUse, writeItemsSidecar, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
-import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
+import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText, withVItem } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -438,6 +438,8 @@ interface Session {
   steps: StepCounts;
   /** The reviewer step under ceremony.reviewGate "pass" per checkout (reviewgates.ts; key "" = session-wide): latest verdict and a revision since (bound.ts). */
   reviewGates: ReviewGates;
+  /** Deleted checkouts the finish gate already named as superseded (D165): one visible line each. */
+  droppedGone: Set<string>;
   /** A parent sent the work back (rework marker, reworkScan) and no `[pre-pr]` PASS followed; the highest handled marker number (its own watermark). Both persisted in the ceremony entry. */
   sentBack: boolean;
   /** The heads a send-back covered that no `[pre-pr]` PASS on the head has cleared (planstate.ts sentBackMark); persisted beside the flag. */
@@ -1187,6 +1189,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchedRoles: new Map(),
       steps: emptySteps(),
       reviewGates: {},
+      droppedGone: new Set(),
       sentBack: false,
       sentBackHeads: [],
       reworkSeen: 0,
@@ -1424,12 +1427,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return s;
   }
 
+  /** The tier rose above trivial (D164: a trivial ledger has no V): the bound ledger gets its V item when it has none. Written inside the ledger lock. */
+  function ensureVItem(s: Session): void {
+    if (s.isChild) return;
+    const file = boundLedger(s.markerDir, s.id);
+    if (!file) return;
+    ledgerGate(file).defer(() => {
+      try {
+        const next = withVItem(fs.readFileSync(file, "utf8"));
+        if (next !== null) fs.writeFileSync(file, next, "utf8");
+      } catch {
+        // an unreadable or unwritable ledger is reported by the next ledger call
+      }
+    });
+  }
+
   /** Every tier change goes through here so the trace sees it. Only a change by the user (/ceremony) resets the round state and the loop stop. */
   function setCeremony(s: Session, next: CeremonyState): void {
     const before = s.ceremony.tier;
     // The reason of the change: the reason an escalation or override appended, else the source (a triage without one).
     const reason = next.reasons.length > s.ceremony.reasons.length ? next.reasons[next.reasons.length - 1] : `source ${next.source}`;
     s.ceremony = next;
+    if (before === "trivial" && next.tier !== "trivial") ensureVItem(s);
     if (next.tier !== before) {
       if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier, reason }); // D7: a tier event is the foreman's triage
       if (next.source === "user") {
@@ -1542,14 +1561,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Work happened in `roots` (null: unknown): their gate entries go stale; a builder raises the builder count of each (an unknown root: of every counted one). */
   function reviseGates(s: Session, roots: readonly string[] | null, builder: boolean): void {
     if (roots === null) {
-      s.reviewGates = gatesRevise(s.reviewGates, null);
+      s.reviewGates = gatesRevise(s.reviewGates, null, Date.now());
       if (builder) for (const k of Object.keys(s.builderRunsByRoot)) s.builderRunsByRoot[k]++;
       return;
     }
     for (const r of roots) {
-      s.reviewGates = gatesRevise(s.reviewGates, r);
+      s.reviewGates = gatesRevise(s.reviewGates, r, Date.now());
       if (builder) s.builderRunsByRoot[r] = (s.builderRunsByRoot[r] ?? 0) + 1;
     }
+  }
+
+  /** The gates the finish readers see (D165): a deleted checkout superseded by a later PASS elsewhere is left out (`supersededGone`); `ctx` gives each dropped checkout one visible line. */
+  function liveGates(s: Session, ctx?: ExtensionContext): ReviewGates {
+    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync);
+    for (const d of dropped) {
+      if (!ctx || s.droppedGone.has(d.dir)) continue;
+      s.droppedGone.add(d.dir);
+      ctx.ui.notify(`pi-foreman: ${d.dir}: deleted, superseded by the PASS in ${d.by || "the session"}`, "info");
+    }
+    return gates;
   }
 
   /** The key of the pass mark that applies to `root`: its own, else the session-wide one; null = the newest mark; undefined when there is none. */
@@ -4589,7 +4619,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!(given && "error" in given)) {
           const lf = boundLedger(s.markerDir, s.id);
           const read = (f: string | null): string | null => { try { return f ? fs.readFileSync(f, "utf8") : null; } catch { return null; } };
-          const named = typeof e.task === "string" ? taskLedger(e.task, ctx.cwd, lf, [s.cwd, ctx.cwd]).path : lf;
+          const named = typeof e.task === "string" ? taskLedger(e.task, ctx.cwd, lf, [s.cwd, ctx.cwd], checkoutOfEntry(e)).path : lf;
           r = launchItemsOf((named === lf ? null : read(named)) ?? read(lf), given && "items" in given ? given.items : undefined, { reReview: occasions.get(e) === "item", failed: s.mem.failItems(checkoutOfEntry(e)), occasion: occasions.get(e), judged: s.mem.judgedIn(checkoutOfEntry(e)), judgedElsewhere: s.mem.judgedElsewhere(checkoutOfEntry(e)) });
         }
         const c = { given, r };
@@ -4958,7 +4988,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const answeredBefore = s.round.revisionAnswered === true;
           // the review gate of the builder's checkouts: the revision climbs when one of them last failed (an unknown checkout reads every entry)
           const builderRoots = resumed ? null : await rootsOf(builderDirs(ctx, input));
-          const failedHere = builderRoots === null ? combined(s.reviewGates).last === "fail" : builderRoots.some((r) => gateOf(s.reviewGates, r).last === "fail");
+          const failedHere = builderRoots === null ? combined(liveGates(s)).last === "fail" : builderRoots.some((r) => gateOf(s.reviewGates, r).last === "fail");
           rounds = walkLaunch(s.round, steps);
           // A further fresh builder in the same prompt, after a revision already answered the open FAIL, is a revision too (no extra round).
           const again = !resumed && rounds.revisions === 0 && answeredBefore && failedHere && steps.some((g) => g.includes("builder"));
@@ -5295,14 +5325,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
         // D31: the ledger a task names by path drives its block, roots block, marks and hints
-        const pickLedger = (task: string) => {
-          const t = taskLedger(task, ctx.cwd, lf, [s.cwd, ctx.cwd]);
+        await resolveCheckouts(); // D171: a reviewer's own checkout picks its ledger
+        const pickLedger = (task: string, e?: Record<string, unknown>) => {
+          const t = taskLedger(task, ctx.cwd, lf, [s.cwd, ctx.cwd], e && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) ? checkoutOfEntry(e) : null);
           const text = t.path === lf ? lg : (() => { try { return t.path ? fs.readFileSync(t.path, "utf8") : null; } catch { return null; } })();
-          return { text, path: t.path, ...(t.notice ? { notice: t.notice } : {}), named: t.named };
+          return { text, path: t.path, ...(t.notice ? { notice: t.notice } : {}), named: t.named || t.viaCheckout === true };
         };
         // one named path per agent entry (a parallel group is flattened, its own object is no entry); null = the bound ledger
         const agentEntries = launchEntries(input).filter((e) => typeof e.agent === "string");
-        const perEntry = agentEntries.map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
+        const perEntry = agentEntries.map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task, e) : null; return p?.named && p.path ? p.path : null; });
         agentEntries.forEach((e, i) => entryLedger.set(e, perEntry[i] ?? lf));
         if (actionOf(input) !== "resume") capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
         // The items of each review launch (verdict.ts): the `items` field, else every open item; after a FAIL the item occasion's default is the failed items still open.
@@ -6599,7 +6630,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               s.live?.flush();
               void s.prWatches.reconcileOwned().finally(() => s.live?.flush());
             }
-            const after = reopened(combined(s.reviewGates));
+            const after = reopened(combined(liveGates(s)));
             if (after) for (const role of roles.filter((r) => REVIEW_ROLES.includes(r))) s.trace?.emit({ event: "rereview", role, after });
           }
         }
@@ -6812,7 +6843,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
     // A parent ruling never satisfies the gate (R6 lane 4c, ruling 3); after a FAIL the refusal names it.
-    const gate = combined(s.reviewGates); // every checkout with work or a review must have a standing PASS
+    const gates = liveGates(s, ctx); // a deleted checkout superseded by a later PASS elsewhere is not read (D165)
+    const gate = combined(gates); // every checkout with work or a review must have a standing PASS
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
@@ -6849,7 +6881,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     // D28: the count belongs to the state the refusal answers (missing steps, work, review verdict); a new state starts at zero.
-    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, Object.entries(s.reviewGates).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, g]) => `${k}:${g.last ?? ""}:${g.failAt ?? ""}`).join(",")].join("|"); // every checkout's verdict, not the combined one
+    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, Object.entries(gates).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, g]) => `${k}:${g.last ?? ""}:${g.failAt ?? ""}`).join(",")].join("|"); // every checkout's verdict, not the combined one
     if (s.finishKey !== stateKey) {
       s.finishKey = stateKey;
       s.finishRefusals = 0;
@@ -6861,7 +6893,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       savePause(s);
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
-        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(s.reviewGates, { cwd: s.cwd, own: await hsOwnRoot(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
@@ -6878,7 +6910,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     savePause(s);
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(s.reviewGates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }
@@ -6938,7 +6970,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** `/foreman close`: the required steps still open and what the parent would have to rule ("" = none). */
   function closeCeremonyNote(s: Session): string {
     if (s.isChild || !isTriaged(s.ceremony)) return "";
-    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), combined(s.reviewGates)));
+    return rulingNeeded(openSteps(s.steps, requiredOf(s, s.ceremony.tier), reviewGateMode(get(s.config.config, "ceremony.reviewGate")), combined(liveGates(s))));
   }
 
   /** The parent ruling file newer than the last FAIL, named in the finish refusal ("" = none). */
@@ -6976,9 +7008,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { python: pyPath(s), isChild: s.isChild, opsConfig: get(s.config.config, "safety.ops"), handoffDirs, packOn: s.gitPack, trace: (r) => s.trace?.emit(r) };
     },
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
-    preflight: async (ctx, op, callId) => {
+    preflight: async (ctx, op, callId, params) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
+      const pre = await safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
+      if (pre || s.isChild || op !== "worktree_remove" || typeof params?.path !== "string") return pre;
+      // a worktree of another clone: that clone's own config and hooks are checked too (D165)
+      return s.gitDrift.gateTargetRepo(path.join(s.agentDir, "pi-foreman", "state"), path.resolve(ctx.cwd, params.path), ctx.cwd, os.homedir(), `foreman_${op}`, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r));
     },
     verifiedMerge: async (ctx, raw) => {
       const s = await ensureSession(ctx);
@@ -7318,7 +7353,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       const allowed = allowedItems(readItemsSidecar(b.verdictDir) ?? b.items, b.highStakes === true); // a resume writes its items into the folder
       const c = checkVerdictCall(params, allowed);
-      if ("error" in c) return refuse(c.error, "invalid");
+      if ("error" in c) {
+        // a normal launch that carries no items refuses items; the fix is on the launch side (the high-stakes text stays as it is)
+        const fix = allowed.length === 0 && b.highStakes !== true && Array.isArray(params.items) && params.items.length > 0 ? " To mark ledger items, the parent launches the reviewer with items: [...] (the item numbers, and V when it is to be marked); otherwise leave items out." : "";
+        return refuse(c.error + fix, "invalid");
+      }
       let replaced = false;
       try {
         replaced = writeRecord(b.verdictDir, recordOf(b.launchId, c.call)).replaced;
@@ -7421,7 +7460,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "ledger_call", kind, allowed: r.ok });
         return r.ok ? { content: [{ type: "text" as const, text: r.text }], details: { decision: "done" } } : refuse(r.text);
       }
-      const plan = planLedgerCall(params, { gate: combined(s.reviewGates), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
+      const plan = planLedgerCall(params, { gate: combined(liveGates(s)), planPass: params.action === "mark" && planOnlyPass(s, ctx) });
       if ("error" in plan) {
         s.trace?.emit({ event: "ledger_call", kind, allowed: false, items: Array.isArray(params.items) ? params.items.map(String).join(",").slice(0, 60) : undefined });
         return refuse(plan.error);

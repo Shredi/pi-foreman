@@ -34,10 +34,29 @@ export function combined(g: ReviewGates): ReviewGate {
   return { last, revised: all.some((e) => e.revised), ...(failAts.length > 0 ? { failAt: Math.max(...failAts) } : {}), ...(passRun ? { passRun } : {}), ...(all.some((e) => e.failed) ? { failed: true } : {}) };
 }
 
-/** Work happened in `root` (null = unknown checkout). */
-export function gatesRevise(g: ReviewGates, root: string | null): ReviewGates {
-  if (root === null) return Object.fromEntries(Object.entries(g).map(([k, e]) => [k, onRevision(e)]));
-  return { ...g, [root]: g[root] ? onRevision(g[root]) : { last: null, revised: true } };
+/** Work happened in `root` (null = unknown checkout); with `now` the entry records its build time (`builtAt`, D165). */
+export function gatesRevise(g: ReviewGates, root: string | null, now?: number): ReviewGates {
+  const built = (e: ReviewGate): ReviewGate => (now === undefined ? e : { ...e, builtAt: now });
+  if (root === null) return Object.fromEntries(Object.entries(g).map(([k, e]) => [k, built(onRevision(e))]));
+  return { ...g, [root]: built(g[root] ? onRevision(g[root]) : { last: null, revised: true }) };
+}
+
+/**
+ * The gates the finish gate reads (D165): an open entry whose checkout no longer exists (`exists` false) is dropped when another, existing entry got a PASS
+ * after everything that happened in it (`builtAt`, and the FAIL time when it failed). An entry without a time, the session-wide one and a standing one are never dropped.
+ * `dropped` names each one with the entry whose PASS superseded it.
+ */
+export function supersededGone(g: ReviewGates, exists: (dir: string) => boolean): { gates: ReviewGates; dropped: { dir: string; by: string }[] } {
+  const gone = (k: string): boolean => k !== SESSION_WIDE && !exists(k);
+  const gates: ReviewGates = {};
+  const dropped: { dir: string; by: string }[] = [];
+  for (const [k, e] of Object.entries(g)) {
+    const at = e.builtAt === undefined ? undefined : Math.max(e.builtAt, e.failAt ?? 0);
+    const by = !gone(k) || stands(e) || at === undefined ? undefined : Object.entries(g).filter(([o, x]) => o !== k && !gone(o) && x.passAt !== undefined && x.passAt > at).sort(([, a], [, b]) => (b.passAt ?? 0) - (a.passAt ?? 0))[0];
+    if (by) dropped.push({ dir: k, by: by[0] });
+    else gates[k] = e;
+  }
+  return { gates, dropped };
 }
 
 /** Reviews ended in `roots` (null = unknown; an empty list too); verdicts collapse as `onReviewVerdicts` (one non-pass wins). */
@@ -46,7 +65,7 @@ export function gatesVerdict(g: ReviewGates, roots: readonly string[] | null, ve
   const pass = !verdicts.includes("fail") && !verdicts.includes(null);
   const next: ReviewGates = { ...g };
   const apply = (k: string): void => {
-    next[k] = onReviewVerdicts(g[k] ?? initialReviewGate(), verdicts, now, runId);
+    next[k] = onReviewVerdicts(g[k] ?? initialReviewGate(), verdicts, now, runId, now);
   };
   if (roots === null || roots.length === 0) {
     if (pass) apply(SESSION_WIDE);

@@ -653,6 +653,29 @@ export class GitDriftWatch {
     return undefined;
   }
 
+  /**
+   * Before `foreman_worktree_remove` of a worktree that belongs to another clone: that clone's git config and hooks run git too, so its own stored snapshot
+   * (`<stateDir>` per common dir, like the session's) is compared; a first sight takes the baseline. Undefined = the target is in the session's repository (the
+   * normal `gate` covers it), has no repository, or nothing changed.
+   */
+  async gateTargetRepo(stateDir: string, target: string, sessionCwd: string, home: string, what: string, ask: DriftAskEnv, trace: (r: Record<string, unknown>) => void): Promise<{ block: true; reason: string } | undefined> {
+    const other = locateRepo(target);
+    const own = locateRepo(sessionCwd);
+    if (!other || (own && samePath(other.commonDir, own.commonDir))) return undefined;
+    const file = stateFileFor(stateDir, "gitdrift", other.commonDir);
+    const st = loadState(file, "git config", deserializeGitSnapshot);
+    const now = takeGitSnapshot(target, home);
+    if (st.kind === "first") {
+      if (now) writeState(file, serializeGitSnapshot(now));
+      return undefined;
+    }
+    const r = await checkGitDrift(st.kind === "stored" ? st.data : now, target, home, what, ask, st.kind === "tampered" ? [st.line] : []);
+    if (r.decision !== "none") trace({ event: "git_config_drift", decision: r.decision, repo: "target" });
+    if (r.decision === "denied" || r.decision === "no-ui") return { block: true, reason: r.reason ?? "pi-foreman: git config drift." };
+    if (r.decision === "approved" && now) writeState(file, serializeGitSnapshot(now));
+    return undefined;
+  }
+
   /** No drift in a checkout whose relative hooks dir has no stored map yet: store that top's hooks as its baseline (the rest of the stored snapshot stays). */
   private recordFirstSeenTop(cwd: string, home: string): void {
     const prev = this.snap;

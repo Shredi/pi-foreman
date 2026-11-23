@@ -311,9 +311,11 @@ export function planLedgerInit(params: Record<string, unknown>): { topic: string
   return { topic, texts };
 }
 
-/** A new ledger file: header, the recorded tier, one open item per text, then item V. */
+export const V_ITEM_LINE = "- [ ] V. fresh-eyes verification passed";
+
+/** A new ledger file: header, the recorded tier, one open item per text, then item V (not at the trivial tier: a read-only trivial session needs no final verification, D164). */
 export function ledgerInitContent(topic: string, tier: string | null, texts: string[]): string {
-  return [`# LEDGER ${topic}`, ...(tier ? [`Tier: ${tier}`] : []), "", ...texts.map((t, i) => `- [ ] ${i + 1}. ${t}`), "- [ ] V. fresh-eyes verification passed", ""].join("\n");
+  return [`# LEDGER ${topic}`, ...(tier ? [`Tier: ${tier}`] : []), "", ...texts.map((t, i) => `- [ ] ${i + 1}. ${t}`), ...(tier === "trivial" ? [] : [V_ITEM_LINE]), ""].join("\n");
 }
 
 // ------------------------------------------------------------------ upsert (line rewrite)
@@ -337,6 +339,13 @@ function itemLines(file: string): { lines: string[]; hits: { i: number; m: RegEx
     if (m) hits.push({ i, m });
   });
   return { lines, hits };
+}
+
+/** The ledger with the V item appended; null when it already has one (open or closed, outside a fence) (D164: the tier rose above trivial). */
+export function withVItem(file: string): string | null {
+  if (itemLines(file).hits.some(({ m }) => m[2] === "V")) return null;
+  const eol = /\r\n/.test(file) ? "\r\n" : "\n";
+  return `${file}${file === "" || /\n$/.test(file) ? "" : eol}${V_ITEM_LINE}${eol}`;
 }
 
 /** The number of a non-V item whose text is exactly `text`, else null. */
