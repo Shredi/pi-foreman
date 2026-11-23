@@ -1,11 +1,9 @@
 """`foreman session prune` inside a session acts only on the entries that session opened; `--all` and a plain shell keep the whole registry."""
 from __future__ import annotations
 
-import io
 import json
 import sys
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
