@@ -147,8 +147,8 @@ test("item 12: a refusal in a body read after the budget is spent stays a refusa
   }
   for (const role of ["main", "builder"] as const) {
     check(`${spent}g(){ Remove-Item -Recurse /etc; }; g`, role, "R");
-    // a refusal at the bottom of 100 nested definitions, after the budget went at the top
-    check(`${nestedDefs(100).replace("ls", "rm -rf ~")}`, role, "R");
+    // a refusal at the bottom of 100 nested definitions: every body counts a level of depth, so past the cap it is judge-first as on main (never an allow)
+    check(`${nestedDefs(100).replace("ls", "rm -rf ~")}`, role, "J");
   }
 });
 
@@ -233,11 +233,11 @@ test("item 12: a privilege program or wrapper in a body is read past the budget 
   }
 });
 
-test("item 12: nested definitions 100 and 250 with a refusal at the bottom, and wide bodies, stay refused", () => {
+test("item 12: nested definitions 100 and 250 with a refusal at the bottom are refused or judge-first, wide bodies stay refused", () => {
   for (const role of ["main", "builder"] as const) {
     for (const c of ["rm -rf /etc", "sudo rm -rf /etc", "sudo bash -c 'rm -rf /etc'", "mkfs.ext4 /dev/sda"]) {
-      check(nestedDefs(100).replace("ls", c), role, "R");
-      check(nestedDefs(250).replace("ls", c), role, "R");
+      check(nestedDefs(100).replace("ls", c), role, "J");
+      check(nestedDefs(250).replace("ls", c), role, "J");
       check(`f(){ ${rep("foo a b c d e f g h", 300, "; ")}; ${c}; }; f`, role, "R");
     }
   }
@@ -258,8 +258,8 @@ test("item 12: 17+ nested coproc and for(( )) bodies with a read or a write outs
           const line = nestedRun(kind, d, c);
           const g = gate(line, role);
           // the foreman may legitimately allow what only a builder is held to (a write outside)
-          if (role === "main" && (c.startsWith("echo x") )) continue;
-          assert.ok(g.blocked || g.danger !== null || d < 17 && false, `${role} ${kind} ${d}: ${c}: no decision`);
+          if (role === "main" && c.startsWith("echo x")) continue;
+          assert.ok(g.blocked || g.danger !== null, `${role} ${kind} ${d}: ${c}: no decision`);
         }
       }
     }
@@ -296,5 +296,58 @@ test("item 12: 17+ nested definitions that nothing calls are judge-first as on m
     check("select s in a; do rm -rf /etc; done", role, "R");
     check("for ((i=0;i<1;i++)); do rm -rf /etc; done", role, "R");
     check("for ((i=0;i<1;i++)); do ls ; done", role, "A");
+  }
+});
+
+// Review 827351a0: a called function body counts a level of depth like every other body, so a call at each level cannot keep 17+ levels undecided.
+const GAMING: ((d: number, c: string) => string)[] = [
+  // a called function between coproc / for(( )) / select levels
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = i % 2 === 0 ? `coproc C${i} { ${n}; }` : `f${i}(){ ${n}; }; f${i}`; return n; },
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = i % 2 === 0 ? `for ((i${i}=0;i${i}<1;i${i}++)); do ${n}; done` : `f${i}(){ ${n}; }; f${i}`; return n; },
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = i % 2 === 0 ? `select s${i} in a b; do ${n}; done` : `f${i}(){ ${n}; }; f${i}`; return n; },
+  // a call inside a coproc body
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = `coproc C${i} { f${i}(){ ${n}; }; f${i}; }`; return n; },
+  // the call only in a branch that never runs
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = `f${i}(){ ${n}; }; if false; then f${i}; fi`; return n; },
+  // the call before the definition, in a loop
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = `for k in 1 2; do f${i}; f${i}(){ ${n}; }; done`; return n; },
+  // the same name at each level, and recursion
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = `f(){ ${n}; }; f`; return n; },
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = `f${i}(){ ${n}; f${i}; }; f${i}`; return n; },
+  (d, c) => { let n = c; for (let i = 0; i < d; i++) n = `ls(){ ${n}; }; ls`; return n; },
+];
+
+test("item 12: 17+ levels with a called function at each level are never no decision (secret read, git reset --hard, outside write)", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const [k, shape] of GAMING.entries()) {
+      for (const d of [17, 18, 30]) {
+        for (const c of ["cat ~/.aws/credentials", "git reset --hard", "touch /outside/x"]) {
+          // the foreman may write outside; only a builder is held to it
+          if (role === "main" && c.startsWith("touch")) continue;
+          const g = gate(shape(d, c), role);
+          assert.ok(g.blocked || g.danger !== null, `${role} shape ${k} depth ${d}: ${c}: no decision`);
+        }
+      }
+    }
+  }
+});
+
+// Review 827351a0: a select body is read once; nesting it deep with many commands a level stays within a count, not a clock.
+test("item 12: nested selects read each body once (work bound) and past the cap are judge-first", () => {
+  const sel = (d: number, per: number, words = "a b"): string => {
+    let n = "ls";
+    for (let i = 0; i < d; i++) n = `select s${i} in ${words}; do ${rep("ls", per - 1, "; ")}${per > 1 ? "; " : ""}${n}; done`;
+    return n;
+  };
+  const line = sel(250, 20);
+  const segs = parseShell(line, { cwd: wt });
+  // every command of the text is walked once: 250 selects × 20 commands, plus the selects' own segments
+  assert.ok(segs.length <= 250 * 21 + 10, `segments walked: ${segs.length}`);
+  assert.equal(segs.filter((s) => s.bodies !== undefined).length, 0, "a select body is not kept to be parsed again");
+  for (const role of ["main", "builder"] as const) {
+    for (const l of [line, sel(150, 1), sel(100, 20), sel(250, 1, "$(ls)"), sel(17, 1), sel(30, 1)]) check(l, role, "J");
+    // plain and shallow selects stay as they were
+    check("select a in x y; do ls; done", role, "A");
+    check(sel(3, 2), role, "A");
   }
 });

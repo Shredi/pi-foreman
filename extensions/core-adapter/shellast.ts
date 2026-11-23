@@ -120,6 +120,8 @@ export interface ShellParseOptions {
 }
 
 export const MAX_DEPTH = 4;
+/** Selects nested this deep (or deeper) in one text leave the line unread: judge-first. */
+const SELECT_NESTING = 16;
 
 /**
  * Whether a shell given these arguments (and no `-c` string) reads its program from stdin: it has no script operand, or `-s` says so. The options that take a value
@@ -250,6 +252,8 @@ interface Scope {
   /** The harness constants the script being walked reads as constants (set by `prepare`). */
   consts?: string[];
   depth: number;
+  /** How many selects the commands walked here sit inside: their bodies are walked in place, so the nesting is counted here (`SELECT_NESTING`). */
+  selects?: number;
   /** stdin comes from a pipe, a heredoc, a here-string or `<`. */
   stdin: boolean;
   redirects: ShellRedirect[];
@@ -660,7 +664,8 @@ function walkNode(n: any, sc: Scope): string | null {
     default: {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
-      withBodies(sc, nodeBodies(n, sc.src ?? ""));
+      // a select body is walked below, as real commands of this text: it is read once, not again as a body text
+      if (n.type !== "Select") withBodies(sc, nodeBodies(n, sc.src ?? ""));
       // the substitutions inside a `[[ ]]` test and a select's word list and body run: they are real segments next to the opaque one (which still keeps any allow off the line)
       if (n.type === "TestCommand") {
         const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
@@ -668,7 +673,10 @@ function walkNode(n: any, sc: Scope): string | null {
         walkSubs(acc.subs, sc);
       } else if (n.type === "Select") {
         walkWords(n.wordlist, sc);
-        walkLists([n.body], sc);
+        // nesting past the cap is judge-first, as when each body was read as a text one level deeper
+        const nested = (sc.selects ?? 0) + 1;
+        if (nested >= SELECT_NESTING) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
+        walkLists([n.body], { ...sc, selects: nested });
       }
       return sc.cwd;
     }

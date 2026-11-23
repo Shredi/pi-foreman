@@ -1642,10 +1642,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
       const inner = parsed.map((x, k) => (first && k === 0 ? carryFacts({ ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x) : x));
-      // a body that runs without a call (coproc, `for ((…))`, select) counts one level of depth, so nesting past the cap is judge-first as on main; a function body the text calls is run by the walk at its calls
-      // and is bounded by the text and the budget (each body once), so it does not count: 100 nested definitions with a refusal at the bottom stay refused
-      const called = opaque.opaque === "function_def" && segs.some((x) => x.opaque !== "function_def" && x.program === opaque.program);
-      const h = pythonKinds(body, inner, env, where, called ? depth : depth + 1, false, acc);
+      // every body counts one level of depth, as on main: nesting past the cap is judge-first, whether the body runs at a call or not
+      const h = pythonKinds(body, inner, env, where, depth + 1, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
@@ -2309,11 +2307,19 @@ function lineKeyWords(line: ShellSegment[]): string[] {
   });
 }
 
+/** `lineKeyWords` carries a floored key, once per line (every segment of the line asks). */
+const lineKeys = new WeakMap<ShellSegment[], boolean>();
+const hasKey = (line: ShellSegment[]): boolean => {
+  let k = lineKeys.get(line);
+  if (k === undefined) lineKeys.set(line, (k = lineKeyWords(line).some((w) => FLOOR_KEYS.test(w))));
+  return k;
+};
+
 /** Floor: a shell write to a permissions file or harness state file, or to a foreman config file in a line that carries a floored key. */
 function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
   const cwd = seg.cwd ?? env.cwd;
   const entries = protectedEntries(env);
-  const keys = lineKeyWords(line).some((w) => FLOOR_KEYS.test(w));
+  const keys = hasKey(line);
   const configWord = (w: string): boolean => {
     if (!keys || dataWord(w)) return false;
     const abs = resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env);
