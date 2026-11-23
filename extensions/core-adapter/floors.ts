@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { MAX_DEPTH, beforeParseError, carryFacts, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
-import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
+import { FIND_BAD, GIT_READ, READ_CLASS, READ_PROGS, RUNNERS, gitReadWrites } from "./effects.ts";
 import { nonPathArgs } from "./patternargs.ts";
 import { SSH_ARG } from "./protected.ts";
 import { protectedMatch } from "./protectedmatch.ts";
@@ -1424,15 +1424,34 @@ const wordsText = (words: string[]): string => words.map((w) => (/^[\w@%+=:,./-]
  * `busybox`/`toybox` or a privilege program (the paths `pythonKinds` re-parses). For the judge-first rules that read a segment's own program (inline code, a remote command).
  */
 export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth = 0): ShellSegment[] {
+  return nestedSegmentsSeen(segs, env, depth, new Set(), { n: 0 });
+}
+
+/**
+ * Segments the walk emitted inside function bodies it walked at a call (`ShellSegment.walked`) that one line may have read below the top ones; past it such a segment's nested text is not read but the
+ * segment is marked `programUnknown` (judge-first, never an allow). Everything the text of the line reads as without those copies (what origin/main read) is always read, with no budget.
+ */
+export const NESTED_SEGMENT_BUDGET = 1500;
+
+function nestedSegmentsSeen(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth: number, seen: Set<string>, used: { n: number }): ShellSegment[] {
   const out: ShellSegment[] = [];
   for (const seg of segs) {
     out.push(seg);
+    if (seg.walked) used.n++;
     if (depth >= NORMALISE_DEPTH) continue;
     const rest = behindWrapper(seg);
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
     const mux = rest !== null && /^(?:busybox|toybox)$/.test(base(seg.program)) && seg.stdinFed !== false;
     for (const t of texts) {
-      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1);
+      // a text read again with the same folder, names and depth gives the same segments (bodies defined inside bodies, walked at every call, repeat): read once
+      const key = JSON.stringify([depth, seg.cwd ?? env.cwd, seg.harnessRebound ?? null, t]);
+      if (!rest && seen.has(key)) continue;
+      if (seg.walked && used.n > NESTED_SEGMENT_BUDGET) {
+        out.push({ ...seg, programUnknown: true });
+        break;
+      }
+      seen.add(key);
+      const inner = nestedSegmentsSeen(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound, ...(rest ? {} : { noCalls: true }) }), env, depth + 1, seen, used);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
         inner[0] = carryFacts({ ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) }, inner[0]); // judge-first-unknown round: keeps programUnknown / harnessRebound
@@ -1494,7 +1513,7 @@ function sshHasCommand(words: string[]): boolean {
   return operands > 1;
 }
 
-const tooDeepHit = (text: string): FloorHit => judgeHit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels), so what it deletes cannot be read.`, text);
+const tooDeepHit = (text: string): FloorHit => judgeHit("delete-unknown-target", `This command nests command substitutions, blocks or subshells deeper than the parser reads, so what it deletes cannot be read.`, text);
 
 /** Hangs the stdin texts of `outer` on the segments parsed from what it unwrapped (the parser leaves the property off a clone). */
 function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
@@ -1516,7 +1535,7 @@ const NORMALISE_DEPTH = 16;
  * are denies; everything else the old check refused is a judge-first hit, kept in `acc` so that a deny found later on the line still wins. `top` is the line itself: its own
  * segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null }): FloorHit | null {
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null; seen?: Set<string>; read?: number }): FloorHit | null {
   // a judge-first hit is kept, not returned: a deny later on the line still wins
   const settle = (h: FloorHit | null): FloorHit | null => {
     if (h?.kind !== "judge") return h;
@@ -1527,7 +1546,16 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   if (depth > NORMALISE_DEPTH) return settle(judgeHit("delete-unknown-target", "This command nests wrappers too deep to be read, so what it deletes cannot be read.", text));
   // every text parsed again (a string, a here-document, a body, the words behind a wrapper or a host) may hold a `$( )` the walker stopped at: unread, as at the top
   if (segs.some((s) => s.tooDeep)) settle(tooDeepHit(text));
+  // the budget is for the copies of walked function bodies (`walked`) alone; the segments the line's text reads as are always read in full, as before the walk existed
+  const spent = (seg: ShellSegment): boolean => {
+    if (!seg.walked) return false;
+    acc.read = (acc.read ?? 0) + 1;
+    if (acc.read <= NESTED_SEGMENT_BUDGET) return false;
+    settle(judgeHit("delete-unknown-target", "This command calls function bodies too many times or too deep to be read, so what it deletes cannot be read.", text));
+    return true;
+  };
   for (const seg of segs) {
+    if (spent(seg)) continue;
     const prog = base(seg.program);
     // one normaliser for every entry point: a privilege program or multiplexer is taken off, the rest is parsed again and gets the whole check (strings, eval, bodies, xargs,
     // containers, ssh), to a fixpoint. A line's own `sudo` is the privilege floor's.
@@ -1603,12 +1631,18 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   // every segment kind whose body the walker records (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
+    if (opaque.walked && (acc.read ?? 0) > NESTED_SEGMENT_BUDGET) continue;
     for (const body of opaque.bodies ?? []) {
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
+      // the same body read again in the same place and state (a body defined inside a body is walked at every call and shows up once more each time) gives the same hits: read once
+      const key = JSON.stringify([body, opaque.cwd ?? env.cwd, opaque.harnessRebound ?? null, opaque.bodyConsts ?? null, opaque.program, where, depth, where !== "local" && segs.indexOf(opaque) === 0]);
+      if ((acc.seen ??= new Set()).has(key)) continue;
+      acc.seen.add(key);
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, noCalls: true, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
       const inner = parsed.map((x, k) => (first && k === 0 ? carryFacts({ ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x) : x));
+      // every body counts one level of depth, as on main: nesting past the cap is judge-first, whether the body runs at a call or not
       const h = pythonKinds(body, inner, env, where, depth + 1, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
@@ -2045,8 +2079,17 @@ export function realDeep(abs: string): string | null {
   return null;
 }
 
-/** The comparable spellings of an absolute path: lexical and symlink-resolved, slashes unified, case-folded where the file system is. */
+const envIds = new WeakMap<object, number>();
+let envSerial = 0;
+
+/** The comparable spellings of an absolute path: lexical and symlink-resolved, slashes unified, case-folded where the file system is. Remembered per path and environment while a gate call's look-up scope is open (a line that repeats its words asks again and again). */
 function formsOf(abs: string, env: FloorEnv): string[] {
+  let id = envIds.get(env);
+  if (id === undefined) envIds.set(env, (id = ++envSerial));
+  return memoLookup(`f:${id}:${abs}`, () => formsUncached(abs, env));
+}
+
+function formsUncached(abs: string, env: FloorEnv): string[] {
   const fold = foldFor(env);
   const real = realDeep(abs);
   const plat = env.platform ?? process.platform;
@@ -2182,7 +2225,7 @@ function protectedAt(word: string, cwd: string, env: FloorEnv, entries: Protecte
 const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a permissions file (permissions.json of the user, the project's .workflow or the tracked .pi), a harness state file (managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate, state/child-asks, state/review-records) or a Pi session file (*.jsonl under the sessions dir). Ask the user to change it.`, word);
 const configHit = (what: string, word: string): FloorHit => hit("config-keys", `${what} the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${word.slice(0, 120)}'. The agent never changes these keys. Ask the user to change them.`, word);
 
-export const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
+export { READ_PROGS };
 const GIT_NONWRITE = new Set(["diff", "log", "show", "status", "blame", "ls-files", "grep", "cat-file", "rev-parse", "check-ignore", "add", "commit", "rev-list", "describe", "shortlog"]);
 
 /** Whether the segment only reads (or stages) its path operands. */
@@ -2264,11 +2307,19 @@ function lineKeyWords(line: ShellSegment[]): string[] {
   });
 }
 
+/** `lineKeyWords` carries a floored key, once per line (every segment of the line asks). */
+const lineKeys = new WeakMap<ShellSegment[], boolean>();
+const hasKey = (line: ShellSegment[]): boolean => {
+  let k = lineKeys.get(line);
+  if (k === undefined) lineKeys.set(line, (k = lineKeyWords(line).some((w) => FLOOR_KEYS.test(w))));
+  return k;
+};
+
 /** Floor: a shell write to a permissions file or harness state file, or to a foreman config file in a line that carries a floored key. */
 function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
   const cwd = seg.cwd ?? env.cwd;
   const entries = protectedEntries(env);
-  const keys = lineKeyWords(line).some((w) => FLOOR_KEYS.test(w));
+  const keys = hasKey(line);
   const configWord = (w: string): boolean => {
     if (!keys || dataWord(w)) return false;
     const abs = resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env);

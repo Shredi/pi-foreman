@@ -50,7 +50,8 @@ test("the restored forms that moved go to the judge first with their label, for 
 
 test("the judge-first PowerShell forms: the owner's question before PR C is the judge's now", () => {
   for (const [tool, l, label] of [["powershell", "iex $s", "danger-delete-unknown-target"], ["powershell", "pwsh -EncodedCommand AAAA", "danger-delete-unknown-target"], ["powershell", "Remove-Item @p", "danger-delete-unknown-target"], ["powershell", "Get-ChildItem | Remove-Item -Recurse", "danger-delete-unknown-target"],
-    ["bash", "f(){ rm -rf /opt/x; }; f", "danger-delete-unknown-target"]] as const) for (const child of [false, true]) assert.equal(run(tool, l, child), `${label}:judge`, `${child ? "child" : "foreman"}: ${l}`);
+    // guard gaps, item 4: `f(){ rm -rf /opt/x; }; f` is the floor-refused delete at the call; a target the line cannot read keeps the judge
+    ["bash", 'f(){ rm -rf "$T"; }; f', "danger-delete-unknown-target"]] as const) for (const child of [false, true]) assert.equal(run(tool, l, child), `${label}:judge`, `${child ? "child" : "foreman"}: ${l}`);
 });
 
 test("PowerShell: -LiteralPath:C:\\Windows is a system delete", () => {

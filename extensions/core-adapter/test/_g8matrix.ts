@@ -29,6 +29,7 @@ const w = (g: Group): string => (g.args ? `${g.prog} ${g.args}` : g.prog);
 export const POSITIONS: Row[] = [
   { form: "plain", line: (g) => w(g) },
   { form: "after ;", line: (g) => `true; ${w(g)}` },
+  { form: "alias then call", line: (g) => `alias x='${w(g)}'; x` }, // guard gaps, item 3: the alias value runs at the call
   { form: "after &&", line: (g) => `true && ${w(g)}` },
   { form: "after ||", line: (g) => `false || ${w(g)}` },
   { form: "after |", line: (g) => `echo x | ${w(g)}` },
@@ -93,7 +94,6 @@ export const GAPS: Row[] = [
   { form: "find -exec", line: (g) => `find . -exec ${w(g)} {} ;` },
   { form: "ssh host", line: (g) => `ssh host ${w(g)}` },
   { form: "docker exec", line: (g) => `docker exec c ${w(g)}` },
-  { form: "alias then call", line: (g) => `alias x='${w(g)}'; x` },
   { form: "eval of a variable", line: () => `eval "$x"` },
   { form: "powershell -Command", line: (g) => `powershell -Command "${w(g)}"` },
   { form: "cmd /c", line: (g) => `cmd /c ${w(g)}` },

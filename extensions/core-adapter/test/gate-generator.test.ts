@@ -303,11 +303,11 @@ test("self-test: a gate that blocks harmless for loops fails the twin property",
 });
 
 test("self-test: a gate that closes one marked gap makes the stale check name it", { skip: posixOnly }, () => {
-  const fake: Oracle = (command, role) => (command.startsWith("[[") ? "judge" : real(command, role));
+  const fake: Oracle = (command, role) => (command.startsWith("trap ") ? "judge" : real(command, role));
   const { found } = checkDanger(fake, [...depthOneCases(), ...pairCases(KNOWN_GAPS)]);
   const stale = staleGaps(sortFound(found, KNOWN_GAPS).matched, KNOWN_GAPS);
-  assert.deepEqual(stale.map((g) => g.id), ["dbracket"]);
-  assert.ok(describeStale(stale[0]).includes("gap dbracket is closed: remove its line from KNOWN_GAPS"));
+  assert.deepEqual(stale.map((g) => g.id), ["trap"]);
+  assert.ok(describeStale(stale[0]).includes("gap trap is closed: remove its line from KNOWN_GAPS"));
 });
 
 test("self-test: a gate that closes the plain git-outside-tilde line makes the stale check name it", { skip: posixOnly }, () => {

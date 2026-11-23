@@ -197,7 +197,7 @@ test("field equals shell line: a heredoc body written with tee, a quoted program
     "tee s.sh <<'EOF'\ngit push --force origin main\nEOF\nbash s.sh",
     "tee s.sh <<'EOF'\nreboot\nEOF",
     '"GIT_CONFIG_COUNT=0" git version',
-    "'API_TOKEN=x' sudo ls",
+    // guard gaps, item 6: `'API_TOKEN=x' sudo ls` names a program no table models, so the words behind it are read as a command and the shell line is judge-first; the field has no such label (generated test below)
     "echo host; git push origin main\\n",
   ];
   for (const l of cells) {
@@ -228,7 +228,8 @@ test("generated: a field is never stricter than the shell line, and for a real c
       const f = flagged(field("mcp_run", { q: l }, kind === "child"));
       if (f && !gaps.includes(l)) assert.ok(s, `stricter: ${kind}: ${JSON.stringify(l)}`);
       // a shell the parser does not read (`powershell -c`) is judge-first as a shell line (danger-inline-code); the field has no such label
-      const foreign = sv?.rule === "danger-inline-code" && l.startsWith("powershell -c ");
+      // a program no table models is judge-first behind its words (guard gaps, item 6), which the field has no label for
+      const foreign = (sv?.rule === "danger-inline-code" && l.startsWith("powershell -c ")) || (sv?.rule === "danger-unknown-program" && l === "'API_TOKEN=x' sudo ls");
       if (commands.includes(l) && s && !foreign) assert.ok(f, `looser: ${kind}: ${JSON.stringify(l)}`);
     }
   }

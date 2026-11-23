@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { BRACE_LIMIT, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments, remoteCommand, unknownTargetDelete } from "./floors.ts";
+import { BRACE_LIMIT, lineFloors, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments as nestedSegmentsOf, remoteCommand, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
@@ -516,7 +516,11 @@ function positionals(argv: string[], valued: ReadonlySet<string> = new Set()): s
   return out;
 }
 
-const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
+/**
+ * The segments the refuse and judge-first checks read: the readable ones, and those a non-harmless assignment before the command (`X=1 git ...`, `env X=1 git ...`) made opaque (the program, its words and its
+ * cwd are still right). Only a refuse or a judge-first hit reads these; an allow keeps the `opaque === null` filter.
+ */
+const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => (s.opaque === null || s.opaque === "assignment") && s.program !== "");
 const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "bg_run", "powershell"]);
 
 const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B", "--base", "-H", "--head", "-t", "--title", "--body", "-q", "--jq", "--json", "-L", "--limit", "-s", "--state", "-a", "--assignee", "-l", "--label", "-m", "--milestone", "-A", "--author", "-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "--template", "-D", "--dir", "-n", "--name", "-j", "--job", "--page", "--per-page", "--cache", "-p"]);
@@ -1196,6 +1200,16 @@ export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
  * floors do not name runs. Floors add their own judge-first hits (`kind: "judge"`: git config and remotes, terminal injection, whole-disk scans, a push whose
  * destination cannot be read, the delete-outside and PowerShell units); the protected targets (protected.ts) go to their own check.
  */
+/** The nested segments of a call's segments, read once per segments array (the four danger tests share it; the array belongs to one gate call, so nothing outlives it). */
+const nestedMemo = new WeakMap<object, { cwd: string; platform: string; out: ShellSegment[] }>();
+const nestedSegments = (segs: ShellSegment[], e: DangerEnv): ShellSegment[] => {
+  const hit = nestedMemo.get(segs);
+  if (hit && hit.cwd === e.cwd && hit.platform === e.platform) return hit.out;
+  const out = nestedSegmentsOf(segs, e);
+  nestedMemo.set(segs, { cwd: e.cwd, platform: e.platform, out });
+  return out;
+};
+
 /** The segments the `danger-inline-code` entry names. */
 const inlineCodeHits = (c: DangerCall, e: DangerEnv): ShellSegment[] =>
   nestedSegments(c.segments ?? [], e).filter((s) => s.program !== "" && (inlineCode(s) || s.opaque === "nonliteral_script" || s.opaque === "stdin_fed" || (s.opaque === "writing_wrapper" && progOf(s) === "script") || (s.opaque === "foreign_shell" && c.tool !== "powershell")));
@@ -1208,6 +1222,17 @@ const codeInCommand = (s: ShellSegment): boolean => {
   return s.opaque === "stdin_fed" && (s.heredocs?.length ?? 0) > 0 && ownStdinText(s) && !s.dynamicCode;
 };
 
+/**
+ * The words behind a program no table models (`ShellSegment.behind`: `caffeinate rm -rf x`) read as a command of their own: any floor hit, any judge-first entry, and for a child a write outside or into the
+ * checkout, makes the segment judge-first (never a refusal: the program may only be passing its words on).
+ */
+const behindHit = (s: ShellSegment, c: DangerCall, e: DangerEnv): boolean =>
+  (s.behind ?? []).some((b) => {
+    const call: DangerCall = { tool: c.tool, input: c.input, segments: b.segments, text: b.text };
+    if (lineFloors(b.text, b.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null) return true;
+    return JUDGE_FIRST.some((r) => r.test(call, e)) || (!!e.roots.child && (outsideTarget(call, e) !== null || writesIntoCheckout(call, e)));
+  });
+
 export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, rebase, amend of published work, stash drop, worktree removal, history rewrite) or runs a program or moves credentials through git", test: segs(gitSeg) },
@@ -1216,7 +1241,7 @@ export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-remote", reason: "runs a command on another machine or in a container (ssh, docker or podman exec, kubectl exec), which the harness cannot check", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && remoteCommand(s, progOf(s)) !== null) },
   { name: "danger-kill-pattern", reason: "stops processes by name or pattern (pkill, killall), which can reach processes the session did not start; `kill <pid>`, `kill $!` and `kill %1` run", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && (progOf(s) === "pkill" || progOf(s) === "killall")) },
   { name: "danger-delete-unknown-target", reason: "a delete whose target the harness cannot read (a variable, a glob without a readable directory, a changed directory, input from another command, a PowerShell or cmd recursive delete)", test: (c, e) => !!c.segments && BASH_TOOL_NAMES.has(c.tool) && unknownTargetDelete(c.text ?? "", c.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null },
-  { name: "danger-unknown-program", reason: "the shell parse cannot say which program runs here (a program word built from a variable or substitution, a wrapper option the walker does not read, a builtin that runs another command, arithmetic on a value not shown to be a number)", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.programUnknown === true) },
+  { name: "danger-unknown-program", reason: "the shell parse cannot say which program runs here (a program word built from a variable or substitution, a wrapper option the walker does not read, a builtin that runs another command, arithmetic on a value not shown to be a number)", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.programUnknown === true || behindHit(s, c, e)) },
 ];
 
 /** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */

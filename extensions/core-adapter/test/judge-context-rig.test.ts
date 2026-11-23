@@ -147,7 +147,8 @@ const WITHHELD_LINES: [string, string][] = [
   ["danger-unknown-write-target", 'printf x > "$T"'],
   // a later label is withheld too: the first label of the line is not a withheld one
   ["danger-remote", "python3 -c 'print(1)'; ssh host 'rm -rf /srv/x'"],
-  ["danger-delete-unknown-target", 'tmux send-keys -t x hi; f(){ rm -rf /srv/x; }; f'],
+  // guard gaps, item 4: a function body is walked at its call, so `f(){ rm -rf /srv/x; }; f` is a floor; a target the line cannot read keeps the label
+  ["danger-delete-unknown-target", 'tmux send-keys -t x hi; f(){ rm -rf "$D"; }; f'],
   ["danger-unknown-write-target", 'tmux send-keys -t x hi; printf x > "$T"'],
 ];
 

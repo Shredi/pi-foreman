@@ -78,8 +78,9 @@ test("an earlier judge-first label wins over danger-unknown-program", { skip: po
 });
 
 // these keep running: no danger-unknown-program, and no refusal for any role
+// guard gaps (item 9): the foreman's `cd $FOREMAN_SCRATCH && ... node t.mjs` is judge-first now (its `$FOREMAN_SCRATCH` names no folder), and a child's function body that writes
+// relative to that folder is walked at the call and refused like the same write outside a function; both are pinned in guard-gaps.test.ts
 const KEEP = [
-  `cd $FOREMAN_SCRATCH && cat > t.mjs <<'EOF'\nconsole.log(1)\nEOF\nnode t.mjs`,
   "echo x > $FOREMAN_SCRATCH/f",
   'cp a "${FOREMAN_OUT}/f"',
   "cd $FOREMAN_SCRATCH && cp a b",
@@ -101,7 +102,6 @@ const KEEP = [
   "for f in a b; do grep x $f; done > $FOREMAN_SCRATCH/out",
   "git diff --name-only | while read f; do echo $f; done > $FOREMAN_SCRATCH/list",
   "export TMPDIR=$FOREMAN_SCRATCH; npm test",
-  "cd $FOREMAN_SCRATCH; f(){ curl -s -o a.html https://x; }; f; grep x a.html",
   'echo "FOREMAN_SCRATCH=$FOREMAN_SCRATCH" > $FOREMAN_SCRATCH/e',
   "echo x > $FOREMAN_SCRATCH/a; eval true",
   "S=$FOREMAN_SCRATCH; echo x > $S/f",

@@ -1,5 +1,5 @@
-// A line too deep for the stack sizes in use (measured up to `--stack-size=7000`): parseShell ends it as the one unreadable segment (it does not throw), and the gate decides it as it
-// decides an unreadable line (main and child), never `gate-error` and never an allow.
+// A line too deep for the stack sizes in use (measured up to `--stack-size=7000`): parseShell ends it as the one unreadable segment marked `tooDeep` (it does not throw), and the gate
+// decides it judge-first (main and child), never `gate-error` and never an allow.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -20,15 +20,16 @@ const DEEP: Record<string, string> = {
 };
 const UNPARSABLE = "echo )";
 
-test("parseShell: a line too deep for the stack is one opaque parse_error segment", () => {
+test("parseShell: a long arithmetic expression is read, not opaque (explicit-stack walks)", () => {
   const plain = parseShell(UNPARSABLE, { platform: "linux" });
   assert.equal(plain.length, 1);
   assert.equal(plain[0].opaque, "parse_error");
   for (const [name, line] of Object.entries(DEEP)) {
     const segs = parseShell(line, { platform: "linux" });
+    // the walks keep their own explicit stacks: a long expression is read as a short one is (it no longer overflows), never a thrown RangeError
     assert.equal(segs.length, 1, name);
-    assert.equal(segs[0].opaque, "parse_error", name);
-    assert.deepEqual(segs, plain, name);
+    assert.notEqual(segs[0].opaque, "parse_error", name);
+    assert.ok(!segs[0].tooDeep, name);
   }
 });
 
@@ -77,16 +78,18 @@ function gate(command: string, child: boolean, withRoots = true): { result: { bl
 }
 
 for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
-  test(`gateEvaluate (${label}): a too-deep line is decided like an unreadable line`, () => {
+  test(`gateEvaluate (${label}): a long arithmetic expression is decided as its short twin`, () => {
     const want = gate(UNPARSABLE, child, withRoots);
-    // the unreadable line: nothing decided here (C: there is no `danger-opaque`; an unreadable line is not on the judge-first list, so it runs)
+    // a plain unreadable line (a syntax error) is not judge-first and runs; a too-deep one is judge-first (below)
     assert.equal(want.result, undefined);
     assert.equal(want.danger, null, "an unreadable line is not judge-first");
     for (const [name, line] of Object.entries(DEEP)) {
       const got = gate(line, child, withRoots);
       assert.notEqual(got.result?.rule, "gate-error", name);
       assert.ok(!got.result?.allow, `${name}: not an allow`);
-      assert.deepEqual(got, want, name);
+      // read, not overflowed: decided as the short twin is (an allow, as on origin/main, where nothing hides in the expression)
+      const twin = gate("echo $(( 1+1 ))", child, withRoots);
+      assert.deepEqual({ rule: got.result?.rule, danger: (got.danger as { name?: string } | null)?.name }, { rule: twin.result?.rule, danger: (twin.danger as { name?: string } | null)?.name }, name);
     }
   });
 }

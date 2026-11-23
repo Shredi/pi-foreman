@@ -411,8 +411,8 @@ export const WEB_READ_RULE = "builtin-web-read";
  * judge-first list. The caller judges, asks or runs what is left.
  */
 export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
-  // a powershell line has one word per path: each distinct path is looked up once for the whole call
-  return toolName === "powershell" ? withLookupCache(() => gateRun(toolName, input, cwd, deps)) : gateRun(toolName, input, cwd, deps);
+  // each distinct path is looked up once for the whole call (a powershell line has one word per path; a shell line walks function bodies and the words behind an unknown program, which repeat the same paths)
+  return withLookupCache(() => gateRun(toolName, input, cwd, deps));
 }
 
 function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
