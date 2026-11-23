@@ -416,3 +416,40 @@ test("item 12: a select in $( ) nested 5 and 16 deep with rm -rf /etc is refused
     }
   }
 });
+
+// Revision after the guard-gaps FAIL, shape A: a program word that holds the xargs replace string is judge-first, and the words behind it are still read (every refusal main gave stays).
+test("xargs -I: the command behind a wrapper whose word holds the replace string is still read", () => {
+  const CASES: [string, X][] = [
+    ["echo x | xargs -I e env rm -rf ~", "R"],
+    ["echo x | xargs -I e env rm -rf /opt/x", "R"],
+    ["echo x | xargs -I b bash -c 'rm -rf /opt/x'", "R"],
+    ["echo x | xargs -I s sh -c 'git push --force origin main'", "R"],
+    ["echo x | xargs -I t timeout 5 git push origin main", "R"],
+    ["echo x | xargs -I{} env rm -rf /opt/x {}", "R"],
+    ["echo x | xargs -J e env rm -rf /opt/x", "R"],
+    ["echo x | xargs --replace=e env rm -rf /opt/x", "R"],
+    ["bash -c 'echo x | xargs -I e env rm -rf /opt/x'", "R"],
+    ["echo $(echo x | xargs -I e env rm -rf /opt/x)", "R"],
+    ["if true; then echo x | xargs -I e env rm -rf /opt/x; fi", "R"],
+    ["echo x | xargs -I e env echo hi", "J"],
+  ];
+  for (const role of ["main", "builder"] as const) for (const [l, want] of CASES) check(l, role, want);
+});
+
+// Shape B: a long arithmetic sum never overflows the walker (an explicit stack), so the floors read the rest of the line as on main.
+test("a long (( )) sum does not hide the commands around it", () => {
+  for (const n of [3000, 20000]) {
+    const sum = rep("1", n, "+");
+    for (const role of ["main", "builder"] as const) {
+      check(`(( ${sum} )); cat ~/.ssh/id_rsa`, role, "R");
+      check(`(( ${sum} )); rm -rf /opt/x`, role, "R");
+      check(`p && (( ${sum} )); rm -rf /opt/x`, role, "R");
+      check(`bash -c '((${sum})); rm -rf /opt/x'`, role, "R");
+      check(`eval '((${sum})); rm -rf /opt/x'`, role, "R");
+      check(`f(){ ((${sum})); rm -rf ~; }; f`, role, "R");
+      // past the parser's own limit (~1,500 terms inside an expansion) the line is unread: judge-first as on main
+      check(`echo \${x:$(( ${sum} ))}; cat ~/.ssh/id_rsa`, role, "J");
+      check(`echo $(( ${sum} )); cat ~/.ssh/id_rsa`, role, "J");
+    }
+  }
+});

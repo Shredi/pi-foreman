@@ -905,34 +905,45 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   return end;
 }
 
+/** Visits `root` and its descendants in document order with an explicit stack (a long arithmetic sum is a left-deep tree: recursion over it overflows); `fn` returns false to leave a node's children unvisited. */
+function preorder(root: SyntaxNode, fn: (n: SyntaxNode) => boolean | void): void {
+  const stack: SyntaxNode[] = [root];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (fn(n) === false) continue;
+    const kids: SyntaxNode[] = [];
+    forEachChild(n, (c: SyntaxNode) => {
+      kids.push(c);
+    });
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  }
+}
+
 /** The body text of every function the script defines, collected into the run's `funcs` (also definitions nested in other bodies and in substitutions). */
 function collectFuncs(script: Script, src: string, rn: Run): void {
   const funcs = rn.funcs;
   if (!funcs) return;
-  const visit = (n: SyntaxNode): void => {
+  preorder(script as SyntaxNode, (n) => {
     if (n.type === "Function") {
       const name = String((n as any).name.text);
       const have = funcs.get(name) ?? [];
       for (const b of nodeBodies(n, src)) if (!have.includes(b)) have.push(b);
       funcs.set(name, have);
     }
-    forEachChild(n, visit);
-  };
-  visit(script as SyntaxNode);
+  });
 }
 
 /** Whether the script takes the words of a call: a positional parameter (`$1`..`$9`, `${10}`, `$@`, `$*`, `$#`) or `shift`, read from the parser's nodes. */
 function usesPositional(script: Script): boolean {
   let found = false;
-  const visit = (n: SyntaxNode): void => {
-    if (found) return;
+  preorder(script as SyntaxNode, (n) => {
+    if (found) return false;
     const x = n as any;
     if (x.type === "SimpleExpansion" && /^[0-9@*#]$/.test(String(x.text).slice(1))) found = true;
     else if (x.type === "ParameterExpansion" && /^(?:\d+|[@*#])$/.test(String(x.parameter))) found = true;
     else if (x.type === "Command" && x.name?.text === "shift") found = true;
-    else forEachChild(n, visit);
-  };
-  visit(script as SyntaxNode);
+    return !found;
+  });
   return found;
 }
 
@@ -976,11 +987,10 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
     markUnknown(sc);
     return cwd;
   }
-  // under `xargs -I`, a program word that holds the replace string is the input
+  // under `xargs -I`, a program word that holds the replace string is (partly) the input: judge-first, and the words behind it are still walked (`xargs -I e env rm -rf /x`)
   if (sc.replace && p.text.includes(sc.replace)) {
     seg(sc, p.text, rest.map((a) => a.value ?? a.text), "unsupported", c, cwd);
     markUnknown(sc);
-    return cwd;
   }
   const prog = p.value;
   const name = baseName(prog);
@@ -1283,14 +1293,13 @@ const wrapsRunner = (x: any): boolean => (x.suffix ?? []).some((w: any) => typeo
 /** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). `passing`: wrappers the walker unwrapped as pass-through (see `passNames`) do not count unless they wrap a runner (the constants `$FOREMAN_SCRATCH` and `$FOREMAN_OUT` only). */
 function runsCode(node: SyntaxNode, passing: ReadonlySet<string> = new Set()): boolean {
   let found = false;
-  const visit = (n: SyntaxNode): void => {
-    if (found) return;
+  preorder(node, (n) => {
+    if (found) return false;
     const x = n as any;
     if (x.type === "Function") found = true;
     else if (x.type === "Command" && x.name && (/[$`]/.test(x.name.text) || (RUNNERS.has(baseName(x.name.value ?? x.name.text)) && !(passing.has(baseName(x.name.value ?? x.name.text)) && !wrapsRunner(x))))) found = true;
-    else forEachChild(n, visit);
-  };
-  visit(node);
+    return !found;
+  });
   return found;
 }
 
