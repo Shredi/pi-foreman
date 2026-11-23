@@ -165,9 +165,12 @@ const WINDOW = /^([\s\S]*)#L(\d+)-(\d+)$/;
 export function resolveReadable(asked: string, scope: JudgeReadScope): Resolution {
   const m = WINDOW.exec(asked);
   if (m) {
-    const literal = resolvePath(asked, undefined, scope);
     // A name that exists (a link included) answers as itself; only a name that does not exist is read as a window.
-    if (literalExists(asked, scope)) return { ...literal, literal: true };
+    // The literal note shows only for a name that was read; any other outcome is the plain one, so the answer does not show that an unreadable name exists.
+    if (literalExists(asked, scope)) {
+      const literal = resolvePath(asked, undefined, scope);
+      return literal.outcome === "ok" || literal.outcome === "dir" ? { ...literal, literal: true } : literal;
+    }
   }
   return resolvePath(m ? m[1] : asked, m ? { from: Math.max(1, Number(m[2])), to: Math.max(1, Number(m[3])) } : undefined, scope);
 }
@@ -199,10 +202,39 @@ function ancestorReadable(real: string, scope: JudgeReadScope): boolean {
   return !place.agent || AGENT_ALLOW.some((n) => fold(scope.platform, n) === fold(scope.platform, place.rel[0] ?? ""));
 }
 
+/** True when a path lies in a place that is never shown: a withheld segment (`extra` are more segments to test), the agent `pi-foreman/remote/` folder, or a secret path. */
+function withheldPlace(real: string, place: Place, scope: JudgeReadScope, extra: string[] = [], lex?: string): boolean {
+  const pf = scope.platform;
+  if ([...place.rel, ...extra].some(withheldName)) return true;
+  if (place.agent && fold(pf, place.rel[0] ?? "") === "pi-foreman" && fold(pf, place.rel[1] ?? "") === "remote") return true;
+  return secretPath(real, scope.floorEnv, true) !== null || (lex !== undefined && secretPath(lex, scope.floorEnv, true) !== null);
+}
+
+/** True when a place may be shown: a project root, or an allow-listed part of the agent dir. */
+function readablePlace(place: Place | null, scope: JudgeReadScope): place is Place {
+  return !!place && (!place.agent || AGENT_ALLOW.some((n) => fold(scope.platform, n) === fold(scope.platform, place.rel[0] ?? "")));
+}
+
+/** True when every `..` of the raw path follows a prefix that lies in a readable place and is not withheld; a `..` after a withheld or outside folder would show whether that folder exists. */
+function dotDotsReadable(p: string, scope: JudgeReadScope): boolean {
+  const parts = p.split(scope.platform === "win32" ? /[\\/]/ : "/");
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] !== "..") continue;
+    const raw = parts.slice(0, i).join(path.sep);
+    const prefix = path.isAbsolute(p) ? raw || path.sep : raw ? scope.cwd + path.sep + raw : scope.cwd;
+    const real = realOf(prefix);
+    if (!real) return false;
+    const place = placeOf(real, scope);
+    if (!readablePlace(place, scope) || withheldPlace(real, place, scope, lexicalSegs(path.resolve(prefix), scope))) return false;
+  }
+  return true;
+}
+
 function resolvePath(asked: string, window: { from: number; to: number } | undefined, scope: JudgeReadScope): Resolution {
   const p = expandAsked(asked, scope);
   const outside = (): Resolution => ({ outcome: "outside" });
   if (!p || p.includes("\0")) return outside();
+  if (!dotDotsReadable(p, scope)) return outside();
   let lex: string;
   let anc: string;
   const tail: string[] = [];
@@ -230,13 +262,8 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
   const target = tail.length ? path.join(realAnc, ...tail) : realAnc;
   const place = placeOf(target, scope);
   if (!place) return outside();
-  if (place.agent && !AGENT_ALLOW.some((n) => fold(scope.platform, n) === fold(scope.platform, place.rel[0] ?? ""))) return outside();
-  const pf = scope.platform;
-  const lexSegs = lexicalSegs(lex, scope);
-  const named = [...place.rel, ...lexSegs].some(withheldName);
-  const remote = place.agent && fold(pf, place.rel[0] ?? "") === "pi-foreman" && fold(pf, place.rel[1] ?? "") === "remote";
-  const secret = secretPath(target, scope.floorEnv, true) !== null || secretPath(lex, scope.floorEnv, true) !== null;
-  if (named || remote || secret) return { outcome: "withheld", real: target, window };
+  if (!readablePlace(place, scope)) return outside();
+  if (withheldPlace(target, place, scope, lexicalSegs(lex, scope), lex)) return { outcome: "withheld", real: target, window };
   if (tail.length) {
     if (!ancestorReadable(realAnc, scope)) return outside();
     // A withheld folder is never the hint: the hint is the nearest folder above it that is not withheld, so the answer is the same whether the withheld folder exists or not.
@@ -244,7 +271,7 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
     for (;;) {
       const hp = placeOf(hint, scope);
       if (!hp) return outside();
-      if (!hp.rel.some(withheldName) && secretPath(hint, scope.floorEnv, true) === null) break;
+      if (!withheldPlace(hint, hp, scope)) break;
       const up = path.dirname(hint);
       if (up === hint) return outside();
       hint = up;

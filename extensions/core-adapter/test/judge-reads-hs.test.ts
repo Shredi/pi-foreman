@@ -371,3 +371,99 @@ test("the not-found answer under a withheld folder is byte-identical whether tha
     assert.ok(!/\.env|\.git/.test(`${a.block.body}${a.rec.ancestor ?? ""}`), a.block.body);
   }
 });
+
+// Two fresh setups: one where the withheld and outside places exist, one where they do not. No answer may differ between them.
+const twins = (() => {
+  const mk = (extra: boolean) => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(tmp, "twin2-")));
+    const home = path.join(root, "home");
+    const ag = path.join(home, ".pi", "agent");
+    const proj = path.join(home, "proj");
+    put(path.join(proj, "run.sh"), "echo proj\n");
+    put(path.join(proj, "deep", "run.sh"), "echo deep\n");
+    put(path.join(proj, "deep", "er", "run.sh"), "echo er\n");
+    fs.symlinkSync(path.join(proj, "deep", "er"), path.join(proj, "d"));
+    put(path.join(ag, "AGENTS.md"), "agents\n");
+    fs.mkdirSync(path.join(ag, "sessions", "s1"), { recursive: true });
+    put(path.join(ag, "sessions", "s2", "x"), "session two\n");
+    fs.mkdirSync(path.join(ag, "pi-foreman"), { recursive: true });
+    if (extra) {
+      fs.mkdirSync(path.join(proj, ".git"));
+      fs.mkdirSync(path.join(proj, ".env"));
+      fs.mkdirSync(path.join(ag, "extensions"));
+      fs.mkdirSync(path.join(ag, "pi-foreman", "remote", "sub"), { recursive: true });
+      fs.mkdirSync(path.join(home, ".ssh"));
+      put(path.join(ag, "zzz#L1-1"), "outside text\n");
+      fs.symlinkSync(path.join(root, "nowhere"), path.join(ag, "dang#L1-1"));
+    }
+    const scope = judgeReadScope({ cwd: proj, worktree: proj, agentDir: ag, home, config: {} }) as JudgeReadScope;
+    const norm = (s: string) => s.replace(/twin2-\w+/g, "twin2");
+    return { scope, ag, home, norm };
+  };
+  return { yes: mk(true), no: mk(false) };
+})();
+const twinPair = (rel: (t: typeof twins.yes) => string) => {
+  const a = twins.yes;
+  const b = twins.no;
+  const ra = readPaths([rel(a)], a.scope, { left: MAX_READ_BUDGET });
+  const rb = readPaths([rel(b)], b.scope, { left: MAX_READ_BUDGET });
+  return { ra, rb, a, b };
+};
+const sameBoth = (rel: (t: typeof twins.yes) => string): { outcome: string; text: string } => {
+  const { ra, rb, a, b } = twinPair(rel);
+  const ta = a.norm(JSON.stringify([ra.blocks, ra.records.map((r) => [r.asked, r.outcome, r.real, r.ancestor])]));
+  const tb = b.norm(JSON.stringify([rb.blocks, rb.records.map((r) => [r.asked, r.outcome, r.real, r.ancestor])]));
+  assert.equal(ta, tb, rel(a));
+  return { outcome: ra.records[0].outcome, text: a.norm(ra.blocks[0].header + "\n" + ra.blocks[0].body) };
+};
+
+test("hint under agent pi-foreman/remote/sub names pi-foreman, the same whether remote exists or not", () => {
+  const plain = sameBoth((t) => path.join(t.ag, "pi-foreman", "remote", "sub", "nope", "x"));
+  assert.equal(plain.outcome, "withheld");
+  const dotted = sameBoth((t) => `${t.ag}/pi-foreman/remote/sub/nope/../../../x`);
+  assert.equal(dotted.outcome, "outside");
+});
+
+test("a `..` after a withheld or outside folder answers outside, the same whether that folder exists or not", () => {
+  for (const f of [
+    (t: typeof twins.yes) => ".git/../run.sh",
+    (t: typeof twins.yes) => ".env/../run.sh",
+    (t: typeof twins.yes) => `${t.ag}/extensions/../AGENTS.md`,
+    (t: typeof twins.yes) => "~/.ssh/../proj/run.sh",
+    (t: typeof twins.yes) => `${t.ag}/pi-foreman/remote/../x`,
+    (t: typeof twins.yes) => `${t.ag}/../x`,
+  ]) {
+    const r = sameBoth(f);
+    assert.equal(r.outcome, "outside", r.text);
+    assert.ok(!/nearest existing/.test(r.text), r.text);
+  }
+});
+
+test("a `..` after readable prefixes keeps working", () => {
+  const d = sameBoth(() => "d/../run.sh");
+  assert.equal(d.outcome, "ok");
+  assert.match(d.text, /deep\/run\.sh/);
+  assert.match(d.text, /echo deep/);
+  const s = sameBoth((t) => `${t.ag}/sessions/s1/../s2/x`);
+  assert.equal(s.outcome, "ok");
+  assert.match(s.text, /session two/);
+});
+
+test("a `#L…` name that exists outside the readable places answers like a missing one, with no literal note", () => {
+  const e = sameBoth((t) => `${t.ag}/zzz#L1-1`);
+  assert.equal(e.outcome, "outside");
+  assert.ok(!/literal name/.test(e.text), e.text);
+  const m = sameBoth((t) => `${t.ag}/yyy#L1-1`);
+  assert.equal(m.outcome, "outside");
+  const dang = sameBoth((t) => `${t.ag}/dang#L1-1`);
+  assert.equal(dang.outcome, "outside");
+  assert.ok(!/literal name/.test(dang.text), dang.text);
+});
+
+test("a literal name that exists in a readable place is still read by that name", () => {
+  const p = put(path.join(twins.yes.scope.cwd, "lit#L1-1"), "literal body\n");
+  const r = readPaths([p], twins.yes.scope, { left: MAX_READ_BUDGET });
+  assert.equal(r.records[0].outcome, "ok");
+  assert.match(r.blocks[0].header, /read by its literal name/);
+  assert.match(r.blocks[0].body, /literal body/);
+});
