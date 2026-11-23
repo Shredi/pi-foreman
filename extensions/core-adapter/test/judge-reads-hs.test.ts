@@ -98,3 +98,38 @@ test("the judge's reason is masked of secrets before it reaches the dialog", () 
     assert.ok("reason" in p && !p.reason.includes(secret) && p.reason.includes("[redacted]"));
   }
 });
+
+test("a masked blob line does not hide later lines: every line is shown or named by the more-hint", () => {
+  const blob = Array.from({ length: 25000 }, (_, i) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[(i * 7 + (i >> 3)) % 36]).join("");
+  const rest = Array.from({ length: 50 }, () => "echo harmless");
+  put(path.join(cwd, "blob.sh"), `${[blob, ...rest, "rm -rf ~/Documents"].join("\n")}\n`);
+  const { block } = one("blob.sh");
+  assert.ok(!block.body.includes(blob.slice(0, 200)));
+  const m = /^lines 1-(\d+)\n/.exec(block.body);
+  assert.ok(m, block.body.slice(0, 40));
+  const last = Number(m[1]);
+  const shown = block.body.split("\n").filter((l) => l === "echo harmless" || l === "rm -rf ~/Documents").length;
+  assert.equal(shown, last - 1, "header counts exactly the lines shown");
+  if (last < 52) assert.match(block.body, new RegExp(`ask blob\\.sh#L${last + 1}-`));
+  else assert.ok(block.body.includes("rm -rf ~/Documents"));
+});
+
+test("a 400-line file with an early blob and long lines: header and hint name only lines really shown", () => {
+  const blob = Array.from({ length: 25000 }, (_, i) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[(i * 7 + (i >> 3)) % 36]).join("");
+  const line = "c".repeat(99);
+  put(path.join(cwd, "many.txt"), `${[blob, ...Array.from({ length: 399 }, () => line)].join("\n")}\n`);
+  const { block } = one("many.txt");
+  const shown = block.body.split("\n").filter((l) => l === line).length;
+  assert.ok(shown > 0 && shown < 399);
+  assert.ok(block.body.startsWith(`lines 1-${shown + 1}\n`), block.body.slice(0, 40));
+  assert.match(block.body, new RegExp(`ask many\\.txt#L${shown + 2}-`));
+  assert.match(block.body, /\[cut at /);
+});
+
+test("a partly shown line carries [cut] and the hint skips to the next line", () => {
+  put(path.join(cwd, "part.txt"), `${"d".repeat(MAX_FILE_BYTES + 10)}\n${"e".repeat(10)}\n`);
+  const { block } = one("part.txt");
+  assert.match(block.body, /d \[cut\]\n/);
+  assert.ok(block.body.startsWith("lines 1-1\n"));
+  assert.match(block.body, /ask part\.txt#L2-/);
+});

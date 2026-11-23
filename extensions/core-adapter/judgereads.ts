@@ -242,15 +242,23 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
     let body = slice.join("\n");
     const more = from - 1 + slice.length < lines.length || partial;
     if (budget.left <= 0) return { outcome: "budget", body: "not read: read budget used up" };
-    const shownLines = redactCommand(body.slice(0, MAX_FILE_BYTES * 2)).split("\n");
     const cap = Math.min(MAX_FILE_BYTES, budget.left);
     // The cut falls on a line boundary; `last` is the last line shown whole. When not even the first line fits, that line is shown cut and the hint
     // continues at the next line (the rest of the long line is not offered again).
+    // Each line is masked on its own and the walk stops at the first line that does not fit, so a line masking shrinks never hides the ones after it.
+    const shownLines: string[] = [];
     let used = 0;
     let k = 0;
-    while (k < shownLines.length && used + (k ? 1 : 0) + shownLines[k].length <= cap) used += (k ? 1 : 0) + shownLines[k++].length;
-    const cut = k < shownLines.length;
-    body = k ? shownLines.slice(0, k).join("\n") : `${shownLines[0].slice(0, cap)} [cut]`;
+    let first = "";
+    for (; k < slice.length; k++) {
+      const masked = redactCommand(slice[k]);
+      if (k === 0) first = masked;
+      if (used + (k ? 1 : 0) + masked.length > cap) break;
+      used += (k ? 1 : 0) + masked.length;
+      shownLines.push(masked);
+    }
+    const cut = k < slice.length;
+    body = k ? shownLines.join("\n") : `${first.slice(0, cap)} [cut]`;
     budget.left -= cut ? cap : body.length; // a cut file used its whole share
     const last = from + Math.max(k, 1) - 1;
     const note = cut ? `\n[cut at ${cap} characters]` : "";
