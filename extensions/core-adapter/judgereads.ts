@@ -167,7 +167,7 @@ export function resolveReadable(asked: string, scope: JudgeReadScope): Resolutio
   if (m) {
     const literal = resolvePath(asked, undefined, scope);
     // A name that exists (a link included) answers as itself; only a name that does not exist is read as a window.
-    if (literal.outcome !== "not-found" || literalExists(asked, scope)) return { ...literal, literal: true };
+    if (literalExists(asked, scope)) return { ...literal, literal: true };
   }
   return resolvePath(m ? m[1] : asked, m ? { from: Math.max(1, Number(m[2])), to: Math.max(1, Number(m[3])) } : undefined, scope);
 }
@@ -237,7 +237,13 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
   const remote = place.agent && fold(pf, place.rel[0] ?? "") === "pi-foreman" && fold(pf, place.rel[1] ?? "") === "remote";
   const secret = secretPath(target, scope.floorEnv, true) !== null || secretPath(lex, scope.floorEnv, true) !== null;
   if (named || remote || secret) return { outcome: "withheld", real: target, window };
-  if (tail.length) return ancestorReadable(realAnc, scope) ? { outcome: "not-found", real: target, ancestor: realAnc, window } : outside();
+  if (tail.length) {
+    if (!ancestorReadable(realAnc, scope)) return outside();
+    // A withheld folder is not named in the hint: the answer is a plain not-found.
+    const ancPlace = placeOf(realAnc, scope);
+    const ancWithheld = (ancPlace?.rel ?? []).some(withheldName) || secretPath(realAnc, scope.floorEnv, true) !== null;
+    return { outcome: "not-found", real: target, ...(ancWithheld ? {} : { ancestor: realAnc }), window };
+  }
   let st: fs.Stats;
   try {
     st = fs.lstatSync(target);
@@ -398,7 +404,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
     if (res.outcome === "not-found") {
       rec.real = res.real;
       rec.ancestor = res.ancestor;
-      body = `(not found; nearest existing folder: ${escapeControl(res.ancestor ?? "")})`;
+      body = res.ancestor ? `(not found; nearest existing folder: ${escapeControl(res.ancestor)})` : "(not found)";
     } else if (res.outcome === "withheld") {
       rec.real = res.real;
       body = "(withheld: this path is never shown)";

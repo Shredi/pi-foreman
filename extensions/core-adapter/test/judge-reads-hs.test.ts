@@ -331,3 +331,21 @@ test("the not-found hint names a folder only inside a readable place", () => {
   assert.equal(ok.rec.outcome, "not-found");
   assert.match(ok.block.body, /nearest existing folder/);
 });
+
+test("a window on a top-level agent-dir allow-listed file shows the window lines", () => {
+  put(path.join(agent, "AGENTS.md"), "one\ntwo\nthree\n");
+  const { rec, block } = one(`${path.join(agent, "AGENTS.md")}#L2-2`);
+  assert.equal(rec.outcome, "ok");
+  assert.match(block.body, /two/);
+  assert.ok(!block.body.includes("three"));
+});
+
+test("the not-found hint does not name a withheld ancestor folder", () => {
+  fs.mkdirSync(path.join(wt, ".env"), { recursive: true });
+  fs.mkdirSync(path.join(wt, ".git", "refs"), { recursive: true });
+  for (const asked of [path.join(wt, ".env", "nope", "..", "..", "absent-run.sh"), path.join(wt, ".git", "refs", "nope", "..", "..", "..", "absent-run.sh")]) {
+    const { rec, block } = one(asked);
+    assert.equal(rec.outcome, "not-found", asked);
+    assert.ok(!/\.env|\.git/.test(`${block.body}${rec.ancestor ?? ""}`), block.body);
+  }
+});
