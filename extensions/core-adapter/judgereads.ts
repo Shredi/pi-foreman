@@ -284,7 +284,7 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
 
 /** Shows control characters (newline, CR, tab, other C0, DEL, NEL, line and paragraph separators, bidi controls) as escapes so one name or path part is always one line. */
 function escapeControl(s: string): string {
-  return s.replace(/[\u0000-\u001f\u007f\u0085\p{Zl}\p{Zp}\u{202a}-\u{202e}\u{2066}-\u{2069}]/gu, (c) => {
+  return s.replace(/[\u0000-\u001f\u007f\u0085\p{Zl}\p{Zp}\u{202a}-\u{202e}\u{2066}-\u{2069}\u200e\u200f\u061c]/gu, (c) => {
     if (c === "\n") return "\\n";
     if (c === "\r") return "\\r";
     if (c === "\t") return "\\t";

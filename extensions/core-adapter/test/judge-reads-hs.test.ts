@@ -234,3 +234,10 @@ test("bidi, NEL, line and paragraph separators in an asked name are escaped", ()
   assert.ok(block.header.startsWith("a\\u202eb\\x85b\\u2028b\\u2029b\\u2066 -> "), block.header);
   assert.ok(!chars.some((c) => block.header.includes(c)));
 });
+
+test("LRM, RLM and ALM in an asked name are escaped", () => {
+  const chars = [0x200e, 0x200f, 0x061c].map((c) => String.fromCharCode(c));
+  const { block } = one(`a${chars.join("b")}`);
+  assert.ok(block.header.startsWith("a\\u200eb\\u200fb\\u061c -> "), block.header);
+  assert.ok(!chars.some((c) => block.header.includes(c)));
+});
