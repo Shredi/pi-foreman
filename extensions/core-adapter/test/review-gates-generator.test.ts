@@ -22,7 +22,7 @@ import { writeRegistry } from "../session.ts";
 
 export type Op = "build" | "launch" | "end" | "pass" | "fail" | "delete" | "markV" | "tier" | "answer" | "restart";
 export type Ev = { op: Op; k: number };
-const KEYS = ["/w/c0", "/w/c1"];
+const KEYS = ["/w/c0", "/w/c1", "/w/c2"];
 const OPS: Op[] = ["build", "pass", "fail", "delete", "launch", "end", "markV", "tier", "answer", "restart"];
 const PER_CHECKOUT = new Set<Op>(["build", "pass", "fail", "delete", "launch", "end"]);
 const LEDGER0 = "# LEDGER t\nTier: trivial\n\n- [ ] 1. a\n";
@@ -92,7 +92,7 @@ export function step(s: S, ev: Ev, impl: Impl, words: Map<string, [Words, Words]
     if (ev.op === "launch") running.set(key, (running.get(key) ?? 0) + 1);
     gates = impl.revise(gates, key, now);
     const m = model.get(key) ?? { last: null, revised: false, hasPass: false };
-    model.set(key, { ...m, revised: m.last !== null || m.revised || !model.has(key) ? true : m.revised, builtAt: now });
+    model.set(key, { ...m, revised: true, builtAt: now });
   } else {
     gates = impl.verdict(gates, [key], [ev.op], now, `run${now}`);
     const m = model.get(key) ?? { last: null, revised: false, hasPass: false };
@@ -164,17 +164,18 @@ export function shrink(events: readonly Ev[], impl: Impl): Ev[] {
   return [...events];
 }
 
-const ALPHABET: Ev[] = OPS.flatMap((op) => (PER_CHECKOUT.has(op) ? KEYS.map((_, k): Ev => ({ op, k })) : [{ op, k: 0 }]));
+const alphabet = (checkouts: number): Ev[] => OPS.flatMap((op) => (PER_CHECKOUT.has(op) ? KEYS.slice(0, checkouts).map((_, k): Ev => ({ op, k })) : [{ op, k: 0 }]));
 const show = (evs: readonly Ev[]): string => evs.map((e) => (PER_CHECKOUT.has(e.op) ? `${e.op} c${e.k}` : e.op)).join("; ");
 
 /** Every sequence of 1 to `depth` events, depth first, each prefix checked once (a failing prefix is not extended). `onStep` sees every step. */
-export function walk(impl: Impl, depth: number, onStep: (seen: Seen) => void = () => {}): { cases: number; failures: string[] } {
+export function walk(impl: Impl, depth: number, onStep: (seen: Seen) => void = () => {}, checkouts = 2): { cases: number; failures: string[] } {
   const failures: string[] = [];
+  const events = alphabet(checkouts);
   let cases = 0;
   const words = new Map<string, [Words, Words]>(); // the real ChildBlocked, once per distinct dialog
   const go = (s: S, path: Ev[]): void => {
     if (path.length === depth || failures.length >= 3) return;
-    for (const ev of ALPHABET) {
+    for (const ev of events) {
       const r = step(s, ev, impl, words);
       cases += 1;
       onStep(r.seen);
@@ -209,6 +210,13 @@ test(`A, B, C, D: the finish verdict, \`mark V\`, the ledger V line and the dial
   const t0 = Date.now();
   const r = walk(REAL, DEPTH);
   console.log(`review gates walk: depth ${DEPTH}, ${r.cases} steps checked, ${Date.now() - t0} ms`);
+  assert.deepEqual(r.failures, []);
+});
+
+test("A, B, C, D over every order of up to 4 events in 3 checkouts", () => {
+  const t0 = Date.now();
+  const r = walk(REAL, 4, () => {}, 3);
+  console.log(`review gates walk: 3 checkouts, depth 4, ${r.cases} steps checked, ${Date.now() - t0} ms`);
   assert.deepEqual(r.failures, []);
 });
 

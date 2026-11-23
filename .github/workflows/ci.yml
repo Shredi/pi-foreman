@@ -284,9 +284,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      TLA_VERSION: v1.8.0
-      # SHA-256 of tla2tools.jar from https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar (computed from the file downloaded on 2026-11-23); a different file fails the job
-      TLA_SHA256: fdffef247f563ef6edbfd44958d2a82db79e7564e07cb673262d896353fa6713
+      TLA_VERSION: v1.7.4
+      # SHA-256 of tla2tools.jar from https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar, the latest stable (non-pre-release) release (computed from the file downloaded on 2026-11-23); a different file fails the job
+      TLA_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
