@@ -1510,7 +1510,7 @@ function sshHasCommand(words: string[]): boolean {
   return operands > 1;
 }
 
-const tooDeepHit = (text: string): FloorHit => judgeHit("delete-unknown-target", `This command nests command substitutions deeper than the parser reads (${MAX_DEPTH} levels), so what it deletes cannot be read.`, text);
+const tooDeepHit = (text: string): FloorHit => judgeHit("delete-unknown-target", `This command nests command substitutions, blocks or subshells deeper than the parser reads, so what it deletes cannot be read.`, text);
 
 /** Hangs the stdin texts of `outer` on the segments parsed from what it unwrapped (the parser leaves the property off a clone). */
 function withHeredocs(inner: ShellSegment[], outer: ShellSegment): void {
@@ -1627,6 +1627,8 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       // one budget for the line, carried through the recursion: bodies read again below bodies cannot grow without bound; past it the line is judge-first, unread
       if ((acc.read ?? 0) > NESTED_SEGMENT_BUDGET) {
         settle(judgeHit("delete-unknown-target", "This command defines function bodies too deep or too many to be read, so what it deletes cannot be read.", text));
+        const d = flatRefusals(body, opaque, env, acc);
+        if (d) return d;
         continue;
       }
       const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
@@ -1646,6 +1648,45 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         if (u) settle(judgeHit("delete-unknown-target", `The target of this recursive delete cannot be read (${u.reason}).`, psText));
         settle(psOutsideDelete(psText, env));
       }
+    }
+  }
+  return null;
+}
+
+/** Segments one line may read in the flat read of bodies past the segment budget; past it the line stays judge-first. */
+const FLAT_PARSE_CAP = 1500;
+
+/**
+ * The refusals alone, for a body past the segment budget: the body and the bodies and wrapper words below it are parsed once each (a work list, no recursion into the full check) and
+ * every command is held to the delete, chmod, disk and PowerShell-delete floors. A refusal the full check would give for these commands survives the budget; the line stays judge-first.
+ */
+function flatRefusals(body: string, from: ShellSegment, env: FloorEnv, acc: { seen?: Set<string>; flat?: number }): FloorHit | null {
+  const seen = (acc.seen ??= new Set());
+  const queue: [string, ShellSegment][] = [[body, from]];
+  // the body itself is always read (a sibling after a spent cap is still checked); the bodies below it only while the line's flat read is under its cap
+  for (let first = true; queue.length > 0 && (first || (acc.flat ?? 0) < FLAT_PARSE_CAP); first = false) {
+    const [t, owner] = queue.pop()!;
+    const parsed = parseShell(t, { cwd: owner.cwd ?? env.cwd, platform: env.platform, rebound: owner.harnessRebound });
+    acc.flat = (acc.flat ?? 0) + parsed.length + 1;
+    const ps: string[] = [];
+    for (const seg of parsed) {
+      const prog = base(seg.program);
+      const kids: string[] = seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
+      const rest = behindWrapper(seg);
+      if (rest) kids.push(wordsText(rest));
+      for (const k of kids) {
+        const key = JSON.stringify(["flat", k, seg.cwd ?? env.cwd, seg.harnessRebound ?? null]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queue.push([k, seg]);
+      }
+      const h = localKind(seg, prog, env);
+      if (h && h.kind !== "judge") return h;
+      if (/^(?:remove-item|ri)$/i.test(prog)) ps.push([seg.program, ...seg.argv].join(" "));
+    }
+    if (ps.length > 0) {
+      const d = psUnitFloors(ps.join("\n"), env);
+      if (d) return d;
     }
   }
   return null;

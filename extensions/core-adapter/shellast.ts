@@ -1571,9 +1571,11 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, funcs: new Map(), budget: { walks: 0, cmds: 0, starts: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
-  const unreadable = (): ShellSegment[] => {
+  // `tooDeep`: a block, subshell or definition nested past the parser's limit is no syntax error (a shell runs it): the line is unread, so judge-first, never an allow
+  const unreadable = (tooDeep = false): ShellSegment[] => {
     const sc = start();
     seg(sc, "", [], "parse_error");
+    if (tooDeep) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     return sc.run.out;
   };
   const sc = start();
@@ -1583,7 +1585,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   } catch {
     script = undefined;
   }
-  if (!script || (script as any).errors?.length) return unreadable();
+  if (!script || (script as any).errors?.length) return unreadable(((script as any)?.errors as { message?: string }[] | undefined)?.some((e) => /nesting depth exceeded/.test(e.message ?? "")) === true);
   try {
     const an = analyse(command);
     sc.run.rebound = an.rebound;

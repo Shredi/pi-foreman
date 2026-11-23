@@ -131,3 +131,48 @@ test("item 12: one large body called once is cut during the walk and judged; a b
     check(atBudget, role, "A");
   }
 });
+
+// Revision round: a refusal in a body read after the segment budget is spent stays a refusal; the budget only moves what is not a refusal to the judge.
+test("item 12: a refusal in a body read after the budget is spent stays a refusal", () => {
+  const spent = `f(){ ${rep(":", 1600, "; ")}; }; f; `;
+  const REFUSED = ["rm -rf ~", "rm -fr /etc", "find / -delete", "mkfs.ext4 /dev/sda", "chmod -R 777 /"];
+  for (const cmd of REFUSED) {
+    for (const role of ["main", "builder"] as const) {
+      check(`${spent}g(){ ${cmd}; }; g`, role, "R");
+      // the same body below another body, past the budget at depth
+      check(`${spent}g(){ h(){ ${cmd}; }; h; }; g`, role, "R");
+      // the harmless twin is judged, not allowed and not refused
+      check(`${spent}g(){ ls; }; g`, role, "J");
+    }
+  }
+  for (const role of ["main", "builder"] as const) {
+    check(`${spent}g(){ Remove-Item -Recurse /etc; }; g`, role, "R");
+    // a refusal at the bottom of 100 nested definitions, after the budget went at the top
+    check(`${nestedDefs(100).replace("ls", "rm -rf ~")}`, role, "R");
+  }
+});
+
+// Revision round, item 15: nesting past the parser's limit is no syntax error, so the line is not an allow.
+test("item 15: nesting the parser rejects is refused or judge-first, never an allow", () => {
+  const nestIf = (n: number, c: string) => rep("if true; then", n) + ` ${c}; ` + rep("fi", n, "; ");
+  const nestParen = (n: number, c: string) => rep("(", n) + ` ${c} ` + rep(")", n);
+  const nestDef = (n: number, c: string) => {
+    let b = c;
+    for (let i = 0; i < n; i++) b = `f${i}(){ ${b}; }`;
+    return `${b}; f${n - 1}`;
+  };
+  for (const role of ["main", "builder"] as const) {
+    for (const c of ["rm -rf ~", "rm -fr /etc"]) {
+      check(nestIf(300, c), role, "J");
+      check(nestParen(300, c), role, "J");
+      check(nestDef(260, c), role, "J");
+    }
+    // the harmless deep twin is judge-first (main allowed it); lines that parse are as before
+    check(nestIf(300, "echo hi"), role, "J");
+    check(nestParen(300, "echo hi"), role, "J");
+    check(nestDef(260, "echo hi"), role, "J");
+    check(nestIf(5, "echo hi"), role, "A");
+    check("echo hi", role, "A");
+    check(nestIf(200, "rm -rf ~"), role, "R");
+  }
+});
