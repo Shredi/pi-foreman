@@ -569,14 +569,14 @@ class ScriptedHcTest(PassBase):
         self.assertEqual(code, 0, err)
         self.assertLess(elapsed, fsn.CLOSE_DEADLINE + 1)
         self.assertEqual(self.row()["status"], "closing")
-        self.assertIn("remote terminal still running; prune will remove it", err)
+        self.assertIn("remote terminal still running; the opening session's watcher removes it while that session runs, when the child reports closed; otherwise foreman session prune once it has finished", err)
         self.assertEqual([c for c in seen if c[0][1] == "kill"], [])
 
     def test_no_time_left_for_the_reap_prints_the_skip_line(self):
         self.seed("open")
         code, err, elapsed, seen = self.run_scripted("close-remote", "demo", took={"exec": fsn.CLOSE_DEADLINE - 0.5})
         self.assertEqual(code, 0, err)
-        self.assertIn("remote terminal still running; prune will remove it", err)
+        self.assertIn("remote terminal still running; the opening session's watcher removes it while that session runs, when the child reports closed; otherwise foreman session prune once it has finished", err)
         self.assertEqual([c for c in seen if c[0][1] == "get"], [])
         self.assertEqual(self.row()["status"], "closing")
 
