@@ -3,7 +3,7 @@
 //     a FAIL on the head or a send-back is work in progress, anything else is not reviewed;
 //   checks: every gating check finished green (the watch's settle rule), or no checks confirmed;
 //   the host says mergeable and the merge state is not behind, dirty, unknown (blocked and draft only keep it from being ready).
-// The result drives the report line (prwatch.ts) and the draft target (a PR leaves draft when the rule holds, goes back on wip or unreviewed).
+// The result drives the report line (prwatch.ts) and the draft target (a PR leaves draft once a `[pre-pr]` PASS stands on its head, even while checks run; it goes back on wip or unreviewed).
 // With ceremony.reviewBeforePr off the caller never asks: no rule, no draft handling.
 import type { ReviewRecord } from "./reviews.ts";
 
@@ -39,8 +39,8 @@ export interface RuleInput {
   draft: boolean;
 }
 
-/** Merge states that keep a PR from leaving draft; `blocked` and `draft` do not (a draft is blocked by definition). */
-const HOLDS_DRAFT = new Set(["behind", "dirty", "unknown"]);
+/** Merge states that keep a PR from leaving draft; `behind`, `blocked` and `draft` do not (a draft is blocked by definition; a PR behind its base can still be reviewed). */
+const HOLDS_DRAFT = new Set(["dirty", "unknown"]);
 
 export interface LabelInput {
   facts: ReviewFacts;
@@ -68,13 +68,14 @@ export function labelTarget(i: LabelInput): boolean | null {
 
 /**
  * The result and the draft target. `draft` is the target: true (go back to draft), false (leave draft), null (no change). A PR goes back to draft only on
- * `wip` or `unreviewed`, never because checks run or fail; it leaves draft when the rule holds apart from the draft state itself.
+ * `wip` or `unreviewed`, never because checks run or fail; with the review facts ok it leaves draft while checks still run (a `[pre-pr]` PASS stands on the head),
+ * behind its base too, but not while it conflicts (not mergeable, dirty) or its merge state is unknown, and not on red checks (no change).
  */
 export function readiness(i: RuleInput): { result: Readiness; draft: boolean | null } {
   if (i.facts === "wip") return { result: "wip", draft: true };
   if (i.facts === "unreviewed") return { result: "unreviewed", draft: true };
   if (i.checks === "red") return { result: "red", draft: null };
-  if (i.checks === "running" || !i.mergeable || HOLDS_DRAFT.has(i.mergeState)) return { result: "running", draft: null };
-  if (i.draft || i.mergeState === "blocked" || i.mergeState === "draft") return { result: "running", draft: false };
+  if (!i.mergeable || HOLDS_DRAFT.has(i.mergeState)) return { result: "running", draft: null };
+  if (i.checks === "running" || i.draft || i.mergeState === "behind" || i.mergeState === "blocked" || i.mergeState === "draft") return { result: "running", draft: false };
   return { result: "ready", draft: false };
 }

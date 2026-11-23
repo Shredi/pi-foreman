@@ -249,7 +249,7 @@ export function prHostLabel(prHost: unknown, workspace: string, env: NodeJS.Proc
 
   | Tool | Parameters |
   |---|---|
-  | `pr_create` | `title` (string 1..256), `body` (string, maxLength 65536) required; `base`, `head` (string 1..200), `draft` (boolean) |
+  | `pr_create` | `title` (string 1..256), `body` (string, maxLength 65536) required; `base`, `head` (string 1..200), `draft` (boolean), `holdDraft` (boolean; a tool field, not sent to the host op: opens as a draft, never undone, the watch changes no draft state and sets no label) |
   | `pr_status`, `pr_checks` | `number` (integer 1..1000000000) |
   | `pr_comments` | `number`, `since` (string 20..35) |
   | `pr_watch` | `number` (`until` and `timeoutSeconds` are refused with `bad_request`) |

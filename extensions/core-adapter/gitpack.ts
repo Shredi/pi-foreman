@@ -185,10 +185,10 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_create",
     op: "pr_create",
     label: "Create PR",
-    description: "Open a pull request for a branch that is already pushed (never pushes). Needs a reviewer PASS on the head. Arms a watch of the new PR in this session (see pr_watch). Answer: number, url, head, base.",
+    description: "Open a pull request for a branch that is already pushed (never pushes). Needs a reviewer PASS on the head. Arms a watch of the new PR in this session (see pr_watch). The PR opens as a draft and the watch takes it out of draft once a `[pre-pr]` reviewer PASS stands on its head (even while CI runs); holdDraft keeps it a draft for good (CI and comments are still reported). Answer: number, url, head, base.",
     parameters: {
       type: "object",
-      properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown)." }, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." }, cwd: str(1000, "Checkout to open the pull request from (default: the session's). Head, base and remote are resolved there. Another checkout than the session's needs a reviewer PASS recorded for it at its current HEAD (run the reviewer with that cwd).") },
+      properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown)." }, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." }, holdDraft: { type: "boolean", description: "Open as a draft and keep it one: the watch reports CI and comments but never changes the draft state and sets no ready label; take it out of draft by hand. Ignores tools.prDraft." }, cwd: str(1000, "Checkout to open the pull request from (default: the session's). Head, base and remote are resolved there. Another checkout than the session's needs a reviewer PASS recorded for it at its current HEAD (run the reviewer with that cwd).") },
       required: ["title", "body"],
       additionalProperties: false,
     },
@@ -230,7 +230,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_unwatch",
     op: "pr_unwatch",
     label: "Unwatch PR",
-    description: "End the watch of a pull request without a message.",
+    description: "End the watch of a pull request without a message. CI and comments of that PR are no longer reported, and nothing takes it out of draft.",
     parameters: { type: "object", properties: { number: num("PR number."), repo: { type: "string", description: "Repository owner/name (default: the current repository's watch if there is one, else every watch with that number)." }, host: { type: "string", description: "A host of tools.prGithubHosts (default: every host)." } }, required: ["number"], additionalProperties: false },
     foremanOnly: true,
   },
@@ -412,7 +412,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
             const cur = await s.tracker?.repoFor?.(ctx.cwd).catch(() => null);
             ended = (cur ? s.watches.unwatch(params.number, cur.repo) : 0) > 0 || s.watches.unwatch(params.number) > 0;
           }
-          return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}` }], details: { decision: "ran" } };
+          return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}${ended ? "\nCI of this PR is no longer reported" : ""}` }], details: { decision: "ran" } };
         }
         if (t.op === "pr_create") {
           if (s.cover && s.gateOn && !s.isChild) {
@@ -430,7 +430,11 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (push) return failure(`pr_create: a push floor refuses pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
         // pr_create writes the `## Reviews` block of the newest PASS on the head into the body (prbody.ts); the PR gate off or no PASS on the head: the body as given
-        let sent = params;
+        // holdDraft is the tool's own field, never sent to the host op
+        const { holdDraft: holdAsked, ...hostParams } = params;
+        if (t.op === "pr_create" && holdAsked !== undefined && typeof holdAsked !== "boolean") return failure("pr_create: bad arguments (holdDraft a boolean); nothing was done.", { decision: "bad_request" });
+        const hold = t.op === "pr_create" && holdAsked === true;
+        let sent: Record<string, unknown> = t.op === "pr_create" ? hostParams : params;
         let reviewMark: { head: string; run: string } | undefined;
         let bodyNote = "";
         if (t.op === "pr_create" && !s.isChild && typeof params.body === "string") {
@@ -439,12 +443,12 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           const facts = sha ? reviewFactsFor((await s.records?.()) ?? [], sha) : null;
           const merged = bodyWithReviews(params.body, facts);
           if (merged.written && facts) {
-            sent = { ...params, body: merged.body };
+            sent = { ...hostParams, body: merged.body };
             reviewMark = markOf(facts);
           } else if (merged.capped) bodyNote = "\nthe `## Reviews` line was not written: the body with it would be over 65536 bytes";
         }
         // pr_create under the draft flow opens as a draft; GitHub's refusal of drafts (a repository without them) is answered by one more create without it
-        const asked = t.op === "pr_create" ? await askDraft(s, ctx, dir) : "no";
+        const asked = t.op === "pr_create" ? (hold ? "yes" : await askDraft(s, ctx, dir)) : "no";
         let draftAsked = asked === "yes";
         let refusedDraft = false;
         let outcome = await run(t.op as PrOp, draftAsked ? { ...sent, draft: true } : sent);
@@ -457,13 +461,14 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
         const openedOn = typeof params.head === "string" && params.head ? await commitOf(dir ?? ctx.cwd, params.head) : await headOf(dir ?? ctx.cwd);
-        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn, draftAsked, undefined, reviewMark).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn, draftAsked, undefined, reviewMark, hold).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
         const r0 = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
         let draftNote = "";
         let out = armed.tracked ? { ...r0, details: { ...r0.details, tracked: armed.tracked } } : r0;
         // a draft nobody watches could never be taken out of draft: no arm, a PR the tracker will not report, or no tracker running, and it leaves draft at once
         const managed = draftAsked && "key" in armed && !!armed.owned;
-        if (draftAsked && !managed) {
+        if (hold) draftNote = `\n${draftAsked ? DRAFT_HELD : "the PR is not a draft (the repository has no draft pull requests); holdDraft could not be kept"}`;
+        else if (draftAsked && !managed) {
           const key = "key" in armed ? armed.key : await watchKey(s, ctx, outcome.result.number, outcome.result.url, dir).catch(() => ({ host: "", repo: "", n: outcome.result.number as number }));
           const undone = await run("pr_draft", { number: outcome.result.number, ...(key.repo ? { repo: key.repo, ...(key.host ? { host: key.host } : {}) } : {}), draft: false }).catch((): SafeOpOutcome => ({ kind: "error", message: "no answer" }));
           s.trace({ event: "pr_watch", outcome: undone.kind === "ran" ? "draft_undone" : "draft_undo_failed" });
@@ -655,7 +660,10 @@ async function askDraft(s: PrPackSession, ctx: ExtensionContext, dir?: string): 
 }
 
 /** The report line of a draft PR the watch manages: the condition is the readiness rule (prready.ts) and needs a tracker report. */
-const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `[pre-pr]` reviewer PASS is the newest code review on its head, its checks have settled green (or none are confirmed), the host says it is mergeable and the merge state is not behind, dirty or unknown";
+const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it and a `[pre-pr]` reviewer PASS is the newest code review on its head, even while its checks run; it does not while the host says it is not mergeable or the merge state is dirty or unknown, and failing checks change nothing";
+
+/** The report line of a PR opened with holdDraft. */
+const DRAFT_HELD = "the PR is a draft and stays one (holdDraft): the watch reports CI and comments but never changes its draft state: take it out of draft by hand";
 
 /** GitHub's answer for a repository without draft pull requests, matched loosely (the wording is the host's). */
 function draftRefused(o: SafeOpOutcome): boolean {
@@ -673,7 +681,7 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey, bodyMark?: { head: string; run: string }): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey, bodyMark?: { head: string; run: string }, hold = false): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = explicit ?? (await watchKey(s, ctx, n, url, cwd));
@@ -694,13 +702,13 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     }
     tracked ??= await track();
     // the watch owns the PR's draft state only when it was opened as a draft, a tracker runs and it will report the PR
-    const owned = draftAsked && st?.kind !== "down" && (tracked === "added" || tracked === "present");
-    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created, bodyMark);
+    const owned = draftAsked && !hold && st?.kind !== "down" && (tracked === "added" || tracked === "present");
+    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created, bodyMark, hold);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
       if (createdHead) await s.cover?.(cwd ?? ctx.cwd, createdHead).catch(() => undefined);
       const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
-      s.watches.startPending(key, undefined, seed, owned, created, bodyMark);
+      s.watches.startPending(key, undefined, seed, owned, created, bodyMark, hold);
     }
     s.trace({ event: "pr_watch", outcome: "started" });
     return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked, owned };

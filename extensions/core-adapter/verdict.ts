@@ -18,7 +18,7 @@ export type ItemResult = (typeof ITEM_RESULTS)[number];
 export const FINDING_KINDS = ["defect", "now", "later"] as const;
 export type FindingKind = (typeof FINDING_KINDS)[number];
 /** The classes of scripts/foreman_findings.py CLASSES. */
-export const FINDING_CLASSES = ["auth", "shell-injection", "path-traversal", "secret-log", "off-by-one", "resource-leak", "race", "swallowed-error", "insecure-default"] as const;
+export const FINDING_CLASSES = ["auth", "shell-injection", "path-traversal", "secret-log", "off-by-one", "resource-leak", "race", "swallowed-error", "insecure-default", "other"] as const;
 
 export const MAX_ITEMS = 64;
 export const MAX_FINDINGS = 50;
@@ -471,3 +471,6 @@ export const failedItemIds = (items: readonly VerdictItem[]): string[] => [...ne
 
 /** The `defect` findings of a record: the blocking ones, the only kind that enters a loop key or the findings store. */
 export const defectsOf = (findings: readonly VerdictFinding[]): VerdictFinding[] => findings.filter((f) => f.kind === "defect");
+
+/** The `now` and `later` findings of a record: advice, stored as `advice` rows beside the findings (never counted as findings, never blocking). */
+export const adviceOf = (findings: readonly VerdictFinding[]): VerdictFinding[] => findings.filter((f) => f.kind !== "defect");

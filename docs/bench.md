@@ -73,7 +73,7 @@ Task dir (`--tasks` names one, or a folder of them; five synthetic samples (clea
 - `prompt.md` the owner's task text the builder was given;
 - `ground_truth.json` `{"clean": false, "defects": [{"id", "file", "lines": [first, last], "class", "description"}]}`,
   or `{"clean": true, "defects": []}` for a clean control. Classes: `auth`, `shell-injection`, `path-traversal`,
-  `secret-log`, `off-by-one`, `resource-leak`, `race`, `swallowed-error`, `insecure-default`.
+  `secret-log`, `off-by-one`, `resource-leak`, `race`, `swallowed-error`, `insecure-default`, `other`.
 
 Plant defects inside the requested change, not next to it. An add-on plant (a helper or code path the prompt never
 asked for) is caught by the reviewer's "unrelated change" rule without the reviewer understanding the defect, so it
@@ -136,8 +136,8 @@ scorer 3 and 4 are never compared.
   of a wrong finding: a real flaw in the reference change counts too.
 
 The classes are the findings store's `CLASSES` (`scripts/foreman_findings.py`): `auth`, `shell-injection`,
-`path-traversal`, `secret-log`, `off-by-one`, `resource-leak`, `race`, `swallowed-error`, `insecure-default`. The
-reviewer names one in the `class` field of a finding.
+`path-traversal`, `secret-log`, `off-by-one`, `resource-leak`, `race`, `swallowed-error`, `insecure-default`, `other` (a
+defect that fits no security class; no seeded bench defect uses it). The reviewer names one in the `class` field of a finding.
 
 Output in `--out` (default `~/.pi-foreman/review-bench/<timestamp>`): `cells/<task>__<model>__r<n>.json` (the verdict
 record, final text, score, ground truth, usage per request, USD, seconds, the composed prompt, the env keys set, the work
