@@ -1310,7 +1310,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       overridden: new Map(),
     };
     sessions.set(id, s);
-    // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman removes worktree-side lanes older than 7 days
+    // the session's scratch location goes in the step that sets `owned.childScratchRoot`; the foreman removes lanes older than 7 days, in the worktree base and under the temp folder
     const applyScratchBase = (): void => {
       s.scratchWt = scratchWtNow;
       if (isChild) return;

@@ -33,9 +33,9 @@ test("the shutdown sweep keeps brief-* and removes the other folders of the lane
   assert.equal(fs.readFileSync(file, "utf8"), "findings");
   assert.equal(fs.existsSync(other), false);
   // reload: a new host of the same session sweeps the recent lane; the brief stays
-  assert.equal(sweepOldScratch(host()), 0);
+  assert.equal(sweepOldScratch(host(), Date.now(), deps), 0);
   assert.ok(fs.existsSync(file));
-  assert.equal(sweepOldScratch(host(), Date.now() + 8 * 86400000), 1);
+  assert.equal(sweepOldScratch(host(), Date.now() + 8 * 86400000, deps), 1);
   assert.equal(fs.existsSync(file), false);
 });
 
