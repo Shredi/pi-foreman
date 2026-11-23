@@ -63,8 +63,8 @@ export interface ReadBlock {
   body: string;
 }
 
-/** Test hooks: `afterStat` runs between the check's stat and the open of a file or folder, `afterOpen` right after the open. */
-export const readHooks: { afterStat?: (real: string) => void; afterOpen?: (real: string) => void } = {};
+/** Test hook: runs between the check's stat and the open of a file or folder. */
+export const readHooks: { afterStat?: (real: string) => void } = {};
 
 const folds = (platform: string): boolean => platform === "darwin" || platform === "win32";
 const fold = (platform: string, s: string): string => (folds(platform) ? s.toLowerCase() : s);
@@ -213,70 +213,20 @@ export function resolveReadable(asked: string, scope: JudgeReadScope): Resolutio
 
 // ------------------------------------------------------------------ reading
 
-interface AncestorSnap {
-  p: string;
-  dev: number;
-  ino: number;
-}
-
-/** The directories above `real` (and `real` itself when `withSelf`), from the root down. */
-function ancestorChain(real: string, withSelf: boolean): string[] {
-  const chain: string[] = [];
-  for (let p = withSelf ? real : path.dirname(real); ; p = path.dirname(p)) {
-    chain.push(p);
-    if (path.dirname(p) === p) break;
-  }
-  return chain.reverse();
-}
-
-/**
- * lstat every directory of the chain. `real` is a realpath, so each must be a real directory, not a link or junction. undefined when one is not.
- * O_NOFOLLOW guards only the last component of an open; this covers the middle ones. A swap back before the next look is a documented gap off Linux.
- */
-function snapAncestors(chain: string[]): AncestorSnap[] | undefined {
-  const snap: AncestorSnap[] = [];
-  for (const p of chain) {
-    const st = fs.lstatSync(p);
-    if (st.isSymbolicLink() || !st.isDirectory()) return undefined;
-    snap.push({ p, dev: st.dev, ino: st.ino });
-  }
-  return snap;
-}
-
-function sameAncestors(before: AncestorSnap[], now: AncestorSnap[] | undefined): boolean {
-  return !!now && now.length === before.length && before.every((b, i) => b.dev === now[i].dev && b.ino === now[i].ino);
-}
-
-/** Linux: the open file's own path must be the resolved real path. false on a mismatch; true when it matches or /proc is not there. */
-function procPathMatches(fd: number, real: string): boolean {
-  try {
-    return fs.readlinkSync(`/proc/self/fd/${fd}`) === real;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return true;
-    throw e;
-  }
-}
-
 const ofStat = (st: fs.Stats): Pick<ReadRecord, "dev" | "ino" | "size" | "mtimeMs" | "ctimeMs"> => ({ dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs });
 
 function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   const win32 = scope.platform === "win32";
   const flags = fs.constants.O_RDONLY | (win32 ? 0 : (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
-  const chain = ancestorChain(res.real, false);
+  readHooks.afterStat?.(res.real);
   let fd: number | undefined;
   try {
-    const before = snapAncestors(chain);
-    if (!before) return { outcome: "changed", body: "changed while it was read: not shown" };
-    readHooks.afterStat?.(res.real);
     fd = fs.openSync(res.real, flags);
-    readHooks.afterOpen?.(res.real);
-    if (scope.platform === "linux" && !procPathMatches(fd, res.real)) return { outcome: "changed", body: "changed while it was read: not shown" };
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.nlink !== 1 || st.dev !== res.st.dev || st.ino !== res.st.ino) return { outcome: "changed", body: "changed while it was read: not shown" };
-    if (realOf(res.real) !== res.real || !sameAncestors(before, snapAncestors(chain))) return { outcome: "changed", body: "changed while it was read: not shown" };
+    if (realOf(res.real) !== res.real) return { outcome: "changed", body: "changed while it was read: not shown" };
     const buf = Buffer.alloc(Math.min(st.size, MAX_SCAN_BYTES));
     const n = buf.length ? fs.readSync(fd, buf, 0, buf.length, 0) : 0;
-    if (!sameAncestors(before, snapAncestors(chain))) return { outcome: "changed", body: "changed while it was read: not shown" };
     const data = buf.subarray(0, n);
     if (data.subarray(0, 8192).includes(0)) return { outcome: "binary", body: "binary file, not shown" };
     const partial = st.size > MAX_SCAN_BYTES;
@@ -322,17 +272,11 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
 
 function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   if (budget.left <= 0) return { outcome: "budget", body: "not read: read budget used up" };
-  const chain = ancestorChain(res.real, true);
+  readHooks.afterStat?.(res.real);
   let names: string[] = [];
   let dir: fs.Dir | undefined;
-  let before: AncestorSnap[] | undefined;
   try {
-    before = snapAncestors(chain);
-    if (!before) return { outcome: "changed", body: "changed while it was read: not shown" };
-    readHooks.afterStat?.(res.real);
     dir = fs.opendirSync(res.real);
-    readHooks.afterOpen?.(res.real);
-    if (!sameAncestors(before, snapAncestors(chain))) return { outcome: "changed", body: "changed while it was read: not shown" };
     for (let e = dir.readSync(); e && names.length < MAX_LISTING_SCAN; e = dir.readSync()) names.push(e.name);
   } catch {
     return { outcome: "changed", body: "changed while it was read: not shown" };
@@ -343,7 +287,7 @@ function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, b
       // a failed close changes nothing
     }
   }
-  if (realOf(res.real) !== res.real || !sameAncestors(before, snapAncestors(chain))) return { outcome: "changed", body: "changed while it was read: not shown" };
+  if (realOf(res.real) !== res.real) return { outcome: "changed", body: "changed while it was read: not shown" };
   names.sort();
   const shown: string[] = [];
   for (const n of names) {
