@@ -154,19 +154,28 @@ interface Resolution {
   ancestor?: string;
   st?: fs.Stats;
   window?: { from: number; to: number };
+  /** The asked name, `#L…` suffix included, exists as it is and was read as that file. */
+  literal?: boolean;
   why?: string;
 }
 
 const WINDOW = /^([\s\S]*)#L(\d+)-(\d+)$/;
 
-/** The check of one asked path: bound first, then exclusions; a missing path is `not-found` only inside the bound. */
+/** The check of one asked path: bound first, then exclusions; a missing path is `not-found` only inside the bound. A file that exists under its literal name (`#L…` included) is read as that file. */
 export function resolveReadable(asked: string, scope: JudgeReadScope): Resolution {
   const m = WINDOW.exec(asked);
-  let p = m ? m[1] : asked;
+  if (m) {
+    const literal = resolvePath(asked, undefined, scope);
+    if (literal.outcome !== "not-found" && literal.outcome !== "outside") return { ...literal, literal: true };
+  }
+  return resolvePath(m ? m[1] : asked, m ? { from: Math.max(1, Number(m[2])), to: Math.max(1, Number(m[3])) } : undefined, scope);
+}
+
+function resolvePath(asked: string, window: { from: number; to: number } | undefined, scope: JudgeReadScope): Resolution {
+  let p = asked;
   // A leading `~` is the home folder (headers and hints show it that way); `~user` and `$VAR` stay as they are. The expanded path is checked like any absolute one.
   const home = scope.floorEnv.home ?? os.homedir();
   if (home && (p === "~" || p.startsWith("~/") || (scope.platform === "win32" && p.startsWith("~\\")))) p = path.join(home, p.slice(1));
-  const window = m ? { from: Math.max(1, Number(m[2])), to: Math.max(1, Number(m[3])) } : undefined;
   const outside = (): Resolution => ({ outcome: "outside" });
   if (!p || p.includes("\0")) return outside();
   let lex: string;
@@ -175,7 +184,8 @@ export function resolveReadable(asked: string, scope: JudgeReadScope): Resolutio
   let realAnc: string;
   try {
     lex = path.resolve(scope.cwd, p);
-    anc = lex;
+    // The OS resolves `..` after the links before it; so the raw joined string goes to realpath, with no normalizing first.
+    anc = path.isAbsolute(p) ? p : scope.cwd + path.sep + p;
     for (;;) {
       try {
         realAnc = fs.realpathSync.native(anc);
@@ -242,7 +252,15 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
     const wanted = res.window ? Math.max(1, res.window.to - from + 1) : MAX_FILE_LINES;
     const count = Math.min(MAX_FILE_LINES, wanted, jsonl ? MAX_JSONL_LINES : MAX_FILE_LINES);
     if (from > lines.length) return { outcome: "ok", body: `(no lines from ${from}: the file has ${lines.length} lines${partial ? " in its first 1 MiB" : ""})` };
-    const slice = lines.slice(from - 1, from - 1 + count).map((l) => (jsonl && l.length > MAX_JSONL_LINE_CHARS ? `${l.slice(0, MAX_JSONL_LINE_CHARS)} [cut]` : l));
+    // A line is masked before any cut, so a cut never leaves half a secret; the last line of a file the scan stopped inside carries `[cut]`.
+    const scanCut = partial && !text.endsWith("\n");
+    const slice = lines.slice(from - 1, from - 1 + count).map((l, i) => {
+      const lastOfScan = scanCut && from - 1 + i === lines.length - 1;
+      if (!jsonl && !lastOfScan) return l;
+      let masked = redactCommand(l);
+      if (jsonl && masked.length > MAX_JSONL_LINE_CHARS) masked = `${masked.slice(0, MAX_JSONL_LINE_CHARS)} [cut]`;
+      return lastOfScan && !masked.endsWith(" [cut]") ? `${masked} [cut]` : masked;
+    });
     let body = slice.join("\n");
     const more = from - 1 + slice.length < lines.length || partial;
     if (budget.left <= 0) return { outcome: "budget", body: "not read: read budget used up" };
@@ -266,7 +284,7 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
     budget.left -= cut ? cap : body.length; // a cut file used its whole share
     const last = from + Math.max(k, 1) - 1;
     const note = cut ? `\n[cut at ${cap} characters]` : "";
-    const base = (WINDOW.exec(asked)?.[1] ?? asked).replace(/[\\/]+$/, "");
+    const base = (res.literal ? asked : WINDOW.exec(asked)?.[1] ?? asked).replace(/[\\/]+$/, "");
     const next = more || cut ? `\n[more of this file: ask ${base}#L${last + 1}-${last + MAX_FILE_LINES}]` : "";
     return { outcome: "ok", body: `lines ${from}-${last}\n${body}${note}${next}` };
   } catch {
@@ -384,7 +402,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       }
     }
     records.push(rec);
-    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]})`, body: body.split("\n").map(redactCommand).join("\n") });
+    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]}${res.literal ? "; read by its literal name, no line window" : ""})`, body: body.split("\n").map(redactCommand).join("\n") });
   }
   return { blocks, records };
 }

@@ -241,3 +241,45 @@ test("LRM, RLM and ALM in an asked name are escaped", () => {
   assert.ok(block.header.startsWith("a\\u200eb\\u200fb\\u061c -> "), block.header);
   assert.ok(!chars.some((c) => block.header.includes(c)));
 });
+
+test("`..` after a link is resolved by the OS: d/../run.sh with d -> deep/er shows deep/run.sh", () => {
+  const base = path.join(cwd, "dotdot");
+  put(path.join(base, "run.sh"), "echo benign\n");
+  put(path.join(base, "deep", "run.sh"), "echo EVIL-ran\n");
+  fs.mkdirSync(path.join(base, "deep", "er"), { recursive: true });
+  fs.symlinkSync(path.join(base, "deep", "er"), path.join(base, "d"));
+  const { block } = one("dotdot/d/../run.sh");
+  assert.match(block.body, /EVIL-ran/);
+  assert.match(block.header, /deep\/run\.sh/);
+  assert.ok(!block.body.includes("benign"));
+});
+
+test("a file named run.sh#L1-9 is read by its literal name; without it the suffix is a window", () => {
+  const base = path.join(cwd, "lit");
+  put(path.join(base, "run.sh"), "plain 1\nplain 2\n");
+  assert.match(one("lit/run.sh#L2-2").block.body, /plain 2/);
+  put(path.join(base, "run.sh#L1-9"), "literal text\n");
+  const { block } = one("lit/run.sh#L1-9");
+  assert.match(block.body, /literal text/);
+  assert.ok(!block.body.includes("plain"));
+  assert.match(block.header, /literal name/);
+});
+
+test("an invalid-verdict detail is masked and cut to 200 characters", () => {
+  const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+  const v = parseJudgeVerdict(JSON.stringify({ verdict: `${secret}${"x".repeat(4800)}` }));
+  assert.ok("error" in v && v.detail.length <= 200 && !v.detail.includes(secret), JSON.stringify(v));
+  const f = parseJudgeVerdict(JSON.stringify({ verdict: "clear", [`${"f".repeat(4800)}${secret}`]: 1 }));
+  assert.ok("error" in f && f.detail.length <= 200 && !f.detail.includes(secret));
+});
+
+test("a .jsonl line is masked before its cut; the last line of a 1 MiB scan carries [cut]", () => {
+  const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789";
+  put(path.join(cwd, "m.jsonl"), `${"j".repeat(990)}${secret} ${"k".repeat(200)}\n`);
+  const j = one("m.jsonl").block.body;
+  assert.ok(!j.includes("sk-ant-api03-abcdefghijklmnopqrstuvwxyz"), j.slice(900, 1100));
+  assert.match(j, /\[cut\]/);
+  put(path.join(cwd, "big.txt"), `first\n${"z".repeat(1024 * 1024 + 50)}`);
+  const b = one("big.txt#L2-2").block.body;
+  assert.match(b, /\[cut\]/);
+});

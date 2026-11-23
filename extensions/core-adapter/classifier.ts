@@ -264,7 +264,7 @@ type ParsedJudge = { verdict: "clear" | "unsure"; reason: string } | { verdict: 
  * 1 to 8 `paths` (strings of at most 500 characters) is valid; `last`: the round after the last read round, where a `read` has its own message.
  */
 export function parseJudgeVerdict(text: string, mode?: "read" | "last"): ParsedJudge {
-  const bad = (detail: string): ParsedJudge => ({ error: "invalid_verdict", detail });
+  const bad = (detail: string): ParsedJudge => ({ error: "invalid_verdict", detail: redactCommand(flat(detail)).slice(0, MAX_REASON) });
   let t = text.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(t);
   if (fenced) t = fenced[1];
@@ -363,7 +363,7 @@ export class Classifier {
         if (reply.ok === false) return refuse(reply.cause, reply.detail);
         p = parseJudgeVerdict(reply.text, mode);
         if (!("error" in p)) break;
-        if (attempt === 2) return refuse(p.error, `the judge verdict was invalid twice (${p.detail})`);
+        if (attempt === 2) return refuse(p.error, redactCommand(`the judge verdict was invalid twice (${p.detail})`).slice(0, MAX_REASON));
       }
       if (!p || "error" in p || p.verdict !== "read" || !scope) break;
       if (ctx.signal?.aborted) return refuse("provider_error", "aborted");
