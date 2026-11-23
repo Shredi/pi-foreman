@@ -2,6 +2,7 @@
 // that checkout, else the only live ledger there, else the session-bound one). The route of the launch keeps it, so a reload does not lose it.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { resolvePython } from "../python.ts";
@@ -43,7 +44,7 @@ async function two(t: Parameters<typeof setup>[0], other: string | null = OTHER)
 const routes = (w: World) => w.entries.filter((e) => (e as { customType?: string }).customType === "pi-foreman-ledger-route").map((e) => (e as { data: { run: string; paths: (string | null)[] } }).data);
 
 test("pure: the checkout ledger rule of taskLedger", () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), "pf-d171-"));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pf-d171-"));
   try {
     const mk = (root: string, ...names: string[]): string[] => names.map((n) => {
       const f = path.join(root, ".workflow", n);

@@ -1,6 +1,7 @@
 // D165: the finish gate drops a deleted checkout only when another checkout got a PASS after the deleted one's last build; a visible line names it.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { test } from "node:test";
 import { supersededGone } from "../reviewgates.ts";
 import type { ReviewGates } from "../reviewgates.ts";
@@ -60,7 +61,7 @@ test("end to end: a deleted checkout built before a later PASS in the own checko
   assert.equal(await settle(a), "");
   const lines = w.notes.filter((n) => n.includes("deleted, superseded by the PASS in"));
   assert.equal(lines.length, 1, w.notes.join("\n"));
-  assert.ok(lines[0].includes(real(w.project).replace(/\/[^/]*$/, "") + "/wtb"), lines[0]);
+  assert.ok(lines[0].includes(path.join(path.dirname(real(w.project)), "wtb")), lines[0]);
   assert.equal(await settle(a), "");
   assert.equal(w.notes.filter((n) => n.includes("deleted, superseded")).length, 1, "one line per dropped checkout");
   const gates = lastGate(w).gate?.reviewGates ?? {};
