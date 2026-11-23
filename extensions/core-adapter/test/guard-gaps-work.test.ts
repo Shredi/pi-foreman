@@ -351,6 +351,24 @@ test("item 12: nested selects stay within a segment count (work bound) and past 
   }
 });
 
+// Review 22e00287: the select body is re-read as text once (the `inSelect` early return); a re-read per level shows as hidden `bodies` and as a blown-up nested read, not as more segments.
+test("item 12: nested selects pin the re-read work (bodies and nested segments are counted)", () => {
+  const sel = (d: number, per: number): string => {
+    let n = "ls";
+    for (let i = 0; i < d; i++) n = `select s${i} in a b; do ${rep("ls", per - 1, "; ")}${per > 1 ? "; " : ""}${n}; done`;
+    return n;
+  };
+  const opts = { cwd: wt, platform: "linux" } as const;
+  // small shape first: a re-reading parser fails here at once (bodies > 1 or a thrown RangeError), not after minutes
+  const small = parseShell(sel(30, 5), { cwd: wt });
+  assert.ok(small.filter((s) => s.bodies).length <= 1, `segments with bodies: ${small.filter((s) => s.bodies).length}`);
+  assert.ok(nestedSegments(small, opts).length <= 17 * (30 * 6 + 10), "nested segments (30x5)");
+  const segs = parseShell(sel(250, 20), { cwd: wt });
+  assert.ok(segs.filter((s) => s.bodies).length <= 1, `segments with bodies: ${segs.filter((s) => s.bodies).length}`);
+  const n = nestedSegments(segs, opts).length;
+  assert.ok(n <= 17 * (250 * 21 + 10), `nested segments: ${n}`);
+});
+
 // Review adcac999: a select body is a body the floors re-read as text, as on main; alternating it with other bodies cannot reset the depth count.
 const ALT: Record<string, (i: number, n: string) => string> = {
   coproc: (i, n) => `coproc C${i} { ${n}; }`,
