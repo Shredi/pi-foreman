@@ -860,7 +860,7 @@ function noteFolder(fl: Flow | undefined, name: string, rest: W[]): void {
 const MAX_BODY_WALKS = 64;
 
 /** The most commands one line walks inside function bodies (a body of hundreds of commands called many times, bodies defined inside bodies); past it a call is unknown, so the work stays bounded and never opens. */
-const MAX_BODY_CMDS = 2000;
+const MAX_BODY_CMDS = 500;
 
 /**
  * One command whose words are resolved. A program word that names a function the line defines runs every body of that name, in any order the line has them (a definition may come later, or twice): each
@@ -871,7 +871,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   const sc = c.sc;
   const name = words[0]?.value;
   const bodies = name != null && !/[\\/]/.test(name) ? sc.run.funcs?.get(name) : undefined;
-  if (sc.fnStack?.length && sc.run.budget) sc.run.budget.cmds++;
+  if (sc.fnStack?.length && sc.run.budget && ++sc.run.budget.cmds > MAX_BODY_CMDS) return cwd; // the budget is spent inside the walk: the rest of the body is not read, and the call that started it is unknown
   if (name == null || !bodies) return runWord(words, c, cwd);
   const before = sc.run.out.length;
   let unknown = false;
@@ -879,13 +879,13 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     // a call of a function from inside its own body is the walk already under way
     if (sc.fnStack?.includes(name)) continue;
     const budget = sc.run.budget;
-    if (!budget || budget.walks >= MAX_BODY_WALKS || budget.cmds >= MAX_BODY_CMDS || sc.depth + 1 > MAX_DEPTH) {
+    if (!budget || budget.walks >= MAX_BODY_WALKS || budget.cmds > MAX_BODY_CMDS || sc.depth + 1 > MAX_DEPTH) {
       unknown = true;
       continue;
     }
     budget.walks++;
     const r = walkBody(body, name, c, cwd);
-    if (!r.ok || r.end !== cwd || r.positional) unknown = true;
+    if (!r.ok || r.end !== cwd || r.positional || budget.cmds > MAX_BODY_CMDS) unknown = true;
   }
   const end = runWord(words, c, cwd);
   for (const x of sc.run.out.slice(before)) if (x.program === name) sc.run.resolved?.add(x);

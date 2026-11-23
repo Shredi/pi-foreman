@@ -104,3 +104,20 @@ test("item 12: look-behind inside function bodies stays bounded", () => {
   assert.ok(segs.length < 2000);
   for (const role of ["main", "builder"] as const) check(line, role, "J");
 });
+
+test("item 12: one large body called once is cut during the walk and judged; a body at the budget decides as inline", () => {
+  const MAX_BODY_CMDS = 500;
+  const big = `f(){ ${rep("ls", 8000, "; ")}; }; f`;
+  const segs = parseShell(big, { cwd: wt });
+  assert.ok(segs.length < MAX_BODY_CMDS + 50, `segments: ${segs.length}`);
+  assert.ok(segs.some((s) => s.programUnknown === true));
+  const bigFoo = `f(){ ${rep("foo a b c d e f g h", 4000, "; ")}; }; f`;
+  assert.ok(parseShell(bigFoo, { cwd: wt }).length < MAX_BODY_CMDS + 50);
+  for (const role of ["main", "builder"] as const) {
+    check(big, role, "J");
+    check(bigFoo, role, "J");
+    const atBudget = `f(){ ${rep("ls", MAX_BODY_CMDS, "; ")}; }; f`;
+    assert.ok(!parseShell(atBudget, { cwd: wt }).some((s) => s.programUnknown === true));
+    check(atBudget, role, "A");
+  }
+});
