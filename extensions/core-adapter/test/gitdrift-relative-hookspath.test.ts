@@ -1,6 +1,6 @@
 // Relative core.hooksPath: one hooks dir id per configured value, hook files compared per worktree top.
 // Real git, temp dirs only.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -14,7 +14,12 @@ import { strRaw } from "../strof.ts";
 const HOME = os.tmpdir();
 const PRINT = { mode: "print", hasUI: false };
 const noTrace = () => undefined;
-const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" };
+// os.devNull is \\.\nul on Windows, which git cannot open as a config file
+const EMPTY_GITCONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "pf-gitcfg-"));
+after(() => rmTestTmp(EMPTY_GITCONFIG_DIR));
+const EMPTY_GITCONFIG = path.join(EMPTY_GITCONFIG_DIR, "gitconfig");
+fs.writeFileSync(EMPTY_GITCONFIG, "");
+const GIT_ENV = { ...process.env, GIT_CONFIG_GLOBAL: EMPTY_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.invalid", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.invalid" };
 function g(cwd: string, ...args: string[]): void {
   const r = spawnSync("git", args, { cwd, env: GIT_ENV });
   assert.equal(r.status, 0, `git ${args.join(" ")}: ${strRaw(r.stderr)}`);
