@@ -28,7 +28,7 @@ function idle(c: Clock, left: number, over: Partial<CacheSource> & { touchAfter?
 const view = (s: CacheSource): FooterView => ({ model: "m", thinking: null, branch: null, contextPercent: 10, contextWindow: 1_000_000, cacheHit: null, usage: null, statuses: [], cache: cacheViewOf(s) ?? undefined });
 const line = (s: CacheSource, width = 200, theme = plainTheme): string => renderFooter(view(s), width, theme)[0];
 const bar = (s: CacheSource, width = 200): string => line(s, width).split(" · ").pop()!;
-const cells = (b: string): number => [...b.split(" ")[0]].filter((ch) => ch === "■" || ch === "□").length;
+const cells = (b: string): number => Array.from(b.split(" ")[0]).filter((ch) => ch === "■" || ch === "□").length;
 /** The bar rendered at 5 cells: the widest line that has 5 cells. */
 function bar5(s: CacheSource): string {
   for (let w = 200; w > 20; w--) {
@@ -37,7 +37,7 @@ function bar5(s: CacheSource): string {
   }
   throw new Error("no 5-cell width");
 }
-const count = (b: string, ch: string): number => [...b.split(" ")[0]].filter((x) => x === ch).length;
+const count = (b: string, ch: string): number => Array.from(b.split(" ")[0]).filter((x) => x === ch).length;
 
 test("goldens at 10 cells: all warms fit, marks between cells, the fill stays visible", () => {
   assert.equal(bar(idle(HOUR, 9)), "■│■│■│■│■│■│■│■│■│■ 9h ♨ ½");

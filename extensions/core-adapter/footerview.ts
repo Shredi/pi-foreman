@@ -187,7 +187,7 @@ export function sanitizeStatus(text: string): string {
 }
 
 /**
- * Line 1 drops the branch first, then the `↓ <id>` step, then shrinks the bars to 5 cells (the cache bar keeps its warm part and its mark); a line still too wide is cut with `…`.
+ * Line 1 drops the branch first, then the `↓ <id>` step, then shrinks the bars to 5 cells (the cache bar keeps its warm part and its marks); a line still too wide is cut with `…`.
  * Line 2 is the usage text, then ` · ` and the other extensions' statuses, dimmed.
  */
 export function renderFooter(v: FooterView, width: number, theme: FooterTheme): string[] {

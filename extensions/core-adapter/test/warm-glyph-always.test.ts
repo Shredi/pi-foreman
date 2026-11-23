@@ -78,7 +78,7 @@ test("narrow: branch, then the step, then 10 -> 5 cells; the warm part stays", (
   const noStep = line(s, visibleWidth(noBranch) - 1, "br");
   assert.ok(noStep.endsWith("♨ ¼") && !noStep.includes("↓") && noStep.includes("■■■│■■│■■■│■■"), noStep);
   const five = line(s, visibleWidth(noStep) - 1, "br");
-  assert.ok(five.endsWith("♨ ¼") && !five.includes("■│■■■■■■■■■") && !five.includes("↓"), five);
+  assert.ok(five.endsWith("♨ ¼") && !five.includes("■■■│■■│■■■│■■") && !five.includes("↓"), five);
   assert.match(line(s, visibleWidth(five) - 3, "br"), /…\x1b\[0m$/);
 });
 
