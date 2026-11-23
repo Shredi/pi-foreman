@@ -1634,10 +1634,21 @@ export function beforeParseError(cmd: string): string | null {
 
 const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
 
+
+/** `text` without its closing `done` or `}` and the blanks and `;` around it (what `/[\s;]*(?:\bdone|\})\s*$/` cut, in one pass: that expression backtracks quadratically on a long run of blanks and `;`). */
+function stripLoopEnd(text: string): string {
+  let end = text.length;
+  while (end > 0 && /\s/.test(text[end - 1]!)) end--;
+  if (text[end - 1] === "}") end--;
+  else if (text.slice(Math.max(0, end - 4), end) === "done" && (end < 5 || !/\w/.test(text[end - 5]!))) end -= 4;
+  else return text;
+  while (end > 0 && (text[end - 1] === ";" || /\s/.test(text[end - 1]!))) end--;
+  return text.slice(0, end);
+}
 function ownBody(n: SyntaxNode, cmd: string): string | null {
   const b = BODY_NODES.has(n.type) ? (n as { body?: { pos: number; end: number; type: string } }).body : undefined;
   // a select or arithmetic for body ends before its heredocs: the slice runs to the end of the node, less the closing `done` or `}`
-  if (b && typeof b === "object" && b.type !== "Word") return n.type === "Select" || n.type === "ArithmeticFor" ? cmd.slice(b.pos, n.end).replace(/[\s;]*(?:\bdone|\})\s*$/, "") : cmd.slice(b.pos, b.end);
+  if (b && typeof b === "object" && b.type !== "Word") return n.type === "Select" || n.type === "ArithmeticFor" ? stripLoopEnd(cmd.slice(b.pos, n.end)) : cmd.slice(b.pos, b.end);
   return null;
 }
 

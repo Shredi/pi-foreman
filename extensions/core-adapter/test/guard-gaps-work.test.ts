@@ -285,3 +285,16 @@ test("item 12: the segment budget really is spent (levels of walked bodies read 
     check(levels(8, "ls"), role, "J");
   }
 });
+
+test("item 12: 17+ nested definitions that nothing calls are judge-first as on main, and the stripped loop end reads as before", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const d of [17, 30]) {
+      let n = "cat ~/.aws/credentials";
+      for (let i = 0; i < d; i++) n = `f${i}(){ ${n}; }`;
+      check(n, role, "J");
+    }
+    check("select s in a; do rm -rf /etc; done", role, "R");
+    check("for ((i=0;i<1;i++)); do rm -rf /etc; done", role, "R");
+    check("for ((i=0;i<1;i++)); do ls ; done", role, "A");
+  }
+});
