@@ -7,7 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { withFileLock } from "./statefile.ts";
-import { defectsOf } from "./verdict.ts";
+import { adviceOf, defectsOf } from "./verdict.ts";
 import { splitLevel } from "./launchmodel.ts";
 import type { PanelFinding } from "./panel.ts";
 import type { ReviewLaunch, ReviewResult } from "./occasion.ts";
@@ -79,11 +79,12 @@ export function recordArgs(r: ReviewResult, launch: ReviewLaunch | null | undefi
   return args;
 }
 
-/** The JSON on stdin of a `record` call: the numbered items the reviewer gave a result (not `open`) and its located findings. */
+/** The JSON on stdin of a `record` call: the numbered items the reviewer gave a result (not `open`), its located findings and its advice (the `now` and `later` findings; the file is optional). */
 export function recordInput(r: Pick<ReviewResult, "items" | "findings">): string {
   const items = r.items.flatMap((i) => (typeof i.id === "number" && i.result !== "open" ? [i.id] : []));
   const findings = findingsOfResult(r).map((f) => ({ file: f.file, line: f.line, class: f.class || undefined, note: f.note }));
-  return JSON.stringify({ items, findings });
+  const advice = adviceOf(r.findings).map((f) => ({ kind: f.kind, note: f.text, ...(f.file ? { file: f.file } : {}), ...(f.line ? { line: f.line } : {}), ...(f.class ? { class: f.class } : {}) }));
+  return JSON.stringify({ items, findings, advice });
 }
 
 /** Runs one `foreman_findings.py` call: args, stdin text; never throws in practice (runScript). */

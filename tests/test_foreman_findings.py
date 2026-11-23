@@ -93,6 +93,24 @@ class RecordInput(unittest.TestCase):
             self.assertIn("record", err)
         self.assertEqual([r["type"] for r in self.stored()], ["review", "review"])
 
+    def test_class_other_is_stored_on_a_finding(self):
+        self.assertIn("other", ff.CLASSES)
+        rc, out, _err = self.call(json.dumps({"findings": [{"file": "app/client.py", "line": 3, "class": "other", "note": "x"}]}))
+        self.assertEqual(json.loads(out)["findings"][0]["class"], "other")
+
+    def test_advice_becomes_advice_rows_without_counting_as_findings(self):
+        data = {"findings": [{"file": "app/client.py", "line": 3, "class": "other", "note": "bug"}],
+                "advice": [{"kind": "later", "note": "rename it", "file": "app/client.py", "line": 9},
+                           {"kind": "now", "note": "add a doc line"},
+                           {"kind": "defect", "note": "not advice"}, {"kind": "now", "note": " "}, {"note": "no kind"}, "text"]}
+        rc, out, _err = self.call(json.dumps(data), "--files-from", str(self.files))
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(json.loads(out)["findings"]), 1)
+        review, finding, *advice = self.stored()
+        self.assertEqual((review["findings"], finding["type"]), (1, "finding"))
+        self.assertEqual([(a["type"], a["kind"], a["file"], a["line"], a["note"]) for a in advice],
+                         [("advice", "later", "app/client.py", 9, "rename it"), ("advice", "now", None, None, "add a doc line")])
+
     def test_extract_is_gone(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(ff.main(["extract", "--files-from", str(self.files)]), 2)

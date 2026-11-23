@@ -1575,7 +1575,7 @@ def _label_arg(args):
 def op_pr_label(req):
     """Put a label on a pull request (`on` true) or take it off (`on` false). GitHub only (gh); a GitLab or template host answers pr_unsupported.
     The PR's labels are read first: a label already in the wanted state answers `changed: false` and nothing is written. An add that fails
-    while the repository has no label of that name creates it (never with --force, so an existing label is not altered) and adds again once.
+    while the repository has no label of that name creates it (never with --force, so an existing label is not altered) and adds again once; a create that fails answers the precondition `label_missing`.
     Not a model-facing tool: the session's PR watch calls it with the watch's repository and host."""
     args, cfg, pr_host = _setup(req, ("number", "repo", "host", "label", "on"))
     number = arg_number(args)
@@ -1601,14 +1601,15 @@ def op_pr_label(req):
     edit = [host.program, "pr", "edit", str(number)] + rflag + ["--add-label" if on else "--remove-label", label]
     code, out, err = run_host(edit, root, subst)
     if code != 0 and on:
-        listed = host_json(host, *run_host([host.program, "label", "list"] + rflag + ["--search", label, "--json", "name", "--limit", "100"], root, subst), "label")
+        lcode, lout, lerr = run_host([host.program, "label", "list"] + rflag + ["--search", label, "--json", "name", "--limit", "100"], root, subst)
+        listed = [] if lcode == 0 and not lout.strip() else host_json(host, lcode, lout, lerr, "label")  # gh prints nothing when no label matches
         if not isinstance(listed, list):
             raise ActionError("pr_host_failed", "gh: printed no label list")
         if any(isinstance(x, dict) and str(x.get("name", "")).casefold() == label.casefold() for x in listed):
             host_error(host, "label", code, err)
         code, out, err = run_host([host.program, "label", "create", label] + rflag, root, subst)
         if code != 0:
-            host_error(host, "label", code, err)
+            raise Precondition("label_missing", "the repository has no label %s and it could not be created: %s" % (label, first_line(err)))
         code, out, err = run_host(edit, root, subst)
     if code != 0:
         host_error(host, "label", code, err)

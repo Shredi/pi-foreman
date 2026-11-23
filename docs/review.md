@@ -53,7 +53,7 @@ The call carries:
 
 - `verdict`: `pass`, `fail` or `incomplete`. `incomplete` (with a one-line `reason`) means the reviewer could not run its checks: gates see no verdict, the foreman sees the reason, and a high-stakes run that ends so is not counted as used.
 - `items`: a result (`pass`, `fail` or `open`, with an optional one-line `note`) per ledger item. V is an item like any other and closes V as the fresh verifier only when the launch's `items` field named it.
-- `findings`: `{kind, text, file?, line?, class?}` with `kind` `defect`, `now` or `later` (see [Critique](#critique)). Only `defect` findings feed the repeat-stop key and the [findings store](#findings-store); a `class` is one of the store's classes.
+- `findings`: `{kind, text, file?, line?, class?}` with `kind` `defect`, `now` or `later` (see [Critique](#critique)). Only `defect` findings feed the repeat-stop key and the findings rows of the [findings store](#findings-store); `now` and `later` findings are stored as `advice` rows there. A `class` is one of the store's classes (`other` for a defect that fits none of the security classes). A passed check is not a finding: give it as an item result, never as a `defect`.
 - `suites` (optional): `[{command, result}]` with `result` `pass`, `fail` or `skip`, up to 20 entries, `command` one line of at most 200 characters without `<!--` or `-->`. A `[pre-pr]` reviewer names there every test suite the repository's CI runs that can run locally and its result (the pre-pr task asks for it). The list travels with the review record, is saved with the session's review records and shows in the PR body block and the verdict file; a bad list refuses the call with the field named.
 
 The tool checks the call in the reviewer's turn and returns an error that names the valid choices: a `pass` with a failed item or a `defect` is refused, a `fail` needs a failed item or a `defect`, an item id must be one of the launch's items (a `[high-stakes]` launch takes none), no id twice, size caps. A second call replaces the first and the answer names the given items it left out; they stay open. The call does not end the run.
@@ -386,13 +386,14 @@ finding several models located (same file and class, lines within 3) is listed o
 ## Findings store
 
 Every completed reviewer run ends in `scripts/foreman_findings.py record` (fail-soft: a failure counts as zero findings
-and traces nothing). The adapter hands it the run's verdict record as JSON on stdin; it appends the record's `defect` findings (checked against the changed files) to
-`<agentDir>/pi-foreman/state/findings/<session>.jsonl`, repo-relative paths only. Four record types:
+and traces nothing). The adapter hands it the run's verdict record as JSON on stdin; it appends the record's `defect` findings (checked against the changed files) and its `now` and `later` findings (as advice) to
+`<agentDir>/pi-foreman/state/findings/<session>.jsonl`, repo-relative paths only. Five record types:
 
-| `type` | Fields (`review` and `finding` also carry `session, gate, model, rung, primary, role, runId, head, ts, source, workspace, repo, branch`) |
+| `type` | Fields (`review`, `finding` and `advice` also carry `session, gate, model, rung, primary, role, runId, head, ts, source, workspace, repo, branch`) |
 |---|---|
 | `review` | `base, items, verdict, secs, startedTs, findings` |
 | `finding` | `id, file, line, class, note` (note cut to 120 characters) |
+| `advice` | `kind` (`now` or `later`), `file` (may be `null`), `line`, `class`, `note` (cut to 120 characters); never counted as a finding: not in the review row's `findings` count, `foreman findings list`, the models table, outcomes or the review rounds |
 | `dismiss` | `id, reason, session, ts` |
 | `pr` | `session, workspace, repo, branch, number, head, ts` |
 

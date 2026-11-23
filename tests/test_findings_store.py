@@ -198,6 +198,17 @@ class Outcomes(unittest.TestCase):
         self.assertFalse(ff.outcomes(recs, None)[("s1", "strong", "late")]["late"])
 
 
+class AdviceRows(unittest.TestCase):
+    def test_list_models_and_outcomes_leave_advice_rows_out(self):
+        recs = [rev("r1", "h1", "FAIL", model="p/cheap", findings=1), fnd("f1", model="p/cheap", run_id="r1"),
+                dict(fnd("a1", model="p/cheap", run_id="r1"), type="advice", kind="later", file=None, note="rename")]
+        table = ff.models_table(recs)
+        self.assertEqual((table["rows"][0]["reviews"], table["rows"][0]["findings"]), (1, 1))
+        ids, _dismissed = ff._finding_rows(recs)
+        self.assertEqual(list(ids), ["f1"])
+        self.assertEqual([o["finding"]["id"] for o in ff.outcomes(recs).values()], ["f1"])
+
+
 class Models(unittest.TestCase):
     def test_table_usd_per_accepted_p90_and_time_to_clean(self):
         t0 = "2026-01-01T00:00:00Z"

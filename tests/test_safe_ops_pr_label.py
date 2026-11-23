@@ -126,8 +126,24 @@ class LabelTest(pr_base.PrCase):
             return (1, "", "denied")
 
         res, seen = self.label(ARGS, script=script)
-        self.assertEqual(res["error"], "pr_host_failed")
+        self.refused(res, "label_missing")
         self.assertEqual([a[1:3] for a in seen], [["pr", "view"], ["pr", "edit"], ["label", "list"], ["label", "create"]])
+
+    def test_an_empty_label_list_is_no_match_and_the_label_is_created(self):
+        self.hosts("gh")
+        edits = []
+
+        def script(a):
+            if a[1:3] == ["pr", "view"]:
+                return view()
+            if a[1:3] == ["pr", "edit"]:
+                edits.append(a)
+                return (1, "", "not found") if len(edits) == 1 else (0, "", "")
+            return (0, "", "")  # label list prints nothing; label create works
+
+        res, seen = self.label(ARGS, script=script)
+        self.assertTrue(res["ok"])
+        self.assertEqual([a[1:3] for a in seen], [["pr", "view"], ["pr", "edit"], ["label", "list"], ["label", "create"], ["pr", "edit"]])
 
     def test_glab_host_is_unsupported_and_nothing_runs(self):
         self.hosts("glab")
