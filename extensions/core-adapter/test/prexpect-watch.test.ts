@@ -92,14 +92,14 @@ const variants: [string, Partial<WatchSnapshot>, Run[]][] = [
   ["one passed quick check", { runs: [run("quick", "passed")], expect: { missing: ["ci"] } }, [run("quick", "passed"), run("ci", "passed")]],
 ];
 for (const [title, part, done] of variants) {
-  test(`a managed draft whose expected checks never start in draft leaves draft at the bound, then gets the real result: ${title}`, async () => {
+  test(`a managed draft whose expected checks never start in draft leaves draft at once on a pre-pr PASS, then gets the real result: ${title}`, async () => {
     const draft = (overdue: boolean) => snap({ ...part, draft: true, mergeState: "draft", expect: { ...part.expect!, ...(overdue ? { overdue: true as const } : {}) } });
     const x = harness({ child: false, owned: true, start: draft(false) });
     await x.tick(draft(false), 0);
     await x.tick(draft(false), BOUND - 1000);
-    assert.deepEqual(x.drafts, [], "still inside the bound: the leave step waits");
+    assert.ok(x.drafts.length > 0 && x.drafts.every((t) => t === false), "a PASS stands on the head: it leaves draft before the bound");
     await x.tick(draft(true), BOUND);
-    assert.deepEqual(x.drafts, [false], "at the bound it leaves draft through the real leave path");
+    assert.ok(x.drafts.every((t) => t === false));
     assert.deepEqual<string[]>(x.sent, [], "no line and no pass at that point");
     const open = snap({ ...part, draft: false, expect: { ...part.expect!, overdue: true } });
     await x.tick(open, BOUND * 2);
@@ -113,15 +113,15 @@ for (const [title, part, done] of variants) {
 }
 
 // the variant `a readable required list` of the loop above, as the base that is not learnable (D101 case 3: no `learn` in the snap): the fallback line replaces the overdue line
-test("a managed draft whose required check never starts in draft (base not learnable) leaves draft at the bound, no green report, the fallback line on the non-draft PR", async () => {
+test("a managed draft whose required check never starts in draft (base not learnable) leaves draft at once on a pre-pr PASS, no green report, the fallback line on the non-draft PR", async () => {
   const part = { runs: [run("lint", "passed")], required: ["ci-ok"] };
   const draft = (overdue: boolean) => snap({ ...part, draft: true, mergeState: "draft", expect: { missing: ["ci-ok"], ...(overdue ? { overdue: true as const } : {}) } });
   const x = harness({ child: true, owned: true, start: draft(false) });
   await x.tick(draft(false), 0);
   await x.tick(draft(false), BOUND - 1000);
-  assert.deepEqual(x.drafts, [], "still inside the bound: the leave step waits");
+  assert.ok(x.drafts.length > 0 && x.drafts.every((t) => t === false), "a PASS stands on the head: it leaves draft before the bound");
   await x.tick(draft(true), BOUND);
-  assert.deepEqual(x.drafts, [false], "at the bound it leaves draft through the real leave path");
+  assert.ok(x.drafts.every((t) => t === false));
   assert.equal(x.sent.some((m) => m.includes(OVERDUE) || m.includes("ready to merge") || m.includes("report to the parent")), false);
   await x.tick(snap({ ...part, draft: false, expect: { missing: ["ci-ok"], overdue: true } }), BOUND * 2);
   assert.equal(x.sent.filter((m) => m.includes("report to the parent: PR #7 checks passed, waiting on required checks")).length, 1);
@@ -133,13 +133,13 @@ test("a managed draft whose required check never starts in draft (base not learn
   assert.match(finished(x.sent)[0], /checks finished: pass/);
 });
 
-test("a readable required list with zero runs: no no-checks line, the label rule says running, the leave-draft step waits, the pill's no-checks input stays false", async () => {
+test("a readable required list with zero runs: no no-checks line, the label rule says running, the leave-draft step runs on the PASS, the pill's no-checks input stays false", async () => {
   const facts = { missing: ["ci-ok"] };
   const s = snap({ runs: [], required: ["ci-ok"], expect: facts, draft: true, mergeState: "draft" });
   const x = harness({ child: true, owned: true, label: true, start: s });
   for (const at of [0, SETTLE, SETTLE * 3, BOUND - 1000]) await x.tick(s, at);
   assert.deepEqual<string[]>(x.sent, [], "no no-checks line and no ready line");
-  assert.deepEqual(x.drafts, [], "the leave-draft step waits");
+  assert.ok(x.drafts.length > 0 && x.drafts.every((t) => t === false), "a PASS stands on the head: the leave-draft step runs even while checks run");
   assert.deepEqual(x.labels, []);
   const live = x.watches.reviewLive();
   assert.equal(live.length, 1);
