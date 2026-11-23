@@ -1,6 +1,8 @@
 // A child's gate decides like the owner's: a write the gate cannot read goes to the judge and, when the judge does not clear it, is refused with the judge's reason
 // (no ask.md) as long as `danger-write-outside` / `danger-unknown-write-target` are the line's only judge-first labels; a protected target is judged for a child that has a
 // route to its parent (ask dir in the launch binding, own gate.childAsk "parent") like for the owner's session. Neutral fixtures.
+process.env.PI_OFFLINE = "1"; // pi-subagents looks up the npm root on first skill use; offline returns early (no npm spawn)
+
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

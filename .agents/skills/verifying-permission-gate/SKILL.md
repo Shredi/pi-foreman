@@ -30,7 +30,7 @@ Open gaps are expected-fail marks with an id and a source: `KNOWN_GAPS` (shapes 
 
 ## Left out
 
-- The main (owner) session: it has its own roots and mode step.
+- The main (owner) session in properties A and B: it has its own roots and mode step. `ROLE_MATRIX` pins it next to builder and reviewer at the gate layer only (no mode step, no judge dialog).
 - Constructs that are not in `CONSTRUCTS` and payloads that are not in `DANGEROUS`.
 - Every payload of a shape whose `KNOWN_GAPS` mark names no payload: a blind spot until that gap closes.
 - Chains are composed only with the `/opt` form of the git-outside payload (`git -C /opt/other stash push`). The `~` form (`git -C ~/other stash push`) is a plain line in `PLAIN_GAPS` (gap `git-outside-tilde`, silent for a builder, blocked for a reviewer); no wrapper is tried around it.
