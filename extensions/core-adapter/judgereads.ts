@@ -3,6 +3,7 @@
 // Pi agent dir (the agent dir wins over a project root that contains it), and no exclusion (secret paths, login and token files, git and Claude folders,
 // histories) names it. The gate parses no command text: the model names the paths, this module checks the folder bound and the exclusions.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
@@ -161,7 +162,10 @@ const WINDOW = /^([\s\S]*)#L(\d+)-(\d+)$/;
 /** The check of one asked path: bound first, then exclusions; a missing path is `not-found` only inside the bound. */
 export function resolveReadable(asked: string, scope: JudgeReadScope): Resolution {
   const m = WINDOW.exec(asked);
-  const p = m ? m[1] : asked;
+  let p = m ? m[1] : asked;
+  // A leading `~` is the home folder (headers and hints show it that way); `~user` and `$VAR` stay as they are. The expanded path is checked like any absolute one.
+  const home = scope.floorEnv.home ?? os.homedir();
+  if (home && (p === "~" || p.startsWith("~/") || (scope.platform === "win32" && p.startsWith("~\\")))) p = path.join(home, p.slice(1));
   const window = m ? { from: Math.max(1, Number(m[2])), to: Math.max(1, Number(m[3])) } : undefined;
   const outside = (): Resolution => ({ outcome: "outside" });
   if (!p || p.includes("\0")) return outside();
@@ -278,9 +282,15 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
   }
 }
 
-/** Shows control characters (newline, CR, tab, other C0, DEL) as escapes so one name or path part is always one line. */
+/** Shows control characters (newline, CR, tab, other C0, DEL, NEL, line and paragraph separators, bidi controls) as escapes so one name or path part is always one line. */
 function escapeControl(s: string): string {
-  return s.replace(/[\u0000-\u001f\u007f]/g, (c) => (c === "\n" ? "\\n" : c === "\r" ? "\\r" : c === "\t" ? "\\t" : `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`));
+  return s.replace(/[\u0000-\u001f\u007f\u0085\p{Zl}\p{Zp}\u{202a}-\u{202e}\u{2066}-\u{2069}]/gu, (c) => {
+    if (c === "\n") return "\\n";
+    if (c === "\r") return "\\r";
+    if (c === "\t") return "\\t";
+    const n = c.charCodeAt(0);
+    return n > 0xff ? `\\u${n.toString(16).padStart(4, "0")}` : `\\x${n.toString(16).padStart(2, "0")}`;
+  });
 }
 
 function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
@@ -374,7 +384,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       }
     }
     records.push(rec);
-    blocks.push({ header: redactCommand(`${escapeControl(a)} -> ${rec.real ? escapeControl(askable(rec.real, scope)) : "-"} (${HEADER_NOTE[rec.outcome]})`), body: body.split("\n").map(redactCommand).join("\n") });
+    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]})`, body: body.split("\n").map(redactCommand).join("\n") });
   }
   return { blocks, records };
 }

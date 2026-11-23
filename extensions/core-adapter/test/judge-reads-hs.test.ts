@@ -189,3 +189,48 @@ test("a judge-asked path with a newline gives a single-line header", () => {
   assert.ok(!block.header.includes("\n"), block.header);
   assert.ok(block.header.startsWith("nope\\nfake"), block.header);
 });
+
+test("a ~/ path is the home folder: the hint for a long agent-dir .jsonl and a long project file pages on", () => {
+  const jl = put(path.join(agent, "sessions", "s.jsonl"), `${Array.from({ length: 100 }, (_, i) => JSON.stringify({ i })).join("\n")}\n`);
+  const first = one("~/.pi/agent/sessions/s.jsonl");
+  assert.equal(first.rec.outcome, "ok");
+  assert.equal(first.rec.real, jl);
+  const hint = /ask (\S+)#L(\d+)-(\d+)\]/.exec(first.block.body);
+  assert.ok(hint, first.block.body);
+  const next = one(`~/.pi/agent/sessions/s.jsonl#L${hint![2]}-${hint![3]}`);
+  assert.equal(next.rec.outcome, "ok");
+  assert.match(next.block.body, new RegExp(`^lines ${hint![2]}-`));
+  put(path.join(wt, "big.txt"), `${Array.from({ length: 900 }, (_, i) => `line ${i}`).join("\n")}\n`);
+  const p1 = one("~/proj/big.txt");
+  assert.equal(p1.rec.outcome, "ok");
+  const h2 = /ask (\S+)#L(\d+)-(\d+)\]/.exec(p1.block.body);
+  assert.ok(h2, p1.block.body);
+  const p2 = one(`~/proj/big.txt#L${h2![2]}-${h2![3]}`);
+  assert.equal(p2.rec.outcome, "ok");
+  assert.match(p2.block.body, /^lines 401-/);
+});
+
+test("~ expansion widens nothing: auth.json stays withheld, a file in the home folder stays outside, ~user and $VAR are not expanded", () => {
+  put(path.join(agent, "sessions", "auth.json"), '{"a":1}\n');
+  put(path.join(tmp, "home", "outside.txt"), "o\n");
+  assert.equal(one("~/.pi/agent/sessions/auth.json").rec.outcome, "withheld");
+  assert.equal(one("~/.pi/agent/auth.json").rec.outcome, "outside");
+  assert.equal(one("~/outside.txt").rec.outcome, "outside");
+  assert.equal(one("~").rec.outcome, "outside");
+  assert.equal(one("~root/x").rec.outcome, "not-found");
+  assert.equal(one("$HOME/x").rec.outcome, "not-found");
+});
+
+test("a token=\" in the asked name cannot hide the real path and outcome part of the header", () => {
+  const { block } = one('t token="x');
+  assert.match(block.header, / -> \S.* \(not found\)$/);
+  put(path.join(cwd, "tk.txt"), "x\n");
+  assert.match(one("tk.txt").block.header, / -> tk\.txt \(file\)$/);
+});
+
+test("bidi, NEL, line and paragraph separators in an asked name are escaped", () => {
+  const chars = [0x202e, 0x85, 0x2028, 0x2029, 0x2066].map((c) => String.fromCharCode(c));
+  const { block } = one(`a${chars.join("b")}`);
+  assert.ok(block.header.startsWith("a\\u202eb\\x85b\\u2028b\\u2029b\\u2066 -> "), block.header);
+  assert.ok(!chars.some((c) => block.header.includes(c)));
+});
