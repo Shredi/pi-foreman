@@ -712,6 +712,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
   const pythonCache = new PythonCache();
   const sessions = new Map<string, Session>();
+  /** Session id -> why startSession failed (a reload across versions leaves a stale module); the tools are refused with it and no start is retried. */
+  const startErrors = new Map<string, string>();
+  const startFailText = (e: unknown): string => `pi-foreman could not start this session: ${e instanceof Error ? e.message : String(e)}. Restart Pi; a reload cannot load a changed install.`;
   let userPickedModel = false;
   let applyingModel = false;
   /** Idle model downshift (idlemodel.ts): one instance per extension load, bound to the session and context of the latest event. */
@@ -1761,15 +1764,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId), record).map((r) => (hs ? { ...r, occasion: "high-stakes" as const, counts: false } : r));
   }
 
+  /** A high-stakes run ended without a verdict: it is kept as the incomplete run (resumable at the head and tree of its launch). */
+  function keepHsIncomplete(s: Session, runId: string, root: string, data: unknown, head: string | null, tree: string | null): void {
+    const launch = launchOfRun(s, runId);
+    s.hs.noteIncomplete({ runId, cwd: root, head, tree, reportPath: outputPathOf(data), model: s.runs.get(runId)?.model ?? s.hs.incomplete()?.model ?? null, ...(launch ? { launch } : {}), at: Date.now() });
+    persistCeremonyState(s);
+  }
+
   /** A high-stakes run ended with a verdict (not `FAIL INCOMPLETE`, which records nothing): it is recorded for its checkout (a FAIL also sets the review gate). No item mark, no normal review record. */
   function hsRunEnd(s: Session, runId: string, root: string, data: unknown, start: Parameters<typeof reviewedHeadVia>[0], trees: Parameters<typeof reviewedHeadVia>[1], treesWf?: Parameters<typeof reviewedHeadVia>[1]): void {
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null || x.incomplete);
     // a run without a verdict (the reviewer recorded `incomplete`, it was cut off, or it left no record) records no run and changes no gate; it is kept to be resumed or handed on (D144)
-    const keepIncomplete = (): void => {
-      const launch = launchOfRun(s, runId);
-      s.hs.noteIncomplete({ runId, cwd: root, head: startValueOf(start, root), tree: startValueOf(treesWf, root), reportPath: outputPathOf(data), model: s.runs.get(runId)?.model ?? s.hs.incomplete()?.model ?? null, ...(launch ? { launch } : {}), at: Date.now() });
-      persistCeremonyState(s);
-    };
+    const keepIncomplete = (): void => keepHsIncomplete(s, runId, root, data, startValueOf(start, root), startValueOf(treesWf, root));
     if (r?.incomplete) {
       s.trace?.emit({ event: "high_stakes", kind: "incomplete" });
       keepIncomplete();
@@ -2018,6 +2024,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (bare.length === 0) return { line: "", ...(primary ? { primary } : {}) };
     if (s.ceremony.tier !== "standard" && s.ceremony.tier !== "heavy") return { line: "", ...(primary ? { primary } : {}) };
+    // A session that started on code before the dirty-base entry and already has builder or edit work stays in its checkout: a folder made now would split the work.
+    if (!s.sessionFolder && !s.primaryWork && s.dirtyBase === null && (s.work.builders > 0 || s.work.edits > 0) && bare.some((e) => e.agent === "builder") && (await primaryCheckout(s.cwd))) {
+      s.primaryWork = true;
+      try {
+        pi.appendEntry(SESSION_FOLDER_ENTRY, { v: 1, primary: true });
+      } catch {
+        // the session file is not writable now: the decision stays in memory
+      }
+    }
     if (!s.sessionFolder && s.primaryWork) {
       if (s.primaryNoted) return { line: "" };
       s.primaryNoted = true;
@@ -2327,7 +2342,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   async function ensureSession(ctx: ExtensionContext): Promise<Session> {
-    return sessionFor(ctx) ?? (await startSession(ctx));
+    const known = sessionFor(ctx);
+    if (known) return known;
+    const failed = startErrors.get(ctx.sessionManager.getSessionId());
+    if (failed !== undefined) throw new Error(failed);
+    return startSession(ctx);
   }
 
   function refreshLedgerTier(s: Session): void {
@@ -2535,7 +2554,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     toolUsage = new ToolUsageTracker();
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
-    const s = await startSession(ctx);
+    let s: Session;
+    try {
+      s = await startSession(ctx);
+      startErrors.delete(s.id);
+    } catch (e) {
+      const text = startFailText(e);
+      startErrors.set(ctx.sessionManager.getSessionId(), text);
+      process.stderr.write(`${text}\n`);
+      ctx.ui.notify(text, "error");
+      return;
+    }
     closingSessions.delete(s.id);
     if (!s.isChild) await hsOwnRoot(s); // the own checkout's key, so no review fact is filed under a raw cwd
     if (!s.isChild) {
@@ -3608,6 +3637,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const status = runEndOf(data)?.status;
           if (status !== undefined && status !== "completed") failedReviewRun(s, runId);
         }
+        // a high-stakes run launched before a reload (no launched roles) that ends not completed: kept incomplete with the head and tree stored at its launch, so it can be resumed (a verdict after a reload is not recorded)
+        if (typeof runId === "string" && !s.isChild && !s.launchedRoles.has(runId) && hsModel(s)) {
+          const hsRoot = s.hs.ownerOf(runId);
+          const stored = hsRoot !== null ? s.hs.launchStartOf(runId) : null;
+          const status = runEndOf(data)?.status;
+          if (hsRoot !== null && stored && status !== undefined && status !== "completed") keepHsIncomplete(s, runId, hsRoot, data, stored.head, stored.tree);
+        }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           const ended = runEndOf(data);
           s.ladder.onRunEnd(ended);
@@ -4077,7 +4113,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return (gs && (repeatedDeny(gs, ctx, r.reason, denialSentence(r)) ?? undefined)) || { block: true as const, reason: r.reason };
     }
     // no session: no dialog, classifier or log to decide with; floors and rules ran above
-    if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
+    if (!gs || !rt || !resolved) return { block: true as const, reason: startErrors.get(ctx.sessionManager.getSessionId()) ?? "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
     const allowed = (rule: string, layer: GateLayer, label: string, folder = false, reason?: string): undefined => {
       gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role, ...(folder ? { mode: "auto", source: "workFolder" } : {}) });
       if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule, reason); // the classifier logs its own record
@@ -6478,7 +6514,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.ladder.onLaunched(event.toolCallId, runId);
         // a `[high-stakes]` launch: the run id is kept in the state (persisted); a failed launch drops the running mark
         if (!s.isChild) s.hs.settleHanded(event.toolCallId, runId, event.isError);
-        if (!s.isChild && s.hs.settle(event.toolCallId, runId, event.isError) !== null && runId) persistCeremonyState(s);
+        if (!s.isChild && s.hs.settle(event.toolCallId, runId, event.isError, (cwd) => ({ head: startValueOf(heads, cwd), tree: startValueOf(treesWf, cwd) })) !== null && runId) persistCeremonyState(s);
         if (runId && !s.isChild) {
           const rowRoles = s.launchedRoles.get(runId) ?? [];
           if (actionOf(event.input as Record<string, unknown>) === "resume") s.childRuns.onResumed(event.toolCallId, runId, resumeTarget(event.input as Record<string, unknown>), rowRoles);

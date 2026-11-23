@@ -84,10 +84,19 @@ export interface HsIncomplete {
   at: number;
 }
 
+/** A high-stakes run id with its checkout; `head` and `tree` are the checkout's at the launch (kept so a run that ends after a reload can still be resumed). */
+export interface HsRunId {
+  id: string;
+  cwd: string;
+  from?: string;
+  head?: string | null;
+  tree?: string | null;
+}
+
 export interface HsState {
   fired: HsFired | null;
   /** Run ids of the high-stakes launches of the session with the checkout each ran in (a reload keeps both); `from` links a resumed run, or a fresh run that got the handoff, to the incomplete run it continues. */
-  runIds: { id: string; cwd: string; from?: string }[];
+  runIds: HsRunId[];
   incomplete?: HsIncomplete;
   runs: HsRun[];
   /** The first HEAD the session saw per repository (key: realpath of the git common dir), the base when no merge-base resolves. */
@@ -132,9 +141,9 @@ export const required = (s: HsState, due: readonly string[], root?: string): boo
 const sha = (x: unknown): x is string => typeof x === "string" && SHA.test(x);
 const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((r): r is string => typeof r === "string" && r !== "") : []);
 
-function runIdsOf(list: unknown): { id: string; cwd: string; from?: string }[] {
+function runIdsOf(list: unknown): HsRunId[] {
   if (!Array.isArray(list)) return [];
-  return list.filter((r): r is Json => isObj(r) && typeof r.id === "string" && r.id !== "" && typeof r.cwd === "string" && r.cwd !== "").map((r) => ({ id: r.id as string, cwd: r.cwd as string, ...(typeof r.from === "string" && r.from ? { from: r.from } : {}) }));
+  return list.filter((r): r is Json => isObj(r) && typeof r.id === "string" && r.id !== "" && typeof r.cwd === "string" && r.cwd !== "").map((r) => ({ id: r.id as string, cwd: r.cwd as string, ...(typeof r.from === "string" && r.from ? { from: r.from } : {}), ...("head" in r && (r.head === null || typeof r.head === "string") ? { head: r.head as string | null } : {}), ...("tree" in r && (r.tree === null || typeof r.tree === "string") ? { tree: r.tree as string | null } : {}) }));
 }
 
 const incompleteOf = (v: unknown): HsIncomplete | undefined => {
@@ -304,7 +313,7 @@ export class HighStakes {
   }
 
   /** The launch's tool result: a failed launch drops the mark; a run id moves it onto the run and records the id. Returns the checkout, or null. */
-  settle(callId: string, runId: string | null, failed: boolean): string | null {
+  settle(callId: string, runId: string | null, failed: boolean, start?: (cwd: string) => { head: string | null; tree: string | null }): string | null {
     const cwd = this.pending.get(callId);
     if (cwd === undefined) return null;
     this.pending.delete(callId);
@@ -318,7 +327,7 @@ export class HighStakes {
       for (const k of [...this.gateKeys.keys()].slice(0, Math.max(0, this.gateKeys.size - MAX_RUN_IDS))) this.gateKeys.delete(k);
     }
     this.running.set(runId, cwd);
-    if (!this.st.runIds.some((r) => r.id === runId)) this.st.runIds = [...this.st.runIds, { id: runId, cwd, ...(from ? { from } : {}) }].slice(-MAX_RUN_IDS);
+    if (!this.st.runIds.some((r) => r.id === runId)) this.st.runIds = [...this.st.runIds, { id: runId, cwd, ...(from ? { from } : {}), ...(start ? start(cwd) : {}) }].slice(-MAX_RUN_IDS);
     return cwd;
   }
 
@@ -331,6 +340,12 @@ export class HighStakes {
   /** The checkout a run id belongs to (a high-stakes run, whatever the model now says; persisted, so a reload keeps it); null when it is no high-stakes run. */
   ownerOf(runId: string): string | null {
     return this.st.runIds.find((r) => r.id === runId)?.cwd ?? null;
+  }
+
+  /** The head and tree stored with a run id at its launch; null when none were stored. */
+  launchStartOf(runId: string): { head: string | null; tree: string | null } | null {
+    const r = this.st.runIds.find((x) => x.id === runId);
+    return r && "head" in r && "tree" in r ? { head: r.head ?? null, tree: r.tree ?? null } : null;
   }
 
   /** The run ended (with or without a verdict): it no longer counts as running. */

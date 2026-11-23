@@ -76,15 +76,15 @@ test("child wait: carried but no run in progress resolves as before; a run in pr
   assert.equal(busy.taken.length, 0);
 });
 
-test("child wait: another wait's pending outcome is flushed when a taken notice ends the last active wait", () => {
+test("child wait: another wait's outcome is sent at once; a taken notice ending the last active wait adds no wake", () => {
   const { rt, wakes, taken, fns } = runtime(true);
   rt.start({ kind: "timer", seconds: 5, note: "t" });
   rt.start({ kind: "child", label: "job", note: "" });
   const timer = [...fns.values()].find((f) => f.ms === 5000)!;
   timer.fn();
-  assert.equal(wakes.length, 0, "held by the batch window while the child wait is active");
+  assert.equal(wakes.length, 1, "the first outcome goes out at once");
   assert.equal(rt.childNotice("job", "result", "/p", true), true);
   assert.equal(taken.length, 1);
-  assert.equal(wakes.length, 1, "the timer outcome goes out now");
+  assert.equal(wakes.length, 1);
   assert.equal(wakes[0][0].kind, "timer");
 });
