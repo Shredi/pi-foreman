@@ -79,7 +79,7 @@ export function replay(events: readonly Ev[], impl: Impl): string | null {
     const r = impl.drop(gates, (d) => !gone.has(d));
     const got = new Set(r.dropped.map((d) => d.dir));
     const where = `after step ${i + 1} (${ev.op} c${ev.k})`;
-    if (got.size !== dropped.size || [...dropped].some((d) => !got.has(d))) return `${where}: dropped [${[...got]}], want [${[...dropped]}]`;
+    if (got.size !== dropped.size || [...dropped].some((d) => !got.has(d))) return `${where}: dropped [${[...got].join(",")}], want [${[...dropped].join(",")}]`;
     const c = combined(r.gates);
     const gotFinish = c.last === "pass" && !c.revised;
     if (gotFinish !== wantFinish) return `${where}: finish verdict ${gotFinish ? "pass" : "open"}, want ${wantFinish ? "pass" : "open"}`;
@@ -246,5 +246,5 @@ test("C self-check: the scenarios reach each wording", () => {
 test("C self-test: the old order (any stored answer says answered, a restart only without one) is reported", () => {
   const legacy: EndedImpl = { words: (sc) => (sc.stale || sc.events.includes("answer") ? "answered" : sc.events.includes("restart") ? "restart" : "none") };
   const found = failuresC(legacy);
-  assert.ok(found.length > 0 && found.some((f) => /stale answer: true; episode: restart: said answered, want restart/.test(f)), found.join("\n"));
+  assert.ok(found.some((f) => /stale answer: true; episode: restart: said answered, want restart/.test(f)), found.join("\n"));
 });

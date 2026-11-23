@@ -345,7 +345,7 @@ function itemLines(file: string): { lines: string[]; hits: { i: number; m: RegEx
 export function withVItem(file: string): string | null {
   if (itemLines(file).hits.some(({ m }) => m[2] === "V")) return null;
   const eol = /\r\n/.test(file) ? "\r\n" : "\n";
-  return `${file}${file === "" || /\n$/.test(file) ? "" : eol}${V_ITEM_LINE}${eol}`;
+  return `${file}${file === "" || file.endsWith("\n") ? "" : eol}${V_ITEM_LINE}${eol}`;
 }
 
 /** The number of a non-V item whose text is exactly `text`, else null. */
