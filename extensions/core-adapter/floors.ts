@@ -1423,7 +1423,7 @@ const wordsText = (words: string[]): string => words.map((w) => (/^[\w@%+=:,./-]
  * The segments of a line and, below them, every segment the parser does not unwrap itself: the body of a function, select, coproc or arithmetic for, and the words behind
  * `busybox`/`toybox` or a privilege program (the paths `pythonKinds` re-parses). For the judge-first rules that read a segment's own program (inline code, a remote command).
  */
-export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth = 0): ShellSegment[] {
+export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth = 0, seen: Set<string> = new Set()): ShellSegment[] {
   const out: ShellSegment[] = [];
   for (const seg of segs) {
     out.push(seg);
@@ -1432,7 +1432,11 @@ export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platfor
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
     const mux = rest !== null && /^(?:busybox|toybox)$/.test(base(seg.program)) && seg.stdinFed !== false;
     for (const t of texts) {
-      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1);
+      // a text read again with the same folder, names and depth gives the same segments (bodies defined inside bodies, walked at every call, repeat): read once
+      const key = JSON.stringify([depth, seg.cwd ?? env.cwd, seg.harnessRebound ?? null, t]);
+      if (!rest && seen.has(key)) continue;
+      seen.add(key);
+      const inner = nestedSegments(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1, seen);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
         inner[0] = carryFacts({ ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) }, inner[0]); // judge-first-unknown round: keeps programUnknown / harnessRebound
@@ -1516,7 +1520,7 @@ const NORMALISE_DEPTH = 16;
  * are denies; everything else the old check refused is a judge-first hit, kept in `acc` so that a deny found later on the line still wins. `top` is the line itself: its own
  * segments were judged by `segmentFloors` already.
  */
-function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null }): FloorHit | null {
+function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: Where, depth: number, top: boolean, acc: { hit: FloorHit | null; seen?: Set<string> }): FloorHit | null {
   // a judge-first hit is kept, not returned: a deny later on the line still wins
   const settle = (h: FloorHit | null): FloorHit | null => {
     if (h?.kind !== "judge") return h;
@@ -1604,6 +1608,10 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
     for (const body of opaque.bodies ?? []) {
+      // the same body read again in the same place and state (a body defined inside a body is walked at every call and shows up once more each time) gives the same hits: read once
+      const key = JSON.stringify([body, opaque.cwd ?? env.cwd, opaque.harnessRebound ?? null, opaque.bodyConsts ?? null, where, depth, where !== "local" && segs.indexOf(opaque) === 0]);
+      if ((acc.seen ??= new Set()).has(key)) continue;
+      acc.seen.add(key);
       const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
@@ -2045,8 +2053,17 @@ export function realDeep(abs: string): string | null {
   return null;
 }
 
-/** The comparable spellings of an absolute path: lexical and symlink-resolved, slashes unified, case-folded where the file system is. */
+const envIds = new WeakMap<object, number>();
+let envSerial = 0;
+
+/** The comparable spellings of an absolute path: lexical and symlink-resolved, slashes unified, case-folded where the file system is. Remembered per path and environment while a gate call's look-up scope is open (a line that repeats its words asks again and again). */
 function formsOf(abs: string, env: FloorEnv): string[] {
+  let id = envIds.get(env);
+  if (id === undefined) envIds.set(env, (id = ++envSerial));
+  return memoLookup(`f:${id}:${abs}`, () => formsUncached(abs, env));
+}
+
+function formsUncached(abs: string, env: FloorEnv): string[] {
   const fold = foldFor(env);
   const real = realDeep(abs);
   const plat = env.platform ?? process.platform;

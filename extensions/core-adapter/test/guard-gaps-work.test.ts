@@ -1,0 +1,106 @@
+// Guard gaps, performance round (ledger items 12 and 13): the work of one gate call is bounded by counts, not by the clock, and a bound that is hit goes to the judge, never to an allow.
+// Item 13: a function body read at its call decides as the inline line; `eval '(( x = $(...) ))'` is judge-first. Gate level for the foreman and a builder (a child).
+import { after, test } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { baseFloorEnv, gateEvaluate } from "../gate.ts";
+import type { GateRoots } from "../pathrules.ts";
+import { nestedSegments } from "../floors.ts";
+import { parseShell } from "../shellast.ts";
+import { mkTestTmp } from "./_tmpbase.ts";
+
+process.env.PI_OFFLINE = "1";
+
+const base = fs.realpathSync(mkTestTmp("pf-gg-"));
+const wt = path.join(base, "wt");
+const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
+const out = path.join(base, "tmp", "pi-foreman-out", "mine");
+const handoff = path.join(base, "handoffs", "h1");
+for (const d of [path.join(wt, "sub"), scr, out, handoff]) fs.mkdirSync(d, { recursive: true });
+after(() => fs.rmSync(base, { recursive: true, force: true }));
+
+type Role = "main" | "builder";
+const roots = (role: Role): GateRoots => ({
+  worktree: wt, scratch: [scr, out], out, tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], childHandoff: handoff,
+  child: role !== "main", role: role === "main" ? "foreman" : "builder", tmpAccess: false,
+});
+const gate = (command: string, role: Role) => {
+  const o = gateEvaluate("bash", { command }, wt, { env: (c) => baseFloorEnv(c, role === "main" ? {} : { child: true, scratch: [scr, out], out }), roots: () => roots(role) });
+  const r = o.result as { block?: boolean } | undefined;
+  return { blocked: r?.block === true, danger: o.danger?.name ?? null };
+};
+
+type X = "J" | "R" | "A";
+const check = (line: string, role: Role, want: X): void => {
+  const l = line.replaceAll("$WT", wt);
+  const g = gate(l, role);
+  const got = g.blocked ? "R" : g.danger ? "J" : "A";
+  const ok = want === "J" ? got !== "A" : got === want;
+  assert.ok(ok, `${role}: ${l}: want ${want}, got ${got} (${g.danger ?? "no danger"})`);
+};
+
+const rep = (s: string, n: number, j = " "): string => Array(n).fill(s).join(j);
+const nestedDefs = (d: number): string => {
+  let n = "ls";
+  for (let i = 0; i < d; i++) n = `f${i}(){ ${n}; f${i}; }; f${i}`;
+  return n;
+};
+const BEHIND_BUDGET = 1000;
+
+test("item 13: a function body decides at the call as the inline line", () => {
+  const CASES: [string, X, X][] = [
+    ["f(){ cat ~/.ssh/id_rsa; }; f", "J", "J"],
+    ["cat ~/.ssh/id_rsa", "J", "J"],
+    ["f(){ cat README.md; }; f", "A", "A"],
+    ["f(){ touch /outside/x; }; f", "A", "R"],
+    ["touch /outside/x", "A", "R"],
+    ["f(){ touch sub/x; }; f", "A", "A"],
+    ["f(){ cat ~/.ssh/id_rsa; }; g(){ f; }; g", "J", "J"],
+    ["(( x = $(rm -rf $HOME/y) ))", "J", "J"],
+    ["eval '(( x = $(rm -rf $HOME/y) ))'", "J", "J"],
+    ["eval '(( x = $(ls) ))'", "J", "J"],
+    ["(( x = $(ls) ))", "J", "J"],
+    ["eval '(( x = 1 ))'", "A", "A"],
+    ["eval '(( x = 1 + 2 ))'", "A", "A"],
+  ];
+  for (const [line, fm, ch] of CASES) {
+    check(line, "main", fm);
+    check(line, "builder", ch);
+  }
+});
+
+test("item 12: calls of a big function body walk a bounded number of commands, and the line is judged", () => {
+  const line = `f(){ ${rep("foo a b c d e f g h", 300, "; ")}; }; ${rep("f", 64, "; ")}`;
+  const segs = parseShell(line, { cwd: wt });
+  assert.ok(segs.length < 2000, `segments: ${segs.length}`);
+  assert.ok(segs.some((s) => s.programUnknown === true));
+  for (const role of ["main", "builder"] as const) check(line, role, "J");
+});
+
+test("item 12: look-behind starts per line are bounded, and the line past the bound is judged", () => {
+  const starts = (line: string): number => parseShell(line, { cwd: wt }).reduce((a, s) => a + (s.behind?.length ?? 0), 0);
+  const many = rep("foo " + rep("a", 32), 200, "; ");
+  assert.ok(starts(many) <= BEHIND_BUDGET, `starts: ${starts(many)}`);
+  for (const role of ["main", "builder"] as const) check(many, role, "J");
+  // under the bound the walk is as before, and the twin stays allowed
+  const few = rep("foo " + rep("a", 32), 20, "; ");
+  assert.equal(starts(few), 640);
+  for (const role of ["main", "builder"] as const) check(few, role, "A");
+});
+
+test("item 12: bodies defined inside bodies are read once per place, not once per path to them", () => {
+  const line = nestedDefs(30);
+  const segs = parseShell(line, { cwd: wt });
+  assert.ok(segs.length < 100, `segments: ${segs.length}`);
+  assert.ok(nestedSegments(segs, { cwd: wt, platform: "linux" }).length < 6000);
+  for (const role of ["main", "builder"] as const) check(line, role, "J");
+});
+
+test("item 12: look-behind inside function bodies stays bounded", () => {
+  const line = `f(){ ${rep("u " + rep("f", 30), 20, "; ")}; }; ${rep("u " + rep("f", 30), 20, "; ")}`;
+  const segs = parseShell(line, { cwd: wt });
+  assert.ok(segs.reduce((a, s) => a + (s.behind?.length ?? 0), 0) <= BEHIND_BUDGET);
+  assert.ok(segs.length < 2000);
+  for (const role of ["main", "builder"] as const) check(line, role, "J");
+});

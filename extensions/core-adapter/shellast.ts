@@ -186,8 +186,8 @@ interface Run {
   flow?: Flow;
   /** The function bodies the line defines (`collectFuncs`), by name: a call walks each of them where it stands (`run`). Set for the line's own walk only. */
   funcs?: Map<string, string[]>;
-  /** The body walks done so far, shared by every trial copy of the run (`MAX_BODY_WALKS`). */
-  budget?: { walks: number };
+  /** The work done so far, shared by every trial copy of the run: body walks (`MAX_BODY_WALKS`), commands walked inside bodies (`MAX_BODY_CMDS`), look-behind starts (`BEHIND_BUDGET`). */
+  budget?: { walks: number; cmds: number; starts: number };
   /** The segments of a command whose program names a function of `funcs` at the time it was walked; any other segment with such a program is marked unknown after the walk. */
   resolved?: Set<ShellSegment>;
 }
@@ -829,7 +829,10 @@ function runStringIn(label: string, src: string, c: Cmd, cwd: string | null): { 
     seg(sc, label, [src], "parse_error", c);
     return { end: cwd, inner: cwd };
   }
+  const before = sc.run.out.length;
   const inner = walkScript(script, src, { ...sc, depth: sc.depth + 1, wiped: sc.cleared, redirects: c.redirs, heredoc: c.heredoc, docs: c.docs, stdin: c.feeds, reason: c.reason });
+  // arithmetic in the text on a value not shown to be a number (`eval '(( x = $(...) ))'`): judged as the same text written inline, whose unit the line's own analysis marks
+  if (sc.run.out.length > before && analyse(src).unsafe.size > 0) markUnknown(sc);
   return { end: cwd, inner };
 }
 
@@ -856,6 +859,9 @@ function noteFolder(fl: Flow | undefined, name: string, rest: W[]): void {
 /** The most function bodies one line walks at their calls; past it the call is unknown. */
 const MAX_BODY_WALKS = 64;
 
+/** The most commands one line walks inside function bodies (a body of hundreds of commands called many times, bodies defined inside bodies); past it a call is unknown, so the work stays bounded and never opens. */
+const MAX_BODY_CMDS = 2000;
+
 /**
  * One command whose words are resolved. A program word that names a function the line defines runs every body of that name, in any order the line has them (a definition may come later, or twice): each
  * body is walked here, at the call, as real segments, then the command is read as it stands (a function may also shadow a wrapper or a builtin, which keeps its own handling). The call is unknown (judge-first)
@@ -865,6 +871,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   const sc = c.sc;
   const name = words[0]?.value;
   const bodies = name != null && !/[\\/]/.test(name) ? sc.run.funcs?.get(name) : undefined;
+  if (sc.fnStack?.length && sc.run.budget) sc.run.budget.cmds++;
   if (name == null || !bodies) return runWord(words, c, cwd);
   const before = sc.run.out.length;
   let unknown = false;
@@ -872,7 +879,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     // a call of a function from inside its own body is the walk already under way
     if (sc.fnStack?.includes(name)) continue;
     const budget = sc.run.budget;
-    if (!budget || budget.walks >= MAX_BODY_WALKS || sc.depth + 1 > MAX_DEPTH) {
+    if (!budget || budget.walks >= MAX_BODY_WALKS || budget.cmds >= MAX_BODY_CMDS || sc.depth + 1 > MAX_DEPTH) {
       unknown = true;
       continue;
     }
@@ -1220,6 +1227,9 @@ const modelled = (name: string): boolean =>
 /** The most words of one unmodelled program that `lookBehind` starts a walk at; more literal words make the segment unknown. */
 const BEHIND_STARTS = 32;
 
+/** The most look-behind walks one line starts (each is read again by the floors and the judge-first rules); past it the segment is unknown, so the work stays bounded and never opens. */
+const BEHIND_BUDGET = 1000;
+
 /**
  * A program no table models may start the words after it (`caffeinate rm -rf x`, `taskset 1 rm -rf x`, `strace rm x`): the words from each literal one on are walked as a command of their own in a trial run
  * (no look-behind inside it), and hang on the segment just emitted as `behind`. Nothing here adds a segment to the line's own list.
@@ -1231,10 +1241,12 @@ function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
   if (!starts.length) return;
   const real = sc.run.out[sc.run.out.length - 1];
   if (!real) return;
-  if (starts.length > BEHIND_STARTS) {
+  const budget = sc.run.budget;
+  if (starts.length > BEHIND_STARTS || !budget || budget.starts + starts.length > BEHIND_BUDGET) {
     markUnknown(sc);
     return;
   }
+  budget.starts += starts.length;
   const behind = starts.map((k) => {
     const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
     run(rest.slice(k), { ...c, sc: { ...sc, run: trial } }, cwd);
@@ -1556,7 +1568,7 @@ export function blankComments(command: string): string {
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, funcs: new Map(), budget: { walks: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, funcs: new Map(), budget: { walks: 0, cmds: 0, starts: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   const unreadable = (): ShellSegment[] => {
