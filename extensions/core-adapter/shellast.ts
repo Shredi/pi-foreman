@@ -90,12 +90,18 @@ export interface ShellSegment {
    * (`caffeinate rm -rf x` runs `rm -rf x`), with the text they were cut from. The segments are a trial walk's, never in the line's own list. Read only by the judge-first list (defaults.ts `danger-unknown-program`).
    */
   behind?: Array<{ text: string; segments: ShellSegment[] }>;
+  /**
+   * Set (true only; not enumerable, handed on by `carryFacts`) on a segment the walk emitted inside a function body it walked at a call: a copy of what the body's own text reads as. The floors read the
+   * body text once (as before) and spend their per-line budget on these copies alone.
+   */
+  walked?: boolean;
 }
 
 /** Hands the non-enumerable facts of `from` on to `copy` (a `{ ...seg }` copy drops them). */
 export function carryFacts<S extends object>(copy: S, from: ShellSegment): S {
   if (from.programUnknown !== undefined) Object.defineProperty(copy, "programUnknown", { value: from.programUnknown, enumerable: false, configurable: true, writable: true });
   if (from.harnessRebound !== undefined) Object.defineProperty(copy, "harnessRebound", { value: from.harnessRebound, enumerable: false, configurable: true, writable: true });
+  if (from.walked) Object.defineProperty(copy, "walked", { value: true, enumerable: false, configurable: true, writable: true });
   if (from.behind !== undefined) Object.defineProperty(copy, "behind", { value: from.behind, enumerable: false, configurable: true, writable: true });
   return copy;
 }
@@ -109,6 +115,8 @@ export interface ShellParseOptions {
   rebound?: string[];
   /** Defaults to process.platform; "win32" switches on the drive-path forms of shellvars.ts. */
   platform?: string;
+  /** A function body the caller reads again for itself (the text of a body, which its own segment already carries): a call of a function the text defines is not walked, so the text reads as it did before the walk existed. */
+  noCalls?: boolean;
 }
 
 export const MAX_DEPTH = 4;
@@ -450,6 +458,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "harnessRebound", { value: reboundAt(sc), enumerable: false, configurable: true, writable: true });
   // the shell is in a folder a variable or a substitution named: a file run by a relative name is not the file the walk's cwd says (not in a look-behind trial: a word after an unknown program is mostly an operand, `curl -o a https://x`)
   if (sc.run.flow?.dyn && !sc.run.behind && runsRelative(program, argv)) Object.defineProperty(out, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
+  if (sc.fnStack?.length) Object.defineProperty(out, "walked", { value: true, enumerable: false, configurable: true, writable: true });
   sc.run.out.push(out);
 }
 
@@ -1568,7 +1577,7 @@ export function blankComments(command: string): string {
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, funcs: new Map(), budget: { walks: 0, cmds: 0, starts: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, ...(opts.noCalls ? {} : { funcs: new Map() }), budget: { walks: 0, cmds: 0, starts: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
     return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
   };
   // `tooDeep`: a block, subshell or definition nested past the parser's limit is no syntax error (a shell runs it): the line is unread, so judge-first, never an allow

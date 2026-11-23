@@ -1427,14 +1427,17 @@ export function nestedSegments(segs: ShellSegment[], env: { cwd: string; platfor
   return nestedSegmentsSeen(segs, env, depth, new Set(), { n: 0 });
 }
 
-/** Segments read per line below the top ones; past it a segment with a nested text is not read further but marked `programUnknown` (judge-first, never an allow). */
+/**
+ * Segments the walk emitted inside function bodies it walked at a call (`ShellSegment.walked`) that one line may have read below the top ones; past it such a segment's nested text is not read but the
+ * segment is marked `programUnknown` (judge-first, never an allow). Everything the text of the line reads as without those copies (what origin/main read) is always read, with no budget.
+ */
 export const NESTED_SEGMENT_BUDGET = 1500;
 
 function nestedSegmentsSeen(segs: ShellSegment[], env: { cwd: string; platform: FloorEnv["platform"] }, depth: number, seen: Set<string>, used: { n: number }): ShellSegment[] {
   const out: ShellSegment[] = [];
   for (const seg of segs) {
     out.push(seg);
-    used.n++;
+    if (seg.walked) used.n++;
     if (depth >= NORMALISE_DEPTH) continue;
     const rest = behindWrapper(seg);
     const texts: string[] = rest ? [wordsText(rest)] : seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
@@ -1443,12 +1446,12 @@ function nestedSegmentsSeen(segs: ShellSegment[], env: { cwd: string; platform: 
       // a text read again with the same folder, names and depth gives the same segments (bodies defined inside bodies, walked at every call, repeat): read once
       const key = JSON.stringify([depth, seg.cwd ?? env.cwd, seg.harnessRebound ?? null, t]);
       if (!rest && seen.has(key)) continue;
-      if (used.n > NESTED_SEGMENT_BUDGET) {
+      if (seg.walked && used.n > NESTED_SEGMENT_BUDGET) {
         out.push({ ...seg, programUnknown: true });
         break;
       }
       seen.add(key);
-      const inner = nestedSegmentsSeen(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound }), env, depth + 1, seen, used);
+      const inner = nestedSegmentsSeen(parseShell(t, { cwd: seg.cwd ?? env.cwd, platform: env.platform, rebound: seg.harnessRebound, ...(rest ? {} : { noCalls: true }) }), env, depth + 1, seen, used);
       // `busybox sh <<'E'`: the applet reads the outer segment's heredoc or pipe as its program, so the inner shell inherits that marker
       if (mux && inner[0] && inner[0].opaque === null && (SHELLS.has(base(inner[0].program)) || base(inner[0].program) === "ash") && shellReadsStdin(inner[0].argv)) {
         inner[0] = carryFacts({ ...inner[0], opaque: "stdin_fed", heredoc: seg.heredoc, heredocs: seg.heredocs, ...(seg.dynamicCode ? { dynamicCode: true } : {}) }, inner[0]); // judge-first-unknown round: keeps programUnknown / harnessRebound
@@ -1543,7 +1546,16 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   if (depth > NORMALISE_DEPTH) return settle(judgeHit("delete-unknown-target", "This command nests wrappers too deep to be read, so what it deletes cannot be read.", text));
   // every text parsed again (a string, a here-document, a body, the words behind a wrapper or a host) may hold a `$( )` the walker stopped at: unread, as at the top
   if (segs.some((s) => s.tooDeep)) settle(tooDeepHit(text));
+  // the budget is for the copies of walked function bodies (`walked`) alone; the segments the line's text reads as are always read in full, as before the walk existed
+  const spent = (seg: ShellSegment): boolean => {
+    if (!seg.walked) return false;
+    acc.read = (acc.read ?? 0) + 1;
+    if (acc.read <= NESTED_SEGMENT_BUDGET) return false;
+    settle(judgeHit("delete-unknown-target", "This command calls function bodies too many times or too deep to be read, so what it deletes cannot be read.", text));
+    return true;
+  };
   for (const seg of segs) {
+    if (spent(seg)) continue;
     const prog = base(seg.program);
     // one normaliser for every entry point: a privilege program or multiplexer is taken off, the rest is parsed again and gets the whole check (strings, eval, bodies, xargs,
     // containers, ssh), to a fixpoint. A line's own `sudo` is the privilege floor's.
@@ -1619,25 +1631,19 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
   // every segment kind whose body the walker records (function, select, coproc, arithmetic for) gets the check: the class is what that function returns
   for (const opaque of segs) {
     if (opaque.opaque === null || opaque.opaque === "parse_error") continue;
+    if (opaque.walked && (acc.read ?? 0) > NESTED_SEGMENT_BUDGET) continue;
     for (const body of opaque.bodies ?? []) {
       // the same body read again in the same place and state (a body defined inside a body is walked at every call and shows up once more each time) gives the same hits: read once
       const key = JSON.stringify([body, opaque.cwd ?? env.cwd, opaque.harnessRebound ?? null, opaque.bodyConsts ?? null, opaque.program, where, depth, where !== "local" && segs.indexOf(opaque) === 0]);
       if ((acc.seen ??= new Set()).has(key)) continue;
       acc.seen.add(key);
-      // one budget for the line, carried through the recursion: bodies read again below bodies cannot grow without bound; past it the line is judge-first, unread
-      if ((acc.read ?? 0) > NESTED_SEGMENT_BUDGET) {
-        settle(judgeHit("delete-unknown-target", "This command defines function bodies too deep or too many to be read, so what it deletes cannot be read.", text));
-        const d = flatRefusals(body, opaque, env, acc);
-        if (d) return d;
-        continue;
-      }
-      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
-      acc.read = (acc.read ?? 0) + parsed.length + 1;
+      const parsed = parseShell(body, { cwd: opaque.cwd ?? env.cwd, platform: env.platform, rebound: opaque.harnessRebound, noCalls: true, ...(env.child && env.scratch?.[0] ? { env: { ...(opaque.bodyConsts?.includes("FOREMAN_SCRATCH") ? { FOREMAN_SCRATCH: env.scratch[0] } : {}), ...(env.out && opaque.bodyConsts?.includes("FOREMAN_OUT") ? { FOREMAN_OUT: env.out } : {}) } } : {}) });
       // a body in a remote string reads as the same commands in `ssh h '...'`: the first command of the whole text stands behind the host (`ssh h 'f(){ find /data -delete; }; f'` runs as
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
       const inner = parsed.map((x, k) => (first && k === 0 ? carryFacts({ ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x) : x));
-      const h = pythonKinds(body, inner, env, where, depth + 1, false, acc);
+      // a body is a part of the text it stands in, so reading it is bounded by the text (and each body once, above): it does not count towards the wrapper depth
+      const h = pythonKinds(body, inner, env, where, depth, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");
@@ -1648,45 +1654,6 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
         if (u) settle(judgeHit("delete-unknown-target", `The target of this recursive delete cannot be read (${u.reason}).`, psText));
         settle(psOutsideDelete(psText, env));
       }
-    }
-  }
-  return null;
-}
-
-/** Segments one line may read in the flat read of bodies past the segment budget; past it the line stays judge-first. */
-const FLAT_PARSE_CAP = 1500;
-
-/**
- * The refusals alone, for a body past the segment budget: the body and the bodies and wrapper words below it are parsed once each (a work list, no recursion into the full check) and
- * every command is held to the delete, chmod, disk and PowerShell-delete floors. A refusal the full check would give for these commands survives the budget; the line stays judge-first.
- */
-function flatRefusals(body: string, from: ShellSegment, env: FloorEnv, acc: { seen?: Set<string>; flat?: number }): FloorHit | null {
-  const seen = (acc.seen ??= new Set());
-  const queue: [string, ShellSegment][] = [[body, from]];
-  // the body itself is always read (a sibling after a spent cap is still checked); the bodies below it only while the line's flat read is under its cap
-  for (let first = true; queue.length > 0 && (first || (acc.flat ?? 0) < FLAT_PARSE_CAP); first = false) {
-    const [t, owner] = queue.pop()!;
-    const parsed = parseShell(t, { cwd: owner.cwd ?? env.cwd, platform: env.platform, rebound: owner.harnessRebound });
-    acc.flat = (acc.flat ?? 0) + parsed.length + 1;
-    const ps: string[] = [];
-    for (const seg of parsed) {
-      const prog = base(seg.program);
-      const kids: string[] = seg.opaque !== null && seg.opaque !== "parse_error" ? seg.bodies ?? [] : [];
-      const rest = behindWrapper(seg);
-      if (rest) kids.push(wordsText(rest));
-      for (const k of kids) {
-        const key = JSON.stringify(["flat", k, seg.cwd ?? env.cwd, seg.harnessRebound ?? null]);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        queue.push([k, seg]);
-      }
-      const h = localKind(seg, prog, env);
-      if (h && h.kind !== "judge") return h;
-      if (/^(?:remove-item|ri)$/i.test(prog)) ps.push([seg.program, ...seg.argv].join(" "));
-    }
-    if (ps.length > 0) {
-      const d = psUnitFloors(ps.join("\n"), env);
-      if (d) return d;
     }
   }
   return null;

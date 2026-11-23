@@ -190,3 +190,55 @@ test("item 15: a walker stack overflow is refused or judge-first, never an allow
     check("echo $((1+1+1))", role, "A");
   }
 });
+
+// Revision round 3 (item 12): the budget is spent on the copies of walked function bodies alone; what the line's text reads as (what origin/main read) is always read in full, so every refusal main gave is kept.
+const CAPPED = `f(){ ${rep(":", 1600, "; ")}; }; h(){ ${rep(":", 1600, "; ")}; }; f; h; `;
+const q = (c: string): string => c.replace(/'/g, "'\\''");
+
+test("item 12: segments emitted inside a walked body carry the marker the budget counts; the text's own segments do not", () => {
+  const segs = parseShell("f(){ ls; cat a; }; f", { cwd: wt });
+  assert.deepEqual(segs.map((s) => s.walked === true), [false, true, true, false]);
+  const nested = nestedSegments(parseShell(CAPPED + "g(){ ls; }; g", { cwd: wt }), { cwd: wt, platform: "linux" });
+  assert.ok(nested.filter((s) => s.walked).length <= NESTED_SEGMENT_BUDGET + 10, `walked segments read: ${nested.filter((s) => s.walked).length}`);
+});
+
+test("item 12: a here-document, here-string or script in a body is read past the budget (family 1)", () => {
+  const CMDS = ["rm -rf /etc", "rm -rf ~", 'r""m -rf /etc', "\\rm -rf /etc", "find / -delete", "mkfs.ext4 /dev/sda", "sudo rm -rf /etc", "busybox rm -rf /etc"];
+  const SHAPES: ((c: string) => string)[] = [
+    (c) => `f(){ bash <<'E'\n${c}\nE\n}; f`,
+    (c) => `f(){ sh <<E\n${c}\nE\n}; f`,
+    (c) => `f(){ bash -s <<E\n${c}\nE\n}; f`,
+    (c) => `f(){ bash <<< '${q(c)}'; }; f`,
+    (c) => `${CAPPED}g(){ bash <<'E'\n${c}\nE\n}; g`,
+    (c) => `${CAPPED}g(){ sh <<E\n${c}\nE\n}; g`,
+    (c) => `${CAPPED}g(){ bash -s <<E\n${c}\nE\n}; g`,
+    (c) => `${CAPPED}g(){ bash <<< '${q(c)}'; }; g`,
+    (c) => `${rep(":", 1600, "; ")}; f(){ ${rep(":", 1600, "; ")}; }; f; g(){ bash <<'E'\n${c}\nE\n}; g`,
+  ];
+  for (const role of ["main", "builder"] as const) for (const c of CMDS) for (const shape of SHAPES) check(shape(c), role, "R");
+});
+
+test("item 12: a privilege program or wrapper in a body is read past the budget (family 2)", () => {
+  const CMDS = ["sudo rm -rf /etc", "doas rm -rf /etc", "sudo -u root rm -rf /etc", "sudo find / -delete", "sudo mkfs.ext4 /dev/sda", "sudo bash -c 'rm -rf /etc'", "doas -u root mkfs.ext4 /dev/sda", "env rm -rf /etc", "nice -n 5 rm -rf ~", "timeout 5 rm -rf /etc", "xargs rm -rf /etc", "eval 'rm -rf /etc'", "bash -c 'sudo rm -rf /etc'", "busybox sh -c 'rm -rf /etc'", "toybox rm -rf /etc"];
+  for (const role of ["main", "builder"] as const) {
+    for (const c of CMDS) {
+      check(`${CAPPED}g(){ ${c}; }; g`, role, "R");
+      check(`${CAPPED}g(){ h2(){ ${c}; }; h2; }; g`, role, "R");
+      check(`${CAPPED}${c}`, role, "R");
+      check(`f(){ ${c}; }; f`, role, "R");
+    }
+    // the harmless twins past the budget are judged, not refused
+    check(`${CAPPED}g(){ sudo ls; }; g`, role, "J");
+    check(`${CAPPED}g(){ echo hi; }; g`, role, "J");
+  }
+});
+
+test("item 12: nested definitions 100 and 250 with a refusal at the bottom, and wide bodies, stay refused", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const c of ["rm -rf /etc", "sudo rm -rf /etc", "sudo bash -c 'rm -rf /etc'", "mkfs.ext4 /dev/sda"]) {
+      check(nestedDefs(100).replace("ls", c), role, "R");
+      check(nestedDefs(250).replace("ls", c), role, "R");
+      check(`f(){ ${rep("foo a b c d e f g h", 300, "; ")}; ${c}; }; f`, role, "R");
+    }
+  }
+});

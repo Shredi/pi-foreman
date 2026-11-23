@@ -1,5 +1,5 @@
-// A line too deep for the stack sizes in use (measured up to `--stack-size=7000`): parseShell ends it as the one unreadable segment (it does not throw), and the gate decides it as it
-// decides an unreadable line (main and child), never `gate-error` and never an allow.
+// A line too deep for the stack sizes in use (measured up to `--stack-size=7000`): parseShell ends it as the one unreadable segment marked `tooDeep` (it does not throw), and the gate
+// decides it judge-first (main and child), never `gate-error` and never an allow.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -79,7 +79,7 @@ function gate(command: string, child: boolean, withRoots = true): { result: { bl
 for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
   test(`gateEvaluate (${label}): a too-deep line is judge-first, not an allow`, () => {
     const want = gate(UNPARSABLE, child, withRoots);
-    // the unreadable line: nothing decided here (C: there is no `danger-opaque`; an unreadable line is not on the judge-first list, so it runs)
+    // a plain unreadable line (a syntax error) is not judge-first and runs; a too-deep one is judge-first (below)
     assert.equal(want.result, undefined);
     assert.equal(want.danger, null, "an unreadable line is not judge-first");
     for (const [name, line] of Object.entries(DEEP)) {
