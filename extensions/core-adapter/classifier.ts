@@ -18,6 +18,7 @@ import type { JudgeReadScope, ReadRecord } from "./judgereads.ts";
 import { THINKING, clampLevel, splitLevel } from "./launchmodel.ts";
 import type { Thinking } from "./launchmodel.ts";
 import { strOf } from "./strof.ts";
+import { redactCommand } from "./trace.ts";
 
 export const MAX_REASON = 200;
 export const MAX_OWNER_MESSAGE_CHARS = 600;
@@ -283,14 +284,14 @@ export function parseJudgeVerdict(text: string, mode?: "read" | "last"): ParsedJ
     if (!Array.isArray(ps) || ps.length < 1 || ps.length > MAX_PATHS_PER_ROUND) return bad(`paths is not a list of 1 to ${MAX_PATHS_PER_ROUND} strings`);
     if (!ps.every((p) => typeof p === "string" && p.length > 0 && p.length <= MAX_PATH_CHARS)) return bad(`a path is not a string of 1 to ${MAX_PATH_CHARS} characters`);
     if (o.reason !== undefined && typeof o.reason !== "string") return bad("reason is not a string");
-    return { verdict: "read", paths: ps as string[], reason: flat((o.reason as string | undefined) ?? "").slice(0, MAX_REASON) };
+    return { verdict: "read", paths: ps as string[], reason: redactCommand(flat((o.reason as string | undefined) ?? "")).slice(0, MAX_REASON) };
   }
   if (mode === "last" && o.verdict === "read") return bad("the judge asked for files after its last round");
   const extra = Object.keys(o).filter((k) => k !== "verdict" && k !== "reason");
   if (extra.length) return bad(`unknown field ${extra[0]}`);
   if (o.verdict !== "clear" && o.verdict !== "unsure") return bad(`verdict ${JSON.stringify(o.verdict)} is not clear or unsure`);
   if (o.reason !== undefined && typeof o.reason !== "string") return bad("reason is not a string");
-  return { verdict: o.verdict, reason: flat((o.reason as string | undefined) ?? "").slice(0, MAX_REASON) };
+  return { verdict: o.verdict, reason: redactCommand(flat((o.reason as string | undefined) ?? "")).slice(0, MAX_REASON) };
 }
 
 export class Classifier {

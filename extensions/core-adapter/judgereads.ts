@@ -53,6 +53,7 @@ export interface ReadRecord {
   ino?: number;
   size?: number;
   mtimeMs?: number;
+  ctimeMs?: number;
   ancestor?: string;
 }
 
@@ -212,9 +213,9 @@ export function resolveReadable(asked: string, scope: JudgeReadScope): Resolutio
 
 // ------------------------------------------------------------------ reading
 
-const ofStat = (st: fs.Stats): Pick<ReadRecord, "dev" | "ino" | "size" | "mtimeMs"> => ({ dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs });
+const ofStat = (st: fs.Stats): Pick<ReadRecord, "dev" | "ino" | "size" | "mtimeMs" | "ctimeMs"> => ({ dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs });
 
-function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
+function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   const win32 = scope.platform === "win32";
   const flags = fs.constants.O_RDONLY | (win32 ? 0 : (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   readHooks.afterStat?.(res.real);
@@ -241,17 +242,20 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, scope: 
     let body = slice.join("\n");
     const more = from - 1 + slice.length < lines.length || partial;
     if (budget.left <= 0) return { outcome: "budget", body: "not read: read budget used up" };
-    body = redactCommand(body.slice(0, MAX_FILE_BYTES * 2));
-    let cut = false;
+    const shownLines = redactCommand(body.slice(0, MAX_FILE_BYTES * 2)).split("\n");
     const cap = Math.min(MAX_FILE_BYTES, budget.left);
-    if (body.length > cap) {
-      body = body.slice(0, cap);
-      cut = true;
-    }
-    budget.left -= body.length;
-    const last = from + slice.length - 1;
+    // The cut falls on a line boundary; `last` is the last line shown whole. When not even the first line fits, that line is shown cut and the hint
+    // continues at the next line (the rest of the long line is not offered again).
+    let used = 0;
+    let k = 0;
+    while (k < shownLines.length && used + (k ? 1 : 0) + shownLines[k].length <= cap) used += (k ? 1 : 0) + shownLines[k++].length;
+    const cut = k < shownLines.length;
+    body = k ? shownLines.slice(0, k).join("\n") : `${shownLines[0].slice(0, cap)} [cut]`;
+    budget.left -= cut ? cap : body.length; // a cut file used its whole share
+    const last = from + Math.max(k, 1) - 1;
     const note = cut ? `\n[cut at ${cap} characters]` : "";
-    const next = more || cut ? `\n[more of this file: ask ${path.basename(res.real)}#L${last + 1}-${last + MAX_FILE_LINES}]` : "";
+    const base = (WINDOW.exec(asked)?.[1] ?? asked).replace(/[\\/]+$/, "");
+    const next = more || cut ? `\n[more of this file: ask ${base}#L${last + 1}-${last + MAX_FILE_LINES}]` : "";
     return { outcome: "ok", body: `lines ${from}-${last}\n${body}${note}${next}` };
   } catch {
     return { outcome: "changed", body: "changed while it was read: not shown" };
@@ -287,6 +291,7 @@ function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, b
   names.sort();
   const shown: string[] = [];
   for (const n of names) {
+    if (shown.length >= MAX_LISTING) break;
     const r = resolveReadable(path.join(res.real, n), scope);
     if (r.outcome === "ok") shown.push(n);
     else if (r.outcome === "dir") shown.push(`${n}/`);
@@ -301,6 +306,12 @@ function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, b
   }
   budget.left -= body.length;
   return { outcome: "dir", body };
+}
+
+/** The path of a block header: relative to the cwd when inside it, else absolute; what the judge can ask again. */
+function askable(real: string, scope: JudgeReadScope): string {
+  const root = realOf(scope.cwd) ?? path.resolve(scope.cwd);
+  return inside(scope.platform, real, root) ? path.relative(root, real) || "." : real;
 }
 
 const HEADER_NOTE: Record<ReadOutcome, string> = { ok: "file", dir: "folder", "not-found": "not found", withheld: "withheld: not shown", outside: "outside the places you may read", changed: "changed while it was read: not shown", binary: "binary", budget: "not read: read budget used up" };
@@ -344,13 +355,13 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
         rec.outcome = "budget";
         body = "not read: read budget used up";
       } else {
-        const r = readFileBlock(res as Resolution & { real: string; st: fs.Stats }, scope, budget);
+        const r = readFileBlock(res as Resolution & { real: string; st: fs.Stats }, a, scope, budget);
         rec.outcome = r.outcome;
         body = r.body;
       }
     }
     records.push(rec);
-    blocks.push({ header: redactCommand(`${a} -> ${rec.real ?? "-"} (${HEADER_NOTE[rec.outcome]})`), body: redactCommand(body) });
+    blocks.push({ header: redactCommand(`${a} -> ${rec.real ? askable(rec.real, scope) : "-"} (${HEADER_NOTE[rec.outcome]})`), body: redactCommand(body) });
   }
   return { blocks, records };
 }
@@ -367,7 +378,7 @@ export function readsUnchanged(records: ReadRecord[], scope: JudgeReadScope): bo
       const now = resolveReadable(r.asked, scope);
       if (now.outcome !== classOf(r.outcome)) return false;
       if ((now.real ?? undefined) !== r.real) return false;
-      if (now.outcome === "ok" && (now.st?.dev !== r.dev || now.st?.ino !== r.ino || now.st?.size !== r.size || now.st?.mtimeMs !== r.mtimeMs)) return false;
+      if (now.outcome === "ok" && (now.st?.dev !== r.dev || now.st?.ino !== r.ino || now.st?.size !== r.size || now.st?.mtimeMs !== r.mtimeMs || now.st?.ctimeMs !== r.ctimeMs)) return false;
       if (now.outcome === "dir" && now.st?.mtimeMs !== r.mtimeMs) return false;
       if (now.outcome === "not-found" && now.ancestor !== r.ancestor) return false;
     }
