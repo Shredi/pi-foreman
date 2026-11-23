@@ -4,7 +4,7 @@
 > Read it when a call is denied or asks and you expected it to run.
 > The floors run first and nothing here (judge, dialog) can allow what a floor refuses.
 
-pi-foreman decides tool calls with its own gate, `extensions/core-adapter/gate.ts` plus the judge step in `index.ts`. It is the first `tool_call` handler in load order and decides every tool call of every session kind. The default is **allow**: a call that no floor, protected target or judge-first entry names runs. Only a few kinds go to a cheap [judge](#the-judge) first (the [judge-first list](#the-judge-first-list): losing local work through git, git settings and remotes, typing into another terminal pane, a whole-filesystem scan, a delete or write whose target the harness cannot read, a child's write whose target cannot be resolved). A clear from the judge runs the call; anything else asks you in a dialog (a child asks its parent), except a child's write whose target cannot be read, which is refused with the judge's reason when the judge does not clear it. Deploys, forge writes, installs, network writes, process control, MCP actions, opaque lines and the rest run with no judge call. Reads, GET fetches, routine git, role launches and PR creation never ask.
+pi-foreman decides tool calls with its own gate, `extensions/core-adapter/gate.ts` plus the judge step in `index.ts`. It is the first `tool_call` handler in load order and decides every tool call of every session kind. The default is **allow**: a call that no floor, protected target or judge-first entry names runs. Only a few kinds go to a cheap [judge](#the-judge) first (the [judge-first list](#the-judge-first-list): losing local work through git, git settings and remotes, typing into another terminal pane, a whole-filesystem scan, a delete or write whose target the harness cannot read, a child's write whose target cannot be resolved). A clear from the judge runs the call; anything else asks you in a dialog (a child asks its parent), except a child's write whose target cannot be read, which is refused with the judge's reason when the judge does not clear it and the line has no other judge-first label (its labels are only `danger-write-outside` and `danger-unknown-write-target`). Deploys, forge writes, installs, network writes, process control, MCP actions, opaque lines and the rest run with no judge call. Reads, GET fetches, routine git, role launches and PR creation never ask.
 
 A guard rail, not a sandbox: a prompt-injected agent can still find commands the parser marks opaque. An opaque line runs unless a floor reads it: the floors run on the raw text, so obfuscation reaches a deny or a question, not an allow. What the floors and the judge-first list do not name is allowed.
 
@@ -305,8 +305,8 @@ Presence (`presence.*`, the same idle-input probe that gates cache warms; see [c
 
 - A dialog opens whether you are at the machine or not, and it stays open until you answer it. Dismissing it denies. Nothing else closes it except an abort of the call or the end of the session; such a close is no answer and denies nothing you did not decide.
 - The dialog opens with no presence probe and no watchdog. `presence.enabled: false` only affects the cache warms.
-- In a session with UI that is not a child, the [protected-target judge](#protected-targets) decides the same way whether you are present, away, or presence is off, not sampled or stale.
-- Children and sessions without UI are unchanged: the judge treats them as away (a confident write, deploy or network allow becomes an ask), and a session without UI has nobody to ask.
+- In a session with UI that is not a child, and in a child with a route to its parent, the [protected-target judge](#protected-targets) decides the same way whether you are present, away, or presence is off, not sampled or stale.
+- For the other judges, children and sessions without UI are unchanged: the judge treats them as away (a confident write, deploy or network allow becomes an ask), and a session without UI has nobody to ask.
 - A floor decision (a deny, or a built-in or rule allow) is deterministic and runs no presence probe.
 
 ## Session kinds and who answers
@@ -397,7 +397,7 @@ A production note example: `{"host": "prod-db", "note": "production: reads and d
   | 5 | `allow`, effect `read`, otherwise | allow |
   | 6 | `allow`, effect `write`, `deploy` or `network`, mode `read-only` | ask (`read_only`) |
   | 6 | the same, owner away (a child with no route to its parent, or a session with no UI) | ask (`away`) |
-  | 6 | the same, otherwise (a session with UI that is not a child, any presence) | allow |
+  | 6 | the same, otherwise (a session with UI that is not a child, or a child with a route to its parent; any presence) | allow |
   | 7 | `allow`, effect `unknown` | ask (`unknown_effect`) |
   | 8 | `deny` citing an existing `D` entry | deny |
   | 9 | anything else (verdict `ask`) | ask (`judge_ask`) |
@@ -480,7 +480,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
 | `gate.readClear` | No effect: the read question was removed. The key is kept so existing configs load | no effect |
 | `gate.readonlyClear` | No effect: the judge step it switched ([The role question](#the-role-question)) was removed. The key is kept so existing configs load | no effect |
-| `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes, except remote writes the harness itself sees, which always ask), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks); a protected entry's `check` can tighten it per entry | tighten only (`ask` < `read-only` < `model`) |
+| `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child or a child with a route to its parent (an ask dir and `gate.childAsk: parent`), writes, except remote writes the harness itself sees, which always ask), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks); a protected entry's `check` can tighten it per entry | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.judgeReads` | the judge may read files before it decides (default true, [What it may read](#the-judge)) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |

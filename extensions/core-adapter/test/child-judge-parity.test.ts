@@ -67,6 +67,8 @@ interface Opts {
   role?: "builder" | "reviewer";
   /** The ask dir of the binding; "none" = a group or chain child (no ask dir). */
   askDir?: "made" | "none";
+  /** "none" = a child with no launch binding at all. */
+  binding?: "none";
   judge?: Judge;
   gate?: Record<string, unknown>;
   perms?: Record<string, unknown>;
@@ -90,7 +92,8 @@ async function rig(t: T, o: Opts = {}) {
   const isChild = o.child !== false;
   const askDir = o.askDir === "none" || !isChild ? null : fs.mkdtempSync(path.join(os.tmpdir(), "pf-cjp-ask-"));
   const prev = process.env[BINDINGS_ENV];
-  if (isChild) process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: o.role ?? "builder", launchId: "L9", kind: "first", model: null, ...(askDir ? { askDir } : {}) } });
+  if (isChild && o.binding === "none") delete process.env[BINDINGS_ENV];
+  else if (isChild) process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: o.role ?? "builder", launchId: "L9", kind: "first", model: null, ...(askDir ? { askDir } : {}) } });
   else delete process.env[BINDINGS_ENV];
   t.after(() => {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
@@ -266,6 +269,14 @@ test("protected: a child with an ask dir and gate.childAsk parent is not away: a
 
 test("protected: a child with no ask dir (group or chain) is away: the write allow becomes an ask", async (t) => {
   const r = await rig(t, { perms: PERMS, reply: WRITE_ALLOW, askDir: "none" });
+  const res = await r.call("bash", SSH);
+  const pc = r.events("protected_check");
+  assert.deepEqual([pc[0].away, pc[0].accepted], [true, "ask"]);
+  assert.equal(res?.block, true);
+});
+
+test("protected: a child with no launch binding at all is away: the write allow becomes an ask", async (t) => {
+  const r = await rig(t, { perms: PERMS, reply: WRITE_ALLOW, binding: "none" });
   const res = await r.call("bash", SSH);
   const pc = r.events("protected_check");
   assert.deepEqual([pc[0].away, pc[0].accepted], [true, "ask"]);
