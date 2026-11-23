@@ -8,7 +8,7 @@ import { judgeSystemPrompt, parseJudgeVerdict } from "../classifier.ts";
 import { MAX_FILE_BYTES, MAX_LISTING, MAX_READ_BUDGET, judgeReadScope, readHooks, readPaths, readsUnchanged } from "../judgereads.ts";
 import type { JudgeReadScope } from "../judgereads.ts";
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-hs-")));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-hs-")));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const agent = path.join(tmp, "home", ".pi", "agent");
 const wt = path.join(tmp, "home", "proj");
@@ -56,19 +56,23 @@ test("the more-hint names the path as asked (no basename), without its window", 
 
 test("headers show a path the judge can ask again: relative inside the cwd, absolute elsewhere", () => {
   put(path.join(cwd, "sub", "h.txt"), "x\n");
-  assert.match(one(path.join(cwd, "sub", "h.txt")).block.header, / -> sub\/h\.txt \(file\)$/);
+  assert.match(one(path.join(cwd, "sub", "h.txt")).block.header, / -> sub[\\/]h\.txt \(file\)$/);
   const other = put(path.join(wt, "other.txt"), "y\n");
-  assert.match(one(other).block.header, /-> \/\S*\/other\.txt \(file\)$/);
-  assert.ok(!one(other).block.header.includes("~/"));
+  // The header may abbreviate the real home folder as `~` (a temp root under it); the asked path is not inside the scope's cwd either way.
+  assert.match(one(other).block.header, /-> (~|[A-Za-z]:|\/)\S*[\\/]other\.txt \(file\)$/);
+  assert.ok(!/-> (sub|\.\.)/.test(one(other).block.header));
 });
 
 test("cache: a same-size in-place rewrite with the old mtime restored is not unchanged", () => {
   const p = put(path.join(cwd, "c.txt"), "aaaa\n");
+  // Whole seconds: a fractional mtime does not survive the utimes round trip exactly on every filesystem.
+  const sec = 1_700_000_000;
+  fs.utimesSync(p, sec, sec);
   const old = fs.statSync(p);
   const { records } = readPaths(["c.txt"], S, { left: MAX_READ_BUDGET });
   assert.equal(readsUnchanged(records, S), true);
   fs.writeFileSync(p, "bbbb\n");
-  fs.utimesSync(p, old.atimeMs / 1000, old.mtimeMs / 1000);
+  fs.utimesSync(p, sec, sec);
   assert.equal(fs.statSync(p).mtimeMs, old.mtimeMs);
   assert.equal(readsUnchanged(records, S), false);
 });
@@ -167,7 +171,7 @@ test("only the reads-on judge prompt carries the [redacted] sentence", () => {
 
 test("a folder listing is masked per entry: no pattern spans names, the count matches the lines", () => {
   const dir = path.join(cwd, "spanlist");
-  const names = ["!token=", '"start', "c_important.db", "d_payload.sh", 'zz"', "zzz_last"];
+  const names = ["!token=", process.platform === "win32" ? "'start" : '"start', "c_important.db", "d_payload.sh", 'zz"', "zzz_last"];
   for (const n of names) put(path.join(dir, n), "x\n");
   const { block } = one("spanlist");
   const lines = block.body.split("\n");
@@ -242,7 +246,10 @@ test("LRM, RLM and ALM in an asked name are escaped", () => {
   assert.ok(!chars.some((c) => block.header.includes(c)));
 });
 
-test("`..` after a link is resolved by the OS: d/../run.sh with d -> deep/er shows deep/run.sh", () => {
+// Win32 resolves `..` lexically before the links, so there the OS opens run.sh and these tests do not apply.
+const posixDots = { skip: process.platform === "win32" };
+
+test("`..` after a link is resolved by the OS: d/../run.sh with d -> deep/er shows deep/run.sh", posixDots, () => {
   const base = path.join(cwd, "dotdot");
   put(path.join(base, "run.sh"), "echo benign\n");
   put(path.join(base, "deep", "run.sh"), "echo EVIL-ran\n");
@@ -284,7 +291,7 @@ test("a .jsonl line is masked before its cut; the last line of a 1 MiB scan carr
   assert.match(b, /\[cut\]/);
 });
 
-test("`..` after a link is resolved by the OS also in a ~/ path", () => {
+test("`..` after a link is resolved by the OS also in a ~/ path", posixDots, () => {
   const base = path.join(wt, "tilde");
   put(path.join(base, "run.sh"), "echo benign\n");
   put(path.join(base, "deep", "run.sh"), "echo EVIL-ran\n");
@@ -442,8 +449,11 @@ test("a `..` after a withheld or outside folder answers outside, the same whethe
 test("a `..` after readable prefixes keeps working", () => {
   const d = sameBoth(() => "d/../run.sh");
   assert.equal(d.outcome, "ok");
-  assert.match(d.text, /deep\/run\.sh/);
-  assert.match(d.text, /echo deep/);
+  if (process.platform === "win32") assert.match(d.text, /echo proj/);
+  else {
+    assert.match(d.text, /deep\/run\.sh/);
+    assert.match(d.text, /echo deep/);
+  }
   const s = sameBoth((t) => `${t.ag}/sessions/s1/../s2/x`);
   assert.equal(s.outcome, "ok");
   assert.match(s.text, /session two/);

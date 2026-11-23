@@ -250,6 +250,14 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         if (code !== "ENOENT" && code !== "ENOTDIR") return outside();
+        // `file/` fails with ENOTDIR on some platforms; an existing non-folder with a trailing separator gets the same "not a folder" answer everywhere.
+        if (!tail.length && /[\\/]$/.test(anc) && anc.length > 1) {
+          const bare = realOf(anc.replace(/[\\/]+$/, ""));
+          if (bare && !fs.lstatSync(bare).isDirectory()) {
+            realAnc = bare;
+            break;
+          }
+        }
       }
       const parent = path.dirname(anc);
       if (parent === anc) return outside();
