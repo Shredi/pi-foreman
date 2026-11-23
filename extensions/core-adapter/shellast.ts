@@ -424,15 +424,25 @@ const harmless = (a: Assign): boolean => !a.append && a.value !== null && (HARML
 
 /** The command substitutions and process substitutions inside `node`, not descending into their scripts. */
 function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undefined; label: string }>; proc: boolean }): void {
-  forEachChild(node, (c: SyntaxNode) => {
+  const stack: SyntaxNode[] = [];
+  const push = (n: SyntaxNode): void => {
+    const kids: SyntaxNode[] = [];
+    forEachChild(n, (c: SyntaxNode) => {
+      kids.push(c);
+    });
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  };
+  push(node);
+  while (stack.length) {
+    const c = stack.pop()!;
     const x = c as any;
     if (x.type === "CommandExpansion" || x.type === "ArithmeticCommandExpansion" || x.type === "ProcessSubstitution") {
       if (x.type === "ProcessSubstitution") acc.proc = true;
       acc.subs.push({ script: x.script, label: String(x.text).startsWith("`") ? "`" : "$(" });
-      return;
+      continue;
     }
-    scriptsIn(c, acc);
-  });
+    push(c);
+  }
 }
 
 function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | null, c?: Cmd, cwd: string | null = sc.cwd): void {
@@ -2001,7 +2011,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
     for (const m of plain.matchAll(/\$\{[^}]*?[-+=?]([A-Za-z_][A-Za-z0-9_]*)\}/g)) note(m[1]);
     return found && /^\u0001*(?:-[A-Za-z]+)?\u0001*\w[\w\u0001]*$/.test(text.replace(/\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*/g, ""));
   };
-  const visit = (n: SyntaxNode, depth: number): void => {
+  const step = (n: SyntaxNode, depth: number): void => {
     const x = n as any;
     switch (x.type) {
       case "Command": {
@@ -2253,7 +2263,19 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
         }
         break;
     }
-    forEachChild(n, (c) => visit(c, depth));
+  };
+  // an explicit stack (the same order as a recursive walk: a node, then its children left to right): a long expression never overflows the call stack
+  const visit = (root: SyntaxNode, depth: number): void => {
+    const stack: SyntaxNode[] = [root];
+    while (stack.length) {
+      const n = stack.pop()!;
+      step(n, depth);
+      const kids: SyntaxNode[] = [];
+      forEachChild(n, (c) => {
+        kids.push(c);
+      });
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+    }
   };
   try {
     const nodes = unitNodes(script);

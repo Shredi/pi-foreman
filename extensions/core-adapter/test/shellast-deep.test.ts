@@ -20,15 +20,16 @@ const DEEP: Record<string, string> = {
 };
 const UNPARSABLE = "echo )";
 
-test("parseShell: a line too deep for the stack is one opaque parse_error segment", () => {
+test("parseShell: a long arithmetic expression is read, not opaque (explicit-stack walks)", () => {
   const plain = parseShell(UNPARSABLE, { platform: "linux" });
   assert.equal(plain.length, 1);
   assert.equal(plain[0].opaque, "parse_error");
   for (const [name, line] of Object.entries(DEEP)) {
     const segs = parseShell(line, { platform: "linux" });
+    // the walks keep their own explicit stacks: a long expression is read as a short one is (it no longer overflows), never a thrown RangeError
     assert.equal(segs.length, 1, name);
-    assert.equal(segs[0].opaque, "parse_error", name);
-    assert.deepEqual(segs, plain, name);
+    assert.notEqual(segs[0].opaque, "parse_error", name);
+    assert.ok(!segs[0].tooDeep, name);
   }
 });
 
@@ -77,7 +78,7 @@ function gate(command: string, child: boolean, withRoots = true): { result: { bl
 }
 
 for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
-  test(`gateEvaluate (${label}): a too-deep line is judge-first, not an allow`, () => {
+  test(`gateEvaluate (${label}): a long arithmetic expression is decided as its short twin`, () => {
     const want = gate(UNPARSABLE, child, withRoots);
     // a plain unreadable line (a syntax error) is not judge-first and runs; a too-deep one is judge-first (below)
     assert.equal(want.result, undefined);
@@ -86,10 +87,9 @@ for (const [label, child, withRoots] of [["main, no session roots", false, false
       const got = gate(line, child, withRoots);
       assert.notEqual(got.result?.rule, "gate-error", name);
       assert.ok(!got.result?.allow, `${name}: not an allow`);
-      // was: decided like the unreadable line (nothing decided, danger null, an allow); now judge-first like nesting past the parser's limit
-      // judge-first shows as an ask result without session roots, as `danger` with them
-      assert.equal(got.result?.rule ?? (got.danger as { name?: string } | null)?.name, "danger-delete-unknown-target", name);
-      assert.ok(!got.result?.block, `${name}: asks, not refused`);
+      // read, not overflowed: decided as the short twin is (an allow, as on origin/main, where nothing hides in the expression)
+      const twin = gate("echo $(( 1+1 ))", child, withRoots);
+      assert.deepEqual({ rule: got.result?.rule, danger: (got.danger as { name?: string } | null)?.name }, { rule: twin.result?.rule, danger: (twin.danger as { name?: string } | null)?.name }, name);
     }
   });
 }
