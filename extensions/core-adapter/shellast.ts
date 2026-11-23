@@ -1564,7 +1564,7 @@ export function blankComments(command: string): string {
 /**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
  * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
- * one `parse_error` segment, none of the partial ones. Any other error propagates.
+ * one `parse_error` segment marked `tooDeep` (judge-first), none of the partial ones. Any other error propagates.
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
@@ -1580,12 +1580,14 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   };
   const sc = start();
   let script: Script | undefined;
+  let overflow = false;
   try {
     script = parse(command);
-  } catch {
+  } catch (e) {
     script = undefined;
+    overflow = e instanceof RangeError;
   }
-  if (!script || (script as any).errors?.length) return unreadable(((script as any)?.errors as { message?: string }[] | undefined)?.some((e) => /nesting depth exceeded/.test(e.message ?? "")) === true);
+  if (!script || (script as any).errors?.length) return unreadable(overflow || ((script as any)?.errors as { message?: string }[] | undefined)?.some((e) => /nesting depth exceeded/.test(e.message ?? "")) === true);
   try {
     const an = analyse(command);
     sc.run.rebound = an.rebound;
@@ -1595,7 +1597,8 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     // a segment that names a function the line defines, but was walked before the definition was known (one made inside a later `eval`): its body was not walked
     for (const x of sc.run.out) if (x.opaque !== "function_def" && sc.run.funcs?.has(x.program) && !sc.run.resolved?.has(x)) Object.defineProperty(x, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
   } catch (e) {
-    if (e instanceof RangeError) return unreadable();
+    // a stack overflow in the walk is a line too deep to read, like nesting past the parser's limit: judge-first, never an allow
+    if (e instanceof RangeError) return unreadable(true);
     throw e;
   }
   Object.defineProperty(sc.run.out, "strings", { value: sc.run.strings, enumerable: false });

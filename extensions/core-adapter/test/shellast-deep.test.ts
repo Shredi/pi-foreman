@@ -77,7 +77,7 @@ function gate(command: string, child: boolean, withRoots = true): { result: { bl
 }
 
 for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
-  test(`gateEvaluate (${label}): a too-deep line is decided like an unreadable line`, () => {
+  test(`gateEvaluate (${label}): a too-deep line is judge-first, not an allow`, () => {
     const want = gate(UNPARSABLE, child, withRoots);
     // the unreadable line: nothing decided here (C: there is no `danger-opaque`; an unreadable line is not on the judge-first list, so it runs)
     assert.equal(want.result, undefined);
@@ -86,7 +86,10 @@ for (const [label, child, withRoots] of [["main, no session roots", false, false
       const got = gate(line, child, withRoots);
       assert.notEqual(got.result?.rule, "gate-error", name);
       assert.ok(!got.result?.allow, `${name}: not an allow`);
-      assert.deepEqual(got, want, name);
+      // was: decided like the unreadable line (nothing decided, danger null, an allow); now judge-first like nesting past the parser's limit
+      // judge-first shows as an ask result without session roots, as `danger` with them
+      assert.equal(got.result?.rule ?? (got.danger as { name?: string } | null)?.name, "danger-delete-unknown-target", name);
+      assert.ok(!got.result?.block, `${name}: asks, not refused`);
     }
   });
 }
