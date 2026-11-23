@@ -34,7 +34,8 @@ const gate = (command: string, role: Role) => {
 
 type X = "J" | "R" | "A";
 const check = (line: string, role: Role, want: X): void => {
-  const l = line.replaceAll("$WT", wt);
+  // forward slashes: bash reads a native `C:\Users\...` spliced into a line as escapes, `C:/Users/...` is the same folder on every OS
+  const l = line.replaceAll("$WT", wt.replaceAll("\\", "/"));
   const g = gate(l, role);
   const got = g.blocked ? "R" : g.danger ? "J" : "A";
   const ok = want === "J" ? got !== "A" : got === want;
