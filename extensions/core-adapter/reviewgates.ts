@@ -41,18 +41,24 @@ export function gatesRevise(g: ReviewGates, root: string | null, now?: number): 
   return { ...g, [root]: built(g[root] ? onRevision(g[root]) : { last: null, revised: true }) };
 }
 
+/** A builder run ended in `roots` (null = unknown: every entry): each existing entry's build time moves up to `now`, nothing else changes (D165). */
+export function gatesBuilt(g: ReviewGates, roots: readonly string[] | null, now: number): ReviewGates {
+  const stamp = (e: ReviewGate): ReviewGate => ({ ...e, builtAt: Math.max(e.builtAt ?? 0, now) });
+  return Object.fromEntries(Object.entries(g).map(([k, e]) => [k, roots === null || roots.includes(k) ? stamp(e) : e]));
+}
+
 /**
  * The gates the finish gate reads (D165): an open entry whose checkout no longer exists (`exists` false) is dropped when another, existing entry got a PASS
- * after everything that happened in it (`builtAt`, and the FAIL time when it failed). An entry without a time, the session-wide one and a standing one are never dropped.
+ * after everything that happened in it (`builtAt`, and the FAIL time when it failed). An entry without a time, the session-wide one, a standing one and one in `running` (a builder launched there has not ended) are never dropped.
  * `dropped` names each one with the entry whose PASS superseded it.
  */
-export function supersededGone(g: ReviewGates, exists: (dir: string) => boolean): { gates: ReviewGates; dropped: { dir: string; by: string }[] } {
+export function supersededGone(g: ReviewGates, exists: (dir: string) => boolean, running: ReadonlySet<string> = new Set()): { gates: ReviewGates; dropped: { dir: string; by: string }[] } {
   const gone = (k: string): boolean => k !== SESSION_WIDE && !exists(k);
   const gates: ReviewGates = {};
   const dropped: { dir: string; by: string }[] = [];
   for (const [k, e] of Object.entries(g)) {
     const at = e.builtAt === undefined ? undefined : Math.max(e.builtAt, e.failAt ?? 0);
-    const by = !gone(k) || stands(e) || at === undefined ? undefined : Object.entries(g).filter(([o, x]) => o !== k && !gone(o) && x.passAt !== undefined && x.passAt > at).sort(([, a], [, b]) => (b.passAt ?? 0) - (a.passAt ?? 0))[0];
+    const by = !gone(k) || running.has(k) || stands(e) || at === undefined ? undefined : Object.entries(g).filter(([o, x]) => o !== k && !gone(o) && x.passAt !== undefined && x.passAt > at).sort(([, a], [, b]) => (b.passAt ?? 0) - (a.passAt ?? 0))[0];
     if (by) dropped.push({ dir: k, by: by[0] });
     else gates[k] = e;
   }

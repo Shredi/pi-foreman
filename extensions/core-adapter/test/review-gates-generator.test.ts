@@ -1,14 +1,14 @@
-// Generator test for the review gates (skill: .agents/skills/verifying-review-gates). Seeded random sequences of build / PASS / FAIL / delete in up to three
+// Generator test for the review gates (skill: .agents/skills/verifying-review-gates). Seeded random sequences of build / builder launch / builder end / PASS / FAIL / delete in up to three
 // checkouts drive the real pure entry points (gatesRevise, gatesVerdict, supersededGone, combined, planLedgerCall) and a model written from the events alone
 // is the oracle. After every step:
 //   A. the finish verdict (combined of the gates that are not dropped) is a PASS iff every kept checkout stands (a PASS with no work since), and one exists;
-//      a gone checkout is dropped iff it is open and another existing checkout got a PASS after its last work and last FAIL (D165)
+//      a gone checkout is dropped iff it is open and another existing checkout got a PASS after its last work (a builder launch or end) and last FAIL, and no builder launched there is still running (D165)
 //   B. `mark V` is accepted iff a counted PASS exists in a kept checkout and no kept checkout's last review failed (later revisions do not reopen V)
 //   C. (dialog episodes of childblocked.ts: every order of a checkpoint answer and a session restart in one episode, with and without an answer older than
 //      the episode) the ended-episode words say "answered" only with an answer at or after the episode start, and a restart wins over any answer (D159). Env: FOREMAN_REVIEW_GEN_SEED (default 1), FOREMAN_REVIEW_GEN_SEEDS (a sweep of N seeds).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { combined, gatesRevise, gatesVerdict, supersededGone, type ReviewGates } from "../reviewgates.ts";
+import { combined, gatesBuilt, gatesRevise, gatesVerdict, supersededGone, type ReviewGates } from "../reviewgates.ts";
 import { planLedgerCall } from "../ledgercall.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -17,18 +17,20 @@ import { ChildBlocked } from "../childblocked.ts";
 import { liveDir } from "../livestate.ts";
 import { writeRegistry } from "../session.ts";
 
-export type Ev = { op: "build" | "pass" | "fail" | "delete"; k: number };
+export type Ev = { op: "build" | "launch" | "end" | "pass" | "fail" | "delete"; k: number };
 const KEYS = ["/w/c0", "/w/c1", "/w/c2"];
 
 /** The entry points under test; the self-test hands in broken ones. */
 export interface Impl {
   revise: typeof gatesRevise;
+  built: typeof gatesBuilt;
   verdict: typeof gatesVerdict;
   drop: typeof supersededGone;
   mark: (gate: ReturnType<typeof combined>) => boolean;
 }
 export const REAL: Impl = {
   revise: gatesRevise,
+  built: gatesBuilt,
   verdict: gatesVerdict,
   drop: supersededGone,
   mark: (gate) => !("error" in planLedgerCall({ action: "mark", items: ["V"] }, { gate })),
@@ -50,13 +52,21 @@ export function replay(events: readonly Ev[], impl: Impl): string | null {
   let gates: ReviewGates = {};
   const model = new Map<string, M>();
   const gone = new Set<string>();
+  const running = new Map<string, number>(); // builder runs launched and not ended, per checkout
   let now = 0;
   for (const [i, ev] of events.entries()) {
     const key = KEYS[ev.k];
     now += 1;
     if (ev.op === "delete") gone.add(key);
-    else if (gone.has(key)) continue; // nothing builds or is reviewed in a deleted checkout
-    else if (ev.op === "build") {
+    else if (ev.op === "end") {
+      if (!running.get(key)) continue; // an end needs a launch
+      running.set(key, running.get(key)! - 1);
+      gates = impl.built(gates, [key], now);
+      const m = model.get(key);
+      if (m) model.set(key, { ...m, builtAt: now }); // a builder ends also in a deleted checkout
+    } else if (gone.has(key)) continue; // nothing builds or is reviewed in a deleted checkout
+    else if (ev.op === "build" || ev.op === "launch") {
+      if (ev.op === "launch") running.set(key, (running.get(key) ?? 0) + 1);
       gates = impl.revise(gates, key, now);
       const m = model.get(key) ?? { last: null, revised: false, hasPass: false };
       model.set(key, { ...m, revised: m.last !== null || m.revised || !model.has(key) ? true : m.revised, builtAt: now });
@@ -70,13 +80,13 @@ export function replay(events: readonly Ev[], impl: Impl): string | null {
     const dropped = new Set<string>();
     for (const [k, m] of model) {
       const at = m.builtAt === undefined ? undefined : Math.max(m.builtAt, m.failAt ?? 0);
-      if (!gone.has(k) || stands(m) || at === undefined) continue;
+      if (!gone.has(k) || stands(m) || at === undefined || (running.get(k) ?? 0) > 0) continue;
       if ([...model].some(([o, x]) => o !== k && !gone.has(o) && x.passAt !== undefined && x.passAt > at)) dropped.add(k);
     }
     const kept = [...model].filter(([k]) => !dropped.has(k)).map(([, m]) => m);
     const wantFinish = kept.length > 0 && kept.every(stands);
     const wantV = kept.some((m) => m.hasPass) && !kept.some((m) => m.last === "fail");
-    const r = impl.drop(gates, (d) => !gone.has(d));
+    const r = impl.drop(gates, (d) => !gone.has(d), new Set([...running].filter(([, n]) => n > 0).map(([k]) => k)));
     const got = new Set(r.dropped.map((d) => d.dir));
     const where = `after step ${i + 1} (${ev.op} c${ev.k})`;
     if (got.size !== dropped.size || [...dropped].some((d) => !got.has(d))) return `${where}: dropped [${[...got].join(",")}], want [${[...dropped].join(",")}]`;
@@ -97,7 +107,7 @@ export function shrink(events: readonly Ev[], impl: Impl): Ev[] {
   return [...events];
 }
 
-const OPS: Ev["op"][] = ["build", "pass", "fail", "delete"];
+const OPS: Ev["op"][] = ["build", "pass", "fail", "delete", "launch", "end"];
 const show = (evs: readonly Ev[]): string => evs.map((e) => `${e.op} c${e.k}`).join("; ");
 
 /** Every sequence up to `depth` events over `checkouts` checkouts, then `samples` seeded sequences up to `len` events over three. */
@@ -148,8 +158,9 @@ test("self-check: the sequences reach each outcome (a dropped checkout, a finish
       now += 1;
       const key = KEYS[ev.k];
       if (ev.op === "delete") gone.add(key);
+      else if (ev.op === "end") gates = gatesBuilt(gates, [key], now);
       else if (gone.has(key)) continue;
-      else gates = ev.op === "build" ? gatesRevise(gates, key, now) : gatesVerdict(gates, [key], [ev.op], now, `run${now}`);
+      else gates = ev.op === "build" || ev.op === "launch" ? gatesRevise(gates, key, now) : gatesVerdict(gates, [key], [ev.op], now, `run${now}`);
       const r = supersededGone(gates, (d) => !gone.has(d));
       const c = combined(r.gates);
       dropped += r.dropped.length > 0 ? 1 : 0;
@@ -161,11 +172,13 @@ test("self-check: the sequences reach each outcome (a dropped checkout, a finish
   assert.ok(dropped > 0 && finish > 0 && accepted > 0 && refused > 0, JSON.stringify({ dropped, finish, accepted, refused }));
 });
 
-test("self-test: a drop rule that ignores the PASS time, one that never drops and a V rule that reads only the last verdict are each reported with a shrunk case", () => {
-  const ignoresTime: Impl = { ...REAL, drop: (g, exists) => supersededGone(Object.fromEntries(Object.entries(g).map(([k, e]) => [k, { ...e, passAt: Number.MAX_SAFE_INTEGER }])), exists) };
+test("self-test: a drop rule that ignores the PASS time, one that never drops, a V rule that reads only the last verdict, a build time not stamped at the builder end and a drop that ignores a running builder are each reported with a shrunk case", () => {
+  const ignoresTime: Impl = { ...REAL, drop: (g, exists, running) => supersededGone(Object.fromEntries(Object.entries(g).map(([k, e]) => [k, { ...e, passAt: Number.MAX_SAFE_INTEGER }])), exists, running) };
   const neverDrops: Impl = { ...REAL, drop: (g) => ({ gates: g, dropped: [] }) };
   const lastOnly: Impl = { ...REAL, mark: (gate) => gate.last === "pass" };
-  for (const broken of [ignoresTime, neverDrops, lastOnly]) {
+  const noEndStamp: Impl = { ...REAL, built: (g) => g }; // the unfixed code: the build time is only the launch time
+  const noRunning: Impl = { ...REAL, drop: (g, exists) => supersededGone(g, exists) }; // a running builder shields nothing
+  for (const broken of [ignoresTime, neverDrops, lastOnly, noEndStamp, noRunning]) {
     const found = failures(broken, 1, 4, 2, 200);
     assert.ok(found.length > 0 && /rerun: FOREMAN_REVIEW_GEN_SEED=1 /.test(found[0]));
     assert.ok(found[0].split("\n")[0].split("; ").length <= 5, found[0]);

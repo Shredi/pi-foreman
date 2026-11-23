@@ -46,7 +46,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { ReviewMemory } from "./reviewmemory.ts";
-import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, supersededGone, type ReviewGates } from "./reviewgates.ts";
+import { combined, gateOf, gatesBuilt, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, supersededGone, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -550,6 +550,8 @@ interface Session {
   builderRunsByRoot: Record<string, number>;
   /** Foreman only: the checkouts a builder run worked in, by run id (null = unknown); a resume of the run revises the same ones. Memory only. */
   builderRoots: Map<string, string[] | null>;
+  /** Builder runs launched and not yet ended, with their checkouts (null: unknown); a gone checkout of one is not superseded (D165). */
+  runningBuilders: Map<string, string[] | null>;
   /** Foreman only: the checkouts a reviewer launch covers, by tool call id until the launch result names the run (null = one is unknown). */
   reviewRootsByCall: Map<string, string[] | null>;
   /** Foreman only: the same by run id; the verdict at the run end is applied to these checkouts. Memory only. */
@@ -1257,6 +1259,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       passMarks: {},
       builderRunsByRoot: {},
       builderRoots: new Map(),
+      runningBuilders: new Map(),
       reviewRootsByCall: new Map(),
       reviewRoots: new Map(),
       touchUps: new Map(),
@@ -1573,7 +1576,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The gates the finish readers see (D165): a deleted checkout superseded by a later PASS elsewhere is left out (`supersededGone`); `ctx` gives each dropped checkout one visible line. */
   function liveGates(s: Session, ctx?: ExtensionContext): ReviewGates {
-    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync);
+    const running = new Set<string>();
+    for (const roots of s.runningBuilders.values()) for (const r of roots ?? Object.keys(s.reviewGates)) running.add(r);
+    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync, running);
     for (const d of dropped) {
       if (!ctx || s.droppedGone.has(d.dir)) continue;
       s.droppedGone.add(d.dir);
@@ -3665,6 +3670,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.live?.touch();
           // D27: a builder run that ends (any outcome) is work of the prompt it ends in, also when it was launched before that prompt
           if ((s.launchedRoles.get(runId) ?? []).includes("builder")) s.work.builders++;
+          // D165: the build time of its checkouts is the run end (the launch stamped an earlier one); a running builder no longer shields them
+          if (s.runningBuilders.has(runId)) {
+            s.reviewGates = gatesBuilt(s.reviewGates, s.runningBuilders.get(runId) ?? null, Date.now());
+            s.runningBuilders.delete(runId);
+            persistCeremonyState(s);
+          }
         }
         // a review run launched before a reload (restored route, no launched roles) that ends not completed: its record is ignored too (T7)
         if (typeof runId === "string" && !s.isChild && !s.launchedRoles.has(runId) && s.ledgerByRun.get(runId)?.review) {
@@ -6624,6 +6635,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               // the checkouts it worked in: a resume revises its target's (none recorded: unknown), a fresh run each entry's own dir
               const roots = actionOf(input) === "resume" ? (s.builderRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(builderDirs(ctx, input));
               capSet(s.builderRoots, runId, roots);
+              s.runningBuilders.set(runId, roots);
               // a touch-up candidate: one known checkout whose own PASS stands and no reviewer in the launch
               if (roots?.length === 1 && stands(s.reviewGates[roots[0]] ?? { last: null, revised: false }) && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.set(runId, roots[0]);
               reviseGates(s, roots, true);

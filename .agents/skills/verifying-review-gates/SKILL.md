@@ -7,7 +7,7 @@ description: "Checks that the finish verdict over the per-checkout review gates 
 
 ## Rule
 
-The finish gate passes only when every checkout with work has a standing PASS; a deleted checkout that is open is dropped only when another existing checkout got a PASS after its last work and last FAIL (D165). `mark V` is accepted only while a counted PASS exists and no checkout's last review failed; later revisions do not reopen V. (c) After a dialog episode of a child ends, the parent's words say "answered" only with a stored answer at or after the episode start, and a restart of the session wins over any answer (D159).
+The finish gate passes only when every checkout with work has a standing PASS; a deleted checkout that is open is dropped only when another existing checkout got a PASS after its last work (a builder launch or end) and last FAIL, and none is held by a builder launched there that has not ended (D165). `mark V` is accepted only while a counted PASS exists and no checkout's last review failed; later revisions do not reopen V. (c) After a dialog episode of a child ends, the parent's words say "answered" only with a stored answer at or after the episode start, and a restart of the session wins over any answer (D159).
 
 ## Harm
 
@@ -21,13 +21,14 @@ A seeded generator test on the pure entry points: the question is every order of
 
 - Files and functions: `extensions/core-adapter/reviewgates.ts` (`gatesRevise`, `gatesVerdict`, `supersededGone`, `combined`), `extensions/core-adapter/bound.ts` (`onReviewVerdicts`, `onRevision`), `extensions/core-adapter/ledgercall.ts` (`planLedgerCall`, the V rule), `extensions/core-adapter/childblocked.ts` (`ChildBlocked.tick`, the ended-episode words)
 - Check file: `extensions/core-adapter/test/review-gates-generator.test.ts`
-- Bounds and assumptions: every sequence of up to 4 events (build, PASS, FAIL, delete) over 2 checkouts (4680 sequences) plus 3000 seeded sequences of 2 to 12 events over 3 checkouts, checked after every step; default seed 1; one event per tick of a counter, so no two times tie. Rule c: every order of up to 3 answers and restarts inside one episode, with and without an older answer (30 scenarios), through the real `ChildBlocked` with a temp agent dir. About 0.2 s.
+- Bounds and assumptions: every sequence of up to 4 events (build, builder launch, builder end, PASS, FAIL, delete) over 2 checkouts (the sequence count is printed by the self-check; about 25000) plus 3000 seeded sequences of 2 to 12 events over 3 checkouts, checked after every step; default seed 1; one event per tick of a counter, so no two times tie. Rule c: every order of up to 3 answers and restarts inside one episode, with and without an older answer (30 scenarios), through the real `ChildBlocked` with a temp agent dir. About 0.2 s.
 - Last confirmed at: `c2574051096aec6dfb3984d728adf7dde46ee998`
 
 ## Left out
 
 - The finish assembly in `index.ts` (`liveGates` and its readers): covered by `review-gone-superseded.test.ts`.
 - The session-wide entry (key ""), a verdict with no verdict (`none`), a verdict over several roots, a high-stakes FAIL (`gatesMarkStood`) and `stoodAtFail`.
+- A builder whose end event never arrives (its checkout stays held until the session ends), a builder end with no recorded launch, a resumed builder's roots, and an unknown-checkout (null roots) end.
 - A deleted checkout that comes back, a checkout built or reviewed after its deletion, and any real git or file system.
 - Diff facts and the review records. Of `childblocked.ts` only the ended-episode words: not the reminders, the remote and hold wordings, `dismissed`, or the re-ask (`reAskOpenDialogs`).
 - No open gap marks: every failure is a finding.
