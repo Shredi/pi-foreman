@@ -120,8 +120,6 @@ export interface ShellParseOptions {
 }
 
 export const MAX_DEPTH = 4;
-/** Selects nested this deep (or deeper) in one text leave the line unread: judge-first. */
-const SELECT_NESTING = 16;
 
 /**
  * Whether a shell given these arguments (and no `-c` string) reads its program from stdin: it has no script operand, or `-s` says so. The options that take a value
@@ -252,8 +250,8 @@ interface Scope {
   /** The harness constants the script being walked reads as constants (set by `prepare`). */
   consts?: string[];
   depth: number;
-  /** How many selects the commands walked here sit inside: their bodies are walked in place, so the nesting is counted here (`SELECT_NESTING`). */
-  selects?: number;
+  /** The commands walked here sit inside a select body: the body is also kept as a text (`bodies`) that the floors read again one level deeper, so the bodies of what stands in it are left to that read. */
+  inSelect?: boolean;
   /** stdin comes from a pipe, a heredoc, a here-string or `<`. */
   stdin: boolean;
   redirects: ShellRedirect[];
@@ -505,6 +503,7 @@ function markUnknown(sc: Scope): void {
 /** Hangs the body texts on the segment just emitted (not enumerable: a segment's own keys stay as they were). */
 function withBodies(sc: Scope, bodies: string[]): void {
   const last = sc.run.out[sc.run.out.length - 1];
+  if (sc.inSelect) return;
   if (last && bodies.length > 0) {
     Object.defineProperty(last, "bodies", { value: bodies, enumerable: false });
     // the constants stand only while the line has not rebound them by this unit
@@ -664,8 +663,7 @@ function walkNode(n: any, sc: Scope): string | null {
     default: {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
-      // a select body is walked below, as real commands of this text: it is read once, not again as a body text
-      if (n.type !== "Select") withBodies(sc, nodeBodies(n, sc.src ?? ""));
+      withBodies(sc, nodeBodies(n, sc.src ?? ""));
       // the substitutions inside a `[[ ]]` test and a select's word list and body run: they are real segments next to the opaque one (which still keeps any allow off the line)
       if (n.type === "TestCommand") {
         const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
@@ -673,10 +671,7 @@ function walkNode(n: any, sc: Scope): string | null {
         walkSubs(acc.subs, sc);
       } else if (n.type === "Select") {
         walkWords(n.wordlist, sc);
-        // nesting past the cap is judge-first, as when each body was read as a text one level deeper
-        const nested = (sc.selects ?? 0) + 1;
-        if (nested >= SELECT_NESTING) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
-        walkLists([n.body], { ...sc, selects: nested });
+        walkLists([n.body], { ...sc, inSelect: true });
       }
       return sc.cwd;
     }

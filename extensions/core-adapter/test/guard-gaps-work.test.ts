@@ -332,8 +332,8 @@ test("item 12: 17+ levels with a called function at each level are never no deci
   }
 });
 
-// Review 827351a0: a select body is read once; nesting it deep with many commands a level stays within a count, not a clock.
-test("item 12: nested selects read each body once (work bound) and past the cap are judge-first", () => {
+// Review 827351a0: nesting selects deep with many commands a level stays within a count, not a clock (the floors re-read a select body as text, as on main).
+test("item 12: nested selects stay within a segment count (work bound) and past the cap are judge-first", () => {
   const sel = (d: number, per: number, words = "a b"): string => {
     let n = "ls";
     for (let i = 0; i < d; i++) n = `select s${i} in ${words}; do ${rep("ls", per - 1, "; ")}${per > 1 ? "; " : ""}${n}; done`;
@@ -341,13 +341,60 @@ test("item 12: nested selects read each body once (work bound) and past the cap 
   };
   const line = sel(250, 20);
   const segs = parseShell(line, { cwd: wt });
-  // every command of the text is walked once: 250 selects × 20 commands, plus the selects' own segments
+  // every command of the text is walked once in place: 250 selects × 20 commands, plus the selects' own segments
   assert.ok(segs.length <= 250 * 21 + 10, `segments walked: ${segs.length}`);
-  assert.equal(segs.filter((s) => s.bodies !== undefined).length, 0, "a select body is not kept to be parsed again");
   for (const role of ["main", "builder"] as const) {
     for (const l of [line, sel(150, 1), sel(100, 20), sel(250, 1, "$(ls)"), sel(17, 1), sel(30, 1)]) check(l, role, "J");
     // plain and shallow selects stay as they were
     check("select a in x y; do ls; done", role, "A");
     check(sel(3, 2), role, "A");
+  }
+});
+
+// Review adcac999: a select body is a body the floors re-read as text, as on main; alternating it with other bodies cannot reset the depth count.
+const ALT: Record<string, (i: number, n: string) => string> = {
+  coproc: (i, n) => `coproc C${i} { ${n}; }`,
+  arith: (i, n) => `for ((i${i}=0;i${i}<1;i${i}++)); do ${n}; done`,
+  func: (i, n) => `f${i}(){ ${n}; }`,
+};
+const selAlt = (kind: string, d: number, c: string): string => {
+  let n = c;
+  for (let i = 0; i < d; i++) n = i % 2 === 0 ? `select s${i} in a b; do ${n}; done` : ALT[kind](i, n);
+  return n;
+};
+
+test("item 12: select alternated with coproc, for(( )) and uncalled functions 17/18/30 deep is never no decision", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const kind of Object.keys(ALT)) {
+      for (const d of [17, 18, 30]) {
+        for (const c of ["cat ~/.ssh/id_rsa", "cat ~/.aws/credentials", "git reset --hard", "touch /outside/x", "cp ~/.ssh/id_rsa x"]) {
+          if (role === "main" && c.startsWith("touch")) continue;
+          const g = gate(selAlt(kind, d, c), role);
+          assert.ok(g.blocked || g.danger !== null, `${role} ${kind} ${d}: ${c}: no decision`);
+        }
+      }
+    }
+  }
+});
+
+test("item 12: PowerShell removers in a select body are refused as on main", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const t of ["/etc", "C:/Windows", "$X", "/outside/d"]) {
+      for (const r of ["Remove-Item -Recurse", "ri -Recurse"]) {
+        const g = gate(`select s in a; do ${r} ${t}; done`, role);
+        assert.ok(g.blocked || g.danger !== null, `${role}: ${r} ${t}: no decision`);
+      }
+    }
+    check("select s in a; do Remove-Item -Recurse /etc; done", role, "R");
+  }
+});
+
+test("item 12: a select in $( ) nested 5 and 16 deep with rm -rf /etc is refused or judge-first as on main", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const d of [5, 16]) {
+      let n = "select s in a; do rm -rf /etc; done";
+      for (let i = 0; i < d; i++) n = `echo $(${n})`;
+      check(n, role, "J");
+    }
   }
 });
