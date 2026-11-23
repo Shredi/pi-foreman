@@ -307,28 +307,9 @@ export interface Gap {
  * One id may cover several shapes (the same gap seen through several constructs); a closed shape is reported by id and shape.
  */
 export const KNOWN_GAPS: readonly Gap[] = [
-  { id: "dbracket", shape: ["dbracket"], source: "guard-gaps list: \"`[[ … ]]` and `select` word lists are not walked: `[[ -n $(rm -rf ~/x) ]]` runs the command substitution unseen.\"" },
-  { id: "select-list", shape: ["select"], source: "guard-gaps list: \"`[[ … ]]` and `select` word lists are not walked: `[[ -n $(rm -rf ~/x) ]]` runs the command substitution unseen.\"" },
-  { id: "sourced-stream", shape: ["dot-procsub"], source: "guard-gaps list: \"Sourced streams: `. <(…)`, `source <(curl …)`.\"" },
-  { id: "sourced-stream", shape: ["source-procsub"], source: "guard-gaps list: \"Sourced streams: `. <(…)`, `source <(curl …)`.\"" },
-  { id: "sourced-stream", shape: ["source-stdin"], source: "#347 follow-up list: \"trap, `compgen -C`, `readarray -C`; sourced streams (`. <(…)`, `source /dev/stdin`); aliases; function bodies (defined before a rebind, called after).\"" },
-  { id: "alias", shape: ["alias"], source: "guard-gaps list: \"Aliases (`alias x='rm -rf ~'; x` within one line / after `shopt -s expand_aliases`).\"" },
-  { id: "alias", shape: ["alias-shopt"], source: "guard-gaps list: \"Aliases (`alias x='rm -rf ~'; x` within one line / after `shopt -s expand_aliases`).\"" },
-  { id: "function-rebind", shape: ["rebind"], source: "guard-gaps list: \"Function bodies after a rebind (a function redefined later in the line; the body actually run is the last one).\"" },
-  { id: "function-body", shape: ["function"], source: "new, found by the generator" },
-  { id: "eval-arith", shape: ["eval", "arith"], source: "new, found by the generator" },
   { id: "xargs", shape: ["xargs-sh"], payloads: ["git-outside"], source: "guard-gaps list: \"`xargs sh -c …` and `xargs -I{} {}` (program word comes from input).\"" },
-  { id: "xargs", shape: ["xargs-I"], source: "guard-gaps list: \"`xargs sh -c …` and `xargs -I{} {}` (program word comes from input).\"" },
   { id: "find-exec", shape: ["find-exec"], source: "#347 follow-up list: \"`find -exec sh -c`, `npx sh -c`; `xargs -I{} {}`, `xargs sh -c`; toybox looser than busybox.\"" },
   { id: "npx", shape: ["npx"], source: "#347 follow-up list: \"`find -exec sh -c`, `npx sh -c`; `xargs -I{} {}`, `xargs sh -c`; toybox looser than busybox.\"" },
-  { id: "unknown-runner", shape: ["caffeinate"], source: "guard-gaps list: \"Unknown runners that exec their arguments (`caffeinate`, `taskset`, `strace`, and similar): judge-first via the unknown-program rule, check they are not on an allow path.\"" },
-  { id: "unknown-runner", shape: ["taskset"], source: "guard-gaps list: \"Unknown runners that exec their arguments (`caffeinate`, `taskset`, `strace`, and similar): judge-first via the unknown-program rule, check they are not on an allow path.\"" },
-  { id: "unknown-runner", shape: ["strace"], source: "guard-gaps list: \"Unknown runners that exec their arguments (`caffeinate`, `taskset`, `strace`, and similar): judge-first via the unknown-program rule, check they are not on an allow path.\"" },
-  { id: "toybox", shape: ["toybox"], source: "guard-gaps list: \"toybox vs busybox multiplexer handling.\"" },
-  { id: "env-git", shape: ["env"], payloads: ["git-outside", "rebase-push"], source: "guard-gaps list: \"`env X=1 git …` drops the git write checks for children.\"" },
-  { id: "env-git", shape: ["assign"], payloads: ["git-outside", "rebase-push"], source: "guard-gaps list: \"`env X=1 git …` drops the git write checks for children.\"" },
-  { id: "rebound-folder", shape: ["rebound-cd"], source: "guard-gaps list: \"A script run from a rebound folder (cd/pushd/variable folder then `./x.sh`).\"" },
-  { id: "rebound-folder", shape: ["rebound-pushd"], source: "guard-gaps list: \"A script run from a rebound folder (cd/pushd/variable folder then `./x.sh`).\"" },
   { id: "rebound-scratch", shape: ["rebound-scratch"], source: "#347 follow-up list: \"`SHELLOPTS`/`PS4`; nameref, `${!x:=v}`, `wait -p`; `python3 $FOREMAN_SCRATCH/s.py` after a rebind.\"" },
   { id: "trap", shape: ["trap"], source: "#347 follow-up list: \"trap, `compgen -C`, `readarray -C`; sourced streams (`. <(…)`, `source /dev/stdin`); aliases; function bodies (defined before a rebind, called after).\"" },
   { id: "compgen", shape: ["compgen"], source: "#347 follow-up list: \"trap, `compgen -C`, `readarray -C`; sourced streams (`. <(…)`, `source /dev/stdin`); aliases; function bodies (defined before a rebind, called after).\"" },
@@ -515,7 +496,7 @@ export const letterOf = (c: Cls): string => Object.entries(LETTER).find(([, v]) 
  * Pinned class of each construct's harmless twins today (measured), one letter per HARMLESS payload (echo-hi, ls, git-status): s silent, j judge, a ask, b block.
  * A twin that gets stricter than its pin fails the twin property. When a change makes one stricter on purpose, its owner edits the pin here and says why in the change;
  * a twin that gets looser is no failure of this property (the danger property guards that side), but the pin should then be loosened too.
- * Judged on purpose today: arith (arithmetic on an unproven value), basefunc (a BASH_FUNC env function), indirect and nameref (computed program names).
+ * Judged on purpose today: sourced streams (dot-procsub, source-procsub, source-stdin), xargs-I (program word from input), alias and alias-shopt (guard-gaps rules), arith (arithmetic on an unproven value), basefunc (a BASH_FUNC env function), indirect and nameref (computed program names).
  * The reviewer's round worktree is read-only: it refuses `find -exec`, even a harmless one.
  */
 export const TWIN_PINS: Record<Role, Record<string, string>> = {
@@ -523,13 +504,13 @@ export const TWIN_PINS: Record<Role, Record<string, string>> = {
     cmdsub: "sss", backtick: "sss", dbracket: "sss", arith: "jjj",
     select: "sss", for: "sss", case: "sss", "if-cond": "sss",
     "while-cond": "sss", herestring: "sss", heredoc: "sss", procsub: "sss",
-    "dot-procsub": "sss", "source-procsub": "sss", "source-stdin": "sss", eval: "sss",
+    "dot-procsub": "jjj", "source-procsub": "jjj", "source-stdin": "jjj", eval: "sss",
     "sh-c": "sss", "bash-c": "sss", busybox: "sss", toybox: "sss",
-    "xargs-sh": "sss", "xargs-I": "sss", "find-exec": "sss", npx: "sss",
+    "xargs-sh": "sss", "xargs-I": "jjj", "find-exec": "sss", npx: "sss",
     trap: "sss", compgen: "sss", readarray: "sss", "trace-prompt": "sss",
     basefunc: "jjj", env: "sss", assign: "sss", nice: "sss",
     timeout: "sss", caffeinate: "sss", taskset: "sss", strace: "sss",
-    function: "sss", rebind: "sss", alias: "sss", "alias-shopt": "sss",
+    function: "sss", rebind: "sss", alias: "jjj", "alias-shopt": "jjj",
     indirect: "jjj", nameref: "jjj", "cd-var": "sss", redirect: "sss",
     pipe: "sss", and: "sss", or: "sss", semi: "sss",
     bg: "sss", negate: "sss", subshell: "sss", brace: "sss",
@@ -538,13 +519,13 @@ export const TWIN_PINS: Record<Role, Record<string, string>> = {
     cmdsub: "sss", backtick: "sss", dbracket: "sss", arith: "jjj",
     select: "sss", for: "sss", case: "sss", "if-cond": "sss",
     "while-cond": "sss", herestring: "sss", heredoc: "sss", procsub: "sss",
-    "dot-procsub": "sss", "source-procsub": "sss", "source-stdin": "sss", eval: "sss",
+    "dot-procsub": "jjj", "source-procsub": "jjj", "source-stdin": "jjj", eval: "sss",
     "sh-c": "sss", "bash-c": "sss", busybox: "sss", toybox: "sss",
-    "xargs-sh": "sss", "xargs-I": "sss", "find-exec": "bbb", npx: "sss",
+    "xargs-sh": "sss", "xargs-I": "jjj", "find-exec": "bbb", npx: "sss",
     trap: "sss", compgen: "sss", readarray: "sss", "trace-prompt": "sss",
     basefunc: "jjj", env: "sss", assign: "sss", nice: "sss",
     timeout: "sss", caffeinate: "sss", taskset: "sss", strace: "sss",
-    function: "sss", rebind: "sss", alias: "sss", "alias-shopt": "sss",
+    function: "sss", rebind: "sss", alias: "jjj", "alias-shopt": "jjj",
     indirect: "jjj", nameref: "jjj", "cd-var": "sss", redirect: "sss",
     pipe: "sss", and: "sss", or: "sss", semi: "sss",
     bg: "sss", negate: "sss", subshell: "sss", brace: "sss",
