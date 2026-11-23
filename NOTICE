@@ -41,6 +41,9 @@ The bundled copy is a temporary fork (https://github.com/Shredi/rpiv-ask-user-qu
 (the question dialog reports the session as blocked); the pin returns to the npm package when upstream
 releases the fix.
 
+The idea for skills/creating-verify-skills comes from the pstack skills create-formal-verification-skill and
+statechart (MIT License, Copyright (c) 2026 Lauren Tan, github.com/cursor/plugins, folder pstack); no text was taken.
+
 The ledger and gate rules in instructions/foreman.md are partly derived from the
 instruction text of that core, and are released under the same MIT License.
 
