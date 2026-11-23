@@ -266,7 +266,7 @@ import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaun
 import { closeLines } from "./reviewrounds.ts";
 import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, buildDirtyBase, CEREMONY_ENTRY, DIRTY_BASE_ENTRY, restoreDirtyBase, emptyCeremonyState, latestCeremonyState, persistedGate, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
+import { buildCeremonyState, buildDirtyBase, CEREMONY_ENTRY, DIRTY_BASE_ENTRY, restoreDirtyBase, emptyCeremonyState, latestCeremonyState, persistedGate, RUNNING_BUILDERS_CAP, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PLAN_SAME_BATCH_LINE, PlanReviews, claimsHintLine, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -1493,7 +1493,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhaseOrigin: s.planPhaseOrigin,
       reviews: s.reviews,
       loopStop: s.loopStop,
-      gate: persistedGate({ ...s.steps }, s.reviewGates, s.passMarks),
+      gate: persistedGate({ ...s.steps }, s.reviewGates, s.passMarks, s.runningBuilders),
       sentBack: s.sentBack,
       sentBackHeads: s.sentBackHeads,
       reworkSeen: s.reworkSeen,
@@ -1926,6 +1926,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const old: ReviewGates = e.gate.reviewGate.last === null && !e.gate.reviewGate.revised ? {} : { [SESSION_WIDE]: e.gate.reviewGate };
       s.reviewGates = e.gate.reviewGates ? { ...e.gate.reviewGates } : old;
       s.passMarks = e.gate.reviewGates ? { ...e.gate.passMarks } : e.gate.passMark ? { [SESSION_WIDE]: e.gate.passMark } : {};
+      s.runningBuilders = new Map(Object.entries(e.gate.runningBuilders ?? {}));
       s.passSnaps = {};
       for (const [k, m] of Object.entries(s.passMarks)) {
         if (m.tree) s.passSnaps[k] = { cwd: m.cwd, tree: m.tree };
@@ -6635,7 +6636,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               // the checkouts it worked in: a resume revises its target's (none recorded: unknown), a fresh run each entry's own dir
               const roots = actionOf(input) === "resume" ? (s.builderRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(builderDirs(ctx, input));
               capSet(s.builderRoots, runId, roots);
-              s.runningBuilders.set(runId, roots);
+              capSet(s.runningBuilders, runId, roots, RUNNING_BUILDERS_CAP);
               // a touch-up candidate: one known checkout whose own PASS stands and no reviewer in the launch
               if (roots?.length === 1 && stands(s.reviewGates[roots[0]] ?? { last: null, revised: false }) && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.set(runId, roots[0]);
               reviseGates(s, roots, true);

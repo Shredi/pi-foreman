@@ -29,6 +29,7 @@ A seeded generator test on the pure entry points: the question is every order of
 - The finish assembly in `index.ts` (`liveGates` and its readers): covered by `review-gone-superseded.test.ts`.
 - The session-wide entry (key ""), a verdict with no verdict (`none`), a verdict over several roots, a high-stakes FAIL (`gatesMarkStood`) and `stoodAtFail`.
 - A builder whose end event never arrives (its checkout stays held until the session ends), a builder end with no recorded launch, a resumed builder's roots, and an unknown-checkout (null roots) end.
+- A reload (the running builders and gate times persisted through it): covered by `review-gone-running-reload.test.ts`.
 - A deleted checkout that comes back, a checkout built or reviewed after its deletion, and any real git or file system.
 - Diff facts and the review records. Of `childblocked.ts` only the ended-episode words: not the reminders, the remote and hold wordings, `dismissed`, or the re-ask (`reAskOpenDialogs`).
 - No open gap marks: every failure is a finding.

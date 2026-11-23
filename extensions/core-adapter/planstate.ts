@@ -61,13 +61,19 @@ export interface PersistedGate {
   passMark: (PassMark & { cwd: string }) | null;
   reviewGates?: ReviewGates;
   passMarks?: Record<string, PassMark & { cwd: string }>;
+  /** Builder runs still open (run id -> the checkouts it works in, null: unknown): they survive a reload, so a running builder keeps shielding its checkout and its end still stamps the build time. */
+  runningBuilders?: Record<string, string[] | null>;
 }
 
+/** The newest runs kept in the persisted running-builders map; an older entry is dropped (a stale entry only blocks, so a drop is the lesser harm than an unbounded entry). */
+export const RUNNING_BUILDERS_CAP = 64;
+
 /** The persisted gate of the session's per-checkout state. */
-export function persistedGate(steps: StepCounts, reviewGates: ReviewGates, passMarks: Record<string, PassMark & { cwd: string }>): PersistedGate {
+export function persistedGate(steps: StepCounts, reviewGates: ReviewGates, passMarks: Record<string, PassMark & { cwd: string }>, runningBuilders?: ReadonlyMap<string, string[] | null>): PersistedGate {
   const marks = Object.values(passMarks);
   const newest = marks.reduce<(PassMark & { cwd: string }) | null>((best, m) => (!best || m.at >= best.at ? m : best), null);
-  return { steps, reviewGate: combined(reviewGates), passMark: newest, reviewGates, passMarks };
+  const running = runningBuilders && runningBuilders.size ? { runningBuilders: Object.fromEntries([...runningBuilders].slice(-RUNNING_BUILDERS_CAP)) } : {};
+  return { steps, reviewGate: combined(reviewGates), passMark: newest, reviewGates, passMarks, ...running };
 }
 
 /** The foreman's work in a session: builder launches or builder run ends, and project-file edits through its tools (index.ts Session.work). */
@@ -279,7 +285,19 @@ function gateOfEntry(v: unknown): PersistedGate | null {
   if (!reviewGate) return null;
   const out: PersistedGate = { steps: { builder, reviewer }, reviewGate, passMark: markOf(g.passMark) };
   const maps = mapsOf(g.reviewGates, g.passMarks);
-  return maps ? { ...out, ...maps } : out;
+  const running = runningOf(g.runningBuilders);
+  return { ...out, ...maps, ...(running ? { runningBuilders: running } : {}) };
+}
+
+/** The persisted running builders, malformed entries dropped (null: none usable). */
+function runningOf(v: unknown): Record<string, string[] | null> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: Record<string, string[] | null> = {};
+  for (const [k, roots] of Object.entries(v).slice(-RUNNING_BUILDERS_CAP)) {
+    if (roots === null) out[k] = null;
+    else if (Array.isArray(roots) && roots.every((r) => typeof r === "string")) out[k] = roots as string[];
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** One review gate, shape-checked; null when anything is off. */
