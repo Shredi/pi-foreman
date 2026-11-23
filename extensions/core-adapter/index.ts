@@ -201,6 +201,8 @@ import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, 
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
+import { keepControlInboxes } from "./inboxkeep.ts";
+import { STOP_GATE_TYPE, stopGateRenderer } from "./stopgaterender.ts";
 import { blockedConfirmOn, cleanLabel, installBlockedShim, withBlockedOn } from "./herdr.ts";
 import type { BlockClass, DialogOutcome } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -678,6 +680,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const bgEnv = deps.env ?? process.env;
   applyBgAddonDefaults(bgEnv);
   const bgShell = platform === "win32" ? resolveBgShell({ platform, env: bgEnv, getShellConfig: deps.getShellConfig ?? piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) }) : { set: false, noBash: false };
+  pi.registerMessageRenderer?.(STOP_GATE_TYPE, stopGateRenderer as never); // plain text: markdown would eat the backslash of a Windows path
   // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
@@ -6562,6 +6565,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (earlier && !s.reviewRuns.byRun.has(runId)) capSet(s.reviewRuns.byRun, runId, earlier.bind ? earlier : { ...earlier, panel: null });
         }
         trackActive(s.activeRuns, event.input, event.details, event.isError);
+        {
+          const dir = event.details && typeof event.details === "object" ? (event.details as { asyncDir?: unknown }).asyncDir : undefined;
+          if (!event.isError && typeof dir === "string" && dir) {
+            const failed = keepControlInboxes(dir); // an empty inbox folder in the temp root can be deleted by the OS during the run
+            if (failed) s.trace?.emit({ event: "inbox_keep_failed", error: failed });
+          }
+        }
         if (!s.isChild) {
           // Budgets restart only for a launch that started (a run id came back), not a refused one.
           if (runId) {
@@ -6763,7 +6773,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owes) s.trace?.emit({ event: "stop_hold", guard: "review_verdict", decision: "continue" });
     const reason = [r.hold ? (r.reason ?? "") : "", owes ? VERDICT_REMINDER : ""].filter(Boolean).join("\n\n");
     return {
-      entries: [...event.entries, { type: "custom_message" as const, customType: "pi-foreman-stop-gate", content: reason, display: true }],
+      entries: [...event.entries, { type: "custom_message" as const, customType: STOP_GATE_TYPE, content: reason, display: true }],
       continue: true,
     };
   });

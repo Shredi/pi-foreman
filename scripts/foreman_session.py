@@ -8,7 +8,7 @@
     python scripts/foreman_session.py open <label> <brief-file> --worktree [--base REF] [--cwd DIR] [...]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
-    python scripts/foreman_session.py prune [--dry-run] [--agent-dir D]
+    python scripts/foreman_session.py prune [--dry-run] [--all] [--parent-id ID] [--agent-dir D]
     python scripts/foreman_session.py restart <label|child id|label@machine> [--json] [--dry-run] [--agent-dir D]
     python scripts/foreman_session.py remote probe|open|deliver|close|restart --json   (the remote side; JSON on stdin)
     python scripts/foreman_session.py remote notice <plan|result|update|ask|closed> [file] [--close ready|open]
@@ -35,7 +35,7 @@ refuses, it prints the manual message and exits 1; it never falls back to Herdr.
 `prune [--dry-run]` marks `closed` (note `pruned: process and terminal gone`) each local `open`/`closing` entry whose
 process is gone (no live file with a running pid or fresh heartbeat) AND whose hc terminal / Herdr pane is provably not
 listed; an unreadable listing, a remote entry or an entry without a terminal record is never touched. `--dry-run`
-writes nothing. One line per entry, then the count. The entry gets `closedBy: "prune"` (a crashed child may be restarted).
+writes nothing. Inside a session (id from --parent-id, PI_INTERCOM_SESSION_ID or PI_INTERCOM_STABLE_ID) only entries that session opened are touched; others are named as skipped, `--all` includes them. One line per entry, then the count. The entry gets `closedBy: "prune"` (a crashed child may be restarted).
 
 `reap` is the closed-child part of `list` and `prune` on its own: for each `closed` local entry it ends and removes the kept hc
 terminal (only one that still has the child's name; a live one is killed after a minute), then, unless `prune` closed the
@@ -282,6 +282,26 @@ def opener_id(given, adir, env=None):
     (the order livestate.ts intercomIdOf and session.ts openerIntercomId use, so the parent's live key matches)."""
     env = os.environ if env is None else env
     return given or env.get(ENV_PUBLISHED, "").strip() or env.get(ENV_STABLE, "").strip() or parent_from_config(adir)
+
+
+def own_session_id(given, env=None):
+    """The id `prune` scopes by: --parent-id, PI_INTERCOM_SESSION_ID, PI_INTERCOM_STABLE_ID; None outside a session. No `stableId`
+    file fallback: a plain shell must keep acting on every entry."""
+    env = os.environ if env is None else env
+    return given or env.get(ENV_PUBLISHED, "").strip() or env.get(ENV_STABLE, "").strip() or None
+
+
+def foreign_entry(entry, owner):
+    """True when `owner` is known and the entry was not opened by it (another `parent`, or none recorded)."""
+    return owner is not None and entry.get("parent") != owner
+
+
+SKIPPED_NOTE = "(opened by another session; --all includes it)"
+
+
+def print_skipped(skipped, out=None):
+    for s in skipped.values():
+        print("skipped %s  %s  %s" % (s.get("label"), s.get("child"), SKIPPED_NOTE), file=out or sys.stdout)
 
 
 # `%(to_parent)s` and `%(no_human)s` are filled by `plan_first_notes`: a local child asks its parent in a message, a remote one by file.
@@ -2317,7 +2337,7 @@ def cmd_machine_setup(a):
         print("remote changes on %s (its own `setup --dry-run`, nothing is written there):" % a.name)
         sys.stdout.flush()
         return subprocess.call(cmd + ["--dry-run"])
-    # stdout streams live; stderr goes through a pipe that a reader thread copies to ours line by line while hc runs, and keeps for the timeout check
+    # stderr goes through a pipe that a reader thread copies to ours line by line and keeps for the timeout check; `hc exec` itself hands over the remote's stdout and stderr only when the remote command ends, so nothing shows before that
     read_fd, write_fd = os.pipe()
     chunks = []
 
@@ -2533,7 +2553,8 @@ def cmd_close_remote(a):
     if result in ("removed", "gone"):
         mark_entry(adir, entry, reaped=True)
     if result == "live":
-        sys.stderr.write("pi-foreman session: remote terminal still running; prune will remove it\n")
+        sys.stderr.write("pi-foreman session: remote terminal still running; the opening session's watcher removes it while that "
+                         "session runs, when the child reports closed; otherwise foreman session prune once it has finished\n")
     elif result == "unknown":
         sys.stderr.write("pi-foreman session: remote terminal could not be removed (hc get/rm failed); "
                          "prune or close-remote --force retries\n")
@@ -2662,15 +2683,24 @@ def herdr_pane_ids():
 
 
 def cmd_prune(a):
-    """`prune [--dry-run]`: mark `closed` the open/closing entries whose process and terminal are provably gone."""
+    """`prune [--dry-run] [--all]`: mark `closed` the open/closing entries whose process and terminal are provably gone. Inside
+    a session (its id known) only the entries that session opened, unless `--all`."""
     adir = agent_dir(a.agent_dir)
+    owner = None if getattr(a, "all", False) else own_session_id(getattr(a, "parent_id", None))
+    skipped = {}
     reg = read_registry(adir)
     live = read_live_files(adir)
     now = time.time()
     hc_addr = herdr_ids = None
     if any(isinstance(s, dict) and s.get("status") in ("open", "closing") and not s.get("machine") for s in reg["sessions"]):
         hc_addr, herdr_ids = hc_terminal_addresses(), herdr_pane_ids()
-    gone = [s for s in reg["sessions"] if isinstance(s, dict) and entry_gone(s, live, now, hc_addr, herdr_ids)]
+    gone = []
+    for s in reg["sessions"]:
+        if isinstance(s, dict) and entry_gone(s, live, now, hc_addr, herdr_ids):
+            if foreign_entry(s, owner):
+                skipped[s.get("child")] = s
+            else:
+                gone.append(s)
     marked = []
     if gone and not a.dry_run:
         # the probes above were slow: re-read under the lock and mark only an entry still as it was probed (a restart that
@@ -2690,8 +2720,9 @@ def cmd_prune(a):
         print("%s%s  %s  %s" % ("would prune " if a.dry_run else "pruned ", s.get("label"), s.get("child"), s.get("status")))
     print("%d %s" % (len(marked), "would be pruned" if a.dry_run else "pruned"))
     if not a.dry_run:
-        prune_remote_terminals(adir)
+        prune_remote_terminals(adir, owner=owner, skipped=skipped)
         reap_local_closed(adir)
+    print_skipped(skipped)
     return 0
 
 
@@ -2790,7 +2821,7 @@ def shares_address(entry, sessions):
                for o in sessions)
 
 
-def settle_close_attempts(adir, out, explicit=False):
+def settle_close_attempts(adir, out, explicit=False, owner=None, skipped=None):
     """The pass: every machine entry in `closing`, `open` or `pending` whose close attempt has expired, and (not for an
     `explicit` run, `prune`, which has its own loop for them) every `closed` entry whose terminal is not yet `reaped` or left
     alone, gets one read of its recorded remote terminal, within one total limit. Finished or gone: an expired attempt is
@@ -2801,7 +2832,8 @@ def settle_close_attempts(adir, out, explicit=False):
     leftover whose label has another number: nothing on the other machine is touched; an expired attempt clears its tried
     time (a `closing` entry is `open` again, an `open` one gets the expiry mark), a leftover gets `leftAloneAt`. A failed
     read, removal or kill records `passRetryAt` on the entry, and on the entries of that machine skipped after a failed read;
-    the list pass (not an `explicit` run) skips an entry while it is paused. Lines go to `out`.
+    the list pass (not an `explicit` run) skips an entry while it is paused. Lines go to `out`. With an `owner`, an entry
+    another session opened is left out (and noted in `skipped`, a dict by child id).
     Returns (the children it took, the labels it could not handle)."""
     now = time.time()
     everything = [s for s in read_registry(adir)["sessions"] if isinstance(s, dict)]
@@ -2810,6 +2842,11 @@ def settle_close_attempts(adir, out, explicit=False):
     if not explicit:
         todo += [s for s in machine_entries if s.get("status") == "closed" and not s.get("reaped") and isinstance(s.get("hc"), dict)
                  and entry_terminal_address(s) is not None and number_of(s.get("leftAloneAt")) is None]
+    if owner is not None:
+        for s in todo:
+            if foreign_entry(s, owner) and skipped is not None:
+                skipped[s.get("child")] = s
+        todo = [s for s in todo if not foreign_entry(s, owner)]
     taken, failed, down = set(), [], set()
     if not todo:
         return taken, failed
@@ -2906,16 +2943,21 @@ def warn_unremoved(failed):
                          "prune or close-remote --force retries\n" % ", ".join(failed))
 
 
-def prune_remote_terminals(adir, out=None):
+def prune_remote_terminals(adir, out=None, owner=None, skipped=None):
     """Machine entries in `closing`, or `closed` with a terminal not yet reaped: remove the finished remote terminal
     (`not_found` counts) and mark a `closing` entry `closed`. A terminal that still runs is left alone. The pass for
-    expired close attempts runs first; the entries it took are not read again."""
+    expired close attempts runs first; the entries it took are not read again. With an `owner`, entries another session
+    opened are left alone and noted in `skipped`."""
     out = out or sys.stdout
-    taken, failed = settle_close_attempts(adir, out, explicit=True)  # closed leftovers stay with the loop below: no pause, no `leftAloneAt`
+    taken, failed = settle_close_attempts(adir, out, explicit=True, owner=owner, skipped=skipped)  # closed leftovers stay with the loop below: no pause, no `leftAloneAt`
     for s in read_registry(adir)["sessions"]:
         if not isinstance(s, dict) or not s.get("machine") or s.get("reaped") or s.get("child") in taken:
             continue
         if s.get("status") not in ("closing", "closed") or not isinstance(s.get("hc"), dict):
+            continue
+        if foreign_entry(s, owner):
+            if skipped is not None:
+                skipped[s.get("child")] = s
             continue
         result = reap_remote_terminal(s)
         if result in ("removed", "gone"):
@@ -3632,6 +3674,8 @@ def main(argv=None):
     ls.add_argument("--agent-dir", dest="agent_dir_sub")
     pr = sub.add_parser("prune")
     pr.add_argument("--dry-run", action="store_true")
+    pr.add_argument("--all", action="store_true", help="also entries opened by other sessions (inside a session, prune keeps to its own)")
+    pr.add_argument("--parent-id", dest="parent_id")
     pr.add_argument("--agent-dir", dest="agent_dir_sub")
     try:
         a = p.parse_args(argv)

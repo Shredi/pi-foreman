@@ -141,7 +141,7 @@ class CloseRemoteReapTest(ReapBase):
         self.assertEqual(code, 0, err)
         self.assertEqual(sleep.call_count, fsn.REAP_POLLS)
         self.assertEqual(self.hc_calls("rm"), [])
-        self.assertIn("remote terminal still running; prune will remove it", err)
+        self.assertIn("remote terminal still running; the opening session's watcher removes it while that session runs, when the child reports closed; otherwise foreman session prune once it has finished", err)
         self.assertEqual(self.row()["status"], "closing")
 
 

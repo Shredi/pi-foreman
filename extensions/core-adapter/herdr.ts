@@ -69,8 +69,8 @@ export function herdrIntegrationVersion(agentDir: string): number {
 /** How an own source ended: `answered` (a value came back, a "no" included), `dismissed` (nothing came back) or `aborted` (it threw); a release with no outcome ended for a reason that says nothing about the owner. */
 export type DialogOutcome = "answered" | "dismissed" | "aborted";
 
-/** Label priority: permission ask, Pi dialog title, own-ask title, dialog kind. */
-const RANK = { perm: 0, title: 1, own: 2, kind: 3 } as const;
+/** Label priority: Pi dialog title, own-ask title, dialog kind. */
+const RANK = { title: 1, own: 2, kind: 3 } as const;
 type Rank = keyof typeof RANK;
 
 export class BlockedTracker {
