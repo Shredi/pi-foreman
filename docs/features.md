@@ -869,6 +869,7 @@ No config key.
 | `gate.reviewTimeoutMs` | `15000` | tighten-only (lower only, minimum 100) |
 | `gate.readClear` | unset | any layer |
 | `gate.readonlyClear` | unset | any layer |
+| `gate.judgeReads` | `true` | tighten-only (only false is accepted) |
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.readTools` | `{}` | not in project/session (user or overlay config only) |
 | `gate.logMaxBytes` | `20971520` | not in project/session (user or overlay config only) |

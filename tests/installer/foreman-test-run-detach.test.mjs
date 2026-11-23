@@ -102,7 +102,8 @@ test("history: give-up 75, time limit 124 while queued (acquired null) and 124 w
 test("history: --history prints the figures of a seeded file and --days filters", () => {
   const dir = tmp();
   try {
-    const at = (ms) => new Date(Date.now() - ms).toISOString();
+    const now = Date.now();
+    const at = (ms) => new Date(now - ms).toISOString();
     const entry = (waitS, runS, exit, agoMs, extra = {}) => ({ id: "x", mode: "suite", kind: "exec", enqueued: at(agoMs + (waitS + runS) * 1000), acquired: at(agoMs + runS * 1000), ended: at(agoMs), exit, ...extra });
     fs.mkdirSync(histDir(dir), { recursive: true });
     const lines = [entry(0, 10, 0, 1000), entry(60, 20, 0, 2000), entry(120, 30, 1, 3000), entry(0, 0, 75, 4000, { acquired: null, enqueued: at(4000 + 90_000) }), entry(0, 0, 124, 5000, { acquired: null, enqueued: at(5000 + 5_000) }), entry(0, 40, 124, 6000), entry(0, 5, 0, 10 * 86_400_000)];
