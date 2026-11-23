@@ -278,6 +278,11 @@ function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: 
   }
 }
 
+/** Shows control characters (newline, CR, tab, other C0, DEL) as escapes so one name or path part is always one line. */
+function escapeControl(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f]/g, (c) => (c === "\n" ? "\\n" : c === "\r" ? "\\r" : c === "\t" ? "\\t" : `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`));
+}
+
 function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   if (budget.left <= 0) return { outcome: "budget", body: "not read: read budget used up" };
   readHooks.afterStat?.(res.real);
@@ -301,12 +306,12 @@ function listFolder(res: Resolution & { real: string }, scope: JudgeReadScope, b
   for (const n of names) {
     if (shown.length >= MAX_LISTING) break;
     const r = resolveReadable(path.join(res.real, n), scope);
-    if (r.outcome === "ok") shown.push(n);
-    else if (r.outcome === "dir") shown.push(`${n}/`);
+    if (r.outcome === "ok") shown.push(escapeControl(n));
+    else if (r.outcome === "dir") shown.push(`${escapeControl(n)}/`);
   }
   const listed = shown.slice(0, MAX_LISTING);
   const hidden = names.length - listed.length;
-  let body = redactCommand(`${listed.join("\n")}${listed.length ? "\n" : ""}(${listed.length} entries shown${hidden > 0 ? `, ${hidden} not shown` : ""})`);
+  let body = `${listed.map((l) => redactCommand(l)).join("\n")}${listed.length ? "\n" : ""}(${listed.length} entries shown${hidden > 0 ? `, ${hidden} not shown` : ""})`;
   if (body.length > budget.left) {
     const mark = "\n[cut]";
     if (budget.left <= mark.length) return { outcome: "budget", body: "not read: read budget used up" };
@@ -340,7 +345,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
     if (res.outcome === "not-found") {
       rec.real = res.real;
       rec.ancestor = res.ancestor;
-      body = `(not found; nearest existing folder: ${res.ancestor})`;
+      body = `(not found; nearest existing folder: ${escapeControl(res.ancestor ?? "")})`;
     } else if (res.outcome === "withheld") {
       rec.real = res.real;
       body = "(withheld: this path is never shown)";
@@ -369,7 +374,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       }
     }
     records.push(rec);
-    blocks.push({ header: redactCommand(`${a} -> ${rec.real ? askable(rec.real, scope) : "-"} (${HEADER_NOTE[rec.outcome]})`), body: body.split("\n").map(redactCommand).join("\n") });
+    blocks.push({ header: redactCommand(`${escapeControl(a)} -> ${rec.real ? escapeControl(askable(rec.real, scope)) : "-"} (${HEADER_NOTE[rec.outcome]})`), body: body.split("\n").map(redactCommand).join("\n") });
   }
   return { blocks, records };
 }

@@ -164,3 +164,28 @@ test("only the reads-on judge prompt carries the [redacted] sentence", () => {
   assert.ok(!judgeSystemPrompt().includes("[redacted]"));
   assert.match(judgeSystemPrompt(true), /\[redacted\] in a file marks a masked value that may hide code; if what it hides matters for the verdict, answer unsure/);
 });
+
+test("a folder listing is masked per entry: no pattern spans names, the count matches the lines", () => {
+  const dir = path.join(cwd, "spanlist");
+  const names = ["!token=", '"start', "c_important.db", "d_payload.sh", 'zz"', "zzz_last"];
+  for (const n of names) put(path.join(dir, n), "x\n");
+  const { block } = one("spanlist");
+  const lines = block.body.split("\n");
+  assert.equal(lines.length, names.length + 1);
+  assert.equal(lines[names.length], `(${names.length} entries shown)`);
+  for (const n of ["c_important.db", "d_payload.sh", "zzz_last"]) assert.ok(lines.includes(n), block.body);
+});
+
+test("a file name with a newline lists as one escaped line", { skip: process.platform === "win32" }, () => {
+  const dir = path.join(cwd, "nllist");
+  put(path.join(dir, "a\nfake_entry"), "x\n");
+  put(path.join(dir, "b\tc\x01"), "x\n");
+  const { block } = one("nllist");
+  assert.deepEqual(block.body.split("\n"), ["a\\nfake_entry", "b\\tc\\x01", "(2 entries shown)"]);
+});
+
+test("a judge-asked path with a newline gives a single-line header", () => {
+  const { block } = one("nope\nfake -> x (file)");
+  assert.ok(!block.header.includes("\n"), block.header);
+  assert.ok(block.header.startsWith("nope\\nfake"), block.header);
+});
