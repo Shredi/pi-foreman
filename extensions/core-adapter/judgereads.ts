@@ -251,8 +251,8 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
         const code = (e as NodeJS.ErrnoException).code;
         if (code !== "ENOENT" && code !== "ENOTDIR") return outside();
         // `file/` fails with ENOTDIR on some platforms; an existing non-folder with a trailing separator gets the same "not a folder" answer everywhere.
-        if (!tail.length && /[\\/]$/.test(anc) && anc.length > 1) {
-          const bare = realOf(anc.replace(/[\\/]+$/, ""));
+        if (!tail.length && (scope.platform === "win32" ? /[\\/]$/ : /\/$/).test(anc) && anc.length > 1) {
+          const bare = realOf(anc.replace(scope.platform === "win32" ? /[\\/]+$/ : /\/+$/, ""));
           if (bare && !fs.lstatSync(bare).isDirectory()) {
             realAnc = bare;
             break;
@@ -459,7 +459,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       const r = listFolder(res as Resolution & { real: string }, scope, budget);
       rec.outcome = r.outcome;
       body = r.body;
-    } else if (/[\\/]$/.test(a.replace(/#L\d+-\d+$/, ""))) {
+    } else if ((scope.platform === "win32" ? /[\\/]$/ : /\/$/).test(a.replace(/#L\d+-\d+$/, ""))) {
       rec.real = res.real;
       rec.outcome = "withheld";
       body = "(not a folder)";

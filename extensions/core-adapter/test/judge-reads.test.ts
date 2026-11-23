@@ -115,9 +115,11 @@ test("withheld: a file with a second hard link and a FIFO are not shown", () => 
   const r = one(f);
   assert.equal(r.rec.outcome, "withheld");
   assert.ok(!r.block.body.includes("linked"));
-  const fifo = path.join(wt, "pipe");
-  execFileSync("mkfifo", [fifo]);
-  assert.equal(one(fifo).rec.outcome, "withheld");
+  if (process.platform !== "win32") {
+    const fifo = path.join(wt, "pipe");
+    execFileSync("mkfifo", [fifo]);
+    assert.equal(one(fifo).rec.outcome, "withheld");
+  }
   assert.equal(one(path.join(wt, "a.sh") + "/").rec.outcome, "withheld", "a folder request on a file is refused");
 });
 

@@ -171,7 +171,8 @@ test("only the reads-on judge prompt carries the [redacted] sentence", () => {
 
 test("a folder listing is masked per entry: no pattern spans names, the count matches the lines", () => {
   const dir = path.join(cwd, "spanlist");
-  const names = ["!token=", process.platform === "win32" ? "'start" : '"start', "c_important.db", "d_payload.sh", 'zz"', "zzz_last"];
+  const win = process.platform === "win32";
+  const names = ["!token=", win ? "'start" : '"start', "c_important.db", "d_payload.sh", win ? "zz'" : 'zz"', "zzz_last"];
   for (const n of names) put(path.join(dir, n), "x\n");
   const { block } = one("spanlist");
   const lines = block.body.split("\n");
@@ -476,4 +477,28 @@ test("a literal name that exists in a readable place is still read by that name"
   assert.equal(r.records[0].outcome, "ok");
   assert.match(r.blocks[0].header, /read by its literal name/);
   assert.match(r.blocks[0].body, /literal body/);
+});
+
+test("a trailing backslash is no separator on POSIX: the answer does not depend on whether the file exists", { skip: process.platform === "win32" }, () => {
+  const names = [".envrc\\", ".env\\", "token\\", "a.tfvars\\", "id_rsa\\", "AGENT/sessions/auth.json\\", ".git/cfg2\\"];
+  const run = (exists: boolean): string => {
+    const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-bs-")));
+    try {
+      const ag = path.join(root, "home", ".pi", "agent");
+      const w = path.join(root, "home", "proj");
+      fs.mkdirSync(ag, { recursive: true });
+      fs.mkdirSync(w, { recursive: true });
+      const sc = judgeReadScope({ cwd: w, worktree: w, agentDir: ag, home: path.join(root, "home"), config: {} }) as JudgeReadScope;
+      const asked = names.map((n) => (n.startsWith("AGENT") ? ag + n.slice(5) : w + "/" + n));
+      for (const a of asked) {
+        fs.mkdirSync(path.dirname(a), { recursive: true });
+        if (exists) fs.writeFileSync(a.slice(0, -1), "x\n");
+      }
+      const r = readPaths(asked, sc, { left: MAX_READ_BUDGET });
+      return JSON.stringify(r.blocks).replace(/\S*judge-reads-bs-\w+/g, "<root>");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  };
+  assert.equal(run(true), run(false));
 });
