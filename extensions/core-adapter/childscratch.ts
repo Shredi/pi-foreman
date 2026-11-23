@@ -210,7 +210,12 @@ export function sessionScratchDir(sessionId: string, deps: ScratchFs = {}): stri
  * lstat only; nothing happens unless `.foreman` and `scratch` are real own dirs. Returns the number removed.
  */
 export function sweepOldLanes(base: string, repos: string[], now: number = Date.now(), deps: ScratchFs = {}): number {
-  if (!ownDir(path.dirname(base), deps) || !ownDir(base, deps)) return 0;
+  if (!ownDir(path.dirname(base), deps)) return 0;
+  return sweepLanesOlder(base, repos, now, deps);
+}
+
+function sweepLanesOlder(base: string, repos: string[], now: number, deps: ScratchFs): number {
+  if (!ownDir(base, deps)) return 0;
   const cutoff = now - KEPT_DAYS * 86400000;
   let removed = 0;
   let names: string[] = [];
@@ -605,7 +610,9 @@ export function sweepScratch(h: ScratchHost, deps: ScratchFs = {}): void {
   }
 }
 
-/** Session start (foreman): remove worktree-side session lanes older than 7 days. */
+/** Session start (foreman): remove session lanes older than 7 days, in the worktree base and in the temp folder (briefs kept at shutdown go there too). */
 export function sweepOldScratch(h: ScratchHost, now: number = Date.now(), deps: ScratchFs = {}): number {
-  return h.scratchWt ? sweepOldLanes(h.scratchWt.base, reposOf(h), now, deps) : 0;
+  const wt = h.scratchWt ? sweepOldLanes(h.scratchWt.base, reposOf(h), now, deps) : 0;
+  const root = scratchRoot(deps);
+  return wt + (root ? sweepLanesOlder(root, reposOf(h), now, deps) : 0);
 }
