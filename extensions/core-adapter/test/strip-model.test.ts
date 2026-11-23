@@ -51,7 +51,7 @@ test("disk: used percent, free GB, tone; a probe that fails or returns junk is m
 test("a bare drive letter becomes its root on win32 only", () => {
   assert.equal(diskPathOf("C:", "win32"), "C:\\");
   assert.equal(diskPathOf("C:\\data", "win32"), "C:\\data");
-  assert.equal(diskPathOf("C:", "linux"), "C:");
+  assert.equal(diskPathOf("C:", "linux"), "/mnt/c");
   assert.equal(diskPathOf("/data", "darwin"), "/data");
 });
 
@@ -171,7 +171,7 @@ test("claude headers: 7d and 5h, unknown window by its raw name, bad values and 
 test("claude rows: labels, periods and order", () => {
   const rows = claudeValues({ opus: { used: 0.1, resetsAt: 1795000000 }, "7d": { used: 0.2, resetsAt: 1795000000 }, "5h": { used: 0.3, resetsAt: 1795000000 }, "7d-opus": { used: 0.4, resetsAt: 1795000000 }, "Bad Name": { used: 0.1, resetsAt: 1 } });
   assert.deepEqual(rows.map((r) => [r.key, r.label, r.periodMs]), [
-    ["claude:5h", "Claude 5h", 5 * HOUR_MS], ["claude:7d", "Claude week", WEEK_MS], ["claude:7d-opus", "7d-opus", WEEK_MS], ["claude:opus", "opus", null],
+    ["claude:5h", "Claude 5h", 5 * HOUR_MS], ["claude:7d", "Claude week", WEEK_MS], ["claude:7d-opus", "Week (opus)", WEEK_MS], ["claude:opus", "Claude opus", null],
   ]);
 });
 
@@ -231,4 +231,28 @@ test("stored samples: malformed entries are dropped and the lists are bounded", 
   assert.equal(got.b, undefined);
   assert.equal(got.c.length, 200);
   assert.deepEqual(samplesOf(null), {});
+});
+
+test("claude labels: known windows by name, 7d_oi is Fable week, variants and unknown ids readable, keys unchanged", () => {
+  const w = (id: string) => ({ [id]: { used: 0.1, resetsAt: 1795000000 } });
+  const one = (id: string) => claudeValues(w(id))[0];
+  assert.equal(one("7d_oi").label, "Fable week");
+  assert.equal(one("7d_oi").key, "claude:7d_oi");
+  assert.equal(one("7d_xyz").label, "Week (xyz)");
+  assert.equal(one("7d-xyz").label, "Week (xyz)");
+  assert.equal(one("5h_xyz").label, "5h (xyz)");
+  assert.equal(one("5h-xyz").label, "5h (xyz)");
+  assert.equal(one("zeta").label, "Claude zeta");
+  assert.equal(one("zeta").key, "claude:zeta");
+});
+
+test("diskPathOf: drive forms probe the root on win32 and the WSL mount elsewhere, other paths are kept", () => {
+  for (const raw of ["C:", "C:\\", "C:/"]) {
+    assert.equal(diskPathOf(raw, "win32"), "C:\\", raw);
+    assert.equal(diskPathOf(raw, "linux"), "/mnt/c", raw);
+  }
+  assert.equal(diskPathOf("c:", "win32"), "c:\\");
+  assert.equal(diskPathOf("c:", "linux"), "/mnt/c");
+  assert.equal(diskPathOf("c:", "darwin"), "/mnt/c");
+  for (const raw of ["D:\\data", "/mnt/wsl/build", "/"]) for (const p of ["win32", "linux"]) assert.equal(diskPathOf(raw, p), raw);
 });

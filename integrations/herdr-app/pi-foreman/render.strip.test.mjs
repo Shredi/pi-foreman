@@ -18,7 +18,7 @@ const walk = (el, out = []) => {
 const texts = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const idOf = (e) => String(e.props?.id ?? "");
 
-const strip = { version: 1, at: "2026-11-20T10:00:00Z", cpu: { pct: 42, history: [10, 90], tone: "neutral" }, mem: { pct: 71, tone: "neutral" },
+const strip = { version: 1, at: "2026-11-20T10:00:00Z", cpu: { pct: 42, history: [10, 90], tone: "neutral" }, mem: { pct: 71, usedMB: 26624, totalMB: 32768, tone: "neutral" },
   level: { level: "high", reasons: ["load"] }, disks: [{ label: "/", usedPct: 78, freeGB: 52, tone: "neutral" }] };
 
 function view(stripDoc) {
@@ -38,8 +38,9 @@ test("strip: drawn above the list, unfolded with the head line and the disk row"
   assert.ok(at > 0, "the strip is drawn");
   assert.ok(at < all.findIndex((e) => idOf(e) === "foreman-list"), "above the session list");
   const t = texts(all[at]).join("|");
-  assert.match(t, /cpu /);
+  assert.match(t, /CPU/);
   assert.match(t, /71%/);
+  assert.match(t, /26 \/ 32 GB/, "the memory row shows used and total");
   assert.match(t, /load/, "the reason shows at high");
   assert.ok(all.some((e) => idOf(e) === "strip-disk:0"));
 });
@@ -51,44 +52,60 @@ test("strip: a click on the head folds it to the summary, a second one opens it"
   assert.ok(m.folded.has("strip"));
   const folded = m.render({});
   assert.equal(walk(folded).some((e) => idOf(e) === "strip-disk:0"), false);
-  assert.match(texts(head(folded)).join(""), /cpu 42%.*mem 71%.*● high/);
+  assert.match(texts(head(folded)).join(""), /● high.*CPU 42%.*Mem 71%.*Disk 78%/);
   head(folded).props.on_click({}, { notify() {} });
   assert.equal(m.folded.has("strip"), false);
 });
 
 test("strip: stale draws the one line, a missing strip draws nothing", () => {
-  assert.match(texts(view({ stale: true }).render({})).join(""), /status: no main session measuring/);
+  assert.match(texts(view({ stale: true }).render({})).join(""), /● no session measuring/);
   assert.equal(walk(view(undefined).render({})).some((e) => idOf(e) === "strip"), false);
 });
 
-test("strip: text parts are separate non-shrinking elements, bars are boxes, the head line wraps", () => {
+test("strip: grid columns have fixed widths, names truncate, bars and the sparkline are boxes", () => {
   const doc = { ...strip, quotas: [{ key: "q", label: "Week", used: 1.6, pace: 0.5, resetsAt: "2026-11-26T20:00:00Z", tone: "red" }] };
   const root = view(doc).render({});
   const all = walk(root);
-  const line = all.find((e) => idOf(e) === "strip-line");
-  assert.ok(line.props.flex_wrap, "the head line wraps whole groups");
-  const groups = line.kids;
-  assert.equal(groups.length, 3, "cpu, mem and level are groups");
-  for (const g of groups) assert.ok(g.props.flex_none);
-  const textEls = (el) => walk(el).filter((e) => (e.kids ?? []).some((k) => typeof k === "string"));
-  for (const e of [...textEls(line), ...textEls(all.find((x) => idOf(x) === "strip-disk:0")), ...textEls(all.find((x) => idOf(x) === "strip-quota:0"))]) {
-    assert.ok(e.props.flex_none, `text ${JSON.stringify(e.kids)} does not shrink`);
+  const byId = (id) => all.find((e) => idOf(e) === id);
+  for (const id of ["strip-cpu", "strip-mem", "strip-disk:0", "strip-quota:0"]) {
+    const row = byId(id);
+    assert.equal(row.props.min_w, 0, `${id}: the row can shrink`);
+    assert.ok(row.props.overflow_hidden, `${id}: the row clips`);
+    assert.equal(row.kids.length, 4, `${id}: name, bar, value, extra`);
+    const [name, bar, value, extra] = row.kids;
+    assert.equal(name.props.w, 64);
+    assert.ok(name.props.truncate, `${id}: the name truncates`);
+    assert.equal(value.props.w, 32);
+    assert.ok(value.props.justify_end, `${id}: the value is right-aligned`);
+    assert.equal(extra.props.w, 58);
+    assert.ok(extra.props.truncate);
+    assert.equal(row.props.gap, 4, `${id}: the cells are 4 px apart`);
+    assert.ok(bar.props.flex_1 && bar.props.min_w === 24, `${id}: the bar cell takes the rest`);
   }
-  const mem = groups[1];
-  const track = mem.kids.find((k) => k.props.bg);
-  assert.ok(track.props.bg && track.props.h === 6, "the track is a box");
-  assert.equal(track.kids[0].props.w, "71%", "the fill is a box of the used share");
-  assert.equal(texts(mem).join(""), "mem 71%");
-  const spark = groups[0].kids.find((k) => k.kids.length === 2 && typeof k.kids[0] !== "string");
+  const memTrack = byId("strip-mem").kids[1];
+  assert.ok(memTrack.props.bg && memTrack.props.h === 6, "the track is a box");
+  assert.equal(memTrack.kids[0].props.w, "71%", "the fill is a box of the used share");
+  assert.equal(texts(byId("strip-mem")).join("|"), "Memory|71%|26 / 32 GB");
+  const spark = byId("strip-cpu").kids[1];
   assert.deepEqual(spark.kids.map((k) => k.props.h), [1, 11]);
+  assert.ok(spark.kids.every((k) => k.props.flex_1 && k.props.min_w === 1 && k.props.w === undefined), "the spark bars stretch across the bar column");
   assert.equal(walk(root).some((e) => texts(e).some((s) => /[█░▁▂▃▄▅▆▇]/.test(s))), false, "no block glyphs");
-  const q = all.find((x) => idOf(x) === "strip-quota:0");
-  const qt = q.kids.find((k) => k.props.bg);
+  const q = byId("strip-quota:0");
+  const qt = q.kids[1];
   assert.equal(qt.kids[0].props.w, "100%", "an overrun fills the track");
   assert.equal(qt.kids[1].props.w, 2, "the pace marker is 2 px wide");
   assert.equal(qt.kids[1].props.left, "50%");
-  assert.ok(qt.props.flex_1 && qt.props.min_w === 24, "the usage bar takes the remaining width");
   assert.match(texts(q).join("|"), /160%/);
+  assert.equal(texts(q).join("|").includes("resets"), false, "the reset column has no label word");
+});
+
+test("strip: the head is found by field, so a strip of only disks or only quotas still draws its rows under a Status head", () => {
+  const onlyDisks = walk(view({ version: 1, disks: [{ label: "/", usedPct: 5, freeGB: 1, tone: "neutral" }] }).render({}));
+  assert.ok(onlyDisks.some((e) => idOf(e) === "strip-disk:0"), "the disk row is a row, not the head");
+  assert.match(texts(onlyDisks.find((e) => idOf(e) === "strip-head")).join(""), /Status/);
+  const onlyQuotas = walk(view({ version: 1, quotas: [{ key: "q", label: "Week", used: 0.2, tone: "green" }] }).render({}));
+  assert.ok(onlyQuotas.some((e) => idOf(e) === "strip-quota:0"));
+  assert.match(texts(onlyQuotas.find((e) => idOf(e) === "strip-head")).join(""), /Status/);
 });
 
 test("strip: traffic lights, a calm value draws green, dashes, a missing disk and the stale line stay dim", () => {
@@ -104,9 +121,9 @@ test("strip: traffic lights, a calm value draws green, dashes, a missing disk an
       spark: els.find((x) => x.props?.items_end)?.kids[0]?.props.bg,
     };
   };
-  const head = byId("strip-line");
-  const cpu = green(head.kids[0]);
-  const mem = green(head.kids[1]);
+  const head = byId("strip-level");
+  const cpu = green(byId("strip-cpu"));
+  const mem = green(byId("strip-mem"));
   const disk = green(byId("strip-disk:0"));
   const quota = green(byId("strip-quota:0"));
   const dim = byId("strip-disk:1").props.text_color;
@@ -116,13 +133,12 @@ test("strip: traffic lights, a calm value draws green, dashes, a missing disk an
   assert.equal(disk.bar, disk.ink);
   assert.equal(quota.bar, quota.ink);
   assert.equal(mem.ink, cpu.ink, "one green for all");
-  const levelEls = walk(head.kids[2]).filter((e) => (e.kids ?? []).some((k) => typeof k === "string"));
-  assert.ok(levelEls.length === 2 && levelEls.every((e) => e.props.text_color === cpu.ink), "the level dot and word at ok are green");
+  assert.equal(head.kids[0].props.text_color, cpu.ink, "the level dot and word at ok are green");
   for (const id of ["strip-disk:1", "strip-quota:1"]) {
     const dash = walk(byId(id)).filter((e) => (e.kids ?? []).includes("—"));
     assert.equal(dash.length, 1);
     assert.equal(dash[0].props.text_color, dim, `${id}: the dash stays dim`);
   }
-  const stale = walk(view({ stale: true }).render({})).find((e) => (e.kids ?? []).some((k) => typeof k === "string" && /no main session/.test(k)));
+  const stale = walk(view({ stale: true }).render({})).find((e) => (e.kids ?? []).some((k) => typeof k === "string" && /no session measuring/.test(k)));
   assert.equal(stale.props.text_color, dim, "the stale line stays dim");
 });

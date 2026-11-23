@@ -3,10 +3,10 @@
 // `foreman_wait` (foreman only) starts a model-free wait on a timer, a file appearing, a process
 // ending or a GitHub Actions run completing, and returns at once with a wait id. Polling is
 // plain unref'd one-shot timers, started with the first wait and all cleared at
-// session_shutdown; no model turn runs while waiting. The first resolved trigger opens a window
-// of `wait.batchWindowSeconds` (0 = immediate); when it closes, or as soon as no wait is left,
-// ONE `foreman_wake` custom message carries every outcome (metadata only: no file contents, no
-// CI logs). The wake is an ordinary custom message: its turn meets the same context-event drift
+// session_shutdown; no model turn runs while waiting. The first resolved outcome is delivered at
+// once as a `foreman_wake` custom message; outcomes resolving within `wait.batchWindowSeconds`
+// (0 = immediate) after a delivery are batched into the next wake, and same-tick outcomes share
+// one wake (metadata only: no file contents, no CI logs). The wake is an ordinary custom message: its turn meets the same context-event drift
 // check, triage gate, permission system and launch checks as any other turn (no bypass here).
 //
 // File bound (item 39): the path (as given and with symlinks resolved, triage.ts realDeep) must
@@ -224,12 +224,15 @@ export const realTimers: Timers = {
 };
 
 /**
- * Batches resolved triggers into one wake (item 14). The first outcome opens the window; the
- * wake goes out when it closes or as soon as no wait is active. Later outcomes open a new one.
+ * Batches resolved triggers into one wake (item 14). Leading edge: an outcome with no window open is delivered at once; when
+ * another wait is still active a window opens then, and outcomes resolving inside it go out together when it closes (or as soon
+ * as no wait is active). After a window closes the next outcome is delivered at once again.
  */
 export class Governor {
   private pending: Outcome[] = [];
   private timer: unknown = null;
+  /** The leading-edge wake of a pressure outcome waits one macrotask so outcomes resolving in the same tick join it. */
+  private lead: unknown = null;
   private readonly d: { windowMs: () => number; active: () => number; timers: Timers; send: (o: Outcome[]) => void };
 
   constructor(d: { windowMs: () => number; active: () => number; timers: Timers; send: (o: Outcome[]) => void }) {
@@ -239,10 +242,19 @@ export class Governor {
   resolved(o: Outcome): void {
     this.pending.push(o);
     if (this.d.active() === 0) return this.flush();
-    if (this.timer !== null) return;
+    if (this.timer !== null || this.lead !== null) return;
+    // Pressure polls of one level change resolve together in one tick: their leading-edge wake waits one macrotask so they share it.
+    if (o.kind !== "pressure") return this.openWindow();
+    this.lead = this.d.timers.set(() => {
+      this.lead = null;
+      this.openWindow();
+    }, 0);
+  }
+
+  private openWindow(): void {
+    this.flush();
     const ms = this.d.windowMs();
-    if (ms <= 0) return this.flush();
-    this.timer = this.d.timers.set(() => this.flush(), ms);
+    if (ms > 0) this.timer = this.d.timers.set(() => this.flush(), ms);
   }
 
   /** After a cancel: no wait left means the window closes now. */
@@ -252,7 +264,9 @@ export class Governor {
 
   flush(): void {
     if (this.timer !== null) this.d.timers.clear(this.timer);
+    if (this.lead !== null) this.d.timers.clear(this.lead);
     this.timer = null;
+    this.lead = null;
     const out = this.pending;
     this.pending = [];
     if (out.length) this.d.send(out);
@@ -260,7 +274,9 @@ export class Governor {
 
   dispose(): void {
     if (this.timer !== null) this.d.timers.clear(this.timer);
+    if (this.lead !== null) this.d.timers.clear(this.lead);
     this.timer = null;
+    this.lead = null;
     this.pending = [];
   }
 }
@@ -290,6 +306,8 @@ export interface RuntimeDeps {
   idle?: () => boolean;
   /** Called after the set of active waits changed (a wait started, resolved or cancelled). */
   changed?: () => void;
+  /** Called when only the stored set changed (a resolved wait was delivered): persist without telling observers. */
+  persist?: () => void;
   /** Modification time (ms) of a file, else null; lets a ruling wait ignore a ruling older than its ask.md. */
   mtime?: (p: string) => number | null;
   /** True while a run is in progress (the adapter's own record, agent_start .. agent_end). Absent = never. */
@@ -322,6 +340,8 @@ interface Entry {
 /** Active waits of one foreman session. */
 export class WaitRuntime {
   private readonly waits = new Map<string, Entry>();
+  /** Resolved waits whose wake is not delivered yet (batch window or held while busy): kept in the stored set, not active. */
+  private readonly undelivered = new Map<string, Outcome>();
   private seq = 0;
   private disposed = false;
   readonly governor: Governor;
@@ -449,10 +469,31 @@ export class WaitRuntime {
 
   resolve(id: string, outcome: string): void {
     if (this.disposed) return;
+    const w = this.waits.get(id);
+    if (!w) return;
+    const o: Outcome = { id: w.id, kind: w.kind, note: w.note, outcome: w.log ? `${outcome}; log ${w.log}` : outcome };
+    if (w.kind !== "pressure") this.undelivered.set(id, o);
     const e = this.drop(id);
     if (!e) return;
     this.d.trace({ event: "wait", decision: "resolved", toolFamily: e.kind });
-    this.governor.resolved({ id: e.id, kind: e.kind, note: e.note, outcome: e.log ? `${outcome}; log ${e.log}` : outcome });
+    this.governor.resolved(o);
+  }
+
+  /** The wake carrying these outcomes was sent: they leave the stored set. */
+  delivered(ids: string[]): void {
+    let any = false;
+    for (const id of ids) any = this.undelivered.delete(id) || any;
+    if (!any || this.disposed) return;
+    try {
+      this.d.persist?.();
+    } catch {
+      // best effort
+    }
+  }
+
+  /** Resolved waits whose wake is not delivered yet (for the stored set). */
+  pendingOutcomes(): Outcome[] {
+    return [...this.undelivered.values()];
   }
 
   cancel(id: string): boolean {
@@ -693,10 +734,19 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       const msg = wakeMessage(outcomes);
       if (s.steer) msg.content = s.steer(msg.content);
       pi.sendMessage(msg, followUp ? { deliverAs: "followUp" } : { triggerTurn: true });
+      holder.rt.delivered(outcomes.map((o) => o.id));
     };
     const quiet = (o: Outcome): void => {
       const line = wakeMessage([{ ...o, outcome: `ended by the notice above: ${o.outcome}` }]);
       pi.sendMessage({ customType: WAIT_NOTE_TYPE, content: s.steer ? s.steer(line.content) : line.content, display: true }, { triggerTurn: false });
+    };
+    // dispose() silences changed() and persist(): a shutdown keeps the last stored set, which is what the resumed session reports as lost
+    const persist = (): void => {
+      try {
+        pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, [...holder.rt.list(), ...holder.rt.pendingOutcomes()]));
+      } catch {
+        // the session file is not writable now
+      }
     };
     holder.rt = new WaitRuntime({
       timers: realTimers,
@@ -714,13 +764,9 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       idle: s.idle,
       changed: () => {
         for (const cb of [...(listeners.get(s.id) ?? [])]) cb();
-        // dispose() silences changed(): a shutdown keeps the last stored set, which is what the resumed session reports as lost
-        try {
-          pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, holder.rt.list()));
-        } catch {
-          // the session file is not writable now
-        }
+        persist();
       },
+      persist,
       wake: (outcomes) => {
         let idle = true;
         try {

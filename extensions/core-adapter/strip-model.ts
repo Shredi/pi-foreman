@@ -146,11 +146,18 @@ export interface DiskDoc {
   freeGB?: number;
   tone?: Tone;
   missing?: true;
+  /** The default disk (the measuring session's folder): drawn as "Disk" without a path. */
+  auto?: true;
 }
 
-/** A bare drive letter on Windows becomes its root (`C:` to `C:\`); everything else is kept. */
+/**
+ * A drive path (`C:`, `c:`, `C:\`, `C:/`) probes its root on Windows (`C:\`) and the WSL drive mount (`/mnt/c`) on every
+ * other platform; everything else is kept.
+ */
 export function diskPathOf(raw: string, platform: string): string {
-  return platform === "win32" && /^[A-Za-z]:$/.test(raw) ? `${raw}\\` : raw;
+  const m = /^([A-Za-z]):[\\/]?$/.exec(raw);
+  if (!m) return raw;
+  return platform === "win32" ? `${m[1]}:\\` : `/mnt/${m[1].toLowerCase()}`;
 }
 
 /** One disk line. A probe that throws or reports nothing gives `{label, missing: true}`: never an error. */
@@ -306,14 +313,24 @@ export function parseClaudeHeaders(headers: unknown): Record<string, ClaudeWindo
   return out;
 }
 
-/** Rows of the Claude windows: 5h and 7d by name, any other window by its raw name (a 7d marker only for `7d…`). */
+/** Readable name of a Claude window: the known ids by name, a variant of 5h or 7d by its suffix, any other id after "Claude". */
+export function claudeLabel(w: string): string {
+  if (w === "5h") return "Claude 5h";
+  if (w === "7d") return "Claude week";
+  if (w === "7d_oi") return "Fable week";
+  const m = /^(7d|5h)[_-](.+)$/.exec(w);
+  if (m) return m[1] === "7d" ? `Week (${m[2]})` : `5h (${m[2]})`;
+  return `Claude ${w}`;
+}
+
+/** Rows of the Claude windows: 5h and 7d first, any other window by its id (a 7d marker only for `7d…`), each with a readable name. */
 export function claudeValues(windows: Record<string, { used: number | null; resetsAt: number }>): QuotaValue[] {
   const names = Object.keys(windows).filter((w) => ID_RE.test(w)).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   return names.map((w) => {
     const v = windows[w];
     const resetsAt = isNum(v.resetsAt) && v.resetsAt > 0 ? v.resetsAt * 1000 : null;
     const periodMs = w === "5h" ? 5 * HOUR_MS : w.startsWith("7d") ? WEEK_MS : null;
-    return { key: `claude:${w}`, label: w === "5h" ? "Claude 5h" : w === "7d" ? "Claude week" : w, used: usedOf(v.used), resetsAt, periodMs: resetsAt === null ? null : periodMs };
+    return { key: `claude:${w}`, label: claudeLabel(w), used: usedOf(v.used), resetsAt, periodMs: resetsAt === null ? null : periodMs };
   });
 }
 const rank = (w: string): number => (w === "5h" ? 0 : w === "7d" ? 1 : 2);

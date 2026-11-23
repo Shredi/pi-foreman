@@ -154,7 +154,7 @@ test("disks: default is the workspace, [] none, a missing path shows missing, ne
   t.after(r.done);
   const s = r.mk();
   s.tick();
-  assert.deepEqual(r.read().disks, [{ label: r.ws, usedPct: 48, freeGB: 52, tone: "neutral" }]);
+  assert.deepEqual(r.read().disks, [{ label: r.ws, usedPct: 48, freeGB: 52, tone: "neutral", auto: true }]);
   assert.deepEqual(seen, [r.ws]);
   r.cfg.value = strip({ disks: [] });
   r.advance(10_000);
@@ -535,7 +535,7 @@ test("source: a command under the workspace is refused", { skip: win }, async (t
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 let rigs = 0;
 
-async function adapter(t: { after(fn: () => void | Promise<void>): void }, o: { child?: boolean; config?: unknown } = {}) {
+async function adapter(t: { after(fn: () => void | Promise<void>): void }, o: { child?: boolean; config?: unknown; pressureRun?: (args: string[], signal?: AbortSignal) => Promise<{ ok: boolean; text: string }> } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   const savedExit = process.exitCode;
@@ -574,7 +574,7 @@ async function adapter(t: { after(fn: () => void | Promise<void>): void }, o: { 
     setThinkingLevel: () => undefined,
     sendMessage: () => undefined,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), spawner: probeSpawner() });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: o.pressureRun ?? (async () => ({ ok: true, text: "" })), spawner: probeSpawner() });
   const sessionId = `strip-adapter-${++rigs}`;
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
@@ -633,4 +633,66 @@ test("adapter: with the strip off a reply writes no Claude note", async (t) => {
   const a = await adapter(t, { config: strip({ enabled: false }) });
   await a.handlers.get("after_provider_response")!({ status: 200, headers: hdrs("7d", "0.2", Math.round(Date.now() / 1000) + 3600) }, a.ctx);
   assert.equal(fs.existsSync(stripClaudePath(a.agentDir)), false);
+});
+
+test("adapter: the strip lease is given back before the later shutdown steps, not after them", async (t) => {
+  let release: () => void = () => undefined;
+  let started = false;
+  const held = new Promise<{ ok: boolean; text: string }>((r) => { release = () => r({ ok: true, text: "" }); });
+  const a = await adapter(t, { pressureRun: () => { started = true; return held; } });
+  assert.equal(await until(() => started && fs.existsSync(stripLeasePath(a.agentDir))), true);
+  const done = a.shutdown();
+  let settled = false;
+  void done.then(() => { settled = true; });
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(settled, false, "a later shutdown step (the pressure run) is still pending");
+  assert.equal(fs.existsSync(stripLeasePath(a.agentDir)), false, "the lease is already gone");
+  release();
+  await done;
+});
+
+test("default disk: the one doc is auto and probes the session folder; configured disks carry no auto", (t) => {
+  const seen: string[] = [];
+  const r = rig({ statfs: (p) => (seen.push(p), fsGB(52)) });
+  t.after(r.done);
+  const s = r.mk();
+  s.tick();
+  assert.deepEqual(r.read().disks?.map((d) => d.auto), [true]);
+  assert.deepEqual(seen, [r.ws]);
+  r.cfg.value = strip({ disks: ["/"] });
+  r.advance(10_000);
+  s.tick();
+  assert.equal(r.read().disks?.[0].auto, undefined);
+});
+
+test("exit listener: start adds one, stop removes it, and a process exit drops the lease", (t) => {
+  const r = rig();
+  t.after(r.done);
+  const before = process.listenerCount("exit");
+  const s = r.mk();
+  s.start();
+  assert.equal(process.listenerCount("exit"), before + 1);
+  r.timers[0].fn();
+  const lease = stripLeasePath(r.agentDir);
+  assert.equal(fs.existsSync(lease), true);
+  const listener = process.listeners("exit").at(-1) as () => void;
+  listener();
+  assert.equal(fs.existsSync(lease), false, "the exit listener gives the lease back");
+  assert.equal(s.holdsLease(), false);
+  void s.stop();
+  assert.equal(process.listenerCount("exit"), before, "stop removes the listener");
+});
+
+test("hand-over: a standby takes the lease on its next tick after the holder stops, without waiting for staleness", (t) => {
+  const r = rig();
+  t.after(r.done);
+  const holder = r.mk();
+  const standby = r.mk();
+  holder.tick();
+  standby.tick();
+  assert.equal(standby.holdsLease(), false);
+  void holder.stop();
+  r.advance(10_000);
+  standby.tick();
+  assert.equal(standby.holdsLease(), true);
 });

@@ -1,5 +1,5 @@
 // r79 item 6: the owner dialog (gatedialog.ts askOwner): three options (allow once, deny with comment, deny and stop), deny with
-// comment, deny and stop, dismissed denies, the full command in the title (head/tail plus trace file above 60 lines). Pi's selector title is a
+// comment, deny and stop, dismissed denies, the full command in the title (head/tail plus trace file above 12 lines). Pi's selector title is a
 // wrapping text without scrolling (extension-selector.js), hence the cut.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -104,30 +104,31 @@ test("presence disabled: an away-reporting presence is never probed and the dial
   assert.equal(u.selects.length, 1);
 });
 
-test("long commands: 60 lines show in full; more show head and tail, name the trace file, and the file holds everything", (t) => {
+test("long commands: 12 lines show in full; more show head and tail, name the trace file, and the file holds everything", (t) => {
   const w = world(t);
   const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`);
-  const full = commandDisplay(lines(60).join("\n"), w.state);
+  const full = commandDisplay(lines(12).join("\n"), w.state);
   assert.equal(full.file, undefined);
-  assert.equal(full.text.split("\n").length, 60);
+  assert.equal(full.text.split("\n").length, 12);
   const text = lines(100).join("\n");
   const cut = commandDisplay(text, w.state);
   const shown = cut.text.split("\n");
   assert.equal(shown.length, HEAD_LINES + 1 + TAIL_LINES);
   assert.equal(shown[0], "line 1");
   assert.equal(shown[HEAD_LINES - 1], `line ${HEAD_LINES}`);
-  assert.match(shown[HEAD_LINES], /^\.\.\. \[40 lines omitted; the full text is in .*gate-ask-1\.txt\]$/);
+  assert.match(shown[HEAD_LINES], /^\.\.\. \[89 lines omitted; the full text is in .*gate-ask-1\.txt\]$/);
   assert.equal(shown.at(-1), "line 100");
   assert.equal(fs.readFileSync(cut.file!, "utf8"), text);
   assert.match(commandDisplay(text, w.state).file!, /gate-ask-2\.txt$/);
 });
 
-test("the dialog title for a long command carries the omission line; no 4000-character cut", async (t) => {
+test("the dialog title for a long line carries its start and end with the hidden count", async (t) => {
   const w = world(t);
   const u = ui({ select: ["allow once"] });
   const payload = `echo ${"y".repeat(5000)}`;
   await askOwner({ ...ASK, payload }, deps(u, w).d);
-  assert.ok(u.selects[0].title.includes(payload));
+  assert.ok(u.selects[0].title.includes(`${payload.slice(0, 200)}… [4725 characters omitted] …${payload.slice(-80)}`));
+  assert.ok(!u.selects[0].title.includes(payload));
 });
 
 test("control characters of a command do not reach the terminal", (t) => {

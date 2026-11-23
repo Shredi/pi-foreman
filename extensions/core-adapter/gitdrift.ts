@@ -122,6 +122,27 @@ export interface GitSnapshot {
   /** Hash of the hooks dir path (the path is a config value, so it is never stored). */
   hooksDirId: string;
   hooks: Map<string, string>;
+  /** Relative core.hooksPath only: the worktree top this snapshot was taken in (in memory; the hooks dir is per checkout). */
+  relTop?: string;
+  /** Relative core.hooksPath only: hooks map per worktree top (saved; absent on files from before and on other hooks dirs). */
+  relTops?: Map<string, Map<string, string>>;
+  /** Relative core.hooksPath only, in memory: the id the pre-fix formula gave for this checkout (sha of the resolved path). */
+  legacyHooksDirId?: string;
+}
+
+const MAX_REL_TOPS = 32;
+const MAX_PASSED_CALLS = 256;
+
+/** Carry the per-top hooks maps of `prev` into `next` (same relative hooks path), dropping tops whose worktree is gone. */
+export function mergeRelTops(prev: GitSnapshot | null, next: GitSnapshot): GitSnapshot {
+  if (next.relTop === undefined) return next;
+  const tops = new Map<string, Map<string, string>>();
+  if (prev?.relTops && prev.hooksDirId === next.hooksDirId) {
+    for (const [t, m] of prev.relTops) if (t !== next.relTop && fs.existsSync(t)) tops.set(t, m);
+  }
+  while (tops.size >= MAX_REL_TOPS) tops.delete(tops.keys().next().value as string);
+  tops.set(next.relTop, next.hooks);
+  return { ...next, relTops: tops };
 }
 
 export const sha =(s: string | Buffer): string => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -292,6 +313,10 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
       hooks.set(name, "unreadable");
     }
   }
+  // A relative value names a different dir in every checkout: one id per configured value, not per resolved path.
+  if (hp && !hp.startsWith("~/") && !path.isAbsolute(hp)) {
+    return { files, hooksDirId: sha(`rel\0${hp}`), hooks, relTop: repo.top, legacyHooksDirId: sha(hooksDir) };
+  }
   return { files, hooksDirId: sha(hooksDir), hooks };
 }
 
@@ -301,7 +326,8 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
 export function stateFileFor(stateDir: string, prefix: string, key: string): string {
   let real = key;
   try {
-    real = fs.realpathSync(key);
+    // native: also expands Windows 8.3 short names, so the long spelling git writes into a worktree's .git file maps to the same file
+    real = fs.realpathSync.native(key);
   } catch {
     real = path.resolve(key);
   }
@@ -378,18 +404,21 @@ export function serializeGitSnapshot(s: GitSnapshot): unknown {
     files: [...s.files].map(([l, f]) => [l, f.hash, f.keys ? [...f.keys] : null]),
     hooksDirId: s.hooksDirId,
     hooks: [...s.hooks],
+    ...(s.relTops ? { relTops: [...s.relTops].map(([t, m]) => [t, [...m]]) } : {}),
   };
 }
 
 export function deserializeGitSnapshot(o: unknown): GitSnapshot | null {
-  const r = o as { v?: number; files?: unknown; hooksDirId?: unknown; hooks?: unknown } | null;
+  const r = o as { v?: number; files?: unknown; hooksDirId?: unknown; hooks?: unknown; relTops?: unknown } | null;
   if (!r || r.v !== 1 || !Array.isArray(r.files) || typeof r.hooksDirId !== "string" || !Array.isArray(r.hooks)) return null;
   try {
     const files = new Map<string, FileSnap>();
     for (const [l, h, k] of r.files as Array<[string, string, Array<[string, string]> | null]>) {
       files.set(String(l), { hash: String(h), keys: Array.isArray(k) ? new Map(k.map(([a, b]) => [String(a), String(b)])) : null });
     }
-    return { files, hooksDirId: r.hooksDirId, hooks: new Map((r.hooks as Array<[string, string]>).map(([a, b]) => [String(a), String(b)])) };
+    const pairs = (m: unknown) => new Map((m as Array<[string, string]>).map(([a, b]): [string, string] => [String(a), String(b)]));
+    const relTops = Array.isArray(r.relTops) ? new Map((r.relTops as Array<[string, unknown]>).map(([t, m]): [string, Map<string, string>] => [String(t), pairs(m)])) : undefined;
+    return { files, hooksDirId: r.hooksDirId, hooks: pairs(r.hooks), ...(relTops ? { relTops } : {}) };
   } catch {
     return null;
   }
@@ -515,11 +544,17 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
     out.push(`worktrees: ${wt.size} changed (${items.join("; ")}${wt.size > MAX_ITEMS ? `; +${wt.size - MAX_ITEMS} more` : ""})`);
   }
   if (quietModules.length) out.push(`submodule configs: ${quietModules.length} changed (${quietModules.slice(0, MAX_ITEMS).map(clean).join("; ")}${quietModules.length > MAX_ITEMS ? `; +${quietModules.length - MAX_ITEMS} more` : ""})`);
-  if (before.hooksDirId !== after.hooksDirId) out.push("hooks directory changed (core.hooksPath)");
-  const hooks = [...new Set([...before.hooks.keys(), ...after.hooks.keys()])].sort();
-  const hAdded = hooks.filter((h) => !before.hooks.has(h));
+  // Relative core.hooksPath: an old-formula id for this checkout counts as unchanged; the baseline hooks are the
+  // stored map of this very worktree top (a top seen first time is its own baseline: no hook drift).
+  const legacy = after.relTop !== undefined && before.relTops === undefined && before.hooksDirId === after.legacyHooksDirId;
+  if (before.hooksDirId !== after.hooksDirId && !legacy) out.push("hooks directory changed (core.hooksPath)");
+  let beforeHooks: Map<string, string> | undefined = before.hooks;
+  if (after.relTop !== undefined && !legacy && before.hooksDirId === after.hooksDirId) beforeHooks = before.relTops?.get(after.relTop);
+  if (beforeHooks === undefined) beforeHooks = after.hooks;
+  const hooks = [...new Set([...beforeHooks.keys(), ...after.hooks.keys()])].sort();
+  const hAdded = hooks.filter((h) => !beforeHooks.has(h));
   const hRemoved = hooks.filter((h) => !after.hooks.has(h));
-  const hChanged = hooks.filter((h) => before.hooks.has(h) && after.hooks.has(h) && before.hooks.get(h) !== after.hooks.get(h));
+  const hChanged = hooks.filter((h) => beforeHooks.has(h) && after.hooks.has(h) && beforeHooks.get(h) !== after.hooks.get(h));
   const hp = [listed("added", hAdded), listed("changed", hChanged), listed("removed", hRemoved)].filter(Boolean);
   if (hp.length) out.push(`hooks: ${hp.join("; ")}`);
   return out;
@@ -563,9 +598,11 @@ export class GitDriftWatch {
   /** Set when the stored snapshot was missing or corrupt for a workspace that had one; asks until approved. */
   tamper: string | null = null;
   private stateFile: string | null = null;
-  private readonly passed = new Set<string>();
+  /** Call id -> the cwd `gate` compared; `after` re-snapshots that checkout, never one the gate did not compare. */
+  private readonly passed = new Map<string, string>();
 
   private set(s: GitSnapshot | null): void {
+    if (s) s = mergeRelTops(this.snap, s);
     this.snap = s;
     if (s) writeState(this.stateFile, serializeGitSnapshot(s));
   }
@@ -607,14 +644,34 @@ export class GitDriftWatch {
       this.tamper = null;
       this.set(takeGitSnapshot(cwd, home));
     }
-    if (callId) this.passed.add(callId);
+    else if (r.decision === "none") this.recordFirstSeenTop(cwd, home);
+    if (callId) {
+      this.passed.delete(callId);
+      while (this.passed.size >= MAX_PASSED_CALLS) this.passed.delete(this.passed.keys().next().value as string);
+      this.passed.set(callId, cwd);
+    }
     return undefined;
+  }
+
+  /** No drift in a checkout whose relative hooks dir has no stored map yet: store that top's hooks as its baseline (the rest of the stored snapshot stays). */
+  private recordFirstSeenTop(cwd: string, home: string): void {
+    const prev = this.snap;
+    if (!prev?.relTops) return;
+    const cur = takeGitSnapshot(cwd, home);
+    if (!cur || cur.relTop === undefined || cur.hooksDirId !== prev.hooksDirId || prev.relTops.has(cur.relTop)) return;
+    const tops = new Map<string, Map<string, string>>();
+    for (const [t, m] of prev.relTops) if (fs.existsSync(t)) tops.set(t, m);
+    while (tops.size >= MAX_REL_TOPS) tops.delete(tops.keys().next().value as string);
+    tops.set(cur.relTop, cur.hooks);
+    this.snap = { ...prev, relTops: tops };
+    writeState(this.stateFile, serializeGitSnapshot(this.snap));
   }
 
   /** After the foreman's own git call ran: its own config changes (push -u, branch -d) become the baseline. */
   after(cwd: string, home: string, callId: string): void {
+    const gated = this.passed.get(callId) ?? cwd;
     if (!this.passed.delete(callId) || !this.snap) return;
-    this.set(takeGitSnapshot(cwd, home));
+    this.set(takeGitSnapshot(gated, home));
   }
 }
 

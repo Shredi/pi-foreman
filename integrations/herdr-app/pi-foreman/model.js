@@ -277,7 +277,6 @@ const STRIP_MAX_HISTORY = 60;
 const STRIP_MAX_DISKS = 8;
 const STRIP_MAX_QUOTAS = 12;
 const STRIP_MAX_REASONS = 6;
-const STRIP_LABEL = 18;
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -300,13 +299,14 @@ export function parseStrip(raw) {
   const cpu = isObj(raw.cpu)
     ? { pct: pct(raw.cpu.pct), history: listOf(raw.cpu.history).map(finite).filter((v) => v !== null).slice(-STRIP_MAX_HISTORY).map((v) => clamp(v, 0, 100)), tone: tone(raw.cpu.tone, LOAD_TONES) }
     : null;
-  const mem = isObj(raw.mem) ? { pct: pct(raw.mem.pct), tone: tone(raw.mem.tone, LOAD_TONES) } : null;
+  const mb = (v) => { const n = finite(v); return n === null ? null : Math.max(0, n); };
+  const mem = isObj(raw.mem) ? { pct: pct(raw.mem.pct), usedMB: mb(raw.mem.usedMB), totalMB: mb(raw.mem.totalMB), tone: tone(raw.mem.tone, LOAD_TONES) } : null;
   const level = isObj(raw.level)
     ? { level: label(raw.level.level, 12) || "ok", reasons: listOf(raw.level.reasons).filter((r) => typeof r === "string").map((r) => label(r, 40)).filter(Boolean).slice(0, STRIP_MAX_REASONS) }
     : null;
   const disks = listOf(raw.disks).filter(isObj).slice(0, STRIP_MAX_DISKS).map((d) => (d.missing === true
-    ? { label: diskLabel(d.label), missing: true }
-    : { label: diskLabel(d.label), missing: false, usedPct: pct(d.usedPct), freeGB: finite(d.freeGB) === null ? null : Math.max(0, d.freeGB), tone: tone(d.tone, LOAD_TONES) }));
+    ? { label: diskLabel(d.label), missing: true, auto: d.auto === true }
+    : { label: diskLabel(d.label), missing: false, auto: d.auto === true, usedPct: pct(d.usedPct), freeGB: finite(d.freeGB) === null ? null : Math.max(0, d.freeGB), tone: tone(d.tone, LOAD_TONES) }));
   const quotas = listOf(raw.quotas).filter(isObj).slice(0, STRIP_MAX_QUOTAS).map((q) => {
     const used = finite(q.used);
     const reset = typeof q.resetsAt === "string" ? Date.parse(q.resetsAt) : NaN;
@@ -337,16 +337,14 @@ export function markerFraction(pace) {
   return typeof pace === "number" && Number.isFinite(pace) ? clamp(pace, 0, 1) : null;
 }
 
-/** "resets Thu 21:00" within 7 days of `now` (local time), else "resets 1 Dec"; "" without a reset time. */
+/** "Thu 21:00" within 7 days of `now` (local time), else "1 Dec"; "" without a reset time. */
 export function resetText(resetsAt, now) {
   if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return "";
   const d = new Date(resetsAt);
-  if (resetsAt - now <= 7 * 86400000) return `resets ${WEEKDAYS[d.getDay()]} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return `resets ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  if (resetsAt - now <= 7 * 86400000) return `${WEEKDAYS[d.getDay()]} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
-/** `{value: true}` only for a measured number, so a dash stays grey. */
-const valueOf = (v) => (v === null || v === undefined ? {} : { value: true });
 const pctText = (v) => (v === null || v === undefined ? "—" : `${Math.round(v)}%`);
 /** `s` cut to `w` chars with "…" in the middle, the larger share kept at the end (the end of a path names it); shorter text stays. */
 export const cutMiddle = (s, w) => {
@@ -354,71 +352,84 @@ export const cutMiddle = (s, w) => {
   const tail = Math.ceil((w - 1) * 0.6);
   return `${s.slice(0, w - 1 - tail)}…${s.slice(s.length - tail)}`;
 };
-const fixed = (s, w) => cutMiddle(s, w).padEnd(w);
 
-/** The dot of the load guard: amber at high, red at critical, else neutral; the reason words only when it is not ok. */
-function levelSegs(level) {
-  if (!level) return [];
-  const toneOf = level.level === "critical" ? "red" : level.level === "high" ? "amber" : "neutral";
-  const text = toneOf === "neutral" ? level.level : (level.reasons.join(", ") || level.level);
-  return [{ text: "●", tone: toneOf, value: true }, { text: ` ${text}`, tone: toneOf, value: true }];
+/** The short name of a disk (the row reads "Disk" plus this): "" for the default disk (`auto`), "C:" for a drive form (`c:`, `C:\`, `C:/`) or a WSL drive mount
+ *  (`/mnt/c`), "/" for the root, else the last folder (UNC `\\server\share` gives `share`). */
+export function diskName(raw, auto = false) {
+  if (auto) return "";
+  const text = str(raw).trim();
+  const drive = /^([A-Za-z]):[\\/]?$/.exec(text) ?? /^\/mnt\/([A-Za-z])\/?$/.exec(text);
+  if (drive) return `${drive[1].toUpperCase()}:`;
+  if (/^[\\/]+$/.test(text)) return text.startsWith("/") ? "/" : "\\";
+  const trimmed = text.replace(/[\\/]+$/, "");
+  return trimmed.split(/[\\/]/).pop() || trimmed;
 }
+const diskRowName = (d) => { const n = diskName(d.label, d.auto); return n ? `Disk ${n}` : "Disk"; };
 
-/** The unfolded strip as rows `{id, segs}`: cpu / memory / level, one row per disk and per usage row. A seg is `{text, tone}` (`value: true` on the measured parts: a calm one draws green, a neutral label, dash or reset text stays dim); a bar seg has
- *  `bar: {frac, marker}` (fill share and pace marker position, 0 to 1 or null) and no text, a sparkline seg `spark: [heights in px]`.
- *  The head row's segs carry `group` ("cpu", "mem", "level") so the drawing can wrap whole groups. `{stale: true}` is one line with dashes; null draws nothing. */
+const STALE_TEXT = "● no session measuring";
+const levelTone = (level) => (level.level === "critical" ? "red" : level.level === "high" ? "amber" : "neutral");
+const gbText = (mb) => `${Math.round(mb / 1024)}`;
+
+/** The unfolded strip as `{head, rows}`; null draws nothing.
+ *  `head`: `{level: {text, tone} | null, reasons, stale}` (level off: null, the head reads "Status"; stale: the "no session measuring" level, no rows).
+ *  `rows`: `{id, kind: "cpu" | "mem" | "disk" | "quota", name, bar: {frac, marker} | null, spark: [heights in px] | null, value: {text, tone, measured}, extra}`:
+ *  the columns name, bar (or spark), percent, one extra text ("" for none). A dash row has no bar; `measured` is false for a dash, so it stays dim. */
 export function stripRows(strip, now = Date.now()) {
-  if (!isObj(strip)) return [];
-  if (strip.stale) return [{ id: "stale", segs: [{ text: "status: no main session measuring  cpu —  mem —", tone: "neutral" }] }];
+  if (!isObj(strip)) return null;
+  if (strip.stale) return { head: { level: { text: STALE_TEXT, tone: "neutral" }, reasons: "", stale: true }, rows: [] };
   const rows = [];
-  const head = [];
-  const grp = (group, segs) => head.push(...segs.map((g) => ({ ...g, group })));
+  const value = (text, toneName, measured) => ({ text, tone: measured ? toneName : "neutral", measured });
   if (strip.cpu) {
-    grp("cpu", [{ text: "cpu ", tone: "neutral" },
-      ...(strip.cpu.history.length ? [{ text: "", tone: strip.cpu.tone, spark: sparkHeights(strip.cpu.history), ...valueOf(strip.cpu.pct) }] : []),
-      { text: pctText(strip.cpu.pct), tone: strip.cpu.tone, ...valueOf(strip.cpu.pct) }]);
+    const c = strip.cpu;
+    rows.push({ id: "cpu", kind: "cpu", name: "CPU", bar: null, spark: c.history.length ? sparkHeights(c.history) : null, value: value(pctText(c.pct), c.tone, c.pct !== null), extra: "" });
   }
   if (strip.mem) {
-    grp("mem", [{ text: "mem ", tone: "neutral" }, { text: "", tone: strip.mem.tone, bar: { frac: fillFraction(strip.mem.pct ?? 0), marker: null }, ...valueOf(strip.mem.pct) },
-      { text: pctText(strip.mem.pct), tone: strip.mem.tone, ...valueOf(strip.mem.pct) }]);
+    const m = strip.mem;
+    const sized = m.usedMB !== null && m.usedMB !== undefined && m.totalMB !== null && m.totalMB !== undefined;
+    rows.push({ id: "mem", kind: "mem", name: "Memory", bar: m.pct === null ? null : { frac: fillFraction(m.pct), marker: null }, spark: null, value: value(pctText(m.pct), m.tone, m.pct !== null), extra: sized ? `${gbText(m.usedMB)} / ${gbText(m.totalMB)} GB` : "" });
   }
-  if (strip.level) grp("level", levelSegs(strip.level));
-  if (head.length) rows.push({ id: "head", segs: head });
-  const w = Math.min(STRIP_LABEL, Math.max(0, ...strip.disks.map((d) => d.label.length), ...strip.quotas.map((q) => q.label.length)));
   strip.disks.forEach((d, i) => {
-    const segs = [{ text: `${fixed(d.label, w)} `, tone: "neutral" }];
-    if (d.missing || d.usedPct === null) segs.push({ text: "—", tone: "neutral" });
-    else segs.push({ text: "", tone: d.tone, bar: { frac: fillFraction(d.usedPct), marker: null }, value: true }, { text: pctText(d.usedPct), tone: d.tone, ...valueOf(d.usedPct) }, ...(d.freeGB === null ? [] : [{ text: `${Math.round(d.freeGB)} GB free`, tone: "neutral" }]));
-    rows.push({ id: `disk:${i}`, segs });
+    const dash = d.missing || d.usedPct === null;
+    rows.push({
+      id: `disk:${i}`, kind: "disk", name: diskRowName(d), spark: null,
+      bar: dash ? null : { frac: fillFraction(d.usedPct), marker: null },
+      value: dash ? value("—", "neutral", false) : value(pctText(d.usedPct), d.tone, true),
+      extra: d.missing ? "not found" : d.freeGB === null ? "" : `${Math.round(d.freeGB)} GB free`,
+    });
   });
   strip.quotas.forEach((q, i) => {
-    const segs = [{ text: `${fixed(q.label, w)} `, tone: "neutral" }];
-    if (q.used === null) segs.push({ text: "—", tone: "neutral" });
-    else {
-      const reset = resetText(q.resetsAt, now);
-      segs.push({ text: "", tone: q.tone, bar: { frac: fillFraction(q.used, 1), marker: markerFraction(q.pace) }, value: true }, { text: `${Math.round(q.used * 100)}%`, tone: q.tone, value: true }, ...(reset ? [{ text: reset, tone: "neutral" }] : []));
-    }
-    rows.push({ id: `quota:${i}`, segs });
+    const dash = q.used === null;
+    rows.push({
+      id: `quota:${i}`, kind: "quota", name: q.label, spark: null,
+      bar: dash ? null : { frac: fillFraction(q.used, 1), marker: markerFraction(q.pace) },
+      value: dash ? value("—", "neutral", false) : value(`${Math.round(q.used * 100)}%`, q.tone, true),
+      extra: dash ? "" : resetText(q.resetsAt, now),
+    });
   });
-  return rows;
+  const level = strip.level ? { text: `● ${strip.level.level}`, tone: levelTone(strip.level) } : null;
+  if (!level && rows.length === 0) return null;
+  const reasons = strip.level && strip.level.level !== "ok" ? strip.level.reasons.join(", ") : "";
+  return { head: { level, reasons, stale: false }, rows };
 }
 
-/** The folded strip as segments of one line "cpu N%  mem N%  ● level" (only the parts that are on); [] for nothing. */
+/** The folded strip as segments of one line "● level  CPU N%  Mem N%  Disk N%" (the level and the first disk only when on); "Status" for none of them. */
 export function stripSummary(strip) {
   if (!isObj(strip)) return [];
-  if (strip.stale) return [{ text: "status: no main session measuring", tone: "neutral" }];
+  if (strip.stale) return [{ text: STALE_TEXT, tone: "neutral" }];
   const segs = [];
-  const add = (group, label, text, toneName, value) => {
-    const lead = segs.length ? "  " : "";
-    segs.push({ text: `${lead}${label}`, tone: "neutral", group }, { text, tone: toneName, group, ...(value ? { value: true } : {}) });
-  };
-  if (strip.cpu) add("cpu", "cpu ", pctText(strip.cpu.pct), strip.cpu.tone, valueOf(strip.cpu.pct).value);
-  if (strip.mem) add("mem", "mem ", pctText(strip.mem.pct), strip.mem.tone, valueOf(strip.mem.pct).value);
+  const lead = () => (segs.length ? "  " : "");
   if (strip.level) {
-    const toneOf = levelSegs(strip.level)[0].tone;
-    segs.push({ text: segs.length ? "  ●" : "●", tone: toneOf, group: "level", value: true }, { text: ` ${strip.level.level}`, tone: toneOf, group: "level", value: true });
+    const toneOf = levelTone(strip.level);
+    segs.push({ text: `● ${strip.level.level}`, tone: toneOf, group: "level", value: true });
   }
-  return segs;
+  const add = (group, name, pct, toneName) => {
+    segs.push({ text: `${lead()}${name} `, tone: "neutral", group }, { text: pctText(pct), tone: toneName, group, ...(pct !== null && pct !== undefined ? { value: true } : {}) });
+  };
+  if (strip.cpu) add("cpu", "CPU", strip.cpu.pct, strip.cpu.tone);
+  if (strip.mem) add("mem", "Mem", strip.mem.pct, strip.mem.tone);
+  const d = strip.disks[0];
+  if (d) add("disk", "Disk", d.missing ? null : d.usedPct, d.tone ?? "neutral");
+  return segs.length ? segs : [{ text: "Status", tone: "neutral" }];
 }
 
 // ---- tree ----------------------------------------------------------------------------------------------------

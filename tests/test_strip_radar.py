@@ -58,6 +58,11 @@ class RadarStripTests(Fixture):
         self.assertEqual(got["version"], 1)
         self.assertNotIn("samples", got)
 
+    def test_disk_auto_flag_is_passed_on(self):
+        self.configure()
+        self.put_strip(strip_doc(NOW - 5, disks=[{"label": "/work", "usedPct": 5, "freeGB": 1, "tone": "neutral", "auto": True}]))
+        self.assertIs(self.doc()["strip"]["disks"][0]["auto"], True)
+
     def test_old_file_is_stale(self):
         self.configure()
         self.put_strip(strip_doc(NOW - 31))

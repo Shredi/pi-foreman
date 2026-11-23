@@ -81,15 +81,15 @@ const line = (cache: ReturnType<typeof cacheViewOf>): string => {
 
 test("rendering: cells with the mark, total warm time, keepalive glyph, tier glyph", () => {
   const l = line(cacheViewOf(src())!);
-  assert.match(l, /■│■■■■■■■■■ 18:15 ♨ ½$/);
-  assert.match(line(cacheViewOf(src({ tier: "quarter", warmsLeft: 1 }))!), /■│■■■■■■■■■ 09:15 ♨ ¼$/);
+  assert.match(l, /■■■│■■│■■■│■■ 18:15 ♨ ½$/);
+  assert.match(line(cacheViewOf(src({ tier: "quarter", warmsLeft: 1 }))!), /■■■■■│■■■■■ 09:15 ♨ ¼$/);
 });
 
 test("ASCII fallback spells the tier glyphs 1/2 and 1/4", () => {
   assert.deepEqual(tierGlyphs("ascii"), { half: "1/2", quarter: "1/4" });
   assert.deepEqual(tierGlyphs("unicode"), { half: "½", quarter: "¼" });
-  assert.match(line(cacheViewOf(src({ symbols: "ascii" }))!), /■\|■■■■■■■■■ 18:15 \^ 1\/2$/);
-  assert.match(line(cacheViewOf(src({ symbols: "ascii", tier: "quarter" }))!), /■\|■■■■■■■■■ 18:15 \^ 1\/4$/);
+  assert.match(line(cacheViewOf(src({ symbols: "ascii" }))!), /■■■\|■■\|■■■\|■■ 18:15 \^ 1\/2$/);
+  assert.match(line(cacheViewOf(src({ symbols: "ascii", tier: "quarter" }))!), /■■■\|■■\|■■■\|■■ 18:15 \^ 1\/4$/);
 });
 
 test("no limiter word and no (away n) in any state", () => {

@@ -455,7 +455,7 @@
     "footer": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." }, "cacheBar": { "type": "boolean", "description": "Show the cache-timer bar in the foreman footer: the cache lifetime as a bar with a mark for the next warm, the total warm time, the budget tier and the next idle step." }, "style": { "type": "string", "enum": ["foreman", "pi"], "description": "Footer in the tui: foreman (default, the two-line pi-foreman footer) or pi (Pi's own footer, the usage line in the one-line status)." } }
+      "properties": { "usage": { "type": "boolean", "description": "Show usage in the footer." }, "cacheBar": { "type": "boolean", "description": "Show the cache-timer bar in the foreman footer: the warm span as a bar (full after a reply, draining to cold after the last warm) with a mark per coming warm, the total warm time, the budget tier and the next idle step." }, "style": { "type": "string", "enum": ["foreman", "pi"], "description": "Footer in the tui: foreman (default, the two-line pi-foreman footer) or pi (Pi's own footer, the usage line in the one-line status)." } }
     },
     "sidebar": {
       "type": "object",
@@ -472,7 +472,7 @@
             "cpu": { "type": "boolean", "description": "Show CPU % and its sparkline (default true)." },
             "memory": { "type": "boolean", "description": "Show memory used % (default true)." },
             "level": { "type": "boolean", "description": "Show the load guard's level dot (default true)." },
-            "disks": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1 }, "maxItems": 8, "description": "Paths whose disk free space is shown, one line per path (on Windows a bare drive letter such as C: is its root). null (default) = the workspace of the measuring session only; [] = no disk lines. A path that does not exist shows a dash." },
+            "disks": { "type": ["array", "null"], "items": { "type": "string", "minLength": 1 }, "maxItems": 8, "description": "Paths whose disk free space is shown, one line per path (a drive letter such as C: is its root on Windows and /mnt/c elsewhere, the WSL drive mount). null (default) = the disk of the measuring session's folder only; [] = no disk lines. A path that does not exist shows a dash." },
             "sampleSeconds": { "type": "integer", "minimum": 5, "description": "Seconds between two measurements (default 10)." },
             "sparkline": { "type": "integer", "minimum": 2, "maximum": 120, "description": "Number of CPU values kept for the sparkline (default 12)." },
             "quotas": {

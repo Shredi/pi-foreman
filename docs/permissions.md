@@ -61,7 +61,7 @@ Every call goes through these steps, in this order. Each step ends the call or p
 
 **Path spelling.** For the tools `read`, `write`, `edit`, `ls`, `grep` and `find`, the gate reads the path fields the way Pi's tool does (`pathnorm.ts` `toolPath`, the same steps as Pi's own function): a leading `@` is dropped, `~` and `~/` mean the home folder, `file://` is a path, unicode spaces become a space, then the path is joined to the cwd. The result is what the floors, the self-modification rules, the child fence, the path allows and the judge-first list see, so a tilde, at-sign or file-link spelling gets the verdict of its plain spelling, in both directions (a child's `~/…/result.md` of its own handoff folder is allowed; `@/tmp/x` is refused as `/tmp/x` is). A malformed `file://` link cannot be read and is denied (`tool-path-unreadable`). Words in a shell line are not changed (`@` and `file://` stay literal, `~` stays unresolved), and the `foreman_move` and `foreman_copy` fields are read as written. Known limits: symlinked and `..` spellings of the handoff folder, and the extra spellings that the read tool accepts.
 
-A handler failure denies (fail safe). A call with no session to decide it in is denied.
+A handler failure denies (fail safe). A call with no session to decide it in is denied. When the session could not start (a reload after the install moved loads a changed module), the owner gets a "Restart Pi" notice and the refusal names that start failure instead of the generic reason; the start is not retried.
 
 ## Default allow
 
@@ -286,7 +286,7 @@ What the text floors read, so that data is not mistaken for a command:
 
 When a call escalates and a human is at the pane, `pi-foreman: <tool> asks` opens a select dialog. The title carries the cause, the judge's reason if it was unsure, the cwd and the **full command**, heredoc bodies included. The cause is one of: `danger-<name>: <reason>`, `self-modification <rule>` or a floor-ask text.
 
-A command of up to 60 lines is shown whole. A longer one shows its first 40 and last 20 lines plus a line naming a trace file `<agentDir>/pi-foreman/state/gate-ask-<n>.txt` that holds the full text. Control characters are shown as `?`. The text that reaches the agent never hides anything.
+A command of up to 12 lines is shown whole. A longer one shows its first 8 and last 3 lines around a line `... [N lines omitted; the full text is in <agentDir>/pi-foreman/state/gate-ask-<n>.txt]`. A line over 300 characters shows its first 200 and last 80 characters around `… [N characters omitted] …`. Whenever anything is cut, the full text goes to that trace file and the display names it (with only characters cut, the last line is `... [the full text is in <file>]`). Without a state dir, or when the trace file cannot be written, the cap still applies and the display names no file. Control characters are shown as `?`. The text that reaches the agent never hides anything.
 
 | Option | Result |
 |---|---|
@@ -491,6 +491,8 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 Every other `gate.*` key is user or overlay only (`gate.protected.check` may tighten); a project value is dropped with a warning. A project cannot remove a user `classifier.deny` sentence: project and tracked lists add to the user's.
 
 ## Known limits
+
+A generator test (`extensions/core-adapter/test/gate-generator.test.ts`, [development](development.md#tests)) hides dangerous commands in shell constructs and fails when one runs silent; the shapes it still finds are listed with their sources in `KNOWN_GAPS` (and `PLAIN_GAPS`, for plain lines) in `_gate-gen.ts` and are known limits of the shell reading.
 
 - Another extension loaded before the gate, or one that mutates `event.input` after it, could change the input between the decision and the execution. The gate is first in load order; the doctor warns when any extension precedes it.
 - Extension-registered providers: the classifier call goes through Pi's registry, so a provider an extension registers at runtime must be loaded before the first classification.

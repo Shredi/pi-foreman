@@ -8,19 +8,21 @@ export interface FooterTheme {
 
 /** What the cache bar shows (cachebar.ts numbers, formatted by the adapter); glyphs come from the active symbol set. */
 export interface CacheBarView {
-  /** Share of the current cache lifetime left, 0..1; null = unknown (dim, empty cells). */
+  /** Share of the bar's span still ahead, 0..1 (the warm span while warms come, else the current cache lifetime); null = unknown (dim, empty cells). */
   share: number | null;
+  /** Share the colour follows (green above 50 %, yellow above 20 %, red at or below); absent = `share`. */
+  colorShare?: number | null;
   /** The time shown: the estimated total warm time while a warm is coming (mm:ss, from 60 minutes whole hours), else the countdown to cold; null = unknown. */
   left: string | null;
-  /** Where the next warm fires, as the share of the lifetime still ahead at that moment (0..1); null = no warm is coming, no mark. */
-  mark?: number | null;
+  /** Where each remaining warm fires, as the share of the span still ahead at that moment, next warm first; absent or empty = no marks. */
+  marks?: number[];
   /** The cache is cold: empty red cells and the cold word. */
   cold: boolean;
   /** Warms a warm stretch allows (running: a fresh one's; 0 = none) and the tier that holds; always set while the bar shows, tier null = unknown. */
   warms: { count: number; tier: "half" | "quarter" | null; /** The idle stretch ended by a miss or an error: ` ♨ miss` / ` ♨ err` replace the `♨` and the tier glyph. */ ended?: "miss" | "err" };
   /** The idle model id of the step after the warms; null = no step. */
   step: string | null;
-  glyphs: { keepalive: string; cold: string; downshift: string; half: string; quarter: string; /** The vertical mark; absent = `│`. */ mark?: string };
+  glyphs: { keepalive: string; cold: string; downshift: string; half: string; quarter: string; /** The vertical mark; absent = `│`. */ mark?: string; /** The dashed cut in front of the marks when more warms come than fit; absent = `┆`. */ cut?: string };
 }
 
 export interface FooterView {
@@ -124,16 +126,44 @@ function cacheSegment(hit: number, theme: FooterTheme): string {
   return theme.fg(color, `CH ${Math.round(hit)}%`);
 }
 
-/** Cache-timer bar: cells drain with the share of the current cache lifetime left (green above 50 %, yellow above 20 %, red at or below, dim unknown), with one mark inserted where the next warm fires; the warm part (`♨` while a warm is coming, then the tier glyph) follows. */
+/**
+ * Where the marks go among `cells` cells: each mark's slot is its share ahead x cells, rounded, 0..cells (slot n sits before cell n).
+ * All marks are drawn when they fit: at most `cells` of them, each in its own slot. Otherwise the next ones that fit, at most 3,
+ * stopping at the first collision; `cutAt` is the slot of the dashed cut in front of them (null = nothing left out).
+ */
+function markSlots(marks: number[], cells: number): { slots: number[]; cutAt: number | null } {
+  const at = marks.map((m) => Math.min(cells, Math.max(0, Math.round(m * cells))));
+  if (at.length <= cells && new Set(at).size === at.length) return { slots: at, cutAt: null };
+  const kept: number[] = [];
+  for (const s of at) {
+    if (kept.length === 3 || kept.includes(s)) break;
+    kept.push(s);
+  }
+  // the slots fall as the warms come later, so the last kept one is the leftmost
+  return { slots: kept, cutAt: kept.length < at.length ? Math.max(0, kept[kept.length - 1] - 1) : null };
+}
+
+/** The cell row: `filled` solid cells, the marks between them and the cut in front of the marks. */
+function cellRow(filled: number, cells: number, marks: number[], mark: string, cut: string): string {
+  const { slots, cutAt } = markSlots(marks, cells);
+  let out = "";
+  for (let s = 0; s <= cells; s++) {
+    if (cutAt === s) out += cut;
+    if (slots.includes(s)) out += mark;
+    if (s < cells) out += s < filled ? "■" : "□";
+  }
+  return out;
+}
+
+/** Cache-timer bar: cells drain with the share of the bar's span left (green above 50 %, yellow above 20 %, red at or below, dim unknown); the marks sit between cells where the next warms fire, a dashed cut in front of them when not all fit. The warm part (`♨` while a warm is coming, then the tier glyph) follows. */
 function cacheBarSegment(c: CacheBarView, cells: number, theme: FooterTheme): string {
   const tier = c.warms.tier ? (c.warms.tier === "half" ? c.glyphs.half : c.glyphs.quarter) : "";
   const warmPart = c.warms.ended ? ` ${c.glyphs.keepalive} ${c.warms.ended}` : [c.warms.count > 0 ? c.glyphs.keepalive : "", tier].filter((p) => p !== "").map((p) => ` ${p}`).join("");
   if (c.cold) return theme.fg("error", `${"□".repeat(cells)} ${c.glyphs.cold} cold`) + warmPart;
-  const color: FooterColor = c.share === null ? "dim" : c.share > 0.5 ? "success" : c.share > 0.2 ? "warning" : "error";
+  const shade = c.colorShare === undefined ? c.share : c.colorShare;
+  const color: FooterColor = shade === null ? "dim" : shade > 0.5 ? "success" : shade > 0.2 ? "warning" : "error";
   const filled = c.share === null ? 0 : Math.min(cells, Math.max(0, Math.round(c.share * cells)));
-  const bar = "■".repeat(filled) + "□".repeat(cells - filled);
-  const at = c.mark === null || c.mark === undefined ? null : Math.min(cells, Math.max(0, Math.round(c.mark * cells)));
-  let out = theme.fg(color, at === null ? bar : bar.slice(0, at) + (c.glyphs.mark ?? "│") + bar.slice(at));
+  let out = theme.fg(color, cellRow(filled, cells, c.marks ?? [], c.glyphs.mark ?? "│", c.glyphs.cut ?? "┆"));
   if (c.left !== null) out += ` ${theme.fg(color, c.left)}`;
   return out + warmPart;
 }
@@ -157,7 +187,7 @@ export function sanitizeStatus(text: string): string {
 }
 
 /**
- * Line 1 drops the branch first, then the `↓ <id>` step, then shrinks the bars to 5 cells (the cache bar keeps its warm part and its mark); a line still too wide is cut with `…`.
+ * Line 1 drops the branch first, then the `↓ <id>` step, then shrinks the bars to 5 cells (the cache bar keeps its warm part and its marks); a line still too wide is cut with `…`.
  * Line 2 is the usage text, then ` · ` and the other extensions' statuses, dimmed.
  */
 export function renderFooter(v: FooterView, width: number, theme: FooterTheme): string[] {
