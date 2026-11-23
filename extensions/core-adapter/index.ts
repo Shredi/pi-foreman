@@ -152,6 +152,7 @@ import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, takeBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
+import { judgeReadScope } from "./judgereads.ts";
 import { dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { START_NOTE_ENTRY, START_NOTE_TYPE, startNoteRecorded, startNoteText } from "./startnote.ts";
@@ -4212,13 +4213,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // the task text is not passed for the riskiest kinds: any judge-first label of the call decides (a structured field), never the first one alone
       const withhold = (out.dangers ?? [danger.name]).some((n) => WITHHELD.has(n));
       // the judge reads the call first: a clear runs it; unsure, an invalid answer or a failure asks the owner (a child asks its parent)
+      // file reads: not for the withheld kinds (the judge sees no task text for them on purpose); a child adds its own output and scratch dirs
+      const readScope = withhold ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never });
       const judged = await rt.classifier.judge(
-        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(ledger ? { ledger } : {}), ...(withhold ? { withhold } : {}) },
+        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(ledger ? { ledger } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
         {
           registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
           recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
           trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
           notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
         },
       );
       if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}`);

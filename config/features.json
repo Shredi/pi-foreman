@@ -813,7 +813,7 @@
       "title": "Gate classifier and dialog",
       "purpose": "The gate decides every tool call: the floors first, then the self-modification rules (a dialog by rule, never judge-cleared), then the built-in allows, then the judge-first list. There are no modes and no rule lists. An escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report). `gate.mode`, `gate.readClear` and `gate.readonlyClear` have no effect; they are kept so existing configs load.",
       "doc": "docs/permissions.md#the-steps",
-      "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes", "gate.readTools", "safety.git", "gate.mode", "gate.readClear", "gate.readonlyClear"],
+      "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.judgeReads", "gate.logMaxBytes", "gate.readTools", "safety.git", "gate.mode", "gate.readClear", "gate.readonlyClear"],
       "commands": ["/foreman perms"],
       "switch": null,
       "state": "on",

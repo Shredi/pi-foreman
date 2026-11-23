@@ -42,6 +42,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
+    gate.judgeReads                  only false is accepted (true sends file text to the judge model)
     providers.*.cache.ttlSeconds / warmCompact / byModel   ignored (the cache policy: L1/L3/L2 only)
     providers.*.cache.keepalive.intervalSeconds   ignored (L1/L3/L2 only)
     providers.*.cache.keepalive.enabled   only false is accepted (true keeps the session warm at a cost)
@@ -343,12 +344,13 @@ LAYER_TIGHTEN = [
     (("tools", "deferred"), "union"),
     (("skills", "hidden"), "union"),
     (("gate", "tmpAccess"), "false_only"),
+    (("gate", "judgeReads"), "false_only"),
     (("gate", "reviewTimeoutMs"), "lower_only"),
     (("gate", "childAsk"), ("ordered", ("deny", "parent"))),
     (("gate", "protected", "check"), ("ordered", ("ask", "read-only", "model"))),
 ]
-# gate keys the project and session layers may set (tmpAccess, reviewTimeoutMs, childAsk and protected have LAYER_TIGHTEN rows; askTimeoutMs, readClear and readonlyClear have no effect and load as they are); every other gate key is user or overlay only
-GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk", "readClear", "readonlyClear", "protected")
+# gate keys the project and session layers may set (tmpAccess, judgeReads, reviewTimeoutMs, childAsk and protected have LAYER_TIGHTEN rows; askTimeoutMs, readClear and readonlyClear have no effect and load as they are); every other gate key is user or overlay only
+GATE_LAYER_KEYS = ("tmpAccess", "judgeReads", "askTimeoutMs", "reviewTimeoutMs", "childAsk", "readClear", "readonlyClear", "protected")
 LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "heavyFileCount": 1,
                  "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "budgetUsd": 0.01,
