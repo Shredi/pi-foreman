@@ -426,10 +426,10 @@ test("hint under agent pi-foreman/remote/sub names pi-foreman, the same whether 
 
 test("a `..` after a withheld or outside folder answers outside, the same whether that folder exists or not", () => {
   for (const f of [
-    (t: typeof twins.yes) => ".git/../run.sh",
-    (t: typeof twins.yes) => ".env/../run.sh",
+    () => ".git/../run.sh",
+    () => ".env/../run.sh",
     (t: typeof twins.yes) => `${t.ag}/extensions/../AGENTS.md`,
-    (t: typeof twins.yes) => "~/.ssh/../proj/run.sh",
+    () => "~/.ssh/../proj/run.sh",
     (t: typeof twins.yes) => `${t.ag}/pi-foreman/remote/../x`,
     (t: typeof twins.yes) => `${t.ag}/../x`,
   ]) {
