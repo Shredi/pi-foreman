@@ -1642,8 +1642,9 @@ function pythonKinds(text: string, segs: ShellSegment[], env: FloorEnv, where: W
       // `ssh h 'find /data -delete'` does), the later ones are read (`ssh h 'f(){ ls; shred /x; }; f'` as `ssh h 'ls; shred /x'`)
       const first = where !== "local" && segs.indexOf(opaque) === 0;
       const inner = parsed.map((x, k) => (first && k === 0 ? carryFacts({ ...x, program: opaque.program, argv: [x.program, ...x.argv], redirectEnd: x.redirectEnd, ...(x.bodies ? { bodies: x.bodies } : {}), ...(x.tooDeep ? { tooDeep: true } : {}) }, x) : x));
-      // a body is a part of the text it stands in, so reading it is bounded by the text (and each body once, above): it does not count towards the wrapper depth
-      const h = pythonKinds(body, inner, env, where, depth, false, acc);
+      // a body that runs without a call (coproc, `for ((…))`, select) counts one level of depth, so nesting past the cap is judge-first as on main; a function body is run by the walk at its calls
+      // and is bounded by the text and the budget (each body once), so it does not count: 100 nested definitions with a refusal at the bottom stay refused
+      const h = pythonKinds(body, inner, env, where, opaque.opaque === "function_def" ? depth : depth + 1, false, acc);
       if (h) return h;
       // the old check read a PowerShell delete in a function body too (`f(){ Remove-Item -Recurse $x; }`): the units of the PowerShell-only removers
       const psText = inner.filter((x) => /^(?:remove-item|ri)$/i.test(base(x.program))).map((x) => [x.program, ...x.argv].join(" ")).join("\n");

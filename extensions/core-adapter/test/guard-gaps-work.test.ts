@@ -242,3 +242,46 @@ test("item 12: nested definitions 100 and 250 with a refusal at the bottom, and 
     }
   }
 });
+
+// Review 3d5a8e40: bodies that run without a call (coproc, `for ((…))`) count towards the depth cap, so 17+ of them nested are judge-first or refused, never no decision.
+const nestedRun = (kind: "coproc" | "for", d: number, inner: string): string => {
+  let n = inner;
+  for (let i = 0; i < d; i++) n = kind === "coproc" ? `coproc C${i} { ${n}; }` : `for ((i${i}=0;i${i}<1;i${i}++)); do ${n}; done`;
+  return n;
+};
+
+test("item 12: 17+ nested coproc and for(( )) bodies with a read or a write outside are never no decision", () => {
+  for (const role of ["main", "builder"] as const) {
+    for (const kind of ["coproc", "for"] as const) {
+      for (const d of [17, 18, 30]) {
+        for (const c of ["cat ~/.aws/credentials", "cp ~/.ssh/id_rsa sub/k", "echo x > /outside/x", "echo x >> ~/.bashrc", "pkill node", "ssh h ls", "python -c 'print(1)'", "eval \"$X\"", "git reset --hard", "rm -rf /etc"]) {
+          const line = nestedRun(kind, d, c);
+          const g = gate(line, role);
+          // the foreman may legitimately allow what only a builder is held to (a write outside)
+          if (role === "main" && (c.startsWith("echo x") )) continue;
+          assert.ok(g.blocked || g.danger !== null || d < 17 && false, `${role} ${kind} ${d}: ${c}: no decision`);
+        }
+      }
+    }
+  }
+});
+
+// Every level walks 400 commands at its call (the walker's own cap is 500 a text) and hands the next level to busybox: the walked copies read in all levels pass the budget.
+const sq = (c: string): string => `'${q(c)}'`;
+const levels = (n: number, inner: string): string => {
+  let t = inner;
+  for (let i = 0; i < n; i++) t = `k(){ ${rep(":", 400, "; ")}; busybox sh -c ${sq(t)}; }; k`;
+  return t;
+};
+
+test("item 12: the segment budget really is spent (levels of walked bodies read through busybox)", () => {
+  const walkedRead = (line: string): number => nestedSegments(parseShell(line, { cwd: wt }), { cwd: wt, platform: "linux" }).filter((s) => s.walked).length;
+  // the budget cuts the read: 8 levels read ~14,000 walked copies with it and ~53,000 without
+  assert.ok(walkedRead(levels(8, "ls")) < 18000, `walked read: ${walkedRead(levels(8, "ls"))}`);
+  for (const role of ["main", "builder"] as const) {
+    // a floor command at the bottom, past the budget, is still refused
+    for (const c of ["rm -rf /etc", "sudo rm -rf /etc", "mkfs.ext4 /dev/sda"]) check(levels(8, c), role, "R");
+    // the harmless twin goes to the judge, never an allow
+    check(levels(8, "ls"), role, "J");
+  }
+});
