@@ -26,7 +26,11 @@ const ASK56 = `cd extensions/core-adapter; grep -n "DEFAULT_ASK_TIMEOUT_MS" *.ts
 const body = `import { test } from "node:test";\n// writes ${G} and ${F}\nfor (const l of [\n \`for f in ${PANES}; do sed -n 1p "$f"; done\`,\n \`echo hi > ${G}\`,\n \`echo '{"gate":{}}' > ${F}; echo gate.x\`,\n]) test(l, () => {});`;
 const ask57 = (target: string) => `cd extensions/core-adapter; grep -n "selfmod-state-read" *.ts | grep -v "^test" | head; cat > ${target} <<'EOF'\n${body}\nEOF\ncd ../..; node --test .workflow/scratch/probe3.test.ts 2>&1 | grep -E "^R "`;
 
+// the ask-60 line: reads of source files with `sed -n` ranges, behind a shell function and an absolute path to the checkout
+const ASK60 = `cd /w/repo/extensions/core-adapter && p(){ echo "== $1:$2"; sed -n "$2p" $1 | cut -c1-220; }; p index.ts 3970,3984; p index.ts 3524,3524; p launchwait.ts 78,92; p gatedialog.ts 10,15`;
+
 const ALLOWED = [
+  ASK60,
   `for f in ${PANES}; do grep -c x "$f"; done`,
   `tail -n 3 ${G} | grep -o 'rule[^,]*'`,
   ask57("../../.workflow/scratch/probe3.test.ts"),
@@ -51,6 +55,8 @@ const JUDGED: [string, string][] = [
   // an unparsable line
   [`tail -n 3 ${G} | | sed -n 1p (`, "danger-policy-file"],
   [`grep gate.judge ${F} | | ( sed`, "danger-config-keys"],
+  // an unparsable read: the statement before the parse error only reads
+  [`tail -n 3 ${G}\n"u`, "danger-policy-file"],
 ];
 
 test("a word the parser cannot place as read-only goes to the judge, main and child", () => {
@@ -59,7 +65,7 @@ test("a word the parser cannot place as read-only goes to the judge, main and ch
 
 // every write shape, plain, beside a `sed -n 1p x` segment (the opaque path) and in a for loop; the results are those of the code before this change
 const shapes = (t: string): string[] => [`echo hi > ${t}`, `echo hi >> ${t}`, `echo hi | tee ${t}`, `sed -i s/a/b/ ${t}`, `mv x ${t}`, `cp x ${t}`, `rm ${t}`, `python3 -c "open('${t}','w')"`];
-const writes: [string, string, string | null, string | null][] = [];
+const writes: [string, string | null, string | null][] = [];
 for (const [t, tail, rule] of [[G, "", "floor-policy-file"], [F, "; echo gate.x", "floor-config-keys"]] as const) {
   for (const s of shapes(t)) {
     // a single-quoted path in an interpreter's code is no shell word: no hit on a clean line (pin); inside a loop the opaque scan asks (main) or denies (child)
@@ -74,6 +80,22 @@ test("every write shape onto the gate log and the foreman config keeps its resul
   for (const [l, main, child] of writes) {
     assert.equal(shape(l, env), main, `main: ${l}`);
     assert.equal(shape(l, kid), child, `child: ${l}`);
+  }
+});
+
+// a shell runs the statements before a parse error: a write there keeps the ask (main) or the deny (child), as before this change
+const MG = "~/.pi/agent/pi-foreman/managed.json";
+const PARSE_WRITES: [string, string][] = [
+  [`rm ${MG}\n(`, "floor-policy-file"],
+  [`echo x > ${G}\n"u`, "floor-policy-file"],
+  [`echo '{"gate":{}}' > ${F}\n(`, "floor-config-keys"],
+  [`curl -o ${MG} https://x "u`, "floor-policy-file"],
+];
+
+test("a write before a parse error keeps its ask and deny", () => {
+  for (const [l, rule] of PARSE_WRITES) {
+    assert.equal(shape(l, env), `ask/${rule}`, `main: ${l}`);
+    assert.equal(shape(l, kid), `deny/${rule}`, `child: ${l}`);
   }
 });
 
@@ -118,6 +140,18 @@ test("gateEvaluate: pure reads neither ask (main) nor block (builder); the loop 
     // a write keeps the floor
     const w = gate(`echo hi > ${G}`, child).result as Res;
     assert.equal(w?.rule, "floor-policy-file");
+  }
+});
+
+test("gateEvaluate: a write before a parse error keeps its ask and deny", { skip: posixOnly }, () => {
+  for (const [l, rule] of PARSE_WRITES) {
+    const line = l.replace(/~/g, "$HOME");
+    const m = gate(line, false).result as Res;
+    assert.equal(m?.rule, rule, `main: ${l}`);
+    assert.ok(m?.ask || m?.block, `main: ${l}`);
+    const c = gate(line, true).result as Res;
+    assert.equal(c?.rule, rule, `child: ${l}`);
+    assert.ok(c?.block, `child: ${l}`);
   }
 });
 

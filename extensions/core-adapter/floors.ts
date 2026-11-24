@@ -2357,11 +2357,22 @@ function cleanReadSegment(seg: ShellSegment, env: FloorEnv): boolean {
 }
 
 /**
+ * The one segment of an unparsable line reads only when the statements a shell runs before the error (`beforeParseError`, as `completeLines` cuts) parse
+ * cleanly and none of them writes. A cut that cannot be made (the first statement holds the error) counts as a write.
+ */
+function unparsedReads(text: string, seg: ShellSegment, env: FloorEnv): boolean {
+  const prefix = beforeParseError(text);
+  if (prefix === null) return false;
+  const parsed = parseShell(prefix, { cwd: seg.cwd, platform: env.platform });
+  return parsed.length > 0 && parsed.every((x) => x.opaque !== "parse_error" && nonWritingSegment(x, env));
+}
+
+/**
  * A segment that writes nothing the parser can see: a loop header, a bare assignment, a cleanly read segment, a read-only program (`sed` without `-i`, `jq`; git stays with `cleanReadSegment`, a `git add` stages) with no
  * redirect but a read, an fd dup or the null device and no text to run, or the one segment of an unparsable line (judged as a whole).
  */
-function nonWritingSegment(seg: ShellSegment, env: FloorEnv): boolean {
-  if (seg.opaque === "parse_error") return true;
+function nonWritingSegment(seg: ShellSegment, env: FloorEnv, text = ""): boolean {
+  if (seg.opaque === "parse_error") return unparsedReads(text, seg, env);
   if (seg.heredoc || runsText(seg) || !seg.redirects.every((r) => r.op === "<" || r.op === "dup" || NULL_TARGET.test(r.target))) return false;
   const p = base(seg.program);
   return LOOP_WORDS.has(p) || (p === "" && seg.opaque === "assignment" && seg.argv.length === 0) || cleanReadSegment(seg, env) || (p !== "git" && seg.wrappers.length === 0 && readOperands(seg, p).argv(""));
@@ -2381,7 +2392,7 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
     return [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
   };
   const unquote = (w: string): string => w.replace(/['"`]/g, "");
-  const reading = line.length > 0 && line.every((s) => nonWritingSegment(s, env));
+  const reading = line.length > 0 && line.every((s) => nonWritingSegment(s, env, text));
   const clean = line.filter((s) => cleanReadSegment(s, env));
   const reads = new Set(clean.flatMap((s) => s.argv.map(unquote)));
   // the split words of every other segment: a path inside a script argument (`sed -n "w $P"`) is carried by that segment, not read by the clean one
