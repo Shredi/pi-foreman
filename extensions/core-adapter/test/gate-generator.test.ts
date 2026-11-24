@@ -1,6 +1,7 @@
 // Generator test for the permission gate (skill: .agents/skills/verifying-permission-gate). The rule: a shell line that holds a dangerous command never runs without a
 // block, a judge look or an owner ask, whatever construct hides it. Seven dangerous payloads are hidden in about fifty shell constructs (alone, then nested two and three
-// deep, seeded) and every line goes through the real gate (gateEvaluate) as a builder and as a reviewer. The main session is left out (LEFT_OUT in _gate-gen.ts).
+// deep, seeded) and every line goes through the real gate (gateEvaluate) as a builder and as a reviewer. The main session is left out of A and B (LEFT_OUT in _gate-gen.ts) and only pinned in the role matrix.
+//   role matrix: the class of every construct and payload for the main session, a builder and a reviewer is pinned exactly; the role differences are listed
 //   A. a dangerous line is never silent (no block, no judge, no ask), except for the shapes marked in KNOWN_GAPS; a mark whose gap closed fails the run
 //   B. the same constructs with a harmless payload are not stricter than today (pinned per construct) and composed harmless chains are never blocked
 //   quoting test: every construct, built with a marker payload, really runs it in a real bash (syntax check only where this machine lacks a need)
@@ -17,8 +18,8 @@ import { r11Rig } from "./_r11rig.ts";
 import { posixOnly } from "./_platform.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import {
-  CONSTRUCTS, DANGEROUS, HARMLESS, KNOWN_GAPS, PLAIN_GAPS, ROLES, TWIN_PINS, WRAPS, buildCommand, checkDanger, checkHarmlessChains, checkPlainGaps, checkTwins, chainNames, construct, depthOneCases, describeStale,
-  describeTwin, describeUnexpected, gateOracle, makeLayout, memoOracle, pairCases, sampleCases, sampleChains, sortFound, staleGaps, sq,
+  CONSTRUCTS, DANGEROUS, FIXED, HARMLESS, KNOWN_GAPS, MATRIX_PAYLOADS, MATRIX_ROLES, PLAIN_GAPS, ROLES, ROLE_DIFFERENCES, ROLE_MATRIX, TWIN_PINS, WRAPS, buildCommand, checkDanger, checkHarmlessChains, checkPlainGaps, checkTwins, chainNames, construct, depthOneCases, describeStale,
+  describeTwin, describeUnexpected, gateOracle, letterOf, makeLayout, matrixOracle, memoOracle, pairCases, sampleCases, sampleChains, sortFound, staleGaps, sq,
   type Chain, type Cls, type DangerCase, type Found, type Needs, type Oracle,
 } from "./_gate-gen.ts";
 
@@ -116,6 +117,44 @@ test("property B: composed harmless chains are never blocked and stay under the 
   assert.equal(blocked.length, 0, `harmless chains are blocked:\n${blocked.join("\n")}`);
   const share = notSilent / total;
   assert.ok(share <= CEILING, `${notSilent} of ${total} harmless chains (${(share * 100).toFixed(1)} %) are judged or asked; the pinned ceiling is ${(CEILING * 100).toFixed(1)} % (measured ${(MEASURED_SHARE * 100).toFixed(1)} % + 2 points). Edit MEASURED_SHARE only for an intended change.`);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The role matrix: main session, builder, reviewer
+
+const matrix = lazy(() => matrixOracle(makeLayout(path.join(base, "matrix"))));
+
+test("role matrix: every construct has a pinned row, no row is left over", { skip: posixOnly }, () => {
+  const names = [...WRAPS.map((c) => c.name), ...FIXED.map((c) => c.name), "plain"].sort();
+  for (const role of MATRIX_ROLES) assert.deepEqual(Object.keys(ROLE_MATRIX[role]).sort(), names, `${role}: the pinned rows and the constructs differ`);
+});
+
+test("role matrix: the class of every construct on every payload is pinned per role (main, builder, reviewer)", { skip: posixOnly }, () => {
+  const oracle = matrix();
+  const bad: string[] = [];
+  for (const role of MATRIX_ROLES) {
+    const rows: [string, string][] = [
+      ...WRAPS.map((c): [string, string] => [c.name, MATRIX_PAYLOADS.map((p) => letterOf(oracle(buildCommand([c], p.text), role))).join("")]),
+      ...FIXED.map((c): [string, string] => [c.name, letterOf(oracle(buildCommand([c], ""), role))]),
+      ["plain", MATRIX_PAYLOADS.map((p) => letterOf(oracle(p.text, role))).join("")],
+    ];
+    for (const [name, got] of rows) if (got !== ROLE_MATRIX[role][name]) bad.push(`[${role}] ${name}: pinned ${ROLE_MATRIX[role][name]}, now ${got} (payload order: ${MATRIX_PAYLOADS.map((p) => p.name).join(", ")})`);
+  }
+  assert.equal(bad.length, 0, `${bad.length} role matrix row(s) changed. If the change meant it, edit ROLE_MATRIX in _gate-gen.ts and say why in the change:\n${bad.slice(0, 12).join("\n")}`);
+});
+
+test("role matrix: the listed role differences hold, and the plain rows differ only there", { skip: posixOnly }, () => {
+  const oracle = matrix();
+  for (const d of ROLE_DIFFERENCES) {
+    for (const role of MATRIX_ROLES) assert.equal(oracle(d.command, role), d.classes[role], `[${role}] ${d.command} (${d.why})`);
+    assert.ok(new Set(Object.values(d.classes)).size > 1, `${d.command} is listed as a role difference but all roles agree`);
+  }
+  // a payload whose plain class differs between roles is covered by the list (the payloads are the DANGEROUS texts)
+  const listed = new Set(ROLE_DIFFERENCES.map((d) => d.command));
+  for (const p of MATRIX_PAYLOADS) {
+    const classes = new Set(MATRIX_ROLES.map((r) => oracle(p.text, r)));
+    if (classes.size > 1) assert.ok(listed.has(p.text), `${p.name} (${p.text}) differs between roles but is not in ROLE_DIFFERENCES`);
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------

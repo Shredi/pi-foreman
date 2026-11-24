@@ -57,6 +57,31 @@ export function gateOracle(l: Layout): Oracle {
   };
 }
 
+/** The roles of the pinned role matrix: the main (owner) session next to the two child roles. `ROLES` stays the child list (property A needs it). */
+export type MatrixRole = "main" | Role;
+export const MATRIX_ROLES: readonly MatrixRole[] = ["main", "builder", "reviewer"];
+export type MatrixOracle = (command: string, role: MatrixRole) => Cls;
+
+/** The gate of the main session as `gateRootsOf` builds it: no `child` root, role `foreman`, the session's own scratch dir; the floor environment is not marked as a child. */
+export function mainOracle(l: Layout): (command: string) => Cls {
+  const roots = (): GateRoots => ({
+    worktree: l.worktree, scratch: [l.scratch[0]], tmp: [], scratchBase: l.scratchBase, owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false,
+  });
+  const env = (c: string) => baseFloorEnv(c, { scratch: [l.scratch[0]] });
+  return (command) => {
+    const o = gateEvaluate("bash", { command }, l.worktree, { env, roots });
+    const r = o.result as Res;
+    return r?.block ? "block" : r?.ask ? "ask" : r?.allow ? "silent" : o.danger ? "judge" : "silent";
+  };
+}
+
+/** The oracle of the role matrix: the main session through `mainOracle`, a child role through `gateOracle`. */
+export function matrixOracle(l: Layout): MatrixOracle {
+  const child = gateOracle(l);
+  const main = mainOracle(l);
+  return (command, role) => (role === "main" ? main(command) : child(command, role));
+}
+
 /** The same oracle with a memo: the shrinker asks about the same line many times. */
 export function memoOracle(oracle: Oracle): Oracle {
   const seen = new Map<string, Cls>();
@@ -601,11 +626,83 @@ export function checkHarmlessChains(oracle: Oracle, pins: Record<Role, Record<st
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
+// The role matrix: main session, builder and reviewer side by side
+
+/** The payloads of a matrix row, in letter order: the harmless ones, then the dangerous ones (HARMLESS then DANGEROUS). A `fixed` construct has one letter. */
+export const MATRIX_PAYLOADS: readonly Payload[] = [...HARMLESS, ...DANGEROUS];
+
+/**
+ * Pinned class (s silent, j judge, a ask, b block) of every construct on every payload of MATRIX_PAYLOADS, and of the plain payloads (`plain`), per role, measured at the gate layer
+ * (gateEvaluate) on origin/main b045c4b7. Unlike TWIN_PINS this is an exact record, not a ceiling: any change, stricter or looser, fails and is edited here with its reason.
+ * It is the before/after record for the role differences; the main session's shell-write guard in index.ts (shellWriteBlock) and the judge-first dialog or refusal are
+ * outside the gate layer, so `write-outside` reads silent for main here.
+ */
+export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
+  main: {
+    cmdsub: "sssbbbbssj", backtick: "sssbbbbssj", dbracket: "sssbbbbssj", arith: "jjjjbajjjj", select: "sssbbbbssj", for: "sssbbbbssj",
+    case: "sssbbbbssj", "if-cond": "sssbbbbssj", "while-cond": "sssbbbbssj", herestring: "sssbbbbssj", heredoc: "sssbbbbssj", procsub: "sssbbbbssj",
+    "dot-procsub": "jjjjbajjja", "source-procsub": "jjjjbajjja", "source-stdin": "jjjjbajjja", eval: "sssbbbbssj", "sh-c": "sssbbbbssj",
+    "bash-c": "sssbbbbssj", busybox: "sssbbbbssa", toybox: "sssbbbbssa", "xargs-sh": "sssbbbbssa", "xargs-I": "jjjjbajjja", "find-exec": "sssjbsssss",
+    npx: "ssssssssss", trap: "ssssbasssa", compgen: "ssssjsssss", readarray: "ssssssssss", "trace-prompt": "ssssbasssa", basefunc: "jjjjbajjja",
+    env: "sssbbbbssj", assign: "sssbbbbssj", nice: "sssbbbbssj", timeout: "sssbbbbssj", caffeinate: "sssjbjbssj", taskset: "sssjbjbssj",
+    strace: "sssjbjbssj", function: "sssbbbbssj", rebind: "sssbbbbssj", alias: "jjjbbbbjjj", "alias-shopt": "jjjbbbbjjj", indirect: "jjjjjjjjjj",
+    nameref: "jjjjjjjjjj", "cd-var": "sssbbbbssj", redirect: "sssbbbbssj", pipe: "sssbbbbssj", and: "sssbbbbssj", or: "sssbbbbssj", semi: "sssbbbbssj",
+    bg: "sssbbbbssj", negate: "sssbbbbssj", subshell: "sssbbbbssj", brace: "sssbbbbssj", "rebound-cd": "j", "rebound-pushd": "j",
+    "rebound-scratch": "s", plain: "sssbbbbssj",
+  },
+  builder: {
+    cmdsub: "sssbbbbjbj", backtick: "sssbbbbjbj", dbracket: "sssbbbbjbj", arith: "jjjjbbjjjj", select: "sssbbbbjbj", for: "sssbbbbjbj",
+    case: "sssbbbbjbj", "if-cond": "sssbbbbjbj", "while-cond": "sssbbbbjbj", herestring: "sssbbbbjbj", heredoc: "sssbbbbjbj", procsub: "sssbbbbjbj",
+    "dot-procsub": "jjjjbbjjjb", "source-procsub": "jjjjbbjjjb", "source-stdin": "jjjjbbjjjb", eval: "sssbbbbjbj", "sh-c": "sssbbbbjbj",
+    "bash-c": "sssbbbbjbj", busybox: "sssbbbbjbb", toybox: "sssbbbbjbb", "xargs-sh": "sssbbbbjsb", "xargs-I": "jjjjbbjjjb", "find-exec": "sssjbsssss",
+    npx: "ssssssssss", trap: "ssssbbsssb", compgen: "ssssjsssss", readarray: "ssssssssss", "trace-prompt": "ssssbbsssb", basefunc: "jjjjbbjjjb",
+    env: "sssbbbbjbj", assign: "sssbbbbjbj", nice: "sssbbbbjbj", timeout: "sssbbbbjbj", caffeinate: "sssjbjbjjj", taskset: "sssjbjbjjj",
+    strace: "sssjbjbjjj", function: "sssbbbbjbj", rebind: "sssbbbbjbj", alias: "jjjbbbbjbj", "alias-shopt": "jjjbbbbjbj", indirect: "jjjjjjjjjj",
+    nameref: "jjjjjjjjjj", "cd-var": "sssbbbbjbb", redirect: "sssbbbbjbj", pipe: "sssbbbbjbj", and: "sssbbbbjbj", or: "sssbbbbjbj", semi: "sssbbbbjbj",
+    bg: "sssbbbbjbj", negate: "sssbbbbjbj", subshell: "sssbbbbjbj", brace: "sssbbbbjbj", "rebound-cd": "j", "rebound-pushd": "j",
+    "rebound-scratch": "s", plain: "sssbbbbjbj",
+  },
+  reviewer: {
+    cmdsub: "sssbbbbbbb", backtick: "sssbbbbbbb", dbracket: "sssbbbbbbb", arith: "jjjjbbjjjj", select: "sssbbbbbbb", for: "sssbbbbbbb",
+    case: "sssbbbbbbb", "if-cond": "sssbbbbbbb", "while-cond": "sssbbbbbbb", herestring: "sssbbbbbbb", heredoc: "sssbbbbbbb", procsub: "sssbbbbbbb",
+    "dot-procsub": "jjjjbbjjbb", "source-procsub": "jjjjbbjjbb", "source-stdin": "jjjjbbjjbb", eval: "sssbbbbbbb", "sh-c": "sssbbbbbbb",
+    "bash-c": "sssbbbbbbb", busybox: "sssbbbbbbb", toybox: "sssbbbbbbb", "xargs-sh": "sssbbbbbbb", "xargs-I": "jjjjbbjjbb", "find-exec": "bbbbbbbbbb",
+    npx: "ssssssssss", trap: "ssssbbssbb", compgen: "ssssjsssss", readarray: "ssssssssss", "trace-prompt": "ssssbbssbb", basefunc: "jjjjbbjjbb",
+    env: "sssbbbbbbb", assign: "sssbbbbbbb", nice: "sssbbbbbbb", timeout: "sssbbbbbbb", caffeinate: "sssjbjbbjj", taskset: "sssjbjbbjj",
+    strace: "sssjbjbbjj", function: "sssbbbbbbb", rebind: "sssbbbbbbb", alias: "jjjbbbbbbb", "alias-shopt": "jjjbbbbbbb", indirect: "jjjjjjjjjj",
+    nameref: "jjjjjjjjjj", "cd-var": "sssbbbbbbb", redirect: "sssbbbbbbb", pipe: "sssbbbbbbb", and: "sssbbbbbbb", or: "sssbbbbbbb", semi: "sssbbbbbbb",
+    bg: "sssbbbbbbb", negate: "sssbbbbbbb", subshell: "sssbbbbbbb", brace: "sssbbbbbbb", "rebound-cd": "j", "rebound-pushd": "j",
+    "rebound-scratch": "s", plain: "sssbbbbbbb",
+  },
+};
+
+/** A plain line whose class differs between roles, with the rule behind each class. */
+export interface RoleDifference {
+  command: string;
+  classes: Record<MatrixRole, Cls>;
+  why: string;
+}
+
+/**
+ * The role differences, listed explicitly (the matrix above holds the same differences through every construct). Everything else is the same for the three roles:
+ * rm-outside, curl-sh and cred-read block, and `git push origin main` blocks (floor `git-push-protected` for main and builder, `git-push-child` for the reviewer).
+ */
+export const ROLE_DIFFERENCES: readonly RoleDifference[] = [
+  { command: "echo hi > ~/.bashrc", classes: { main: "silent", builder: "judge", reviewer: "block" }, why: "main: the foreman's shell-write guard decides before the gate; builder: the child-only judge-first label danger-write-outside (`~` is not resolved); reviewer: floor child-readonly-write" },
+  { command: "echo x > $D/f", classes: { main: "silent", builder: "judge", reviewer: "block" }, why: "the same three causes as `~/.bashrc`" },
+  { command: "echo x > $F", classes: { main: "judge", builder: "judge", reviewer: "block" }, why: "main: the general write-target label danger-unknown-write-target; builder: that label and danger-write-outside; reviewer: floor child-readonly-write" },
+  { command: "echo x > /elsewhere/f", classes: { main: "silent", builder: "block", reviewer: "block" }, why: "a resolved write outside the child's folders is the floor child-write-outside; the main session may write there as far as the gate goes" },
+  { command: "git -C /opt/other stash push", classes: { main: "silent", builder: "block", reviewer: "block" }, why: "floor child-write-outside (git in another folder), a child only" },
+  { command: "git rebase -x 'git push' main", classes: { main: "judge", builder: "judge", reviewer: "block" }, why: "main and builder: judged; the reviewer: blocked by a child floor" },
+  { command: "git push -u origin my-branch", classes: { main: "silent", builder: "silent", reviewer: "block" }, why: "only the main session and a builder from a single launch push (floor git-push-child)" },
+];
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------
 // Left out
 
 /** What this check does not cover; the verify skill repeats it. */
 export const LEFT_OUT: readonly string[] = [
-  "the main (owner) session: it has its own roots and mode step",
+  "the main (owner) session in properties A and B: it has its own roots and mode step; it is only pinned in ROLE_MATRIX, at the gate layer",
   "constructs that are not in CONSTRUCTS, payloads that are not in DANGEROUS",
   "chains are composed only with the /opt form of git-outside; the ~/other form (gap git-outside-tilde, builder) is a plain line in PLAIN_GAPS and no wrapper is tried around it",
   "every payload of a shape that has a KNOWN_GAPS mark without payload names (a blind spot until the gap closes)",

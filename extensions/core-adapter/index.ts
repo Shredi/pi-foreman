@@ -4186,8 +4186,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const rule = `protected:${ids}`;
         const lead = m.entries[0];
         const named = `${lead.id}${lead.note ? ` (${lead.note})` : ""}`;
-        // a child or a session without UI fails closed; the owner's own session ignores presence
-        const away = gs.isChild || !ctx.hasUI;
+        // a child with no route to its parent (the route decideByDialog uses) or a session without UI fails closed; the owner's own session ignores presence
+        const away = gs.isChild ? !childAskRoute(gs) : !ctx.hasUI;
         let askCause = `${named} is protected.`;
         const checkRaw = get(gs.config.config, "gate.protected.check");
         const checkMode = effectiveCheckMode(checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model", m.entries);
@@ -4268,6 +4268,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
       );
       if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}`);
+      // a child's write the gate cannot read (and no other judge-first label on the line): a judge that does not clear it refuses it, nobody is asked
+      const labels = out.dangers ?? [danger.name];
+      if (gs.isChild && labels.includes("danger-write-outside") && labels.every((n) => n === "danger-write-outside" || n === "danger-unknown-write-target")) {
+        return denied("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true));
+      }
       return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, classifierReason: judged.reason, dangerName: danger.name });
     } catch (e) {
       const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
@@ -4301,6 +4306,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       stateDir: path.join(s.agentDir, "pi-foreman", "state"),
     };
   }
+  /** A child's route to its parent: the ask dir its launch binding names, when its own `gate.childAsk` is `parent`; undefined when it has none (the child is away). */
+  function childAskRoute(gs: Session): string | undefined {
+    return launchBinding?.askDir && get(gs.config.config, "gate.childAsk") === "parent" ? launchBinding.askDir : undefined;
+  }
+  /** The refusal of a child's write whose target the gate cannot read when the judge did not clear it: the cause, the judge's reason and the way out. */
+  function unreadableWriteText(judgeReason: string, mayWriteWorktree: boolean): string {
+    const dirs = mayWriteWorktree ? "`$FOREMAN_SCRATCH`, `$FOREMAN_OUT` or your worktree" : "`$FOREMAN_SCRATCH` or `$FOREMAN_OUT`";
+    return `pi-foreman: denied (danger-write-outside): this write goes to a target the gate cannot read (a variable, a substitution, \`~\` or a changed directory), and the permission judge did not clear it${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. Write to a path the gate can read, such as a literal path in ${dirs}, or report this line to the foreman.`;
+  }
   /**
    * The dialog step of the gate (r79 items 5, 7). A child asks its parent through ask.md; a headless session denies at once; the owner pane opens
    * askOwner. Returns the block, or undefined when the call may go on.
@@ -4318,9 +4332,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return allow ? (a.allowed(rule, "dialog", `dialog:${answer}`, false, answer), undefined) : a.denied(rule, "dialog", reason ?? "pi-foreman: denied.");
     };
     if (kind === "child") {
-      const askDir = launchBinding?.askDir;
-      const cfgOff = get(gs.config.config, "gate.childAsk") !== "parent";
-      if (!askDir || cfgOff) {
+      const askDir = childAskRoute(gs);
+      if (!askDir) {
+        const cfgOff = get(gs.config.config, "gate.childAsk") !== "parent";
         // child asks off (own config, or the parent launched it with them off) vs nobody at the parent's pane
         const off = launchBinding?.noAsk !== "no-pane" && (cfgOff || launchBinding?.noAsk === "deny");
         return done("no-parent", false, off ? childAskOffText(cause) : `${NO_PANE_TEXT} The call was: ${cause}.`);
@@ -4396,7 +4410,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ? {
           ask: `Protect ${clean.kind} ${clean.glob}?`,
           ...(clean.note ? { summary: clean.note } : {}),
-          detail: [`Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode)`, `File: ${where}`, "For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI that is not a child writes and deploys too, except remote writes the harness itself sees, which always ask; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply."],
+          detail: [`Check mode: ${clean.check ?? "the global gate.protected.check"} (an entry can only tighten the global mode)`, `File: ${where}`, "For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; confident reads can be allowed, and in a session with UI, or a child with a route to its parent, writes and deploys too, except remote writes the harness itself sees, which always ask; a child with no route to its parent, or a session without UI, asks for writes and deploys. Floors and deny rules still apply."],
           answers: "Yes: the protection is written   No: nothing changes",
         }
       : {
