@@ -869,6 +869,8 @@ export interface WatchRecord {
   state: WatchState;
   /** pr_create armed this watch in this session (a PR opened as a draft under draft handling); absent: not owned (pr_watch, pr_follow). */
   owned?: boolean;
+  /** pr_create opened this PR with `holdDraft`: the watch reports CI and comments but never changes the draft state and sets no ready label. Absent: not held. */
+  holdDraft?: boolean;
   /** pr_create opened this PR in this session: the watch keeps the `## Reviews` line of the PR body current (prbody.ts), whether or not it handles the draft state. Absent: pr_watch, pr_follow. */
   opened?: boolean;
   /** The (head, run id) pair of the review line last written into the body (by pr_create or by the watch); absent: none. */
@@ -921,7 +923,7 @@ export function parseWatchRecord(v: unknown): WatchRecord | null {
     const state = parseState(r.state);
     const bm = r.bodyMark as Record<string, unknown> | null | undefined;
     const bodyMark = bm && typeof bm === "object" && typeof bm.head === "string" && bm.head && typeof bm.run === "string" ? { bodyMark: { head: bm.head, run: bm.run } } : {};
-    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}), ...(r.opened === true ? { opened: true } : {}), ...bodyMark } : null;
+    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}), ...(r.holdDraft === true ? { holdDraft: true } : {}), ...(r.opened === true ? { opened: true } : {}), ...bodyMark } : null;
   }
   if (!finite(r.n) || !Number.isInteger(r.n) || r.n < 1 || !strings(r.commentIds)) return null;
   const state: WatchState = { head: "", failedIds: [], ci: "", mergeable: "", commentIds: r.commentIds, updatedAt: "", noCi: 0, noCiHead: "", readyHead: "", last: "watching" };
@@ -1039,6 +1041,8 @@ interface Watch {
   status: string;
   /** pr_create armed this watch in this session: its draft state is handled (tools.prDraft). */
   owned: boolean;
+  /** pr_create opened this PR with `holdDraft` (WatchRecord.holdDraft). */
+  holdDraft?: boolean;
   /** pr_create opened this PR in this session: the watch keeps the body's reviews line current (WatchRecord.opened). */
   opened: boolean;
   /** The pair of the review line last written into the body (WatchRecord.bodyMark). */
@@ -1076,6 +1080,8 @@ export class PrWatches {
   private trackerDown = false;
   /** The one notice of the current tools.prGithubHosts error was sent. */
   private hostsNoticed = false;
+  /** host/repo/label of ready labels the repository lacks and could not get (pr_label answered `label_missing`): label handling is off for them, with one notice. */
+  private labelMissing = new Set<string>();
   private deps: PrWatchesDeps;
   private timers: Timers;
   constructor(deps: PrWatchesDeps) {
@@ -1115,14 +1121,14 @@ export class PrWatches {
   }
 
   /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
-  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false, bodyMark?: { head: string; run: string }): void {
+  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false, bodyMark?: { head: string; run: string }, holdDraft = false): void {
     const state = baselineOf(snap);
     const passed = this.passedSet();
     // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
     // (a head with no record is left for a tick to report, so the message is not swallowed here; the watch holds the stored data of `okAt`, so a tick on that
     // same data only re-arms and the message comes with the first tick that brings newer stored data)
     if (passed) reviewStep(state, snap.head, passed, false);
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}), ...(holdDraft ? { holdDraft: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
     w.seenAt = okAt;
     this.arm(w);
     this.persist();
@@ -1142,9 +1148,9 @@ export class PrWatches {
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false, bodyMark?: { head: string; run: string }): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false, bodyMark?: { head: string; run: string }, holdDraft = false): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}), ...(holdDraft ? { holdDraft: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
@@ -1192,7 +1198,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, opened: r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, ...(r.holdDraft === true ? { holdDraft: true } : {}), opened: r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.merged = this.merged.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
@@ -1206,7 +1212,7 @@ export class PrWatches {
 
   /** The active watches as session-entry records. */
   records(): WatchRecord[] {
-    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}), ...(w.opened ? { opened: true } : {}), ...(w.bodyMark ? { bodyMark: w.bodyMark } : {}) }));
+    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}), ...(w.holdDraft ? { holdDraft: true } : {}), ...(w.opened ? { opened: true } : {}), ...(w.bodyMark ? { bodyMark: w.bodyMark } : {}) }));
   }
 
   /** The watched PRs this session saw merged (the watch's merged event, or a pre-close fresh status), oldest first. */
@@ -1491,7 +1497,7 @@ export class PrWatches {
   /** The watch's draft state is handled: pr_create armed it in this session, the flow is on and the host op exists. */
   private managed(w: Watch): boolean {
     try {
-      return w.owned && w.key.repo !== "" && !!this.deps.draft && !!this.deps.reviewFacts && (this.deps.draftFlow?.() ?? false);
+      return w.owned && !w.holdDraft && w.key.repo !== "" && !!this.deps.draft && !!this.deps.reviewFacts && (this.deps.draftFlow?.() ?? false);
     } catch {
       return false;
     }
@@ -1623,11 +1629,11 @@ export class PrWatches {
    * watch has not asked for this head yet (or its own removal changed this head); a remove only when the label is the watch's own. Every answered call updates the record, one that
    * changed nothing too, so no call is repeated; a record of another label name is dropped (that label is left alone). The busy flag is set before the call, so a tick and the
    * hook that overlap send one call. A failure pauses like the draft step (growing pause, at the cap one notice and no more calls for the head); `pr_unsupported` gives one
-   * notice and ends label handling for the watch. Never throws; never blocks the watch.
+   * notice and ends label handling for the watch; `label_missing` (the repository has no such label and it could not be created) gives one notice, no retry, and ends label handling for that host/repo/label. Never throws; never blocks the watch.
    */
   private async labelStep(w: Watch, snap: WatchSnapshot): Promise<void> {
     try {
-      if (w.ended || !this.deps.label || w.key.repo === "") return;
+      if (w.ended || w.holdDraft || !this.deps.label || w.key.repo === "") return;
       const rules = this.phasesOrNull();
       if (!rules) return; // fail closed: no label call and the label record untouched while the live phase rules cannot be read
       const name = this.labelName(w, rules);
@@ -1638,6 +1644,8 @@ export class PrWatches {
         this.persist();
       }
       if (!name || w.labeling || w.labelStopped || snap.state !== "open" || !snap.head) return;
+      const missingKey = `${w.key.host}/${w.key.repo}/${name}`.toLowerCase();
+      if (this.labelMissing.has(missingKey)) return;
       const target = this.labelTargetOf(w, snap, rules);
       if (target === null) return;
       const head = snap.head;
@@ -1668,6 +1676,12 @@ export class PrWatches {
         w.labelStopped = true;
         this.deps.trace({ event: "pr_watch", outcome: "label_unsupported" });
         this.deps.send(noticeMessage(w.key.n, "ready label not set: the host has no label support (GitHub CLI only); label handling stops for this watch", "label_unsupported"), this.idle());
+        return;
+      }
+      if (o.kind === "precondition" && o.precondition === "label_missing") {
+        this.labelMissing.add(missingKey);
+        this.deps.trace({ event: "pr_watch", outcome: "label_missing" });
+        this.deps.send(noticeMessage(w.key.n, `repo has no ready label ${name}; label handling off`, "label_missing"), this.idle());
         return;
       }
       const n = (f && f.head === head ? f.n : 0) + 1;

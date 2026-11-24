@@ -606,7 +606,7 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_reads, expected)
         # round 43: the PR body carries the changelog section; PRs never edit CHANGELOG.md
         old_pr = "Children never open PRs."
-        new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): you draft it in the scratch dir at every tier. PRs never edit CHANGELOG.md."
+        new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): you draft it in the scratch dir at every tier. For a runtime or UI change in a repo with a way to drive it, the PR body also carries a short `## Verification` section (the command run and the path of the kept log or screenshot, from the builder's report). PRs never edit CHANGELOG.md."
         self.assertIn(old_pr, expected)
         # roles-slim: the planner, finalizer and senior-reviewer roles are gone; one (old, new) pair per changed rendered line
         role_pairs = [

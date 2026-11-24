@@ -15,6 +15,7 @@
     python scripts/foreman_session.py remote notice refused --reason=TEXT
     python scripts/foreman_session.py close-remote <label|child id> [--path P.md] [--json] [--agent-dir D]
     python scripts/foreman_session.py brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir D]
+    python scripts/foreman_session.py adopt <label|child id> [--agent-dir D]
 
 `open` writes the handoff dir `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/`:
   brief.md  the brief file's text plus the report-back footer (message contract below)
@@ -3609,6 +3610,76 @@ def cmd_brief(a):
     return 1
 
 
+def intercom_sessions(timeout=HERDR_TIMEOUT):
+    """The sessions the intercom broker lists (`cli.mjs list --json`, argv list, no shell) as a list of {id, name}, or None when
+    the list cannot be read (no node or module, broker unreachable, unusable output)."""
+    cli, node = intercom_cli(), shutil.which("node")
+    if not cli or not node:
+        return None
+    try:
+        r = subprocess.run([node, str(cli), "list", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=timeout)
+        data = json.loads(r.stdout.decode("utf-8", "replace"))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    rows = data.get("sessions") if isinstance(data, dict) and data.get("ok") is True else None
+    return [x for x in rows if isinstance(x, dict)] if isinstance(rows, list) else None
+
+
+def cmd_adopt(a):
+    """Make the calling session the parent of a local child whose recorded parent is gone: rewrites the handoff `parent` file (which
+    the child re-reads to accept a close) and the registry `parent`, logs `adopted.log` in the handoff dir and the caller's trace."""
+    adir = agent_dir(a.agent_dir)
+    if os.environ.get("PI_SUBAGENT_CHILD") == "1":
+        raise Refused("adopt is refused in a subagent child; run it in a main session")
+    caller = own_session_id(None)
+    if not caller or not VALUE_RE.match(caller):
+        raise Refused("no own session id in the environment (%s or %s); adopt works only inside a Pi session" % (ENV_PUBLISHED, ENV_STABLE))
+    entry = find_entry(adir, a.target)
+    if not entry or not VALUE_RE.match(str(entry.get("child"))):
+        raise Refused("no session with label or child id %r (see: foreman session list)%s" % (a.target, address_candidates(adir, a.target)))
+    if entry.get("machine"):
+        raise Refused("%s runs on %s: restart it under this session instead (foreman session restart)" % (entry.get("label"), entry["machine"]))
+    handoff = entry.get("handoff")
+    if not isinstance(handoff, str) or not handoff or not Path(handoff).is_dir():
+        raise Refused("%s has no handoff dir to re-point (see: foreman session list)" % entry.get("label"))
+    own_handoff = os.environ.get("PI_FOREMAN_HANDOFF_DIR", "").strip()
+    if caller == entry["child"] or (own_handoff and os.path.realpath(own_handoff) == os.path.realpath(handoff)):
+        raise Refused("a session cannot adopt itself")
+    old = read_first_line(Path(handoff) / "parent") or entry.get("parent")
+    if old == caller:
+        print("pi-foreman session: %s is already a child of this session." % entry.get("label"))
+        return 0
+    sessions = intercom_sessions()
+    if sessions is None:
+        raise Refused("the intercom session list cannot be read, so it is unknown whether the recorded parent still runs; try again when the broker is up", "liveness_unknown")
+    if old and any(old in (x.get("id"), x.get("name")) for x in sessions):
+        raise Refused("the recorded parent %s is still running; adopt works only when it is gone" % strip_control(old), "parent_alive")
+    now = iso_now()
+    with registry_lock(adir):
+        reg = read_registry(adir)
+        for sess in reg["sessions"]:
+            if isinstance(sess, dict) and sess.get("child") == entry["child"]:
+                sess["parent"] = caller
+        write_registry(adir, reg)
+        (Path(handoff) / "parent").write_text(caller + "\n", "utf-8")
+    line = "adopted %s by %s (was %s) %s" % (entry.get("label"), caller, old or "none", now)
+    try:
+        with open(Path(handoff) / "adopted.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError as e:
+        sys.stderr.write("pi-foreman session: adoption log not written (%s).\n" % e)
+    trace = Path(adir) / "pi-foreman" / "state" / ("trace-%s.jsonl" % re.sub(r"[^A-Za-z0-9_-]", "", caller))
+    if trace.is_file():  # tracing on for this session
+        try:
+            with open(trace, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"ts": now, "event": "session_adopt", "from": old or "none", "to": caller}) + "\n")
+        except OSError:
+            pass
+    print("pi-foreman session: %s adopted; %s is now its parent (was %s)." % (entry.get("label"), caller, old or "none"))
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="foreman session", description="Open and list pi-foreman sessions.")
     p.add_argument("--agent-dir")
@@ -3637,6 +3708,9 @@ def main(argv=None):
     b.add_argument("--parent-id")
     b.add_argument("--rework", action="store_true")
     b.add_argument("--agent-dir", dest="agent_dir_sub")
+    ad = sub.add_parser("adopt")
+    ad.add_argument("target")
+    ad.add_argument("--agent-dir", dest="agent_dir_sub")
     rm = sub.add_parser("remote")
     verbs = rm.add_subparsers(dest="verb")
     for verb in ("probe", "open", "deliver", "close", "restart"):
@@ -3700,6 +3774,8 @@ def main(argv=None):
             return cmd_prune(a)
         if a.cmd == "brief":
             return cmd_brief(a)
+        if a.cmd == "adopt":
+            return cmd_adopt(a)
         if a.cmd == "remote" and a.verb == "notice":
             return cmd_notice(a)
         if a.cmd == "remote" and a.verb:

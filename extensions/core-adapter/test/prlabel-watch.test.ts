@@ -641,3 +641,21 @@ test("a waiting reviewed PR keeps its label through other work; a FAIL after the
   await x.watches.reconcileOwned();
   assert.deepEqual(x.ops(), ["+ready", "-ready"]);
 });
+
+// ---------------------------------------------------------------- D167: the repository has no ready label
+
+test("a repository without the ready label gives one notice and no retry, on later ticks and heads too", async () => {
+  const x = harness();
+  x.h.answer = () => ({ kind: "precondition", precondition: "label_missing", message: "the repository has no label ready" });
+  x.start();
+  await x.tick();
+  x.set(snap({ updatedAt: "t2" }));
+  await x.tick();
+  x.set(snap({ head: B }));
+  await x.tick();
+  await x.watches.reconcileOwned();
+  assert.equal(x.calls.length, 1);
+  assert.deepEqual(x.sent.filter((m) => m.includes("ready label")), ["pi-foreman-pr: PR #7 repo has no ready label ready; label handling off"]);
+  assert.ok(x.traces.includes("label_missing"));
+  assert.ok(!x.traces.includes("label_failed"));
+});

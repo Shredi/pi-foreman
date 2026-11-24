@@ -253,6 +253,10 @@ export interface ReviewGate {
   passRun?: string;
   /** The latest real verdict is FAIL: a later review that ended without a verdict (`last` "none") keeps it until a PASS. */
   failed?: boolean;
+  /** When work last happened in this checkout (ms): the build time `supersededGone` compares a later PASS elsewhere against. Absent on an old record. */
+  builtAt?: number;
+  /** When the last counted PASS ended (ms), kept across later verdicts like `passRun`. Absent on an old record. */
+  passAt?: number;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {
@@ -264,12 +268,14 @@ export function initialReviewGate(): ReviewGate {
 }
 
 /** Reviews ended: a single non-pass among them wins (like verdictOf). */
-export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[], now?: number, runId?: string): ReviewGate {
+/** `passTime`: when a PASS happened, kept as `passAt` (D165); callers that only need the FAIL time leave it out. */
+export function onReviewVerdicts(g: ReviewGate, verdicts: (Verdict | null)[], now?: number, runId?: string, passTime?: number): ReviewGate {
   if (verdicts.length === 0) return g;
   const last = verdicts.includes("fail") ? "fail" : verdicts.includes(null) ? "none" : "pass";
   const passRun = last === "pass" && runId ? runId : g.passRun;
+  const passAt = last === "pass" && passTime !== undefined ? passTime : g.passAt;
   const failed = last === "fail" || (last === "none" && (g.last === "fail" || g.failed === true));
-  const next: ReviewGate = { last, revised: false, ...(passRun ? { passRun } : {}), ...(failed ? { failed } : {}) };
+  const next: ReviewGate = { last, revised: false, ...(passRun ? { passRun } : {}), ...(failed ? { failed } : {}), ...(g.builtAt !== undefined ? { builtAt: g.builtAt } : {}), ...(passAt !== undefined ? { passAt } : {}) };
   return last === "fail" && now !== undefined ? { ...next, failAt: now } : next;
 }
 

@@ -54,9 +54,15 @@ test("readiness table: each fact true and false", () => {
   assert.deepEqual(readiness({ ...base, facts: "wip" }), { result: "wip", draft: true });
   assert.deepEqual(readiness({ ...base, facts: "unreviewed" }), { result: "unreviewed", draft: true });
   assert.deepEqual(readiness({ ...base, checks: "red" }), { result: "red", draft: null });
-  assert.deepEqual(readiness({ ...base, checks: "running" }), { result: "running", draft: null });
+  assert.deepEqual(readiness({ ...base, checks: "running" }), { result: "running", draft: false });
   assert.deepEqual(readiness({ ...base, mergeable: false }), { result: "running", draft: null });
-  for (const ms of ["behind", "dirty", "unknown"]) assert.deepEqual(readiness({ ...base, mergeState: ms }), { result: "running", draft: null }, ms);
+  for (const ms of ["dirty", "unknown"]) assert.deepEqual(readiness({ ...base, mergeState: ms }), { result: "running", draft: null }, ms);
+  assert.deepEqual(readiness({ ...base, mergeState: "behind" }), { result: "running", draft: false });
+  assert.deepEqual(readiness({ ...base, checks: "running", mergeState: "behind" }), { result: "running", draft: false });
+  assert.deepEqual(readiness({ ...base, checks: "running", mergeState: "dirty" }), { result: "running", draft: null });
+  assert.deepEqual(readiness({ ...base, checks: "running", mergeState: "unknown" }), { result: "running", draft: null });
+  assert.deepEqual(readiness({ ...base, checks: "running", mergeable: false }), { result: "running", draft: null });
+  assert.deepEqual(readiness({ ...base, checks: "red", draft: true }), { result: "red", draft: null });
   // blocked: waits on the host, but out of draft
   assert.deepEqual(readiness({ ...base, mergeState: "blocked" }), { result: "running", draft: false });
   // a draft that holds the rule apart from the draft state leaves draft (merge state draft or blocked does not keep it)

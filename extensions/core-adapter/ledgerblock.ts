@@ -97,7 +97,7 @@ export function earlierFindingsBlock(findings: string): string {
  * chain, parallel); a resume and the entries in `skip` (rung-up handoff) get none. A reviewer step gets the re-review line first when
  * `reReview` is set (an open FAIL), except a `[plan-review]`, `[pre-pr]` or `[second-opinion]` task. Returns trace records.
  */
-export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null; findings?: string } | null | ((e: Record<string, unknown>) => { sha: string | null; findings?: string } | null) = null, pick?: (task: string) => { text: string | null; path: string | null; notice?: string }, occasions?: ReadonlyMap<unknown, Occasion>, allowedOf?: (e: Record<string, unknown>) => readonly (number | string)[]): Record<string, unknown>[] {
+export function applyLedgerItems(input: Record<string, unknown>, ledger: string | null, skip: ReadonlySet<unknown> = new Set(), ledgerPath?: string | null, critic: readonly string[] = [], reReview: { sha: string | null; findings?: string } | null | ((e: Record<string, unknown>) => { sha: string | null; findings?: string } | null) = null, pick?: (task: string, e: Record<string, unknown>) => { text: string | null; path: string | null; notice?: string }, occasions?: ReadonlyMap<unknown, Occasion>, allowedOf?: (e: Record<string, unknown>) => readonly (number | string)[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   if (typeof input.action === "string") return out;
   const visit = (e: unknown): void => {
@@ -105,7 +105,7 @@ export function applyLedgerItems(input: Record<string, unknown>, ledger: string 
     const role = typeof e.agent === "string" && (e.agent === "builder" || REVIEW_AGENTS.has(e.agent)) ? e.agent : null;
     if (role && typeof e.task === "string") {
       // D31: the ledger the task names by path replaces the bound one for this entry
-      const pk = pick?.(e.task);
+      const pk = pick?.(e.task, e);
       const lt = pk ? pk.text : ledger;
       const lp = pk ? pk.path : ledgerPath;
       let block = skip.has(e) ? "" : role === "builder" ? ledgerItemsBlock(lt, e.task) : reviewLedgerBlock(lt, e.task, lp, allowedOf?.(e));

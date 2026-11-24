@@ -433,17 +433,18 @@ export class ReviewFacts {
   mergeBase: ((dir: string) => Promise<string | null>) | null = null;
 
   /**
-   * The base of a normal review of `dir`: the recorded builder base, except that the merge-base replaces it when the recorded base is not an
-   * ancestor of HEAD (the branch was squash-merged and a new one cut from main) or is a strict ancestor of the merge-base (main was merged in).
+   * The base of a normal review of `dir`: the recorded builder base while it is an ancestor of HEAD and the merge-base (when one resolves) is an ancestor-or-equal of it.
+   * Otherwise the merge-base replaces it (the branch was squash-merged or rebased and a new head cut, or main was merged in). With no merge-base a record that is not an
+   * ancestor of HEAD is dropped: null base, only uncommitted edits are diffed (D176).
    */
   async baseFor(dir: string): Promise<string | null> {
     const rec = this.bases.get(dir) ?? null;
-    if (!rec || !this.mergeBase) return rec;
-    const mb = await this.mergeBase(dir).catch(() => null);
-    if (!mb || mb === rec) return rec;
+    if (!rec) return null;
+    const mb = this.mergeBase ? await this.mergeBase(dir).catch(() => null) : null;
+    if (mb === rec) return rec;
     if ((await git(dir, ["merge-base", "--is-ancestor", rec, "HEAD"])) === null) return mb;
-    if ((await git(dir, ["merge-base", "--is-ancestor", rec, mb])) !== null) return mb;
-    return rec;
+    if (!mb) return rec;
+    return (await git(dir, ["merge-base", "--is-ancestor", mb, rec])) !== null ? rec : mb;
   }
 
   /** A new user prompt starts a new piece of work: the next builder launch records a new base. */

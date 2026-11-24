@@ -1,5 +1,5 @@
 // D101 (plan v2) through the whole watch (PrWatches over a fake store): case 1 (learned merge-time check) passes at once and sets the ready label; case 2 (a name that ran before
-// the merge) never passes; case 3 (not learnable) sends the fallback line after the hold, no pass and no label, and a managed draft still leaves draft at the 10-minute bound.
+// the merge) never passes; case 3 (not learnable) sends the fallback line after the hold, no pass and no label, and a managed draft leaves draft once a pre-pr PASS stands on the head.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EXPECT_BOUND_MS, PrWatches } from "../prwatch.ts";
@@ -77,15 +77,15 @@ test("case 1, a clean merge state: the child's ready line runs", async () => {
   assert.deepEqual(x.labels, [true]);
 });
 
-test("case 2: no pass, no label, no fallback line however long; the overdue line names the pre-merge name; a managed draft leaves at the bound", async () => {
+test("case 2: no pass, no label, no fallback line however long; the overdue line names the pre-merge name; a managed draft leaves draft on the PASS", async () => {
   const d = (o: Partial<WatchSnapshot> & { overdue?: true } = {}) => caseTwo({ draft: true, mergeState: "draft", ...o });
   const x = harness(d(), { child: true, owned: true });
   await x.tick(d(), 0);
   await x.tick(d(), SETTLE * 3);
   assert.deepEqual<string[]>(x.sent, []);
-  assert.deepEqual(x.drafts, []);
+  assert.ok(x.drafts.length > 0 && x.drafts.every((t) => t === false), "a PASS stands on the head: the draft leaves at once");
   await x.tick(d({ overdue: true }), BOUND);
-  assert.deepEqual(x.drafts, [false]);
+  assert.ok(x.drafts.every((t) => t === false));
   await x.tick(caseTwo({ overdue: true }), BOUND * 2);
   assert.equal(x.sent.length, 1);
   assert.ok(x.sent[0].includes("expected checks not reported"));
@@ -117,7 +117,7 @@ test("case 3, settle time 0: the fallback line comes at once", async () => {
   assert.ok(x.sent[0].includes(REPORT));
 });
 
-test("case 3, a managed draft: the event without a report line, the leave at the 10-minute bound without a pass, then the report line once on the non-draft PR", async () => {
+test("case 3, a managed draft: the event without a report line, the leave on the PASS without a green pass, then the report line once on the non-draft PR", async () => {
   const d = (o: Partial<WatchSnapshot> & { overdue?: true } = {}) => caseThree({ draft: true, mergeState: "draft", ...o });
   const x = harness(d({ runs: [run("check", "pending")] }), { child: true, owned: true });
   await x.tick(d(), 0);
@@ -125,11 +125,10 @@ test("case 3, a managed draft: the event without a report line, the leave at the
   assert.equal(x.sent.length, 1);
   assert.ok(x.sent[0].split("\n")[0].includes(`${FALLBACK}, draft`));
   assert.equal(x.sent[0].includes("report to the parent"), false, "a draft gets no report line");
-  assert.deepEqual(x.drafts, []);
+  assert.ok(x.drafts.every((t) => t === false), "a PASS stands on the head: the leave path runs before the bound");
   await x.tick(d(), BOUND - 1000);
-  assert.deepEqual(x.drafts, []);
   await x.tick(d({ overdue: true }), BOUND);
-  assert.deepEqual(x.drafts, [false], "leaves at the bound through the real leave path");
+  assert.ok(x.drafts.length > 0 && x.drafts.every((t) => t === false), "left through the real leave path");
   assert.equal(x.sent.length, 1);
   await x.tick(caseThree({ overdue: true }), BOUND + 1000);
   assert.equal(x.sent.length, 2);

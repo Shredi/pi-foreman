@@ -115,7 +115,7 @@ export interface SafeOpsDeps {
   env(): Record<string, string>;
   timeoutMs?: number;
   /** Runs before the script (foreman git-config drift check); a block refuses the op. */
-  preflight?(ctx: ExtensionContext, op: SafeOp, callId: string): Promise<{ block: true; reason: string } | undefined>;
+  preflight?(ctx: ExtensionContext, op: SafeOp, callId: string, params?: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined>;
   /** `worktree_remove`: the verified-merged fact (host PR MERGED, head ref and sha match) for the worktree at `path`; undefined when there is none. */
   verifiedMerge?(ctx: ExtensionContext, path: string): Promise<{ sha: string; branch: string } | undefined>;
 }
@@ -142,7 +142,7 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "error" });
           return failure(`${t.name} is for the foreman only; nothing was done.`, { decision: "error" });
         }
-        const pre = deps.preflight ? await deps.preflight(ctx, t.op, id) : undefined;
+        const pre = deps.preflight ? await deps.preflight(ctx, t.op, id, params) : undefined;
         if (pre) {
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "blocked" });
           return failure(`${t.name}: ${pre.reason} Nothing was done.`, { decision: "blocked" });

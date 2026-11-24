@@ -31,7 +31,8 @@ import time
 from pathlib import Path
 
 CLASSES = ("auth", "shell-injection", "path-traversal", "secret-log", "off-by-one", "resource-leak", "race",
-           "swallowed-error", "insecure-default")
+           "swallowed-error", "insecure-default", "other")
+ADVICE_KINDS = ("now", "later")
 
 LINE_SLACK = 3
 
@@ -197,7 +198,7 @@ def load_records(agent_dir=None, session=None):
     return out
 
 
-def _write_records(args, found, items):
+def _write_records(args, found, items, advice=()):
     head = args.head
     if not head and args.cwd:
         rc, out, _err = _git(args.cwd, "rev-parse", "HEAD")
@@ -213,13 +214,29 @@ def _write_records(args, found, items):
     for f in found:
         lines.append(dict(common, type="finding", id=f["id"], file=f["file"], line=f["line"], **{"class": f["class"]},
                           note=f["note"][:MAX_NOTE]))
+    for a in advice:  # advice rows: the non-defect findings (kind now or later); never counted as findings
+        lines.append(dict(common, type="advice", kind=a["kind"], file=a["file"], line=a["line"], **{"class": a["class"]},
+                          note=a["note"][:MAX_NOTE]))
     _append_lines(os.path.join(findings_dir(args.agent_dir), _session_id(args.session) + ".jsonl"), lines)
 
 
+def _advice_rows(raw, cwd=None):
+    """The advice rows of a `record` input's `advice` list: `{kind: now|later, note, file?, line?, class?}`. A file is optional here (the no-file
+    drop applies to findings only); an entry with another kind or no note is dropped."""
+    out = []
+    for a in raw if isinstance(raw, list) else []:
+        if not isinstance(a, dict) or a.get("kind") not in ADVICE_KINDS or not str(a.get("note") or "").strip():
+            continue
+        line = a.get("line") if isinstance(a.get("line"), int) and not isinstance(a.get("line"), bool) and a["line"] > 0 else None
+        out.append({"kind": a["kind"], "file": safe_rel(a["file"], cwd) if isinstance(a.get("file"), str) else None, "line": line,
+                    "class": a.get("class") if a.get("class") in CLASSES else None, "note": str(a["note"])})
+    return out
+
+
 def _record_input(raw, files, cwd):
-    """(item numbers, located findings) of the JSON a `record` call gets on stdin: `{items: [N], findings: [{file, line, class, note}]}`,
-    the `defect` findings of the reviewer's verdict record. A finding needs a repo-relative file (inside `files` when given); a class
-    outside CLASSES is dropped. Anything malformed gives nothing."""
+    """(item numbers, located findings, advice rows) of the JSON a `record` call gets on stdin: `{items: [N], findings: [{file, line, class, note}],
+    advice: [{kind, note, file?, line?, class?}]}`, the `defect` findings and the `now`/`later` findings of the reviewer's verdict record. A finding
+    needs a repo-relative file (inside `files` when given); a class outside CLASSES is dropped. Anything malformed gives nothing."""
     data = json.loads(raw) if raw.strip() else {}
     if not isinstance(data, dict):
         raise ValueError("stdin is not a JSON object")
@@ -236,24 +253,24 @@ def _record_input(raw, files, cwd):
             continue
         seen.add(fid)
         found.append({"file": rel, "line": line, "class": cls, "note": str(f.get("note") or "")[:MAX_NOTE], "id": fid})
-    return items, found
+    return items, found, _advice_rows(data.get("advice"), cwd)
 
 
 def cmd_record(args):
-    errors, files, items, found = [], [], [], []
+    errors, files, items, found, advice = [], [], [], [], []
     try:
         if args.files_from or args.diff:
             files = [f for f in (safe_rel(x, args.cwd) for x in _read_files(args)) if f]
     except OSError as e:
         errors.append(str(e))
     try:
-        items, found = _record_input(sys.stdin.buffer.read().decode("utf-8", "replace"), files, args.cwd)
+        items, found, advice = _record_input(sys.stdin.buffer.read().decode("utf-8", "replace"), files, args.cwd)
     except ValueError as e:
         errors.append("stdin: %s" % e)
     print(json.dumps({"verdict": args.verdict, "items": items, "findings": found}))
     sys.stdout.flush()
     try:
-        _write_records(args, found, items)
+        _write_records(args, found, items, advice)
     except Exception as e:  # noqa: BLE001 - recording must never fail the review
         errors.append(str(e))
     for e in errors:

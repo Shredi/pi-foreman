@@ -163,11 +163,11 @@ test("session start removes session lanes older than 7 days, not newer ones", { 
   fs.writeFileSync(stray, "x");
   fs.utimesSync(stray, past, past);
   const h = host(repo, wt);
-  assert.equal(sweepOldScratch(h), 1);
+  assert.equal(sweepOldScratch(h, Date.now(), deps), 1);
   assert.equal(fs.existsSync(oldSession), false);
   assert.ok(fs.existsSync(newLane));
   assert.ok(fs.existsSync(stray), "only directories go");
-  assert.equal(sweepOldScratch(host(repo, null)), 0, "a session on the temp folder sweeps nothing here");
+  assert.equal(sweepOldScratch(host(repo, null), Date.now(), deps), 0, "no recent lane under the temp folder goes");
   // a symlink at lane depth is never followed
   const outside = path.join(base, "outside-lane");
   fs.mkdirSync(outside);

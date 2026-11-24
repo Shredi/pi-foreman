@@ -735,7 +735,18 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     if not isinstance(raw, str) or not raw.strip() or "\0" in raw:
         raise Precondition("bad_request", "path must be a non-empty path")
     target = os.path.realpath(os.path.join(cwd, raw))
-    items = worktrees(cwd)
+    items = None
+    if os.path.isdir(target):
+        # another clone of the same project (both have the same origin url): its linked worktree is listed from its own repository (D165)
+        try:
+            theirs = git(["config", "--get", "remote.origin.url"], target)[1].strip()
+            ours = git(["config", "--get", "remote.origin.url"], cwd)[1].strip()
+            if theirs and theirs == ours:
+                items = worktrees(target)
+        except (Precondition, OSError, subprocess.SubprocessError):
+            items = None
+    if items is None:
+        items = worktrees(cwd)
     if not items:
         raise Precondition("not_linked_worktree", "no worktrees listed")
     main = items[0]
