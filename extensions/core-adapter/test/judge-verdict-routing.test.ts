@@ -37,9 +37,27 @@ test("parse: clear, refuse and the old unsure; owner needs a class of the six; a
   assert.deepEqual(parseJudgeVerdict('{"verdict":"refuse","reason":"cannot see the script"}'), { verdict: "refuse", reason: "cannot see the script" });
   assert.deepEqual(parseJudgeVerdict('{"verdict":"unsure","reason":"hm"}'), { verdict: "refuse", reason: "hm" }, "unsure is a refuse");
   for (const c of JUDGE_CLASSES) assert.deepEqual(parseJudgeVerdict(JSON.stringify({ verdict: "owner", class: c, reason: "r" })), { verdict: "owner", class: c, reason: "r" });
-  for (const bad of ['{"verdict":"owner","reason":"r"}', '{"verdict":"owner","class":"everything","reason":"r"}', '{"verdict":"owner","class":3}', '{"verdict":"clear","class":"data-loss"}', '{"verdict":"refuse","class":"outbound"}', '{"verdict":"allow"}', "[]", ""]) {
+  for (const bad of ['{"verdict":"owner","reason":"r"}', '{"verdict":"owner","class":"everything","reason":"r"}', '{"verdict":"owner","class":3}', '{"verdict":"allow"}', "[]", ""]) {
     assert.equal("error" in parseJudgeVerdict(bad), true, bad);
   }
+});
+
+// the B1 pin rejected a `class` on clear and refuse; models add one in practice (bench: 54 % invalid), so it is read as no part of the answer (see the tests below)
+test("parse: a class key on clear, refuse and unsure is ignored; the verdict stays what it says", () => {
+  assert.deepEqual(parseJudgeVerdict('{"verdict":"clear","class":"data-loss","reason":"ok"}'), { verdict: "clear", reason: "ok" });
+  assert.deepEqual(parseJudgeVerdict('{"verdict":"refuse","class":"outbound","reason":"no"}'), { verdict: "refuse", reason: "no" });
+  assert.deepEqual(parseJudgeVerdict('{"verdict":"clear","class":null,"reason":"ok"}'), { verdict: "clear", reason: "ok" });
+  assert.deepEqual(parseJudgeVerdict('{"verdict":"unsure","class":"secrets","reason":"hm"}'), { verdict: "refuse", reason: "hm" });
+});
+
+test("parse: owner without a class or with an unknown class is invalid; any other unknown field is invalid", () => {
+  for (const bad of ['{"verdict":"owner","reason":"r"}', '{"verdict":"owner","class":null,"reason":"r"}', '{"verdict":"owner","class":"everything","reason":"r"}', '{"verdict":"clear","extra":1,"reason":"r"}', '{"verdict":"clear","class":"data-loss","extra":1}', '{"verdict":"refuse","entry":"x"}', '{"verdict":"clear","class":3}']) {
+    assert.equal("error" in parseJudgeVerdict(bad), true, bad);
+  }
+});
+
+test("the answer text says a class belongs to an owner answer only", () => {
+  for (const reads of [false, true]) assert.match(judgeSystemPrompt(reads), /Only an owner answer has a class/);
 });
 
 test("parse: the read round format with paths; a malformed read reply is invalid; a read after the last round is invalid", () => {
