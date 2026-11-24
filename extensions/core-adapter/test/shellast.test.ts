@@ -192,7 +192,8 @@ test("variables resolve only through the closed grammar (old: null)", () => {
   // A7 changes exactly this pair: with a child scratch binding (env.FOREMAN_SCRATCH) a sole literal assignment is substituted into a later pipeline too
   assert.deepEqual(views("D=/t/x && mkdir -p $D | cat"), ["", "mkdir -p /t/x", "cat"]);
   // without the binding (owner, round) the line stays outside the closed grammar
-  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat", { platform: "posix", cwd: "/w/proj" }), [" !assignment", "mkdir -p $D !unresolved_var", "cat"]);
+  // plan D2: a standalone literal assignment (no expansion, no append, a name that steers nothing) is no longer opaque; the later `$D` still stays unresolved
+  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat", { platform: "posix", cwd: "/w/proj" }), ["", "mkdir -p $D !unresolved_var", "cat"]);
 });
 
 test("a variable outside the grammar stays unresolved: command position, loop variable, reserved name", () => {
@@ -444,4 +445,13 @@ test("every program effects.ts refuses as a runner is opaque or unwrapped, never
     const segs = parseShell(`${r} ls`, POSIX);
     assert.ok(segs.some((s) => s.opaque !== null) || segs.some((s) => s.program === "ls"), r);
   }
+});
+
+test("a standalone literal assignment is not opaque; a steering or code-running name still marks the segment", () => {
+  assert.equal(parseShell("D=/x; ls", POSIX)[0].opaque, null);
+  for (const name of ["PATH", "BASH_ENV", "ENV", "PS4", "PROMPT_COMMAND", "LD_PRELOAD", "FOREMAN_SCRATCH", "FOREMAN_OUT"]) {
+    assert.equal(parseShell(`${name}=/x; ls`, POSIX)[0].programUnknown, true, name);
+  }
+  // a harness setting that steers no path or code does not mark it
+  assert.notEqual(parseShell("FOREMAN_TEST_DETACH=1; ls", POSIX)[0].programUnknown, true);
 });

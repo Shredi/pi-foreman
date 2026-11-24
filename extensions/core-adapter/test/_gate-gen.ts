@@ -332,8 +332,6 @@ export interface Gap {
  * One id may cover several shapes (the same gap seen through several constructs); a closed shape is reported by id and shape.
  */
 export const KNOWN_GAPS: readonly Gap[] = [
-  { id: "find-exec", shape: ["find-exec"], source: "#347 follow-up list: \"`find -exec sh -c`, `npx sh -c`; `xargs -I{} {}`, `xargs sh -c`; toybox looser than busybox.\"" },
-  { id: "npx", shape: ["npx"], source: "#347 follow-up list: \"`find -exec sh -c`, `npx sh -c`; `xargs -I{} {}`, `xargs sh -c`; toybox looser than busybox.\"" },
 ];
 
 /**

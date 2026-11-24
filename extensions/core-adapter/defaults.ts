@@ -442,7 +442,8 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   // a plain glob of a read program, and a here-document fed to a read or List B program, are data (fastallow.ts); every other opaque or here-document segment is no default
   const readsData = LIST_READ.has(seg.program) || SKIP_ONLY.has(seg.program);
   if ((seg.opaque !== null && !readGlobSegment(seg)) || (seg.heredoc && (!readsData || seg.dynamicCode)) || !seg.wrappers.every((w) => w === "timeout")) return null;
-  if (seg.program === "") return seg.argv.length === 0 && seg.redirects.length === 0 ? "default-assign" : null;
+  // an assignment unit with arithmetic or a subscript on a value not shown to be a number runs code the line does not show: no default, the judge-first rule looks
+  if (seg.program === "") return seg.argv.length === 0 && seg.redirects.length === 0 && seg.programUnknown !== true ? "default-assign" : null;
   const cwd = seg.cwd;
   const chain = toChain(seg);
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;
@@ -1240,6 +1241,7 @@ const behindHit = (s: ShellSegment, c: DangerCall, e: DangerEnv): boolean =>
   (s.behind ?? []).some((b) => {
     const call: DangerCall = { tool: c.tool, input: c.input, segments: b.segments, text: b.text };
     if (lineFloors(b.text, b.segments, e.floor ?? { cwd: e.cwd, platform: e.platform, writeRoots: [e.cwd] }) !== null) return true;
+    if (b.segments.some((n) => behindHit(n, c, e))) return true;
     return JUDGE_FIRST.some((r) => r.test(call, e)) || (!!e.roots.child && (outsideTarget(call, e) !== null || writesIntoCheckout(call, e)));
   });
 

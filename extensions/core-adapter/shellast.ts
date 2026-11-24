@@ -190,6 +190,8 @@ interface Run {
   unsafe?: Set<number>;
   /** A look-behind walk (`lookBehind`): no look-behind of its own starts inside it. */
   behind?: boolean;
+  /** The look-behind walk starts a program the line names (`npx`, `find -exec`), not an operand of an unknown one: a relative program word is judged in it too. */
+  behindRuns?: boolean;
   /** The folder flow of the walk, in walk order (see `Flow`). Set for the line's own walk; a trial copy of the run gets a copy of it. */
   flow?: Flow;
   /** The function bodies the line defines (`collectFuncs`), by name: a call walks each of them where it stands (`run`). Set for the line's own walk only. */
@@ -426,7 +428,7 @@ const harmless = (a: Assign): boolean => !a.append && a.value !== null && (HARML
 const STEERING = /^(PATH|IFS|HOME|SHELL|ENV|CDPATH|GLOBIGNORE|PS[0-9]|PROMPT_COMMAND|FCEDIT|EDITOR|VISUAL|TMPDIR|OLDPWD|PWD|SHLVL|OPTIND|OPTARG|POSIXLY_CORRECT|BASH_.*|BASHOPTS|SHELLOPTS|LD_.*|DYLD_.*|GIT_.*|NODE_.*|PYTHON.*|PERL.*|RUBY.*|FOREMAN_.*|PI_.*|MAIL.*|HIST.*|TERM.*|NPM_.*|XDG_.*|USER|LOGNAME|LANG|LC_.*)$/i;
 
 /** Names whose setting makes a shell or loader run code the line does not show (a prompt, a startup file, a function body, the search path, a preload, the harness folders): a command under one is judged. */
-const RUNS_CODE = /^(PATH|IFS|ENV|BASH_ENV|BASH_FUNC_.*|BASHOPTS|SHELLOPTS|PS[0-9]|PROMPT_COMMAND|CDPATH|GLOBIGNORE|LD_.*|DYLD_.*|FOREMAN_.*)$/;
+const RUNS_CODE = /^(PATH|IFS|ENV|BASH_ENV|BASH_FUNC_.*|BASHOPTS|SHELLOPTS|PS[0-9]|PROMPT_COMMAND|CDPATH|GLOBIGNORE|LD_.*|DYLD_.*|FOREMAN_SCRATCH|FOREMAN_OUT)$/;
 const steersCode = (a: Assign | undefined): boolean => !!a && !harmless(a) && RUNS_CODE.test(a.name);
 
 /** A standalone `NAME=literal`: no expansion in the value, no append, a name that steers nothing. It names a string for later words, which are read as they stand (an unresolved `$NAME` stays opaque). */
@@ -479,7 +481,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "programUnknown", { value: sc.unit !== undefined && !!sc.run.unsafe?.has(sc.unit), enumerable: false, configurable: true, writable: true });
   Object.defineProperty(out, "harnessRebound", { value: reboundAt(sc), enumerable: false, configurable: true, writable: true });
   // the shell is in a folder a variable or a substitution named: a file run by a relative name is not the file the walk's cwd says (not in a look-behind trial: a word after an unknown program is mostly an operand, `curl -o a https://x`)
-  if (sc.run.flow?.dyn && !sc.run.behind && runsRelative(program, argv)) Object.defineProperty(out, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
+  if (sc.run.flow?.dyn && (!sc.run.behind || sc.run.behindRuns) && runsRelative(program, argv)) Object.defineProperty(out, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
   if (sc.fnStack?.length) Object.defineProperty(out, "walked", { value: true, enumerable: false, configurable: true, writable: true });
   sc.run.out.push(out);
 }
@@ -1293,14 +1295,14 @@ const BEHIND_BUDGET = 1000;
  * (no look-behind inside it), and hang on the segment just emitted as `behind`. Nothing here adds a segment to the line's own list.
  */
 function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
-  if (c.sc.run.behind || (modelled(name) && name !== "npx")) return;
-  attachBehind(rest, rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : [])), c, cwd);
+  // inside a trial only `npx` (it starts the program it is given) looks behind again: the program of `npx sh -c 'find . -exec ...'` is not an operand of an unknown one
+  if ((c.sc.run.behind && name !== "npx") || (modelled(name) && name !== "npx")) return;
+  attachBehind(rest, rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : [])), c, cwd, name === "npx");
 }
 
 /** `find -exec CMD ... ;`: the words after each exec action read as a command of their own (`find . -exec sh -c 'rm x' \;`), like the words behind an unmodelled program. */
 function lookBehindExec(rest: W[], c: Cmd, cwd: string | null): void {
-  if (c.sc.run.behind) return;
-  attachBehind(rest, rest.flatMap((a, k) => (FIND_EXEC.has(a.value ?? "") && rest[k + 1] && rest[k + 1].value !== null ? [k + 1] : [])), c, cwd);
+  attachBehind(rest, rest.flatMap((a, k) => (FIND_EXEC.has(a.value ?? "") && rest[k + 1] && rest[k + 1].value !== null ? [k + 1] : [])), c, cwd, true);
 }
 
 /** `compgen -C CMD`, `readarray -C CMD`: the callback command is run by the shell; a literal one is read as the command it holds, any other makes the segment unknown. */
@@ -1316,7 +1318,7 @@ function callbackOption(rest: W[], c: Cmd, cwd: string | null): void {
 }
 
 /** Starts a trial walk at each of the `starts` words of `rest` and hangs the results on the segment just emitted (`ShellSegment.behind`). */
-function attachBehind(rest: W[], starts: number[], c: Cmd, cwd: string | null): void {
+function attachBehind(rest: W[], starts: number[], c: Cmd, cwd: string | null, runs = false): void {
   const sc = c.sc;
   if (!starts.length) return;
   const real = sc.run.out[sc.run.out.length - 1];
@@ -1328,7 +1330,7 @@ function attachBehind(rest: W[], starts: number[], c: Cmd, cwd: string | null): 
   }
   budget.starts += starts.length;
   const behind = starts.map((k) => {
-    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
+    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(runs ? { behindRuns: true } : {}), ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
     run(rest.slice(k), { ...c, sc: { ...sc, run: trial } }, cwd);
     return { text: rest.slice(k).map((a) => a.value ?? a.text).join(" "), segments: trial.out };
   });

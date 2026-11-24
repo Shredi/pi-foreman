@@ -89,7 +89,8 @@ test("property A in both modes: a dangerous payload is never silent through any 
 });
 
 test("judge mode closes the marked gaps: the constructs KNOWN_GAPS names are judged or stricter for every payload and role", { skip: posixOnly }, () => {
-  const names = new Set(KNOWN_GAPS.flatMap((g) => g.shape));
+  // the two gaps the list held (find-exec, npx) are closed in the code; judge mode still must not run them silent, and a gap marked later is covered too
+  const names = new Set([...KNOWN_GAPS.flatMap((g) => g.shape), "find-exec", "npx"]);
   assert.ok(names.size > 0);
   for (const role of GATE_ROLES) {
     for (const n of names) {
