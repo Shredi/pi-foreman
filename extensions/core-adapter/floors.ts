@@ -2402,7 +2402,7 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   // the silent exemption: every segment is a clean read, a loop word or a bare assignment; a `sed` or `jq` beside it may write what the parser cannot see, so a placed word goes to the judge
   const silent = line.every((s) => cleanReadSegment(s, env) || LOOP_WORDS.has(base(s.program)) || (base(s.program) === "" && s.opaque === "assignment" && s.argv.length === 0));
   const placed = (w: string): boolean => (!reading || silent) && reads.has(unquote(w)) && !others.has(unquote(w));
-  // a protected word inside a larger word of a segment that is neither a clean read nor a loop header (a sed `w` command the parser does not see as a write) keeps the ask or deny
+  // lifts judge to ask/deny for a split-off path; never weaker than the judge (a protected word inside a larger word of a segment that is neither a clean read nor a loop header, such as a sed `w` command the parser does not see as a write)
   const embedded = (w: string): boolean => otherSegs.some((s) => !LOOP_WORDS.has(base(s.program)) && segWords(s).some((x) => unquote(x) !== w && wordsOf(x).includes(w)));
   // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
   // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
