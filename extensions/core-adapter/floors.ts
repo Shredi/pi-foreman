@@ -1851,7 +1851,7 @@ const shellConsumer = (s: ShellSegment): boolean => runsShellText(s) || s.argv.s
 export function dataBodies(segments: ShellSegment[]): boolean {
   const bodies = segments.filter((s) => s.heredoc);
   const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program)) || s.opaque === "stdin_fed") && !shellConsumer(s));
-  return bodies.length > 0 && data && !segments.some((s) => s.stdinFed && shellConsumer(s));
+  return bodies.length > 0 && data && !bodies.some((s) => s.wrappers.some((w) => w === "$(" || w === "`")) && !segments.some((s) => s.stdinFed && shellConsumer(s));
 }
 
 /**
@@ -1862,7 +1862,9 @@ export function dataBodies(segments: ShellSegment[]): boolean {
 function bodiesOnlyCatTee(segments: ShellSegment[], env: FloorEnv): boolean {
   const plain = (s: ShellSegment): boolean => ["cat", "tee"].includes(base(s.program));
   const code = (s: ShellSegment): boolean => SHELL_LIKE.has(base(s.program)) || (s.opaque !== null && s.opaque !== "writing_wrapper");
-  return segments.every((s) => (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s) || cleanReadSegment(s, env)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
+  // a heredoc inside a substitution (`gzip $(cat <<E … E)`): its output becomes another command's arguments, so its body is no data
+  const inSubst = (s: ShellSegment): boolean => s.wrappers.some((w) => w === "$(" || w === "`");
+  return segments.every((s) => !(s.heredoc && inSubst(s)) && (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s) || cleanReadSegment(s, env)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
 }
 
 /**
