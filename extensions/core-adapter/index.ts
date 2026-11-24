@@ -33,11 +33,11 @@ import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
 import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, inputHash, writeChildAsk } from "./childask.ts";
 import { ChildAskPark, parkKey } from "./childaskpark.ts";
 import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
-import { askOwner, STOP_TEXT } from "./gatedialog.ts";
+import { askOwner, DEFAULT_ASK_TIMEOUT_MS, STOP_TEXT } from "./gatedialog.ts";
 import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
-import { CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
+import { CHILD_ASK_TIMEOUT_TEXT, CHILD_AWAY_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -3501,7 +3501,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const childAskWatches = new Map<string, ChildAskWatch>();
   const childAskWatchFor = (s: Session, ctx: ExtensionContext): ChildAskWatch => {
     let w = childAskWatches.get(s.id);
-    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a) => answerChildAsk(s, ctx, a), (e) => reportChildAsk(s, e, ctx))));
+    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a, signal) => answerChildAsk(s, ctx, a, signal), (e) => reportChildAsk(s, e, ctx))));
     return w;
   };
   // D3: answers of asks whose run ended while the child waited, and the run -> launch map of resumes (childaskpark.ts); memory only, per session
@@ -3524,6 +3524,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return `pi-foreman: the run ended while waiting for the owner on ${open.tool}: ${open.payload.replace(/\s+/g, " ").trim().slice(0, 100)}; the question is still open, do not work around it.`;
     }
     childAskWatches.get(s.id)?.remove(dir);
+    parkFor(s).dropDir(dir);
     fs.rmSync(dir, { recursive: true, force: true });
     return null;
   };
@@ -3579,16 +3580,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.sendMessage({ customType: "pi-foreman-ask-answered", content: `pi-foreman notice: the owner answered the question the ended run (${e.ask.role}, launch ${e.ask.run}) left open on ${e.ask.tool}: ${e.allow ? "allowed" : "denied"}. The run can be resumed; its identical call is answered once without asking again.`, display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
   };
   /** The parent's answer to one child ask (r79 item 5): the owner dialog in the parent's own pane with the child's role, run and the full command; never a model. */
-  async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk): Promise<ChildAnswer> {
+  async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk, signal?: AbortSignal): Promise<ChildAnswer> {
     if (!ctx.hasUI) return { allow: false, reason: NO_PANE_TEXT };
     const rt = gateRuntimeOf(s);
     // D3: the owner already answered this exact call of a run that ended while it waited: used once, no dialog
+    // the parked answer lives until the first ask of the resumed run: it covers that ask when the call is the same, and is dropped either way
     const parked = a.inputHash ? parkFor(s).take(parkKey(a.dir, a.tool, a.cwd, a.inputHash)) : undefined;
+    parkFor(s).dropDir(a.dir);
     if (parked !== undefined) {
       s.trace?.emit({ event: "ask_parked_used", role: a.role, toolFamily: a.tool, decision: parked ? "allow" : "deny" });
       return parked ? { allow: true, how: "allow-parked" } : { allow: false, reason: "pi-foreman: the owner denied this call while the run had ended; it is not run again. Report this line to the foreman and continue with what you can.", how: "deny-parked" };
     }
-    const ans = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run } }, ownerDeps(s, ctx, rt)), { tool: a.tool, summary: typeof a.payload === "string" ? a.payload : "" }, (r) => r.how === "aborted");
+    const ans = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run } }, ownerDeps(s, ctx, rt, signal)), { tool: a.tool, summary: typeof a.payload === "string" ? a.payload : "" }, (r) => r.how === "aborted");
     if (ans.allow === false && ans.how === "aborted") return { allow: false, reason: ans.reason, how: ans.how, noRuling: true };
     return ans.allow === true ? { allow: true, how: "allow-once" } : { allow: false, reason: ans.reason, how: ans.how };
   }
@@ -4370,11 +4373,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the child never creates the ask dir: a missing one means the starting session ended or no longer watches this helper
         if (!fs.existsSync(askDir)) return done("parent-gone", false, CHILD_GONE_TEXT);
         const askCause = a.dangerName ?? (cause === "no rule matches" || cause.startsWith("rule ") ? cause : cause.startsWith("self-modification") ? "selfmod" : cause);
-        const n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, inputHash: inputHash(input) });
+        // owner decision (e): a child's ask ends after DEFAULT_ASK_TIMEOUT_MS on both sides (the deadline is in ask.md, the parent aborts its dialog at it)
+        const deadline = Date.now() + DEFAULT_ASK_TIMEOUT_MS;
+        let n: number;
+        try {
+          n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, deadline, inputHash: inputHash(input) });
+        } catch (e) {
+          // the dir went between the check and the write: the starting session is gone (the child never creates it)
+          if (!fs.existsSync(askDir)) return done("parent-gone", false, CHILD_GONE_TEXT);
+          throw e;
+        }
         const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
-        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Infinity, 250, notBefore, undefined, undefined, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
+        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Math.max(0, deadline - Date.now()), 250, notBefore, undefined, undefined, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "gone") return done("parent-gone", false, CHILD_GONE_TEXT);
+        // a timeout or an away parent is nobody's refusal of this call: no repeat-stop count, and the text says what happened
+        if (w.answer === "timeout") return done("parent-timeout", false, CHILD_ASK_TIMEOUT_TEXT);
+        if (w.answer === "away") return done("parent-away", false, CHILD_AWAY_TEXT);
         if (w.answer === "aborted") return done("parent-aborted", false, "pi-foreman: the call was aborted while it waited for the parent's ruling; the question stays open in ask.md.");
         const parentDeny = (text: string): { block: true; reason: string } | undefined => (w.answer === "deny" ? denyCounted("parent-deny", text, "parent-deny") : done("parent-deny", false, text));
         return parentDeny(w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}${tool === "bash" ? (n2 => (n2 ? ` ${n2}` : ""))(childNpmNote(strOf((input as Record<string, unknown> | undefined)?.command), launchBinding?.install === true)) : ""}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);

@@ -1,4 +1,5 @@
-// Plan asks-wait-for-owner D2: a child's ask has no deadline and a wait cannot hang on nobody. The child's wait (awaitChildRuling) ends by a ruling,
+// Plan asks-wait-for-owner D2: a wait cannot hang on nobody (the waits below run with no limit of their own; the gate's child ask itself ends after
+// DEFAULT_ASK_TIMEOUT_MS, owner decision (e), tested in child-ask-deadline.test.ts). The child's wait (awaitChildRuling) ends by a ruling,
 // the call's abort signal, or "the starting session is gone"; the parent re-adds its ask dirs after a reload and a closed dialog writes no ruling.
 import { test } from "node:test";
 import assert from "node:assert/strict";

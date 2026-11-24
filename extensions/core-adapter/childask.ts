@@ -96,7 +96,10 @@ export function nextAskN(dir: string): number {
   return n + 1;
 }
 
-/** Write `<dir>/ask.md` (header `# Ask <n>: <topic>`, `key: value` lines, then the whole payload in a fence; no cut) atomically and return n. */
+/**
+ * Write `<dir>/ask.md` (header `# Ask <n>: <topic>`, `key: value` lines, then the whole payload in a fence; no cut) atomically and return n.
+ * The child never creates `dir`: a missing dir means the starting session ended or no longer watches this helper, and the write throws (the caller counts the child as gone).
+ */
 export function writeChildAsk(dir: string, a: ChildAskInput): number {
   const n = nextAskN(dir);
   const text = [
@@ -120,7 +123,6 @@ export function writeChildAsk(dir: string, a: ChildAskInput): number {
     "```",
     "",
   ].join("\n");
-  fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.ask.md.${process.pid}.tmp`);
   fs.writeFileSync(tmp, text, "utf8");
   fs.renameSync(tmp, path.join(dir, "ask.md"));
@@ -253,7 +255,8 @@ export type ChildAskEvent = { kind: "answered" | "late" | "expired" | "failed" |
 
 /**
  * The ask dirs of one session's running children. Each new ask is queued; `answer` runs for one ask at a time (one dialog at a time
- * per session). An ask whose deadline passed before its turn is dropped; an answer that comes after the deadline is reported as
+ * per session). An ask whose deadline passed before its turn is dropped (`expired`); the dialog of a shown ask is aborted (its signal) at the
+ * deadline so the queue moves on, nothing is written and the ask is reported `late`; an answer that comes after the deadline is reported as
  * `late` and never written.
  */
 export class ChildAskWatch {
@@ -262,12 +265,12 @@ export class ChildAskWatch {
   private busy = false;
   private shown: ChildAsk | null = null;
   private handle: unknown;
-  private readonly answer: (a: ChildAsk) => Promise<ChildAnswer>;
+  private readonly answer: (a: ChildAsk, signal: AbortSignal) => Promise<ChildAnswer>;
   private readonly report: (e: ChildAskEvent) => void;
   private readonly timers: AskTimers;
   private readonly now: () => number;
 
-  constructor(answer: (a: ChildAsk) => Promise<ChildAnswer>, report: (e: ChildAskEvent) => void, timers: AskTimers = REAL_TIMERS, now: () => number = Date.now) {
+  constructor(answer: (a: ChildAsk, signal: AbortSignal) => Promise<ChildAnswer>, report: (e: ChildAskEvent) => void, timers: AskTimers = REAL_TIMERS, now: () => number = Date.now) {
     this.answer = answer;
     this.report = report;
     this.timers = timers;
@@ -337,14 +340,18 @@ export class ChildAskWatch {
         }
         let ans: ChildAnswer;
         this.shown = a;
+        const stop = new AbortController();
+        const timer = a.deadline ? this.timers.set(() => stop.abort(), Math.max(1, a.deadline - this.now())) : undefined;
         try {
-          ans = await this.answer(a);
+          ans = await this.answer(a, stop.signal);
         } catch (e) {
           ans = { allow: false, reason: `the parent could not answer (${e instanceof Error ? e.message : String(e)})` };
         }
+        if (timer !== undefined) this.timers.clear(timer);
         this.shown = null;
         if (ans.noRuling) {
-          this.report({ kind: "aborted", ask: a });
+          // closed by the deadline: whatever the owner would have answered is late and never written
+          this.report(stop.signal.aborted ? { kind: "late", ask: a, detail: "dialog closed at the deadline" } : { kind: "aborted", ask: a });
           continue;
         }
         if (a.deadline && this.now() > a.deadline) {

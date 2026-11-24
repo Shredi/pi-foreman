@@ -233,7 +233,9 @@ test("child ask: ask.md carries role and run; an ALLOW ruling lets the call run 
   assert.match(text, /cause: danger-git/);
   assert.match(text, /role: builder/);
   assert.match(text, /run: L9/);
-  assert.doesNotMatch(text, /^deadline:/m, "the gate writes no deadline");
+  // reversed on purpose (owner decision (e)): a child's ask ends after DEFAULT_ASK_TIMEOUT_MS, so the gate writes the deadline into ask.md
+  const deadline = Number(/^deadline: (\d+)$/m.exec(text)?.[1]);
+  assert.ok(deadline > Date.now() && deadline <= Date.now() + 15 * 60 * 1000, "the gate writes a deadline 15 minutes ahead");
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
   assert.equal(await p, undefined);
   const d = r.events("dialog").at(-1)!;
