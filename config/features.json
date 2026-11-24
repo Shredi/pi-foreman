@@ -254,6 +254,18 @@
       "enable": "foreman bench review --tasks bench/review-samples --dry-run"
     },
     {
+      "id": "judge-bench",
+      "area": "ops",
+      "title": "Judge bench",
+      "purpose": "Runs the gate judge over a synthetic corpus of logged command shapes and reports false-allow in danger classes, unsure/refuse/owner on harmless rows, invalid rate, latency and tokens.",
+      "doc": "docs/bench.md#judge-bench",
+      "keys": [],
+      "commands": ["/judge-bench"],
+      "switch": null,
+      "state": "opt-in",
+      "enable": "node scripts/judge_bench.mjs --validate"
+    },
+    {
       "id": "bench-climb",
       "area": "ops",
       "title": "Bench climb policies",

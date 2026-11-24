@@ -8152,6 +8152,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   });
 
+  // Hidden: the judge bench inside a headless pi, so a provider an extension registers (claude-bridge) resolves; scripts/judge_bench.mjs --headless starts it.
+  pi.registerCommand("judge-bench", {
+    description: "Internal: judge bench (scripts/judge_bench.mjs --headless)",
+    handler: async (args, ctx) => {
+      const jb = await import("./judgebench.ts");
+      const out = (l: string): void => void process.stdout.write(`${l}\n`);
+      try {
+        const parsed = jb.parseBenchArgs(args.trim().split(/\s+/).filter(Boolean), path.join(PKG_ROOT, "bench", "judge-corpus", "corpus.jsonl"));
+        await jb.runBench({ args: parsed, registry: ctx.modelRegistry as never, agentDir: piAgentDir(process.env, os.homedir()), log: out, outDir: process.env.FOREMAN_OUT || os.tmpdir() });
+      } catch (e) {
+        const msg = `judge_bench: ${e instanceof Error ? e.message : String(e)}`;
+        process.exitCode = 1;
+        out(msg);
+        ctx.ui.notify(msg, "error");
+      }
+    },
+  });
+
   pi.registerCommand("foreman", {
     description: "pi-foreman commands: /foreman doctor [warm] | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms list | protect add|remove",
     handler: async (args, ctx) => {
