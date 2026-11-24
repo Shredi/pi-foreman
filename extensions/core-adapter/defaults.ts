@@ -894,7 +894,7 @@ function programTargets(s: ShellSegment): WriteTarget[] {
       // sed takes any unambiguous prefix of a long option (`--in`, `--in-pl=.bak`): every prefix of `--in-place` from `--i` on is it
       const inPlace = a.some((w) => (w.startsWith('--i') && "--in-place".startsWith(w.split("=")[0])) || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
       const wfiles: string[] = [];
-      for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
+      for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/0-9$,!])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
       return named([...(inPlace ? files : []), ...wfiles]);
     }
     case "truncate":
