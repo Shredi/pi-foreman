@@ -60,6 +60,17 @@ const EXEC: Array<[string, string]> = [
   ['protocol "ext"', "allow = always"], ["protocol", "allow = always"],
   ["http", "proxy = x"], ['http "https://a/"', "proxy = x"],
   ["sendemail", "smtpServer = x"], ["pager", "log = x"], ["interactive", "diffFilter = x"], ["uploadpack", "packObjectsHook = x"],
+  // keys found by reading `git help config` (round 2)
+  ['hook "h"', "command = x"], ['hook "h"', "event = pre-push"], ["hook", "x.command = x"],
+  ["gc", "recentObjectsHook = x"], ["gc", "repackFilterTo = x"],
+  ['guitool "g"', "cmd = x"], ["imap", "tunnel = x"], ["imap", "host = x"], ["instaweb", "httpd = x"], ["instaweb", "browser = x"],
+  ["lfs", "customtransfer.x.path = x"], ["lfs", "url = x"], ['lfs "extension.x"', "clean = x"], ["ssh", "variant = simple"],
+  ["extensions", "worktreeConfig = true"], ["extensions", "objectFormat = sha256"],
+  ['remote "origin"', "push = x"], ['remote "origin"', "mirror = true"], ['remote "origin"', "fetch = x"],
+  ["receive", "procReceiveRefs = x"], ["fetch", "bundleURI = x"], ["transfer", "bundleURI = x"],
+  ["bundle", "version = 1"], ['bundle "b"', "uri = x"], ["http", "sslCAInfo = x"], ["gpg", "format = ssh"], ['gpg "x509"', "program = x"],
+  ["help", "browser = x"], ["submodule", "alternateLocation = x"], ["trace2", "eventTarget = x"], ["fsmonitor", "socketDir = x"],
+  ["core", "unsetenvvars = x"], ["attr", "tree = x"], ['trailer "t"', "cmd = x"], ['mergetool "m"', "cmd = x"], ['difftool "d"', "cmd = x"],
 ];
 
 for (const [section, line] of EXEC) {
@@ -70,9 +81,9 @@ for (const [section, line] of EXEC) {
     const added = drift(dir, before);
     assert.ok(added.length >= 1, `${section} ${line}`); // core.hooksPath adds a hooks-directory line too
     assert.match(added[0], /^git:config: added /);
-    assert.doesNotMatch(added[0], /= x/);
+    assert.doesNotMatch(added[0], /= x|= true/);
     const mid = takeGitSnapshot(dir, HOME);
-    fs.writeFileSync(config(dir), fs.readFileSync(config(dir), "utf8").replace(/= (!x|x|always)\n$/, "= y\n"));
+    fs.writeFileSync(config(dir), fs.readFileSync(config(dir), "utf8").replace(/= [^\n]*\n$/, "= y\n"));
     assert.match(drift(dir, mid)[0] ?? "", /^git:config: changed /);
   });
 }
@@ -93,4 +104,45 @@ test("a new config file with only non-exec keys is quiet; with an exec key it as
   assert.deepEqual(drift(dir, before), []);
   fs.writeFileSync(f, "[foo]\n\tbar = 1\n[core]\n\tpager = z\n");
   assert.match(drift(dir, before).join("\n"), /core\.pager/);
+});
+
+test("core.bare and core.repositoryformatversion changes ask", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.writeFileSync(config(dir), fs.readFileSync(config(dir), "utf8").replace("bare = false", "bare = true"));
+  assert.deepEqual(drift(dir, before), ["git:config: changed core.bare"]);
+  fs.appendFileSync(config(dir), "[core]\n\trepositoryformatversion = 1\n");
+  assert.match(drift(dir, before)[0], /core\.repositoryformatversion/);
+});
+
+test("an unparsable line written with a bookkeeping key still asks; a changed or removed one too", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[branch \"main\"]\n\tvscode-merge-base = o\n[sendpack]\n\t= weird line !!\n[user]\n\tname = a\n");
+  const added = drift(dir, before);
+  assert.deepEqual(added, ["git:config: added (unparsed lines)"]);
+  assert.doesNotMatch(added.join("\n"), /weird/);
+  const mid = takeGitSnapshot(dir, HOME);
+  fs.writeFileSync(config(dir), fs.readFileSync(config(dir), "utf8").replace("weird line", "other line"));
+  assert.deepEqual(drift(dir, mid), ["git:config: changed (unparsed lines)"]);
+  fs.writeFileSync(config(dir), fs.readFileSync(config(dir), "utf8").replace("\t= other line !!\n", ""));
+  assert.deepEqual(drift(dir, mid), ["git:config: removed (unparsed lines)"]);
+});
+
+test("old-style [core.sub] header and a new config file with an unparsable line still ask", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[core.sub]\n\tfsmonitor = 1\n");
+  assert.notDeepEqual(drift(dir, before), []);
+  fs.mkdirSync(path.join(dir, ".git", "worktrees", "w1"), { recursive: true });
+  const b2 = takeGitSnapshot(dir, HOME);
+  fs.writeFileSync(path.join(dir, ".git", "worktrees", "w1", "config.worktree"), "[foo]\n\tbar = 1\n\t= junk\n");
+  assert.match(drift(dir, b2).join("\n"), /unparsed lines/);
+});
+
+test("comments and blank lines do not count as unparsable", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "\n# note\n; note\n[user]\n\tname = a\n");
+  assert.deepEqual(drift(dir, before), []);
 });

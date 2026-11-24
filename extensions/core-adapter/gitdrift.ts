@@ -149,7 +149,13 @@ export const sha =(s: string | Buffer): string => crypto.createHash("sha256").up
 
 /** Minimal git-config reader: key names (lower-cased section and name) and values. */
 export function parseGitConfig(text: string): Array<[string, string]> {
+  return parseGitConfigLines(text).entries;
+}
+
+/** Same reader, plus the lines it skipped (not comments, blank lines or empty section headers). */
+export function parseGitConfigLines(text: string): { entries: Array<[string, string]>; skipped: string[] } {
   const out: Array<[string, string]> = [];
+  const skipped: string[] = [];
   const lines = text.replace(/\\\r?\n/g, "").split(/\r?\n/);
   let section = "";
   for (const raw of lines) {
@@ -164,10 +170,13 @@ export function parseGitConfig(text: string): Array<[string, string]> {
       if (!rest || rest.startsWith("#") || rest.startsWith(";")) continue;
     }
     const kv = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(rest);
-    if (!kv || !section) continue;
+    if (!kv || !section) {
+      skipped.push(line);
+      continue;
+    }
     out.push([`${section}.${kv[1].toLowerCase()}`, kv[2] === undefined ? "true" : kv[2].trim()]);
   }
-  return out;
+  return { entries: out, skipped };
 }
 
 function inside(root: string, p: string): boolean {
@@ -207,9 +216,11 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
     if (files.has(lbl) || depth > 5) return;
     const text = readText(p);
     if (text === null) return;
-    const entries = parseGitConfig(text);
+    const { entries, skipped } = parseGitConfigLines(text);
     const grouped = new Map<string, string[]>();
     for (const [k, v] of entries) grouped.set(k, [...(grouped.get(k) ?? []), v]);
+    // A line the reader cannot parse may be anything git does read: its hash is a key of its own, so a change in it is never silent.
+    if (skipped.length) grouped.set(UNPARSED_KEY, [skipped.join("\n")]);
     const raw = new Map([...grouped].filter(([k]) => BRANCH_TRACKING.test(k)));
     files.set(lbl, { hash: sha(text), keys: new Map([...grouped].map(([k, vs]) => [k, sha(vs.join("\0"))])), raw });
     for (const [k, v] of entries) {
@@ -492,30 +503,43 @@ function routineRemote(branch: string, a: FileSnap, b: FileSnap): boolean {
 }
 
 /**
- * Config keys whose change can run a program or redirect git (evidence: `git help config`; a value there is a command, a program path, a URL
- * rewrite or proxy, a remote target, or an include). Named by key shape: section, optional subsection, variable (all lowercased).
- * Only these (plus hooks, info/attributes, includes and worktree links, which are other snapshot parts) open the drift ask; any other key
- * (branch.<b>.vscode-merge-base, branch.<b>.description, user.*, unknown) updates the baseline without a dialog. Unsure keys stay in this class.
+ * Config keys whose change can run a program or redirect git (a value there is a command, a program path, a URL rewrite or proxy, a remote
+ * target, a bundle URI, an include, or a switch of the repository, config or worktree git uses). Named by key shape: section, optional
+ * subsection, variable (all lowercased). Method: every key of `git help config` (git 2.54, ~670 entries) was read; each whose description names
+ * a command, program, hook, helper, tool, executable path, URL, proxy, include or such a switch is here, and a section most of whose keys
+ * qualify (http, gpg, remote, ...) is here as a whole. Unsure keys stay in the class (fail closed); the extensions git ships later and
+ * third-party sections (lfs) are covered by shape. Only these (plus hooks, info/attributes, includes and worktree links, which are other
+ * snapshot parts, and unparsable config lines, see UNPARSED_KEY) open the drift ask; any other key (branch.<b>.vscode-merge-base,
+ * branch.<b>.description, user.*, unknown) updates the baseline without a dialog.
  */
-const EXEC_SECTIONS = new Set(["filter", "alias", "credential", "protocol", "sendemail", "pager", "difftool", "mergetool", "safe", "web", "browser", "man", "include"]);
+const EXEC_SECTIONS = new Set([
+  "filter", "alias", "credential", "protocol", "sendemail", "pager", "difftool", "mergetool", "safe", "web", "browser", "man", "include",
+  "hook", "guitool", "imap", "instaweb", "lfs", "ssh", "extensions", "bundle", "http", "gpg", "remote", "trace2", "fsmonitor",
+]);
 const EXEC_VARS: Record<string, RegExp> = {
-  core: /^(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|worktree|attributesfile|alternaterefscommand)$/,
+  core: /^(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|worktree|attributesfile|alternaterefscommand|bare|repositoryformatversion|unsetenvvars)$/,
   url: /^(?:insteadof|pushinsteadof)$/,
   diff: /^(?:textconv|command|external|tool|guitool)$/,
   merge: /^(?:driver|tool|guitool)$/,
-  remote: /^(?:url|pushurl|uploadpack|receivepack|proxy|vcs|pushdefault)$/,
   branch: /^(?:remote|merge|rebase|pushremote)$/,
-  gpg: /^(?:program|defaultkeycommand)$/,
   sequence: /^editor$/,
   interactive: /^difffilter$/,
   uploadpack: /^packobjectshook$/,
-  http: /^(?:proxy|curloptresolve)$/,
-  submodule: /^(?:url|update)$/,
+  receive: /^procreceiverefs$/,
+  gc: /^(?:recentobjectshook|repackfilterto)$/,
+  fetch: /^bundleuri$/,
+  transfer: /^bundleuri$/,
+  attr: /^tree$/,
+  help: /^(?:browser|htmlpath)$/,
+  submodule: /^(?:url|update|alternatelocation|gitdir)$/,
   init: /^templatedir$/,
   trailer: /^(?:cmd|command)$/,
   tar: /^command$/,
   includeif: /^path$/,
 };
+
+/** Synthetic key in a parsed config file's key map: a hash of the lines `parseGitConfig` could not read (never their text). */
+export const UNPARSED_KEY = "(unparsed lines)";
 
 /** True when a config key (dotted, lowercased) is in the exec-capable class above. */
 function execCapableKey(key: string): boolean {
