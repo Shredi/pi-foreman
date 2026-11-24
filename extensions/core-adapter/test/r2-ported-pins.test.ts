@@ -657,8 +657,8 @@ test("permoverlay-r41", { skip: posixOnly }, () => {
     [29,"bash","git clone https://x/r.git /pf41/agent/pi-foreman","b","block:selfmod-agent-dir"],
     [29,"bash","git -C /pf41/agent/pi-foreman checkout .","b","block:child-write-outside"],
     // permoverlay-r41.test.ts:261 
-    [29,"bash","curl -o /pf41/agent/pi-foreman/managed.json https://x \"u","m","ask:floor-policy-file"],
-    [29,"bash","curl -o /pf41/agent/pi-foreman/managed.json https://x \"u","b","block:floor-policy-file"],
+    [29,"bash","curl -o /pf41/agent/pi-foreman/managed.json https://x \"u","m","none"], // gate-verify-reads: an unparsable line naming a state file goes to the judge, not to the owner
+    [29,"bash","curl -o /pf41/agent/pi-foreman/managed.json https://x \"u","b","none"], // gate-verify-reads: judge, not a deny
     // permoverlay-r41.test.ts:323 
     [29,"bash","tar -xf a.tar -C/pf41/agent/pi-foreman","m","ask:selfmod-agent-dir"],
     [29,"bash","patch -d /pf41/agent/pi-foreman -i a.diff","m","ask:selfmod-agent-dir"],

@@ -1857,11 +1857,12 @@ export function dataBodies(segments: ShellSegment[]): boolean {
 /**
  * A heredoc body is data for the settings-file rule only when every segment that reads it through a pipe is `cat` or `tee`, no interpreter or variable program sits inside a
  * substitution (`tee >(python3) <<E`: the walker labels a process substitution like `$(`), and no heredoc command is an interpreter or a variable program.
+ * A cleanly read segment (`grep`, `head`) fed by a pipe only reads the text, so it is no consumer that runs it.
  */
-function bodiesOnlyCatTee(segments: ShellSegment[]): boolean {
+function bodiesOnlyCatTee(segments: ShellSegment[], env: FloorEnv): boolean {
   const plain = (s: ShellSegment): boolean => ["cat", "tee"].includes(base(s.program));
   const code = (s: ShellSegment): boolean => SHELL_LIKE.has(base(s.program)) || (s.opaque !== null && s.opaque !== "writing_wrapper");
-  return segments.every((s) => (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
+  return segments.every((s) => (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s) || cleanReadSegment(s, env)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
 }
 
 /**
@@ -2342,10 +2343,10 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
 
 /**
  * A segment that parsed cleanly and only reads: a read-class program (a `find` with no action) or `git status|log|diff|show` with no program or output option,
- * and no redirect but a read, an fd dup or the null device. A config file it names is read, not written.
+ * and no redirect but a read, an fd dup or the null device. A config file it names is read, not written. A `~` or `$HOME` spelling is no opacity here (the floors expand it).
  */
 function cleanReadSegment(seg: ShellSegment, env: FloorEnv): boolean {
-  if (seg.opaque !== null || seg.heredoc || runsText(seg)) return false;
+  if ((seg.opaque !== null && !homeSpelling(seg)) || seg.heredoc || runsText(seg)) return false;
   if (!seg.redirects.every((r) => r.op === "<" || r.op === "dup" || NULL_TARGET.test(r.target))) return false;
   const p = base(seg.program);
   if (p === "git") {
@@ -2356,8 +2357,20 @@ function cleanReadSegment(seg: ShellSegment, env: FloorEnv): boolean {
 }
 
 /**
+ * A segment that writes nothing the parser can see: a loop header, a bare assignment, a cleanly read segment, a read-only program (`sed` without `-i`, `jq`; git stays with `cleanReadSegment`, a `git add` stages) with no
+ * redirect but a read, an fd dup or the null device and no text to run, or the one segment of an unparsable line (judged as a whole).
+ */
+function nonWritingSegment(seg: ShellSegment, env: FloorEnv): boolean {
+  if (seg.opaque === "parse_error") return true;
+  if (seg.heredoc || runsText(seg) || !seg.redirects.every((r) => r.op === "<" || r.op === "dup" || NULL_TARGET.test(r.target))) return false;
+  const p = base(seg.program);
+  return LOOP_WORDS.has(p) || (p === "" && seg.opaque === "assignment" && seg.argv.length === 0) || cleanReadSegment(seg, env) || (p !== "git" && seg.wrappers.length === 0 && readOperands(seg, p).argv(""));
+}
+
+/**
  * Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1).
- * A config file word that only a cleanly parsed read segment of `line` carries is a read: it is no config-keys hit (the segments judge the writes).
+ * A word that only a cleanly parsed read segment of `line` carries is a read: it is no hit (the segments judge the writes). On a line where no segment writes
+ * (`nonWritingSegment`) a word no read segment carries (a loop variable, an assignment, unparsed text) goes to the judge instead of the owner or a deny.
  */
 function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellSegment[] = []): FloorHit | null {
   const flag = deny ? opaqueDeny : askHit;
@@ -2367,20 +2380,32 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
     const flat = t.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
     return [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
   };
-  const words = wordsOf(text);
+  const unquote = (w: string): string => w.replace(/['"`]/g, "");
+  const reading = line.length > 0 && line.every((s) => nonWritingSegment(s, env));
+  const clean = line.filter((s) => cleanReadSegment(s, env));
+  const reads = new Set(clean.flatMap((s) => s.argv.map(unquote)));
+  const others = new Set(line.filter((s) => !clean.includes(s)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)].map(unquote)));
+  const placed = (w: string): boolean => reads.has(unquote(w)) && !others.has(unquote(w));
+  // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
+  // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
+  const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line, env);
+  const words = wordsOf(data ? blankHeredocBodies(text) : text);
   // a Pi session file (`*.jsonl`) is no hit here: a line that only reads one (a transcript read through a path variable) is not refused; parsed write targets and path fields keep the entry
   const unread = entries.filter((e) => e.ext === undefined);
-  const w = words.find((x) => protectedWord(x, env.cwd, env, unread));
-  if (w !== undefined) return flag("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`, w);
+  const prot = words.filter((x) => protectedWord(x, env.cwd, env, unread));
+  if (prot.length > 0) {
+    const w = reading ? prot.find((x) => !placed(x)) : prot[0];
+    if (w !== undefined) {
+      const why = `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`;
+      return reading ? judgeHit("policy-file", why, w) : flag("policy-file", why, w);
+    }
+  }
   if (UNREAD_KEYS.test(text)) {
-    const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
-    const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
-    // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
-    // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
-    const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line);
-    const outside = new Set(wordsOf(data ? blankHeredocBodies(text) : text));
-    const c = words.find((x) => outside.has(x) && CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
-    if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
+    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
+    if (c !== undefined) {
+      const why = `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`;
+      return reading ? judgeHit("config-keys", why, c) : flag("config-keys", why, c);
+    }
   }
   return null;
 }

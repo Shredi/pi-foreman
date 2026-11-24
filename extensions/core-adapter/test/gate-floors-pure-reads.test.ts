@@ -1,0 +1,116 @@
+// A line that only reads a protected state or settings file reaches no owner ask and no child deny (floor-policy-file, floor-config-keys on an opaque line).
+// A word no read segment carries (loop variable, assignment, unparsed text) goes to the judge; every write shape onto the files keeps its result.
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { baseFloorEnv, gateEvaluate } from "../gate.ts";
+import { lineFloors, type FloorEnv } from "../floors.ts";
+import { parseShell } from "../shellast.ts";
+import type { GateRoots } from "../pathrules.ts";
+import { mkTestTmp } from "./_tmpbase.ts";
+import { posixOnly } from "./_platform.ts";
+
+const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo", "/s/scr", "/tmp"], protectedBranches: ["release"], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
+const kid: FloorEnv = { ...env, child: true };
+const hitOf = (line: string, e: FloorEnv) => lineFloors(line, parseShell(line, { cwd: e.cwd }), e);
+const shape = (line: string, e: FloorEnv): string | null => { const h = hitOf(line, e); return h ? `${h.kind}/${h.rule}` : null; };
+
+const G = "~/.pi/agent/pi-foreman/state/gate/log.jsonl";
+const F = "~/.pi/agent/foreman.json";
+const PANES = "~/.pi/agent/pi-foreman/state/panes/*.json";
+
+// the ask-56 line of the false-alarm list (the worktree path as the repo-relative cwd)
+const ASK56 = `cd extensions/core-adapter; grep -n "DEFAULT_ASK_TIMEOUT_MS" *.ts | head -5; grep -n "JUDGE_FIRST" gate.ts defaults.ts | head; sed -n 1230,1250p defaults.ts; grep -n "cacheRetention\\|JUDGE_REASONING\\|judgeLevel" classifier.ts | head; grep -n "danger-install\\|danger-net-write" *.ts | grep -v test | head; ls ../../scripts | head -40; grep -n '"review"' ~/.pi/agent/pi-foreman/foreman.json ~/.pi/agent/foreman.json 2>/dev/null | head`;
+// the ask-57 line: a data heredoc writes a test file into the own scratch dir; protected paths are only text in its body
+const body = `import { test } from "node:test";\n// writes ${G} and ${F}\nfor (const l of [\n \`for f in ${PANES}; do sed -n 1p "$f"; done\`,\n \`echo hi > ${G}\`,\n \`echo '{"gate":{}}' > ${F}; echo gate.x\`,\n]) test(l, () => {});`;
+const ask57 = (target: string) => `cd extensions/core-adapter; grep -n "selfmod-state-read" *.ts | grep -v "^test" | head; cat > ${target} <<'EOF'\n${body}\nEOF\ncd ../..; node --test .workflow/scratch/probe3.test.ts 2>&1 | grep -E "^R "`;
+
+const ALLOWED = [
+  ASK56,
+  ASK56.replace(/^cd [^;]*; /, ""),
+  `tail -n 3 ${G} | sed -n 1p`,
+  `sed -n 1p x; tail -n 3 ${G} | grep -o rule`,
+  `grep -n gate.judge ${F}; sed -n 1p x`,
+  `for f in ${PANES}; do grep -c x "$f"; done`,
+  `tail -n 3 ${G} | grep -o 'rule[^,]*'`,
+  ask57("../../.workflow/scratch/probe3.test.ts"),
+];
+
+test("pure reads of a protected file are no floor hit, main and child", () => {
+  for (const l of ALLOWED) for (const e of [env, kid]) assert.equal(shape(l, e), null, `${e.child ? "child" : "main"}: ${l.slice(0, 120)}`);
+});
+
+const JUDGED: [string, string][] = [
+  [`for f in ${PANES}; do sed -n 1p "$f"; done`, "danger-policy-file"],
+  [`for f in ${PANES}; do jq .x "$f"; done`, "danger-policy-file"],
+  // the variable is bound on another statement: the parser does not place the word as read
+  [`D=~/.pi/agent/pi-foreman/state/gate; tail -n 3 $D/log.jsonl`, "danger-policy-file"],
+  [`for f in ${F}; do sed -n 1p "$f"; done; echo gate.judge`, "danger-config-keys"],
+  // an unparsable line
+  [`tail -n 3 ${G} | | sed -n 1p (`, "danger-policy-file"],
+  [`grep gate.judge ${F} | | ( sed`, "danger-config-keys"],
+];
+
+test("a word the parser cannot place as read-only goes to the judge, main and child", () => {
+  for (const [l, rule] of JUDGED) for (const e of [env, kid]) assert.equal(shape(l, e), `judge/${rule}`, `${e.child ? "child" : "main"}: ${l}`);
+});
+
+// every write shape, plain, beside a `sed -n 1p x` segment (the opaque path) and in a for loop; the results are those of the code before this change
+const shapes = (t: string): string[] => [`echo hi > ${t}`, `echo hi >> ${t}`, `echo hi | tee ${t}`, `sed -i s/a/b/ ${t}`, `mv x ${t}`, `cp x ${t}`, `rm ${t}`, `python3 -c "open('${t}','w')"`];
+const writes: [string, string, string | null, string | null][] = [];
+for (const [t, tail, rule] of [[G, "", "floor-policy-file"], [F, "; echo gate.x", "floor-config-keys"]] as const) {
+  for (const s of shapes(t)) {
+    // a single-quoted path in an interpreter's code is no shell word: no hit on a clean line (pin); inside a loop the opaque scan asks (main) or denies (child)
+    const py = s.startsWith("python3");
+    for (const [l, loop] of [[`${s}${tail}`, false], [`sed -n 1p x; ${s}${tail}`, false], [`for f in a b; do ${s}${tail}; done`, true], [`for f in a b; do sed -n 1p "$f"; ${s}${tail}; done`, true]] as const) {
+      writes.push(py ? [l, loop ? `ask/${rule}` : null, loop ? `deny/${rule}` : null] : [l, `deny/${rule}`, `deny/${rule}`]);
+    }
+  }
+}
+
+test("every write shape onto the gate log and the foreman config keeps its result", () => {
+  for (const [l, main, child] of writes) {
+    assert.equal(shape(l, env), main, `main: ${l}`);
+    assert.equal(shape(l, kid), child, `child: ${l}`);
+  }
+});
+
+test("ask 57 write twin: the heredoc written onto a protected file keeps its stop", () => {
+  // the state file is a deny; onto foreman.json the line is an ask (main) or a deny (child), by config-keys now that the body's paths are data (the body held a state path: policy-file before)
+  assert.equal(shape(ask57(G), env), "deny/floor-policy-file");
+  assert.equal(shape(ask57(G), kid), "deny/floor-policy-file");
+  assert.equal(shape(ask57(F), env), "ask/floor-config-keys");
+  assert.equal(shape(ask57(F), kid), "deny/floor-config-keys");
+});
+
+test("ask 56 write twin: the same line with a redirect onto foreman.json still stops", () => {
+  const l = ASK56.replace(/ 2>\/dev\/null \| head$/, `; echo '{"gate":{}}' > ~/.pi/agent/foreman.json`);
+  for (const e of [env, kid]) assert.equal(shape(l, e), "deny/floor-config-keys", `${e.child ? "child" : "main"}`);
+});
+
+// through the gate: main and a builder child
+const base = fs.realpathSync(mkTestTmp("pf-pure-reads-"));
+const wt = path.join(base, "wt");
+fs.mkdirSync(wt, { recursive: true });
+after(() => fs.rmSync(base, { recursive: true, force: true }));
+type Res = { block?: boolean; ask?: boolean; allow?: boolean; rule?: string } | undefined;
+const roots = (): GateRoots => ({ worktree: wt, scratch: [], tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false });
+const gate = (command: string, child: boolean) => gateEvaluate("bash", { command }, wt, child ? { env: (c) => baseFloorEnv(c, { child: true }), roots } : { env: (c) => baseFloorEnv(c) });
+
+test("gateEvaluate: pure reads neither ask (main) nor block (builder); the loop with sed goes to the judge", { skip: posixOnly }, () => {
+  for (const child of [false, true]) {
+    for (const l of [`tail -n 3 ${G} | sed -n 1p`, `grep -n gate.judge ${F}; sed -n 1p x`, `for f in ${PANES}; do grep -c x "$f"; done`]) {
+      const r = gate(l, child).result as Res;
+      assert.ok(!r?.ask && !r?.block || /selfmod|protected|child-read/.test(r?.rule ?? ""), `${child ? "child" : "main"} ${l}: ${JSON.stringify(r)}`);
+      assert.notEqual(r?.rule, "floor-policy-file");
+      assert.notEqual(r?.rule, "floor-config-keys");
+    }
+    const j = gate(`for f in ${PANES}; do sed -n 1p "$f"; done`, child);
+    // no judge is wired here: a main session shows the judge-first label as its ask, a child's outcome carries it as the danger the judge looks at
+    assert.equal(child ? j.danger?.name : (j.result as Res)?.rule, "danger-policy-file");
+    // a write keeps the floor
+    const w = gate(`echo hi > ${G}`, child).result as Res;
+    assert.equal(w?.rule, "floor-policy-file");
+  }
+});
