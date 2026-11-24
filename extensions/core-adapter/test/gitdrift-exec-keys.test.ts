@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { diffGitSnapshots, takeGitSnapshot } from "../gitdrift.ts";
+import { spawnSync } from "node:child_process";
+import { diffGitSnapshots, parseGitConfig, parseGitConfigLines, takeGitSnapshot } from "../gitdrift.ts";
 
 const HOME = os.tmpdir();
 
@@ -145,4 +146,56 @@ test("comments and blank lines do not count as unparsable", (t) => {
   const before = takeGitSnapshot(dir, HOME);
   fs.appendFileSync(config(dir), "\n# note\n; note\n[user]\n\tname = a\n");
   assert.deepEqual(drift(dir, before), []);
+});
+
+test("a comment ending in a backslash does not swallow the next section", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[branch \"main\"]\n\tvscode-merge-base = o\n# x \\\n[core]\n\tsshCommand = evil\n");
+  assert.match(drift(dir, before).join("\n"), /core\.sshcommand/);
+  const b2 = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "; y \\\n[core]\n\tpager = evil2\n");
+  assert.match(drift(dir, b2).join("\n"), /core\.pager/);
+});
+
+test("a value ending in an escaped backslash does not swallow the next section", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[branch \"main\"]\n\tvscode-merge-base = o\n[user]\n\tname = a\\\\\n[filter \"lfs\"]\n\tclean = evil\n");
+  assert.match(drift(dir, before).join("\n"), /filter\.lfs\.clean/);
+});
+
+test("a real continuation inside a value still joins", () => {
+  assert.deepEqual(parseGitConfig("[a]\n\tb = x\\\n y\n\tc = 1\n"), [["a.b", "x y"], ["a.c", "1"]]);
+  assert.deepEqual(parseGitConfig("[a]\n\tb = x\\\r\n y\n\tc = 1\n"), [["a.b", "x y"], ["a.c", "1"]]);
+});
+
+test("a bad escape or an open quote is unparsed, not placed", () => {
+  assert.equal(parseGitConfigLines("[a]\n\tb = \\q\n\tc = \"x\n").skipped.length, 2);
+});
+
+const gitOk = spawnSync("git", ["--version"]).status === 0;
+test("differential: key names match git config --list", { skip: !gitOk }, (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-drift-diff-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const cases = [
+    "# x \\\n[core]\n\tsshCommand = evil\n",
+    "; x \\\n[filter \"lfs\"]\n\tclean = evil\n",
+    "[user]\n\tname = a\\\\\n[filter \"lfs\"]\n\tclean = evil\n",
+    "[a]\n\tb = x\\\n y\n[core]\n\tpager = p\n",
+    "[a]\n\tb = \"q ; # \\\\\"\n[core]\n\tpager = p\n",
+    "[a]\n\tb = v # c \\\n[core]\n\teditor = e\n",
+    "[a]\n\tb = v ; c \\\\\n[core]\n\teditor = e\n",
+    "[Core]\n\tFsMonitor\n[url \"x\\\"y\"]\n\tinsteadOf = z\n",
+    "[a] b = 1\n[c] ; d\n\te = 2\n",
+    "[a]\n\tb = \"x\\\n y\"\n[core]\n\thooksPath = h\n",
+    "[a]\n\tb = x\\\r\n y\r\n[core]\r\n\tpager = p\r\n",
+  ];
+  cases.forEach((text, i) => {
+    const f = path.join(dir, `c${i}`);
+    fs.writeFileSync(f, text);
+    const r = spawnSync("git", ["config", "-f", f, "--name-only", "--list"], { encoding: "utf8" });
+    assert.equal(r.status, 0, `git rejects case ${i}: ${r.stderr}`);
+    assert.deepEqual(parseGitConfig(text).map(([k]) => k), r.stdout.split("\n").filter(Boolean), `case ${i}`);
+  });
 });

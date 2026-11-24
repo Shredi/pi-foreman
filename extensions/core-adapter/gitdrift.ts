@@ -152,29 +152,103 @@ export function parseGitConfig(text: string): Array<[string, string]> {
   return parseGitConfigLines(text).entries;
 }
 
-/** Same reader, plus the lines it skipped (not comments, blank lines or empty section headers). */
+/**
+ * Same reader, plus the lines it skipped (not comments, blank lines or empty section headers). It follows git's config.c: a comment (`#` or `;`
+ * outside quotes) runs to the end of the physical line and a backslash there continues nothing; inside a value a doubled backslash and a backslash-quote are escapes, quotes
+ * toggle, and only an unescaped backslash directly before the newline joins the next line. A value keeps its raw text (comment included).
+ * Anything it cannot place (bad escape, open quote, malformed header or key) is skipped to the end of its line, so a caller can fail closed.
+ */
 export function parseGitConfigLines(text: string): { entries: Array<[string, string]>; skipped: string[] } {
   const out: Array<[string, string]> = [];
   const skipped: string[] = [];
-  const lines = text.replace(/\\\r?\n/g, "").split(/\r?\n/);
+  const n = text.length;
+  const eol = (from: number): number => {
+    const i = text.indexOf("\n", from);
+    return i < 0 ? n : i;
+  };
   let section = "";
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#") || line.startsWith(";")) continue;
-    let rest = line;
-    const hdr = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(.*)$/.exec(line);
-    if (hdr) {
-      const [name, ...sub] = hdr[1].split(".");
-      section = hdr[2] !== undefined ? `${name.toLowerCase()}.${hdr[2].replace(/\\(.)/g, "$1")}` : [name.toLowerCase(), ...sub.map((x) => x.toLowerCase())].join(".");
-      rest = hdr[3].trim();
-      if (!rest || rest.startsWith("#") || rest.startsWith(";")) continue;
-    }
-    const kv = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(rest);
-    if (!kv || !section) {
-      skipped.push(line);
+  let pos = 0;
+  while (pos < n) {
+    const c = text[pos];
+    if (c === " " || c === "\t" || c === "\r" || c === "\n") {
+      pos++;
       continue;
     }
-    out.push([`${section}.${kv[1].toLowerCase()}`, kv[2] === undefined ? "true" : kv[2].trim()]);
+    if (c === "#" || c === ";") {
+      pos = eol(pos);
+      continue;
+    }
+    const end = eol(pos);
+    const physical = text.slice(pos, end);
+    if (c === "[") {
+      const hdr = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]/.exec(physical);
+      if (!hdr) {
+        skipped.push(physical.trim());
+        pos = end;
+        continue;
+      }
+      const [name, ...sub] = hdr[1].split(".");
+      section = hdr[2] !== undefined ? `${name.toLowerCase()}.${hdr[2].replace(/\\(.)/g, "$1")}` : [name.toLowerCase(), ...sub.map((x) => x.toLowerCase())].join(".");
+      pos += hdr[0].length;
+      continue;
+    }
+    const kv = /^[A-Za-z][A-Za-z0-9-]*/.exec(physical);
+    if (!kv || !section) {
+      skipped.push(physical.trim());
+      pos = end;
+      continue;
+    }
+    const key = `${section}.${kv[0].toLowerCase()}`;
+    let i = pos + kv[0].length;
+    while (text[i] === " " || text[i] === "\t" || text[i] === "\r") i++;
+    if (i >= n || text[i] === "\n") {
+      out.push([key, "true"]);
+      pos = i;
+      continue;
+    }
+    if (text[i] !== "=") {
+      skipped.push(physical.trim());
+      pos = end;
+      continue;
+    }
+    i++;
+    let raw = "";
+    let quoted = false;
+    let comment = false;
+    let bad = false;
+    for (; i < n; i++) {
+      const ch = text[i];
+      if (ch === "\n") break;
+      if (comment) {
+        raw += ch;
+        continue;
+      }
+      if (ch === "\\") {
+        const nx = text[i + 1];
+        if (nx === "\n") {
+          i++;
+          continue;
+        }
+        if (nx === "\r" && text[i + 2] === "\n") {
+          i += 2;
+          continue;
+        }
+        if (nx === undefined || !"\\\"ntb".includes(nx)) bad = true;
+        raw += ch + (nx ?? "");
+        i++;
+        continue;
+      }
+      if (ch === '"') quoted = !quoted;
+      else if (!quoted && (ch === "#" || ch === ";")) comment = true;
+      raw += ch;
+    }
+    if (bad || quoted) {
+      skipped.push(text.slice(pos, i).trim());
+      pos = i;
+      continue;
+    }
+    out.push([key, raw.trim()]);
+    pos = i;
   }
   return { entries: out, skipped };
 }
@@ -466,7 +540,7 @@ const BRANCH_TRACKING = /^branch\..+\.(remote|merge|rebase)$/;
 /**
  * D141: keys git writes into an absorbed submodule's `git:modules/<x>/config` (probed: `submodule add`, `submodule update --init`, `submodule status`
  * and `git -C sub worktree add` write only these, plus the routine branch tracking pair) and that cannot make git run a program. A change confined to
- * them is one grouped line; any other key (filter.*, core.hooksPath, core.fsmonitor, include.path, unknown) keeps its own file line.
+ * them is one grouped line; any other exec-capable key (filter.*, core.hooksPath, core.fsmonitor, include.path) keeps its own file line; an unknown non-exec key is silent like anywhere else.
  */
 const QUIET_MODULE_KEYS = /^(?:core\.(?:worktree|bare|repositoryformatversion|filemode|logallrefupdates|ignorecase|precomposeunicode)|remote\.[^.]+\.(?:url|fetch))$/;
 const MODULE_CONFIG = /^git:modules\/(.+)\/config$/;
