@@ -486,6 +486,8 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.judgeReads` | the judge may read files before it decides (default true, [What it may read](#the-judge)) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
+| `gate.log.fullCommand` | keep the full command text in the gate log (field `input`, credentials masked) next to the masked shape (default false). A judge reply that was no valid verdict is logged as `raw` either way | user or overlay only |
+| `gate.unclassified` | what happens with a command the code cannot classify: `allow` (default, the shipped behaviour). `judge` is accepted by the schema, but nothing reads it yet; a later step wires it | user or overlay only |
 | `gate.readTools` | extension tool name to path field (or null), judged like read/grep, see [Read tools](#read-tools) (default `{}`) | user or overlay only |
 | `gate.mode` | No effect: there are no permission modes. The key (and the retired value `floors-only`) is kept so existing configs load | user or overlay only |
 | `providers.<p>.roles.review`, `roles.review` | the classifier model | user or overlay only |
