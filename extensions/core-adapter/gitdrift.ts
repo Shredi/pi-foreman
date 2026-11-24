@@ -590,6 +590,7 @@ function routineRemote(branch: string, a: FileSnap, b: FileSnap): boolean {
 const EXEC_SECTIONS = new Set([
   "filter", "alias", "credential", "protocol", "sendemail", "pager", "difftool", "mergetool", "safe", "web", "browser", "man", "include",
   "hook", "guitool", "imap", "instaweb", "lfs", "ssh", "extensions", "bundle", "http", "gpg", "remote", "trace2", "fsmonitor",
+  "rebase", // instructionFormat can inject exec todo lines; neither git nor editors write rebase.* on their own
   "push", // redirects where a bare `git push` lands (push.default, autoSetupRemote, ...); with a branch.<b>.merge change it reaches main
 ]);
 const EXEC_VARS: Record<string, RegExp> = {

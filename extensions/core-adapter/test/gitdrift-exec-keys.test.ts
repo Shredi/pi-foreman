@@ -260,3 +260,24 @@ test("branch.<b>.merge change plus push.default = upstream asks", (t) => {
   fs.appendFileSync(config(dir), "[push]\n\tdefault = upstream\n");
   assert.match(drift(dir, before).join("\n"), /push\.default/);
 });
+
+test("rebase.instructionFormat added asks (it can inject exec todo lines)", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[rebase]\n\tinstructionFormat = %s%nexec x\n");
+  assert.deepEqual(drift(dir, before), ["git:config: added rebase.instructionformat"]);
+});
+
+test("[Rebase] InstructionFormat mixed case added asks", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[Rebase]\n\tInstructionFormat = %s%nexec x\n");
+  assert.equal(drift(dir, before).length, 1);
+});
+
+test("sequence.editor added asks", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[sequence]\n\teditor = x\n");
+  assert.equal(drift(dir, before).length, 1);
+});
