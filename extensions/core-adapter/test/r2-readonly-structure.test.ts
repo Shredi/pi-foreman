@@ -77,7 +77,9 @@ const GIT_WRITES = ["commit -m x", "add .", "rm f", "mv a b", "merge x", "rebase
 test("(c) a git subcommand that writes is refused in the worktree (cwd, -C <wt>, an unresolved -C); a scratch clone is free", () => {
   mustRefuse(GIT_WRITES.flatMap((s) => [`git ${s}`, `git -C ${W} ${s}`, ...(s === "clean -fd" ? [] : [`git -C "$D" ${s}`])]));
   // `git -C "$D" clean -fd`: the read-only roles are refused by this rule, the builder goes to the judge (C)
-  unknownTarget('git -C "$D" clean -fd', "danger-delete-unknown-target");
+  // (an unreadable `-C` is no judge case for a builder any more: child-write-outside refuses it first, plan D2 / ledger item 5; the read-only roles keep their own rule)
+  for (const role of ROLES) assert.equal(verdict('git -C "$D" clean -fd', role, "ro")?.rule, RO, role);
+  assert.equal(verdict('git -C "$D" clean -fd', "builder", "child")?.rule, "child-write-outside");
   // a plain `git fetch origin` is a fetch rule (free); with -C it is not that rule's form
   mustRefuse([`git -C ${W} fetch origin`, `git -C "$D" fetch origin`]);
   mustFree(["git fetch origin", "git config --get x", `cd ${S} && git clone ${W} c2`]);
@@ -202,10 +204,13 @@ test("revision: a scratch path held in a variable is substituted only when the v
       // `C:/...` is never substituted and the target stays unresolved: refused, fail closed (the plain form resolves through the closed grammar)
       assert.deepEqual([verdict(held(absent), role, "ro")?.block, verdict(held(absent), role, "ro")?.rule], [true, RO], held(absent));
     } else {
-      // (b) name nowhere else: resolves into the scratch dir, the verdict of the literal-path line
-      assert.deepEqual(verdict(held(absent), role, "ro"), verdict(literal, role, "ro"), held(absent));
+      // (b) name nowhere else: resolves into the scratch dir; the decision is the literal-path line's, the rule name differs: the literal assignment is
+      // its own allowed segment (`default-assign`, plan D2) beside the pipeline's `default-read`
+      assert.deepEqual(verdict(held(absent), role, "ro"), { allow: true, layer: "default", rule: "default-assign+default-read" }, held(absent));
+      assert.equal(verdict(held(absent), role, "ro")?.allow, verdict(literal, role, "ro")?.allow ?? true, held(absent));
     }
-    assert.deepEqual(verdict(literal, role, "ro"), undefined, literal);
+    // the literal path line is allowed too (default-read since the fast allow, plan D2)
+    assert.equal(verdict(literal, role, "ro")?.allow ?? true, true, literal);
   }
   mustRefuse([held(inPath)]);
   if (winDrive) mustRefuse([held(absent)]);

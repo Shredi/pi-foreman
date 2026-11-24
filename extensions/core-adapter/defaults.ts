@@ -1138,6 +1138,8 @@ function intoDirTargets(s: ShellSegment, env: DangerEnv, ec: EffectCtx): string[
 }
 
 /** `w` run from `cwd` as an absolute path, as written when it does not resolve. */
+/** The word after the first `-C` of a git segment, or undefined. */
+const gitCWord = (s: ShellSegment): string | undefined => (s.argv.includes("-C") ? s.argv[s.argv.indexOf("-C") + 1] : undefined);
 const shown = (env: DangerEnv, cwd: string | null, w: string): string => resolveWord(env.platform, cwd ?? env.cwd, w) ?? w;
 
 /** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp: the first such target (a write-class effect: its cwd), else null. */
@@ -1148,7 +1150,8 @@ function shellOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
   const ec = { ...(fa ? fa.ec : effectCtxOf(env)), cpSourceRead: true };
   for (const s of live(c)) {
     const bad = intoDirTargets(s, env, ec).find((w) => !writable(w, s.cwd, env, !!fa, linkOperand(s, w)));
-    if (bad !== undefined) return shown(env, s.cwd, bad);
+    // a git call whose `-C` target cannot be read has no folder: the refusal names that word, not the cwd the relative `.` would resolve against
+    if (bad !== undefined) return s.cwd === null && progOf(s) === "git" ? gitCWord(s) ?? shown(env, s.cwd, bad) : shown(env, s.cwd, bad);
   }
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;
@@ -1159,7 +1162,8 @@ function shellOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
     if (segmentEffect(ec, cwd, { ...chain, redirects: [] }).cls === "write-out") {
       // a cp / mv refused for its destination names it; the cwd only when the cwd is what was refused
       const dest = progOf(s) === "cp" || progOf(s) === "mv" ? operands(s.argv).slice(-1)[0] : undefined;
-      return dest !== undefined && s.cwd !== null ? shown(env, s.cwd, dest) : cwd;
+      if (dest !== undefined && s.cwd !== null) return shown(env, s.cwd, dest);
+      return s.cwd === null && progOf(s) === "git" ? gitCWord(s) ?? cwd : cwd;
     }
   }
   return null;

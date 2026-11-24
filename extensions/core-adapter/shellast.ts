@@ -428,7 +428,7 @@ const harmless = (a: Assign): boolean => !a.append && a.value !== null && (HARML
 const STEERING = /^(PATH|IFS|HOME|SHELL|ENV|CDPATH|GLOBIGNORE|PS[0-9]|PROMPT_COMMAND|FCEDIT|EDITOR|VISUAL|TMPDIR|OLDPWD|PWD|SHLVL|OPTIND|OPTARG|POSIXLY_CORRECT|BASH_.*|BASHOPTS|SHELLOPTS|LD_.*|DYLD_.*|GIT_.*|NODE_.*|PYTHON.*|PERL.*|RUBY.*|FOREMAN_.*|PI_.*|MAIL.*|HIST.*|TERM.*|NPM_.*|XDG_.*|USER|LOGNAME|LANG|LC_.*)$/i;
 
 /** Names whose setting makes a shell or loader run code the line does not show (a prompt, a startup file, a function body, the search path, a preload, the harness folders): a command under one is judged. */
-const RUNS_CODE = /^(PATH|IFS|ENV|BASH_ENV|BASH_FUNC_.*|BASHOPTS|SHELLOPTS|PS[0-9]|PROMPT_COMMAND|CDPATH|GLOBIGNORE|LD_.*|DYLD_.*|FOREMAN_SCRATCH|FOREMAN_OUT)$/;
+const RUNS_CODE = new RegExp(`^(PATH|IFS|ENV|BASH_ENV|BASH_FUNC_.*|BASHOPTS|SHELLOPTS|PS[0-9]|PROMPT_COMMAND|CDPATH|GLOBIGNORE|LD_.*|DYLD_.*|${HARNESS_NAMES.join("|")})$`);
 const steersCode = (a: Assign | undefined): boolean => !!a && !harmless(a) && RUNS_CODE.test(a.name);
 
 /** A standalone `NAME=literal`: no expansion in the value, no append, a name that steers nothing. It names a string for later words, which are read as they stand (an unresolved `$NAME` stays opaque). */

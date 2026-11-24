@@ -222,7 +222,9 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
   const outside = outsideTarget(call, env);
-  if (outside !== null) {
+  // a git write whose `-C` target cannot be read, in a read-only role: the repository it may change is the round worktree, so its own refusal names it (not an outside target)
+  const roGit = outside !== null && env.roots.roundReadOnly && readonlyWrite(tool, input, segments, cmd, env)?.gitAny === true;
+  if (outside !== null && !roGit) {
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
     const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? ` Use $FOREMAN_SCRATCH${r.scratch.length ? ` (${r.scratch[0]})` : ""}, not /tmp.` : "";

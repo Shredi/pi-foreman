@@ -263,7 +263,7 @@ type ParsedJudge =
 
 /**
  * Strict parse of the closed verdict: `verdict` is clear, refuse (the old `unsure` is read as refuse) or owner, `reason` an optional string, `class` one of
- * `JUDGE_CLASSES` with owner and only with owner, no other field. `mode` `read`: a fourth verdict `read` with 1 to 8 `paths` (strings of at most 500
+ * `JUDGE_CLASSES` required with owner (a class on clear or refuse is ignored), no other field. `mode` `read`: a fourth verdict `read` with 1 to 8 `paths` (strings of at most 500
  * characters) is valid; `last`: the round after the last read round, where a `read` has its own message.
  */
 export function parseJudgeVerdict(text: string, mode?: "read" | "last"): ParsedJudge {
