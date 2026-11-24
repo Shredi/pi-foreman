@@ -1,5 +1,5 @@
 // The judge verdict set and its log (plan gate-verify D1, D6): clear | refuse | owner(+class of six) | read; `unsure` is read as refuse; an unreadable reply is asked for once more, then
-// refused with the raw start of the reply in the gate log (masked like a command); the model call carries `cacheRetention: "short"`; `gate.log.fullCommand` adds the input, credentials masked.
+// refused with the raw start of the reply in the gate log (masked like a command); the model call carries `cacheRetention: "none"`; `gate.log.fullCommand` adds the input, credentials masked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -110,10 +110,11 @@ test("invalid_verdict: one retry with the same request; invalid twice refuses wi
   assert.equal(l.rows()[2].raw, undefined, "a valid answer logs no raw");
 });
 
-test("the judge request carries cacheRetention short", async () => {
+test("the judge request carries cacheRetention none", async () => {
+  // pi-claude-bridge routes only "none" to its isolated one-off route; any other value goes through prompt-capture, which knows only the main agent prompt and throws.
   const reg = fake(['{"verdict":"clear"}']);
   await new Classifier().judge(CALL, ctxOf(reg));
-  assert.equal(reg.seen[0].opts.cacheRetention, "short");
+  assert.equal(reg.seen[0].opts.cacheRetention, "none");
 });
 
 test("gate.log.fullCommand off: the row has the masked shape only; on: the input too, with a credential masked", async (t) => {

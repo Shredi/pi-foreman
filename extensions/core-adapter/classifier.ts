@@ -150,7 +150,7 @@ async function callModel(ctx: ClassifierCtx, target: ReviewTarget | null, system
   });
   try {
     const call = Promise.resolve()
-      .then(() => ctx.registry.complete(model as never, { systemPrompt: system, messages: [{ role: "user", content: text, timestamp: Date.now() }] } as never, { signal: ac.signal, maxTokens: reasoning ? REASONING_MAX_TOKENS : 1024, cacheRetention: "short", ...(reasoning ? { reasoning } : {}) } as never))
+      .then(() => ctx.registry.complete(model as never, { systemPrompt: system, messages: [{ role: "user", content: text, timestamp: Date.now() }] } as never, { signal: ac.signal, maxTokens: reasoning ? REASONING_MAX_TOKENS : 1024, cacheRetention: "none", ...(reasoning ? { reasoning } : {}) } as never))
       .catch((e: unknown) => ({ thrown: e instanceof Error ? e.message : String(e) }));
     const r = await Promise.race([call, timeout]);
     if (r === "timeout") return { ok: false, cause: "timeout", detail: `the classifier model did not answer within ${ms} ms` };
