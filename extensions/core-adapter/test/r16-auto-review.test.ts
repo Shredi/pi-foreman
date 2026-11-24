@@ -124,10 +124,10 @@ const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
   own_async_results_python_read: ["blocked:judge:danger-inline-code", 0, 2, true], // a refusal now, not a dialog; item 5: an unreadable verdict is asked for once more (2 calls); PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no valid judge verdict, so the call is refused
   handoff_ruling_for_cat: [CLASSIFIED, 0, 0],
-  cp_ruling_into_scratch: [OK, 0, 0],
+  cp_ruling_into_scratch: ["allowed:default-write-in+default-read", 0, 0], // gate-verify D2: fast allow (own-folder write plus read), no mode step
   usage_ls_grep_node_version: [OK, 0, 0],
   pi_scratch_read: ["allowed:default-read", 0, 0],
-  own_bg_output_chain: [OK, 0, 0],
+  own_bg_output_chain: ["allowed:default-skip+default-read", 0, 0], // gate-verify D2: sleep is a skip-only list B program, the reads are fast allow
   r16_f1_ruling_append_and_cp: [OK, 0, 0],
   toolchain_probe_pipe: [CLASSIFIED, 0, 0],
   project_settings_read_mention: [OK, 0, 0],

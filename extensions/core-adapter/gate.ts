@@ -496,13 +496,13 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
         if (!s || toolName === "powershell") return null;
-        // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
-        // a plain glob of a read program is no opaque unit (fastallow.ts readGlobSegment)
-        const r = opaque && !readGlobSegment(s) ? null : segmentDefault(s, cmd, dctx, ec);
-        if (r !== null) return r;
+        // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords); the rule comes before the default read allow so a public key read keeps its trace
         const bn = boundNames(cmd);
         const pubs = pubKeyReadWords([s], env, bn.any ? new Set(["HOME", "USERPROFILE"]) : bn.names);
         if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
+        // a plain glob of a read program is no opaque unit (fastallow.ts readGlobSegment)
+        const r = opaque && !readGlobSegment(s) ? null : segmentDefault(s, cmd, dctx, ec);
+        if (r !== null) return r;
         if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };

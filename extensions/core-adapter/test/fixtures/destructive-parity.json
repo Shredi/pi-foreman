@@ -712,7 +712,7 @@
 {"path":"cd-unknown","tool":"bash","line":"cd $D && truncate -s 0 $X","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"judge","child":"judge"}},
 {"path":"cd-unknown","tool":"bash","line":"cd $D && echo hi > $F","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"judge","child":"judge"}},
 {"path":"cd-unknown","tool":"bash","line":"cd $D && git clean -fd -e keep","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"judge","child":"floor"}},
-{"path":"cd-unknown","tool":"bash","line":"cd $D && git clean -fd $X","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"judge","child":"judge"}},
+{"path":"cd-unknown","tool":"bash","line":"cd $D && git clean -fd $X","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"judge","child":"floor"},"reason":"gate-verify item 5: a builder's git after a cd to an unreadable folder is child-write-outside (was the judge)"},
 {"path":"cd-unknown","tool":"bash","line":"cd $D && git push origin HEAD:$B","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"floor","child":"floor"}},
 {"path":"cd-unknown","tool":"bash","line":"cd $D && ls build","was":{"foreman":"allow","child":"allow"},"now":{"foreman":"run","child":"run"}},
 {"path":"cd-literal","tool":"bash","line":"cd sub && rm -rf $X","was":{"foreman":"deny","child":"refused"},"now":{"foreman":"judge","child":"judge"}},
