@@ -794,6 +794,15 @@ function parseOpts(args: W[], s: OptSpec): { rest: W[]; opts: Opt[] } | OpaqueRe
 const has = (opts: Opt[], ...names: string[]): boolean => opts.some((o) => names.includes(o.name));
 const val = (opts: Opt[], ...names: string[]): string | null => opts.find((o) => names.includes(o.name))?.value ?? null;
 
+/** The word `$PWD` or `${PWD}`, bare or in double quotes. */
+const PWD_WORD = /^"?\$(?:PWD|\{PWD\})"?$/;
+
+/** The line may bind PWD (an assignment, `cd` through a bound name, `read`, `eval` ...): `boundNames` answers for any name it cannot rule out. */
+const pwdBound = (root: string): boolean => {
+  const b = boundNames(root);
+  return b.any || b.names.has("PWD");
+};
+
 /** Emits the segment of a final (non-wrapper) program. */
 function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null, stdinFlag = false): string | null {
   const sc = c.sc;
@@ -814,6 +823,9 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
     for (let i = 0; i < rest.length; ) {
       const v = rest[i].value;
       if (v === "-C") {
+        // `git -C "$PWD"` names the folder the walk tracks, while nothing on the line binds PWD: the word is that folder (the base allowed it; an unreadable `-C` target is judged)
+        const w = rest[i + 1];
+        if (w && w.value === null && at !== null && PWD_WORD.test(w.text) && sc.run.root !== undefined && !pwdBound(sc.run.root)) rest = rest.map((a, k) => (k === i + 1 ? { ...a, value: at as string, reason: null } : a));
         const d = rest[i + 1]?.value;
         at = d == null ? null : (cdTarget(["cd", d], at ?? undefined, win32(sc.run)) ?? null);
         i += 2;
