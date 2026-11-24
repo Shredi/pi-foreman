@@ -7,7 +7,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { parseJudgeVerdict } from "../classifier.ts";
-import { OWNER_CLASSES, clearedAgainstBaseline, formatTable, judgeCallOf, loadCorpus, parseCorpus, percentile, readVerdict, runModel, summarize, validateRow } from "../judgebench.ts";
+import { OWNER_CLASSES, checkModels, clearedAgainstBaseline, formatTable, judgeCallOf, loadCorpus, parseBenchArgs, parseCorpus, percentile, readVerdict, runBench, runModel, summarize, validateRow } from "../judgebench.ts";
 import type { CorpusRow } from "../judgebench.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -248,4 +248,92 @@ test("scripts/judge_bench.mjs --validate checks the corpus and calls no model; b
   const none = spawnSync(process.execPath, [script, "--model", "nope"], { encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: os.tmpdir() } });
   assert.equal(none.status, 1);
   assert.match(none.stderr, /not provider\/id/);
+});
+
+// ------------------------------------------------------------------ one label per command shape, task line, model check, headless command
+
+/** The command with the wrappers and the noise that do not change what it does: quotes, spacing, `bash -c`, `env X=1`, a leading `cd x &&`, parentheses, stash and commit numbers. */
+function shape(command: string): string {
+  let c = command.replace(/\s+/g, " ").trim();
+  for (;;) {
+    const n = c
+      .replace(/^bash -c '(.*)'$/, "$1")
+      .replace(/^\((.*)\)$/, "$1")
+      .replace(/^env (\w+=\S+ )+/, "")
+      .replace(/^cd \S+ (&&|;) /, "")
+      .trim();
+    if (n === c) break;
+    c = n;
+  }
+  return c.replace(/["']/g, "").replace(/ && /g, "; ").replace(/stash@\{\d+\}/g, "stash").replace(/git stash drop stash$/, "git stash drop");
+}
+
+test("the same command shape never carries two different expected labels", () => {
+  const byShape = new Map<string, CorpusRow[]>();
+  for (const r of parseCorpus(corpusText)) byShape.set(shape(r.command), [...(byShape.get(shape(r.command)) ?? []), r]);
+  for (const [s, rows] of byShape) assert.equal(new Set(rows.map((r) => r.expected)).size, 1, `${s}: ${rows.map((r) => `${r.id}=${r.expected}`).join(", ")}`);
+  // the shapes the reviewer found, by name
+  const label = (id: string): string => parseCorpus(corpusText).find((r) => r.id === id)!.expected;
+  assert.equal(label("c354"), label("c197"));
+  assert.equal(label("c363"), label("c199"));
+  assert.equal(label("c316"), label("c231"));
+  assert.equal(label("c372").startsWith("owner:"), label("c188").startsWith("owner:"));
+  assert.equal(label("c143"), "owner:data-loss");
+  assert.equal(label("c185"), "owner:data-loss");
+});
+
+test("shape() sees through wrappers (self-check of the duplicate test)", () => {
+  assert.equal(shape("bash -c 'rm -rf ~/x'"), shape("env FOO=1 rm -rf ~/x"));
+  assert.equal(shape("cd src && rm -rf ~/x"), shape("(rm -rf ~/x)"));
+  assert.equal(shape("git stash drop stash@{0}"), shape("git stash drop"));
+});
+
+test("a row's task becomes the owner message for main and the launch task for a helper; a bad task is invalid", () => {
+  assert.equal(judgeCallOf(row("a", "ls", "run", { role: "main", kind: "ui", task: "fix the parser" })).ownerMessage, "fix the parser");
+  const h = judgeCallOf(row("b", "ls", "run", { task: "review the diff" }));
+  assert.deepEqual([h.launchTask, h.ownerMessage], ["review the diff", undefined]);
+  assert.equal(judgeCallOf(row("c", "ls", "run")).launchTask, undefined);
+  assert.deepEqual(validateRow(row("a", "ls", "run", { task: "ok" })), []);
+  for (const task of ["", "two\nlines", "x".repeat(161)]) assert.match(validateRow(row("a", "ls", "run", { task })).join(), /task/);
+  assert.match(validateRow({ ...row("a", "ls", "run"), task: 3 }).join(), /task/);
+});
+
+test("checkModels fails fast with a clear message; parseBenchArgs reads the flags", () => {
+  const reg = { find: (p: string, id: string) => (p === "anthropic" && id === "claude-haiku-5-5" ? {} : undefined) };
+  checkModels(reg, ["anthropic/claude-haiku-5-5"]);
+  assert.throws(() => checkModels(reg, ["anthropic/claude-haiku-5-5", "claude-bridge/claude-sonnet-5-5"]), /not in the registry: claude-bridge\/claude-sonnet-5-5.*--headless/);
+  assert.throws(() => checkModels(reg, ["nope"]), /not provider\/id/);
+  assert.throws(() => checkModels(reg, []), /at least one --model/);
+  const a = parseBenchArgs(["--model", "a/b", "--model", "c/d", "--limit", "5", "--thinking", "off", "--validate"], "/c.jsonl");
+  assert.deepEqual([a.models, a.limit, a.thinking, a.validate, a.corpus], [["a/b", "c/d"], 5, "off", true, "/c.jsonl"]);
+  assert.throws(() => parseBenchArgs(["--limit", "0"], "/c"), /positive/);
+  assert.throws(() => parseBenchArgs(["--model"], "/c"), /needs a value/);
+});
+
+test("runBench: a missing model stops before any call; a run writes the report and logs the table", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "judge-bench-run-"));
+  try {
+    const f = fake(() => V("clear"));
+    const missing = { find: () => undefined, complete: f.registry.complete };
+    const base = { agentDir: dir, outDir: dir, log: () => undefined };
+    await assert.rejects(runBench({ ...base, registry: missing as never, args: parseBenchArgs(["--model", "claude-bridge/x", "--limit", "3"], corpusPath) }), /not in the registry: claude-bridge\/x/);
+    assert.equal(f.calls.length, 0);
+    const lines: string[] = [];
+    const json = path.join(dir, "out", "r.json");
+    const out = await runBench({ ...base, log: (l) => lines.push(l), registry: f.registry as never, args: parseBenchArgs(["--model", "fake/m", "--limit", "4", "--json", json], corpusPath) });
+    assert.equal(out, json);
+    const report = JSON.parse(fs.readFileSync(json, "utf8"));
+    assert.equal(report.rows, 4);
+    assert.equal(report.models[0].model, "fake/m");
+    assert.ok(lines.some((l) => /false-allow/.test(l)) && lines.some((l) => l === `json: ${json}`));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the /judge-bench command is registered by the extension and named in no help text", () => {
+  const src = fs.readFileSync(path.join(here, "..", "index.ts"), "utf8");
+  assert.match(src, /registerCommand\("judge-bench"/);
+  const help = /pi\.registerCommand\("foreman", \{\s*description: "([^"]*)"/.exec(src);
+  assert.ok(help && !/judge/.test(help[1]));
 });

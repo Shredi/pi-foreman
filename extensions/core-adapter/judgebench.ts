@@ -23,9 +23,11 @@ export interface CorpusRow {
   expected: string;
   source: (typeof SOURCES)[number];
   note?: string;
+  /** One line (at most 160 chars) the judge sees as the task: the owner's last message for `main`, the launch task for a helper. Absent: no task line. */
+  task?: string;
 }
 
-const KEYS = new Set(["id", "command", "cwdKind", "role", "kind", "expected", "source", "note"]);
+const KEYS = new Set(["id", "command", "cwdKind", "role", "kind", "expected", "source", "note", "task"]);
 const isOneOf = (list: readonly string[], v: unknown): boolean => typeof v === "string" && list.includes(v);
 
 /** The problems of one parsed corpus row; empty when it is valid. */
@@ -44,6 +46,7 @@ export function validateRow(row: unknown): string[] {
   const ownerClass = typeof e === "string" && e.startsWith("owner:") ? e.slice(6) : null;
   if (!(e === "run" || e === "refuse-ok" || (ownerClass !== null && (OWNER_CLASSES as readonly string[]).includes(ownerClass)))) bad.push("expected is not run|refuse-ok|owner:<class>");
   if (r.note !== undefined && typeof r.note !== "string") bad.push("note is not a string");
+  if (r.task !== undefined && (typeof r.task !== "string" || !r.task.trim() || r.task.length > 160 || /[\r\n]/.test(r.task))) bad.push("task is not one line of 1 to 160 chars");
   return bad;
 }
 
@@ -103,6 +106,7 @@ export function judgeCallOf(row: CorpusRow): JudgeCall {
     branch: FIXTURE.branch,
     remotes: ["origin"],
     ...(row.role === "main" ? {} : { childDirs: { out: FIXTURE.out, scratch: FIXTURE.scratch } }),
+    ...(row.task ? (row.role === "main" ? { ownerMessage: row.task } : { launchTask: row.task }) : {}),
   };
 }
 
@@ -319,4 +323,91 @@ export function formatTable(summaries: readonly ModelSummary[]): string {
   const cols = summaries.map((s) => Math.max(s.model.length, ...lines.map(([, f]) => f(s).length)));
   const row = (label: string, cells: string[]): string => `${label.padEnd(w0)}  ${cells.map((c, i) => c.padEnd(cols[i])).join("  ")}`.trimEnd();
   return [row("", summaries.map((s) => s.model)), ...lines.map(([l, f]) => row(l, summaries.map(f)))].join("\n");
+}
+
+// ------------------------------------------------------------------ the run (shared by scripts/judge_bench.mjs and the hidden /judge-bench command)
+
+export interface BenchArgs {
+  models: string[];
+  limit: number;
+  corpus: string;
+  thinking: string;
+  timeoutMs: number;
+  concurrency: number;
+  json: string;
+  validate: boolean;
+}
+
+/** Parses the bench flags (`--model` repeated, `--limit`, `--corpus`, `--thinking`, `--timeout-ms`, `--concurrency`, `--json`, `--validate`); throws on anything else. */
+export function parseBenchArgs(argv: readonly string[], defaultCorpus: string): BenchArgs {
+  const a: BenchArgs = { models: [], limit: 0, corpus: defaultCorpus, thinking: "low", timeoutMs: 60000, concurrency: 4, json: "", validate: false };
+  const positive = (v: string, name: string): number => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} needs a positive number`);
+    return n;
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const k = argv[i];
+    const v = (): string => {
+      if (i + 1 >= argv.length) throw new Error(`${k} needs a value`);
+      return argv[++i];
+    };
+    if (k === "--model") a.models.push(v());
+    else if (k === "--limit") a.limit = positive(v(), k);
+    else if (k === "--corpus") a.corpus = path.resolve(v());
+    else if (k === "--thinking") a.thinking = v();
+    else if (k === "--timeout-ms") a.timeoutMs = positive(v(), k);
+    else if (k === "--concurrency") a.concurrency = positive(v(), k);
+    else if (k === "--json") a.json = path.resolve(v());
+    else if (k === "--validate") a.validate = true;
+    else throw new Error(`unknown argument ${k}`);
+  }
+  return a;
+}
+
+/** Fails fast before any call: every model is `provider/id` and the registry finds it. The message says which ones are missing and where extension providers resolve. */
+export function checkModels(registry: Pick<RegistryLike, "find">, models: readonly string[]): void {
+  if (!models.length) throw new Error("pass at least one --model provider/id");
+  const missing: string[] = [];
+  for (const m of models) {
+    const slash = m.indexOf("/");
+    if (slash <= 0 || slash === m.length - 1 || /\s/.test(m)) throw new Error(`--model ${m} is not provider/id`);
+    if (!registry.find(m.slice(0, slash), m.slice(slash + 1))) missing.push(m);
+  }
+  if (missing.length) throw new Error(`model not in the registry: ${missing.join(", ")}. A provider that an extension registers (claude-bridge) resolves only inside a pi with that extension: run the bench with --headless.`);
+}
+
+export interface BenchRun {
+  args: BenchArgs;
+  registry: RegistryLike;
+  agentDir: string;
+  log: (line: string) => void;
+  /** Where the JSON report goes when `--json` is not given. */
+  outDir: string;
+}
+
+/** The whole bench: load the corpus, check the models, run each, write the JSON report and log the table. Returns the report path (empty for `--validate`). */
+export async function runBench(r: BenchRun): Promise<string> {
+  const { args } = r;
+  let rows = loadCorpus(args.corpus, r.agentDir);
+  if (args.limit) rows = rows.slice(0, args.limit);
+  if (args.validate) {
+    r.log(`corpus ok: ${rows.length} rows`);
+    return "";
+  }
+  checkModels(r.registry, args.models);
+  const models: { model: string; results: RowResult[]; summary: ModelSummary }[] = [];
+  for (const model of args.models) {
+    let done = 0;
+    const results = await runModel({ registry: r.registry, model, rows, thinking: args.thinking, timeoutMs: args.timeoutMs, concurrency: args.concurrency, onRow: () => (++done % 25 === 0 ? r.log(`${model}: ${done}/${rows.length}`) : undefined) });
+    models.push({ model, results, summary: summarize(model, rows, results) });
+  }
+  const report = { corpus: args.corpus, rows: rows.length, thinking: args.thinking, at: new Date().toISOString(), models: models.map((m) => m.summary), againstBaseline: clearedAgainstBaseline(models), results: Object.fromEntries(models.map((m) => [m.model, m.results])) };
+  const jsonPath = args.json || path.join(r.outDir, `judge-bench-${Date.now()}.json`);
+  fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2) + "\n");
+  r.log(formatTable(report.models));
+  for (const [m, c] of Object.entries(report.againstBaseline)) r.log(`${m} vs ${args.models[0]}: cleared owner:* rows ${c.clearedExpectedOwner}, cleared rows the baseline stopped as owner ${c.clearedBaselineOwner}`);
+  r.log(`json: ${jsonPath}`);
+  return jsonPath;
 }
