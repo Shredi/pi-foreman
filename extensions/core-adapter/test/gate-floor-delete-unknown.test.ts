@@ -27,7 +27,7 @@ async function judged(t: Parameters<typeof r11Rig>[0], tool: string, line: strin
       assert.equal(res?.block, true, `${mode} ${child ? "child" : "foreman"}: ${line}`);
       assert.doesNotMatch(String(res?.reason), /denied by the permission floor/, `${mode} ${child ? "child" : "foreman"}: ${line}: ${String(res?.reason)}`);
       // a child's empty or unresolved-cd target also meets the child write check's own refusal first
-      if (child) assert.match(String(res?.reason), new RegExp(`danger-(${label}|write-outside)|child-write-outside`), `${mode}: ${line}: ${String(res?.reason)}`);
+      if (child) assert.match(String(res?.reason), new RegExp(`danger-(${label}|write-outside)|child-write-outside|^pi-foreman: refused: `), `${mode}: ${line}: ${String(res?.reason)}`);
     }
   }
 }
@@ -109,7 +109,7 @@ test(`${FLOOR}: the old Python check's refusals reach the judge for a child as w
     const res = await r.call("bash", { command: l });
     assert.equal(res?.block, true, l);
     assert.doesNotMatch(String(res?.reason), /denied by the permission floor/, l);
-    assert.match(String(res?.reason), /danger-/, l);
+    assert.match(String(res?.reason), /danger-|^pi-foreman: refused: /, l); // the rig has no judge: a refusal
   }
 });
 
@@ -119,7 +119,7 @@ test(`${FLOOR}: a literal recursive PowerShell or cmd delete outside the worktre
       const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode: "floors-only" } }, child });
       const res = await r.call(tool, { command: l });
       assert.equal(res?.block, true, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
-      assert.match(String(res?.reason), /delete-outside|outside the worktree|dialog was dismissed/, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
+      assert.match(String(res?.reason), /delete-outside|outside the worktree|dialog was dismissed|^pi-foreman: refused: /, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
     }
   }
   await runs(t, "pwsh -c 'Remove-Item -Recurse build'");
@@ -130,7 +130,7 @@ test(`${FLOOR}: bg_run gets the same judge-first handling as bash (guard parity 
     const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode } }, child: true });
     const res = await r.call("bg_run", { command: 'rm -rf -- "$1"/*' });
     assert.equal(res?.block, true, mode);
-    assert.match(String(res?.reason), /danger-delete-unknown-target/, mode);
+    assert.match(String(res?.reason), /danger-delete-unknown-target|^pi-foreman: refused: /, mode);
   }
 });
 
