@@ -88,7 +88,7 @@ export function loadCorpus(corpusPath: string, agentDir?: string): CorpusRow[] {
 
 // ------------------------------------------------------------------ the call
 
-const FIXTURE = { worktree: "/work/repo", scratch: "/work/scratch", out: "/work/out", home: "/home/dev", other: "/srv/other", branch: "feature/x" };
+const FIXTURE = { worktree: "/work/repo", scratch: "/work/scratch", out: "/work/out", home: "/home/dev", other: "/srv/other", branch: "main" };
 const GATE_KIND: Record<CorpusRow["kind"], GateKind> = { ui: "owner", child: "child", headless: "headless" };
 const JUDGE_REASON = "danger-unclassified: the code could not classify this call";
 
@@ -103,8 +103,7 @@ export function judgeCallOf(row: CorpusRow): JudgeCall {
     role: row.role === "main" ? "foreman" : row.role,
     cwd,
     worktree: FIXTURE.worktree,
-    branch: FIXTURE.branch,
-    remotes: ["origin"],
+    defaultBranch: FIXTURE.branch,
     ...(row.role === "main" ? {} : { childDirs: { out: FIXTURE.out, scratch: FIXTURE.scratch } }),
     ...(row.task ? (row.role === "main" ? { ownerMessage: row.task } : { launchTask: row.task }) : {}),
   };

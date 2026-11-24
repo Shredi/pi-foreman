@@ -22,7 +22,7 @@ function fakeRegistry(replies: Reply[], found = true) {
   };
   return { registry, calls };
 }
-const V = (verdict: string, reason: string | null): string => JSON.stringify({ verdict, reason: `because ${reason}` });
+const V = (verdict: string, reason: string | null): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: `because ${reason}` });
 // presence off: an owner dialog awaits the presence probe's detached child, which keeps no event loop alive in a bare test process
 const config = { providers: { fake: { roles: { review: { model: "m" } } } }, presence: { enabled: false } };
 const DANGER = "git branch -D old-topic"; // danger-git: judge-first
@@ -119,9 +119,10 @@ test("judge unsure opens the dialog with the judge's reason; failures and a miss
   assert.match(esc.asked[0].title, /cause: danger-git/);
   assert.match(esc.asked[0].title, /classifier: because null/);
   assert.deepEqual(esc.asked[0].options, ["allow once", "deny with comment", "deny and stop"]);
+  // a failing or missing judge is a refusal now, the owner is not asked
   const gone = await rig(t, [new Error("boom")]);
   assert.equal((await gone.call("bash", { command: DANGER }))?.block, true);
-  assert.equal(gone.asked.length, 1);
+  assert.equal(gone.asked.length, 0);
   assert.equal(gone.log().find((x) => x.layer === "classifier")!.rule, "judge:provider_error");
   const none = await rig(t, [V("clear", "judge")], { found: false });
   await none.call("bash", { command: DANGER });

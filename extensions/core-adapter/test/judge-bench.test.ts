@@ -215,7 +215,7 @@ test("a provider error and a missing model are errors, not stops", async () => {
 
 test("clearedAgainstBaseline counts clears on owner rows and on rows the baseline stopped as owner", async () => {
   const rows = [row("o1", "git push origin main", "owner:default-branch"), row("o2", "rm -rf ~/x", "owner:outside-write"), row("r1", "echo ok", "run")];
-  const sonnet = await runModel({ registry: fake((c) => (c === "echo ok" ? V("clear") : V("owner", { class: "x" }))).registry as never, model: "fake/sonnet", rows, timeoutMs: 100 });
+  const sonnet = await runModel({ registry: fake((c) => (c === "echo ok" ? V("clear") : V("owner", { class: "outside-write" }))).registry as never, model: "fake/sonnet", rows, timeoutMs: 100 });
   const haiku = await runModel({ registry: fake(() => V("clear")).registry as never, model: "fake/haiku", rows, timeoutMs: 100 });
   const cmp = clearedAgainstBaseline([
     { model: "fake/sonnet", results: sonnet },

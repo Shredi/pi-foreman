@@ -1748,7 +1748,7 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
     // A3: a child cannot answer an owner question about a line the parser could not read: a deterministic deny that says how to rephrase
     const flag = env.child ? opaqueDeny : askHit;
     if (env.child && !env.builder && push && push !== dynamic) return flag("git-push-child", `The unparsed line looks like a git push. ${PUSH_CHILD_TEXT}`);
-    // git config words are judge-first (a child's judge-first hit asks its parent): they wait behind the push floors and the denies below
+    // git config words are judge-first (the judge decides; only an owner answer naming a class asks, a child its parent): they wait behind the push floors and the denies below
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
     if (key !== undefined) soft = judgeHit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`, key);
     else if (calls.some((c) => c.verb === "remote" && /^\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(c.tail))) soft = judgeHit("git-config", "The unparsed line changes a git remote.");

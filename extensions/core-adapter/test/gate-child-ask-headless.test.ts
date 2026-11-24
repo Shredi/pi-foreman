@@ -10,7 +10,7 @@ import { NO_PANE_TEXT } from "../presencewait.ts";
 
 type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "builder", "reviewer"];
-const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ASK = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 const ALLOW = JSON.stringify({ verdict: "clear", reason: "because" });
 function registry(reply: string) {
   return { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };

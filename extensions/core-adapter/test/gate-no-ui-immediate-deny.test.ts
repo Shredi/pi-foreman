@@ -15,7 +15,7 @@ const registry = (reply: string | Error, found = true) => ({
     return { content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } };
   },
 });
-const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "not covered" });
+const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "not covered" });
 const JUDGE_FIRST_LINE = "git branch -D old-branch";
 async function rig(t: Parameters<typeof r11Rig>[0], modelRegistry: unknown) {
   return r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", ui, modelRegistry }, config: { providers: { fake: { roles: { review: { model: "m" } } } } } });
@@ -44,7 +44,7 @@ test("no UI + an unreachable classifier (failing provider; no model): an immedia
     const r = await rig(t, reg);
     const res = await r.call("bash", { command: JUDGE_FIRST_LINE });
     assert.equal(res?.block, true);
-    assert.match(String(res?.reason), /nobody is at this session/);
+    assert.match(String(res?.reason), /^pi-foreman: refused: /);
   }
   assert.equal(selects, 0);
 });

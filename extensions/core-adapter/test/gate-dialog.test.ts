@@ -23,7 +23,7 @@ function fakeRegistry(replies: Reply[], found = true) {
   };
   return { registry, calls };
 }
-const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 // presence off: an owner dialog in a rig awaits the presence probe otherwise
 const baseConfig = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } };
 

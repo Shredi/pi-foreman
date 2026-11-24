@@ -186,7 +186,7 @@ async function handler(t: Parameters<typeof r11Rig>[0], child: boolean) {
     getProviderAuthStatus: () => ({ configured: false }),
     complete: async (_m: never, ctx: { messages: { content: string }[] }) => {
       calls.push(ctx.messages[0].content);
-      return { content: [{ type: "text", text: JSON.stringify({ verdict: "unsure", reason: "because test" }) }], stopReason: "stop", usage: { input: 1, output: 1 } };
+      return { content: [{ type: "text", text: JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because test" }) }], stopReason: "stop", usage: { input: 1, output: 1 } };
     },
   };
   const ui = { notify: () => undefined, confirm: async () => false, select: async () => "deny with comment", input: async () => "", editor: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };

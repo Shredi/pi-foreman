@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
 import { readRows, storeFor } from "../reports.ts";
 
-const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "unsure" });
+const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "unsure" });
 const registry = {
   find: () => ({ id: "m" }),
   getProviderAuthStatus: () => ({ configured: false }),

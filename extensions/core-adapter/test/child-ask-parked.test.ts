@@ -289,7 +289,7 @@ async function childRig(t: T, askDir: string, ctx: Record<string, unknown>) {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const escalate = JSON.stringify({ verdict: "unsure", reason: "because" });
+  const escalate = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because" });
   const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: escalate }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   return r11Rig(t, {}, { ctx: { modelRegistry: reg, ...ctx }, config: cfg(), child: true });
 }

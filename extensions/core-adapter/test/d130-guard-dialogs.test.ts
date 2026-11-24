@@ -20,7 +20,7 @@ async function until<X>(f: () => X | undefined | false, ms = 4000): Promise<X> {
   }
   throw new Error("timed out");
 }
-const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 const registry = (reply: string) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: { builder: { model: "fake/builder" } } } } };
 /** A select that never answers: it ends only through the abort signal (`undefined`, a dismissal). */

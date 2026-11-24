@@ -621,10 +621,11 @@ export const gitFacts: GitFacts = {
   hasUpstream: (cwd) => gitOut(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]) !== null,
 };
 
-/** Git facts for a classifier request: branch, HEAD, MERGE_HEAD and remote names (null / empty when git cannot say). */
-export function reviewGitFacts(cwd: string): { branch: string | null; head: string | null; mergeHead: string | null; remotes: string[] } {
+/** Git facts for a classifier request: branch, default branch (`origin/HEAD`), HEAD, MERGE_HEAD and remote names (null / empty when git cannot say). */
+export function reviewGitFacts(cwd: string): { branch: string | null; defaultBranch: string | null; head: string | null; mergeHead: string | null; remotes: string[] } {
   return {
     branch: currentBranch(cwd),
+    defaultBranch: remoteHead(cwd),
     head: gitOut(cwd, ["rev-parse", "-q", "--verify", "HEAD"]) || null,
     mergeHead: gitOut(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]) || null,
     remotes: (gitOut(cwd, ["remote"]) ?? "").split("\n").filter(Boolean),

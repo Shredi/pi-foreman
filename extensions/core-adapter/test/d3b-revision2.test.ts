@@ -59,7 +59,7 @@ test("gateEvaluate: node -e x -e \"$C\" runs code the harness cannot read", { sk
   assert.ok(reasons(`node -e x`).includes("the code is in the command") || !reasons(`node -e x`).includes("cannot read"));
 });
 
-const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ASK = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 const registry = () => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: ASK }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { gate: { askTimeoutMs: 600000 }, presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } } };
 

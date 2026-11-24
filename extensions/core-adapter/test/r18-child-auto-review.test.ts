@@ -133,11 +133,19 @@ test("r18 child: a read of another session's state dir is denied by the selfmod-
   assert.deepEqual(gate(c), ["blocked:selfmod-state-read"]);
 });
 
-test("r18 child: an unsure judge is a child deny with the no-pane text (no ask dir, no owner dialog)", async (t) => {
-  const c = await childRig(t, V("unsure", "unsure"));
+test("r18 child: an owner+class judge is a child deny with the no-pane text (no ask dir, no owner dialog)", async (t) => {
+  const c = await childRig(t, JSON.stringify({ verdict: "owner", class: "data-loss", reason: "unsure" }));
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /nobody is at this session \(no pane\)/);
+  assert.equal(c.sent.length, 1);
+});
+
+test("r18 child: an unsure judge is a refusal with the judge's reason, nobody is asked", async (t) => {
+  const c = await childRig(t, V("unsure", "cannot tell"));
+  const r = await c.bash(PROBE);
+  assert.equal(r?.block, true);
+  assert.match(r?.reason ?? "", /^pi-foreman: refused: the permission judge refused it: cannot tell/);
   assert.equal(c.sent.length, 1);
 });
 
@@ -145,6 +153,6 @@ test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict:
   const c = await childRig(t, '{"verdict":"defer"}');
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
-  assert.match(r?.reason ?? "", /nobody is at this session/);
+  assert.match(r?.reason ?? "", /^pi-foreman: refused: /);
   assert.equal(c.sent.length, 2); // item 5: an invalid verdict is asked for once more
 });

@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
 
-const V = (verdict: string): string => JSON.stringify({ verdict, reason: "because test" });
+const V = (verdict: string): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: "because test" });
 // presence off: an owner dialog awaits the presence probe's detached child, which keeps no event loop alive in a bare test process
 const config = { providers: { fake: { roles: { review: { model: "m" } } } }, presence: { enabled: false } };
 

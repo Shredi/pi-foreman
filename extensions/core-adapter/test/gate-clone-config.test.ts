@@ -54,7 +54,7 @@ test("clone config: git clone without config is unchanged", () => {
 });
 
 type T = Parameters<typeof r11Rig>[0];
-const verdictText = (verdict: string): string => JSON.stringify({ verdict, reason: "stub" });
+const verdictText = (verdict: string): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: "stub" });
 const ROLES = ["explorer", "builder", "reviewer"];
 
 for (const kind of ["main", "child"] as const) {

@@ -59,7 +59,7 @@ const within = <X>(p: Promise<X>, ms = 5000): Promise<X> => {
   return Promise.race([p, cap]).finally(() => clearTimeout(timer));
 };
 // C: the judge answers clear or unsure; a judge-first line (git branch -D) the judge is unsure about asks the owner (a child: its parent)
-const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, reason: `because ${entry}` });
+const V = (verdict: string, entry: string): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: `because ${entry}` });
 const registry = (reply: string) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } }, presence: { enabled: false } };
 const ASK_FIELDS = { tool: "bash", payload: "git branch -D old-topic", cwd: "/w", session: "child-s", role: "builder", run: "L9" };

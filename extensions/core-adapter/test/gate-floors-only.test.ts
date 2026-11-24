@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import { r11Rig } from "./_r11rig.ts";
 import { gateLogFile } from "../gatelog.ts";
 
-const UNSURE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const UNSURE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 const INSTALL = "pip install requests";
 const NOMATCH = "terraform plan";
 const JUDGE_FIRST_LINE = "git branch -D old-branch";

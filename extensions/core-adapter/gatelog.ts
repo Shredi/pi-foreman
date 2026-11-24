@@ -27,6 +27,8 @@ export interface ShapeRoots {
 const MAX_SHAPE = 400;
 const MAX_FIELD = 120;
 const MAX_REASON = 320;
+/** `gate.log.fullCommand`: the cap of the `input` field. */
+const MAX_FULL = 20_000;
 
 const slashes = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "");
 /** Whether `p` is `root` or below it (segment boundary; a drive letter is case-insensitive). */
@@ -79,7 +81,7 @@ function maskHeredocs(text: string): string {
  * The shape of a command: program and option words kept; quoted strings and secret-grammar values `<v>`;
  * URLs `scheme://host`; every literal path (any token with a separator, `~`, or a file name with an extension) a class token.
  */
-export function normalizeShape(text: string, roots: ShapeRoots = {}, credsOnly = false): string {
+export function normalizeShape(text: string, roots: ShapeRoots = {}, credsOnly = false, max = MAX_SHAPE): string {
   const quoted = credsOnly ? text.replace(/[`'"]/g, " ") : maskHeredocs(text).replace(/"(?:[^"\\]|\\.)*"|'[^']*'/g, "<v>");
   const masked = redactCommand(quoted).split("[redacted]").join("<v>");
   let prog = "";
@@ -110,7 +112,7 @@ export function normalizeShape(text: string, roots: ShapeRoots = {}, credsOnly =
     const npmSet = prog === "npm" && words.length === 4 && words[1] === "config" && words[2] === "set" && SECRET_NAME.test(tok);
     pending = awsSet || npmSet || credOperandNext(tok, prog);
   }
-  return (out + masked.slice(prev)).slice(0, MAX_SHAPE);
+  return (out + masked.slice(prev)).slice(0, max);
 }
 
 /** Whether the token after `tok` is the operand of a credential option. */
@@ -151,8 +153,10 @@ export interface GateRecord {
   reason?: string;
   /** The text a floor matched (the denial's `matched:` part); written through the redacting field writer, like the tool name. */
   fragment?: string;
-  /** The raw command or target text; written only as its normalised shape. */
+  /** The raw command or target text; written only as its normalised shape (and, with `gate.log.fullCommand`, as `input` with credentials masked). */
   input?: string;
+  /** The start of a judge reply that was not a valid verdict; written as the first `MAX_REASON` characters of its shape (credentials-only masking with `gate.log.fullCommand`). */
+  raw?: string;
   role?: string;
   kind?: GateKind;
   latencyMs?: number;
@@ -185,6 +189,8 @@ export interface GateLogOptions {
   roots?: ShapeRoots;
   /** `gate.logMaxBytes`; default 20 MB. */
   maxBytes?: unknown;
+  /** `gate.log.fullCommand`, read on every row: true adds the input with credentials masked; default off. */
+  fullCommand?: () => boolean;
   now?: () => Date;
 }
 
@@ -214,6 +220,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
           fs.mkdirSync(path.dirname(file), { recursive: true });
           ready = true;
         }
+        const full = opts.fullCommand?.() === true;
         const line =
           JSON.stringify({
             id,
@@ -237,6 +244,8 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             ...(rec.reads?.length ? { reads: rec.reads.slice(0, 16).map((r) => redactCommand(String(r)).slice(0, 200)) } : {}),
             ...(rec.reads?.length && typeof rec.readBytes === "number" ? { readBytes: Math.round(rec.readBytes) } : {}),
             ...(rec.reads?.length && typeof rec.rounds === "number" ? { rounds: Math.round(rec.rounds) } : {}),
+            ...(rec.raw ? { raw: normalizeShape(rec.raw, opts.roots, full).slice(0, MAX_REASON) } : {}),
+            ...(full && rec.input ? { input: normalizeShape(rec.input, opts.roots, true, MAX_FULL) } : {}),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,
           }) + "\n";
