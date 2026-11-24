@@ -156,7 +156,7 @@ const CASES: [string, X, X][] = [
   ["./x.sh", "A", "A"],
   // moved pins of judge-first-unknown.test.ts: the foreman's `$FOREMAN_SCRATCH` names no folder, a child's function body is walked at its call
   ["cd $FOREMAN_SCRATCH && cat > t.mjs <<'EOF'\nconsole.log(1)\nEOF\nnode t.mjs", "J", "A"],
-  ["cd $FOREMAN_SCRATCH; f(){ curl -s -o a.html https://x; }; f; grep x a.html", "A", "R"],
+  ["cd $FOREMAN_SCRATCH; f(){ curl -s -o a.html https://x; }; f; grep x a.html", "J", "R"],
   ["$V/bin/pip install x", "A", "A"],
   ["git add .", "A", "A"],
   ["grep -r x .", "A", "A"],

@@ -66,13 +66,12 @@ const POSITIVE: Record<string, Case[]> = {
   "danger-net-write": [
     sh("curl -X POST https://example.com/x"), sh("curl -XPUT https://example.com/x"), sh("curl --request DELETE https://example.com/x"), sh("curl -d a=1 https://example.com/x"), sh("curl --data-binary @f https://example.com/x"),
     sh("curl -sSd x https://example.com/x"), sh("curl -F f=@x https://example.com/x"), sh("curl -T f https://example.com/x"), sh("curl --json '{}' https://example.com/x"), sh("wget --post-data=a=1 https://example.com/x"),
-    sh("wget --method=PUT https://example.com/x"), sh("http POST example.com a=1"), sh("http example.com a=1"), sh("xh PUT example.com"), sh("nc host 80"), sh("ncat host 80"), sh("socat - TCP:host:80"),
+    sh("wget --method=PUT https://example.com/x"), 
     sh(`curl -n https://example.com/x -o ${SCR}/p`), sh(`curl -H @h.txt https://example.com/x -o ${SCR}/p`), sh(`curl --output-dir ${OUT} -o a https://example.com/x`),
     { tool: "fetch", input: { url: "https://example.com/x", method: "POST" } }, { tool: "fetch", input: { url: "https://example.com/x", body: "a" } }, { tool: "fetch", input: { url: "https://example.com/x", headers: { Authorization: "x" } } },
   ],
   "danger-install": [
-    sh("npm install"), sh("npm i lodash"), sh("npm ci"), sh("npm install -g x"), sh("npm uninstall x"), sh("pnpm add x"), sh("yarn"), sh("yarn add x"), sh("bun install"), sh("npx cowsay"), sh("pnpm dlx x"), sh("bunx x"), sh("uvx x"),
-    sh("pip install x"), sh("pip3 install x"), sh("uv pip install x"), sh("python3 -m pip install x"), sh("cargo install ripgrep"), sh("gem install x"), sh("brew install x"), sh("brew upgrade"),
+    sh("npm install -g x"), sh("yarn global add x"), sh("bun add -g x"), sh("npm link"), sh("cargo install ripgrep"), sh("gem install x"), sh("brew install x"), sh("brew upgrade"),
     sh("apt-get install x"), sh("apt remove x"), sh("dnf install x"), sh("choco install x"), sh("winget install x"), sh("scoop uninstall x"), sh("pacman -S x"), sh("pacman -Syu"),
   ],
   "danger-git": [
@@ -230,4 +229,17 @@ test("a dangerous segment is never a default, also inside an otherwise plain lin
     assert.notEqual(hit({ line: l }), null, l);
   }
   for (const l of ["git status && git log", "ls src && cat a.txt"]) assert.notEqual(lineDefault(l, parseShell(l, { cwd: wt }), dctx()), null, l);
+});
+
+// the plan's "not labelled" lists: project-level installs and one-off runners (the code cannot tell a virtual environment from a global one), and the network tools webReadAllow does not read
+// (judged only in judge mode); the query forms of pacman are plain reads
+const NOT_LABELLED = {
+  "danger-install": ["npm install", "npm i lodash", "npm ci", "npm uninstall x", "pnpm add x", "yarn", "yarn add x", "bun install", "npx cowsay", "pnpm dlx x", "bunx x", "uvx x", "pip install x", "pip3 install x", "uv pip install x", "python3 -m pip install x", "pacman -Ss x", "pacman -Si x", "pacman -Sl", "pacman -Sg"],
+  "danger-net-write": ["http POST example.com a=1", "http example.com a=1", "xh PUT example.com", "nc host 80", "ncat host 80", "socat - TCP:host:80"],
+};
+test("not labelled: project-level installs, one-off runners, pacman queries and the unread network tools are no danger-install / danger-net-write", () => {
+  for (const [name, lines] of Object.entries(NOT_LABELLED)) {
+    const rule = JUDGE_FIRST.find((r) => r.name === name)!;
+    for (const l of lines) assert.ok(!rule.test(callOf(sh(l)), denv()), `${name}: ${l}`);
+  }
 });
