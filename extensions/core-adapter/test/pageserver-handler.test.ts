@@ -8,6 +8,7 @@ import { MAX_FILE_BYTES, handle, hostAllowed, pagesStateDir, registerRoot, roots
 import type { HandlerCtx, HostRules, Reply } from "../pageserver.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { posixOnly } from "./_platform.ts";
+import { ZOOM_SNIPPET } from "../zoom.ts";
 
 let tmp: string;
 let stateDir: string;
@@ -45,7 +46,7 @@ after(() => rmTestTmp(tmp));
 
 test("a right id serves the page; a missing, wrong or short id gives 404", () => {
   assert.equal(get(`/${id}/plan.html`).status, 200);
-  assert.equal(text(get(`/${id}/plan.html`)), "<h1>plan</h1>");
+  assert.equal(text(get(`/${id}/plan.html`)), `<h1>plan</h1>${ZOOM_SNIPPET}`);
   assert.equal(get("/plan.html").status, 404);
   assert.equal(get("/").status, 404);
   assert.equal(get(`/${"a".repeat(26)}/plan.html`).status, 404);
@@ -82,7 +83,7 @@ test("GET and HEAD only: 405 otherwise; HEAD has the headers and no body", () =>
   }
   const h = get(`/${id}/plan.html`, "127.0.0.1", "HEAD");
   assert.equal(h.status, 200);
-  assert.equal(h.headers["Content-Length"], "13");
+  assert.equal(h.headers["Content-Length"], String(Buffer.byteLength(`<h1>plan</h1>${ZOOM_SNIPPET}`)));
 });
 
 test("Host check: loopback names, the bind address and the baseUrl host (any port) pass; others give 404", () => {
