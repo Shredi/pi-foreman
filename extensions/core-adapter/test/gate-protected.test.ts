@@ -42,8 +42,9 @@ test("a path tool write to a protected path asks; a read of it does not", () => 
   assert.notEqual(tag(g("read", { path: "ops/playbooks/a.yml" }, { entries: prot })).split(":")[1], "protected");
 });
 
+// the line holds a write (`sed -i` on a loop variable) beside the config read: a read-only `jq` loop is a judge hit now (unplaceable loop word), not a floor ask
 test("a pending floor ask beats a protected match", () => {
-  const line = "for b in $L; do jq .gate.askTimeoutMs config/foreman.json; done";
+  const line = "for b in $L; do jq .gate.askTimeoutMs config/foreman.json; sed -i s/a/b/ \"$b\"; done";
   const withEntry = g("bash", { command: line }, { entries: [E("command", "*", 1)] });
   const without = g("bash", { command: line });
   assert.ok(withEntry && "ask" in withEntry);
