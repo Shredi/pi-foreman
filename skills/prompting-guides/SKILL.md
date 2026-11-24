@@ -58,3 +58,5 @@ For the wording of skill bodies and descriptions, also read the `skill-authoring
 - [ ] Output format is asked for in the shape wanted.
 - [ ] Runtime settings (effort, thinking, API choice for tools) are not left to prose.
 - [ ] The prompt was tried on real tasks.
+
+Further reading for plain owner text: https://github.com/danyuchn/asd-ste100-skill (STE-flavored mode, MIT).

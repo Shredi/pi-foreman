@@ -140,6 +140,11 @@ class SizingPromptTest(unittest.TestCase):
             for old_text, new_text in ROLE_PAIRS:
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
+            # plain-pr-text: the PR body opens with a plain Summary above the Changelog
+            old_body = "The PR body carries a `## Changelog` section (one to three user-facing bullets): you draft it in the scratch dir at every tier."
+            new_body = "The PR body opens with a plain `## Summary` for the owner (owner text: what changes and why), with one small `mermaid` diagram when the change has a flow or a before-and-after; then comes the `## Changelog` section (one to three user-facing bullets), then the dense part. You draft it in the scratch dir at every tier."
+            self.assertIn(old_body, want)
+            want = want.replace(old_body, new_body)
             # launch fields: a numbered item beyond the failed ones is reviewed against the whole change
             old_items = "a review did not cover, and only after you have checked the evidence on disk."
             new_items = old_items + " A numbered item in `items` outside the current failed items is reviewed against the whole change."

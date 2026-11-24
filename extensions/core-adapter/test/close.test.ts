@@ -162,7 +162,7 @@ test("close: result path text is a fixed charset ending in .md; the prompt carri
     assert.match((resultPath(bad, opts) as { error: string }).error, /A-Z a-z 0-9/, bad);
   }
   const ok = resultPath(".workflow/r-1_x.md", opts) as { shown: string };
-  assert.equal(closePrompt(ok.shown), "pi-foreman close: write your result file now at .workflow/r-1_x.md (summary, commits, open items). Do not start new work.");
+  assert.equal(closePrompt(ok.shown), "pi-foreman close: write your result file now at .workflow/r-1_x.md (open with 2-4 plain sentences for the owner, then the dense part: summary, commits, open items). Do not start new work.");
 });
 
 test("close: a close turn that never starts is disarmed at the deadline; later runs never sync or shut down (review S5)", async () => {

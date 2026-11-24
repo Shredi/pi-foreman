@@ -11,6 +11,7 @@ Write a document a fresh agent can pick up and continue, without this conversati
 2. End with a `## Suggested skills` section: each skill the next agent should use, with its name and location. Pi has no Skill tool; the agent reads the `SKILL.md`.
 3. Reference existing artifacts (plan, ledger, spec, ADR, issue, PR, commit, diff, earlier brief) by path, URL or hash; do not restate them. Link `AGENTS.md` for the shared repo rules instead of copying them.
 4. Redact secrets (keys, tokens, passwords) and personal data the next agent does not need. Text bound for a public place (PR, issue, commit) follows the repo's public rules.
-5. Save to the path the harness names (the session handoff dir: `brief.md`, `brief-<n>.md`, `result.md`; the close result file). Otherwise save to the OS temp dir (`$TMPDIR`, else `/tmp`; `%TEMP%` on Windows), never the workspace.
+5. A result for a parent or owner opens with 2-4 plain sentences (the owner-text rule: short sentences, active voice, one fact each); the dense part follows below.
+6. Save to the path the harness names (the session handoff dir: `brief.md`, `brief-<n>.md`, `result.md`; the close result file). Otherwise save to the OS temp dir (`$TMPDIR`, else `/tmp`; `%TEMP%` on Windows), never the workspace.
 
 Source: https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff (MIT, adapted; see NOTICE).
