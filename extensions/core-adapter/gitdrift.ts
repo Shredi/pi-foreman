@@ -491,6 +491,43 @@ function routineRemote(branch: string, a: FileSnap, b: FileSnap): boolean {
   return !!r && r.length === 1 && remoteUnchanged(r[0], a, b);
 }
 
+/**
+ * Config keys whose change can run a program or redirect git (evidence: `git help config`; a value there is a command, a program path, a URL
+ * rewrite or proxy, a remote target, or an include). Named by key shape: section, optional subsection, variable (all lowercased).
+ * Only these (plus hooks, info/attributes, includes and worktree links, which are other snapshot parts) open the drift ask; any other key
+ * (branch.<b>.vscode-merge-base, branch.<b>.description, user.*, unknown) updates the baseline without a dialog. Unsure keys stay in this class.
+ */
+const EXEC_SECTIONS = new Set(["filter", "alias", "credential", "protocol", "sendemail", "pager", "difftool", "mergetool", "safe", "web", "browser", "man", "include"]);
+const EXEC_VARS: Record<string, RegExp> = {
+  core: /^(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|worktree|attributesfile|alternaterefscommand)$/,
+  url: /^(?:insteadof|pushinsteadof)$/,
+  diff: /^(?:textconv|command|external|tool|guitool)$/,
+  merge: /^(?:driver|tool|guitool)$/,
+  remote: /^(?:url|pushurl|uploadpack|receivepack|proxy|vcs|pushdefault)$/,
+  branch: /^(?:remote|merge|rebase|pushremote)$/,
+  gpg: /^(?:program|defaultkeycommand)$/,
+  sequence: /^editor$/,
+  interactive: /^difffilter$/,
+  uploadpack: /^packobjectshook$/,
+  http: /^(?:proxy|curloptresolve)$/,
+  submodule: /^(?:url|update)$/,
+  init: /^templatedir$/,
+  trailer: /^(?:cmd|command)$/,
+  tar: /^command$/,
+  includeif: /^path$/,
+};
+
+/** True when a config key (dotted, lowercased) is in the exec-capable class above. */
+function execCapableKey(key: string): boolean {
+  const first = key.indexOf(".");
+  const last = key.lastIndexOf(".");
+  if (first < 0) return true; // unparsable shape: fail closed
+  const section = key.slice(0, first);
+  const variable = key.slice(last + 1);
+  if (EXEC_SECTIONS.has(section)) return true;
+  return EXEC_VARS[section]?.test(variable) ?? false;
+}
+
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */
 export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot | null): string[] {
   if (!before) return [];
@@ -511,7 +548,12 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
       quietModules.push(mod[1]);
       continue;
     }
-    if (kind === "new") state = `new file${b!.keys && b!.keys.size ? ` (${listed("keys", [...b!.keys.keys()])})` : ""}`;
+    if (kind === "new") {
+      const nk = b!.keys ? [...b!.keys.keys()] : [];
+      const ek = nk.filter(execCapableKey);
+      if (nk.length && !ek.length) continue; // only bookkeeping keys: no dialog
+      state = `new file${nk.length ? ` (${listed("keys", ek)})` : ""}`;
+    }
     else if (kind === "removed") state = "removed";
     else {
       const ka = a!.keys ?? new Map<string, string>();
@@ -521,10 +563,13 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
       const added = [...kb.keys()].filter((k) => !ka.has(k) && !routine(k));
       const removed = [...ka.keys()].filter((k) => !kb.has(k) && !BRANCH_TRACKING.test(k));
       const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k) && !routine(k));
-      const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
+      // Only keys that can run a program or redirect git are named; a change confined to other keys updates the baseline without a dialog.
+      const [eAdded, eChanged, eRemoved] = [added, changed, removed].map((ks) => ks.filter(execCapableKey));
+      if (added.length + changed.length + removed.length && !eAdded.length && !eChanged.length && !eRemoved.length) continue;
+      const parts = [listed("added", eAdded), listed("changed", eChanged), listed("removed", eRemoved)].filter(Boolean);
       const onlyTracking = !parts.length && [...ka.keys(), ...kb.keys()].some((k) => BRANCH_TRACKING.test(k) && ka.get(k) !== kb.get(k));
       if (onlyTracking) continue;
-      if (mod && parts.length && [...added, ...changed, ...removed].every((k) => QUIET_MODULE_KEYS.test(k))) {
+      if (mod && parts.length && [...eAdded, ...eChanged, ...eRemoved].every((k) => QUIET_MODULE_KEYS.test(k))) {
         quietModules.push(mod[1]);
         continue;
       }
