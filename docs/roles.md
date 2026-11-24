@@ -74,7 +74,7 @@ When the refused model is a role's own normal (mapped default) model and both it
 keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand. The rank-tier `inexpensive` preset is in [presets](presets.md):
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
-  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
+  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier (`review.model`) on Sonnet 5.5 (the judge bench: Haiku cleared owner rows at every thinking level, Sonnet at low did not; Haiku stays an explicit opt-in);
   `childPolicy: below` with `rolePolicy` reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
   `rolePolicy.<role>: at-or-below` (under an Opus foreman the builder's FAIL climb is skipped unless its risk tag calls for the strong rung); `ladder.equalOnStrongRisk: true`, because for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial: only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
