@@ -140,11 +140,11 @@ test("a payload tool with no review model and no UI denies within 1 s", async (t
   assert.ok(Date.now() - t0 < 1000);
 });
 
-// An unusable judge reply is no clear; a headless session denies with the no-pane text.
+// An unusable judge reply is no clear; it is a refusal with its reason in every session kind (the owner is not asked).
 test("an invalid judge reply in a headless session denies with the no-pane text", async (t) => {
   const reg = fakeRegistry(["not json"]);
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: reg.registry }, config });
   const res = await r.call("bash", { command: "git branch -D old-branch" });
   assert.ok(res && res.block);
-  assert.match(res.reason ?? "", /nobody is at this session/);
+  assert.match(res.reason ?? "", /^pi-foreman: refused: the permission judge's answer could not be read/);
 });
