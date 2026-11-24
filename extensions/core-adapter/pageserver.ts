@@ -19,6 +19,7 @@ import { resolvePython } from "./python.ts";
 import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
+import { injectZoom } from "./zoom.ts";
 
 export const DEFAULT_PORT = 47317;
 export const ROOT_KEEP_MS = 7 * 24 * 3_600_000;
@@ -449,6 +450,11 @@ function markdownPage(buf: Buffer, name: string): Buffer {
   return Buffer.from(renderPage({ title, kicker: name, markdown, source: name }), "utf8");
 }
 
+/** A served HTML body with the zoom snippet (zoom.ts). The body is read one char per byte and the snippet is ASCII, so every other byte comes back unchanged. */
+function withZoom(body: Buffer): Buffer {
+  return Buffer.from(injectZoom(body.toString("latin1")), "latin1");
+}
+
 /** One request. `rawUrl` is the request target; nothing of it is logged. */
 export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHeader: string | undefined, local: LocalEnd = { address: "", port: 0 }): Reply {
   ctx.touch();
@@ -497,7 +503,8 @@ export function handle(ctx: HandlerCtx, method: string, rawUrl: string, hostHead
   if (!type) return notFound();
   const buf = readGuarded(rootReal, root.kind, target);
   if (!buf) return notFound();
-  return reply(200, type, ext === ".md" ? markdownPage(buf, name) : buf);
+  const body = ext === ".md" ? markdownPage(buf, name) : buf;
+  return reply(200, type, type.startsWith("text/html") ? withZoom(body) : body);
 }
 
 // ---------------------------------------------------------------- health client

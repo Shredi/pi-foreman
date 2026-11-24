@@ -8,6 +8,7 @@ import * as net from "node:net";
 import * as path from "node:path";
 import { ENSURE_CACHE_MS, ROOT_KEEP_MS, compareVersions, countRoots, ensureServer, httpHealth, pageUrlFor, pagesStateDir, readServer, registerRoot, rootsDir, rotateRoots, serverFile, startPageServer } from "../pageserver.ts";
 import type { EnsureDeps, PageServer, PagesCfg, ServerRecord } from "../pageserver.ts";
+import { injectZoom } from "../zoom.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { posix } from "./_platform.ts";
 
@@ -241,7 +242,7 @@ test("pageUrlFor: a page of a pages/ folder gets a served URL that serves the pa
   assert.ok(url);
   assert.match(url, new RegExp(`^http://127\\.0\\.0\\.1:${port}/[a-z2-7]{26}/plan\\.html$`));
   const r = await request(port, new URL(url).pathname);
-  assert.deepEqual(r, { status: 200, body: "<p>served</p>" });
+  assert.deepEqual(r, { status: 200, body: injectZoom("<p>served</p>") });
   assert.equal(await pageUrlFor(path.join(dir, "plan.html"), "dir", undefined, urlDeps()), url);
 });
 
