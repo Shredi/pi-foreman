@@ -1851,7 +1851,7 @@ const shellConsumer = (s: ShellSegment): boolean => runsShellText(s) || s.argv.s
 export function dataBodies(segments: ShellSegment[]): boolean {
   const bodies = segments.filter((s) => s.heredoc);
   const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program)) || s.opaque === "stdin_fed") && !shellConsumer(s));
-  return bodies.length > 0 && data && !bodies.some((s) => s.wrappers.some((w) => w === "$(" || w === "`")) && !segments.some((s) => s.stdinFed && shellConsumer(s));
+  return bodies.length > 0 && data && !segments.some((s) => s.stdinFed && shellConsumer(s));
 }
 
 /**
@@ -1862,9 +1862,7 @@ export function dataBodies(segments: ShellSegment[]): boolean {
 function bodiesOnlyCatTee(segments: ShellSegment[], env: FloorEnv): boolean {
   const plain = (s: ShellSegment): boolean => ["cat", "tee"].includes(base(s.program));
   const code = (s: ShellSegment): boolean => SHELL_LIKE.has(base(s.program)) || (s.opaque !== null && s.opaque !== "writing_wrapper");
-  // a heredoc inside a substitution (`gzip $(cat <<E … E)`): its output becomes another command's arguments, so its body is no data
-  const inSubst = (s: ShellSegment): boolean => s.wrappers.some((w) => w === "$(" || w === "`");
-  return segments.every((s) => !(s.heredoc && inSubst(s)) && (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s) || cleanReadSegment(s, env)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
+  return segments.every((s) => (!s.heredoc || (s.program === "" ? s.opaque === null : plain(s))) && (!s.stdinFed || s.heredoc || plain(s) || cleanReadSegment(s, env)) && !(s.wrappers.includes("$(") && !plain(s) && code(s)));
 }
 
 /**
@@ -2409,7 +2407,10 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
   // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
   const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line, env);
-  const words = wordsOf(data ? blankHeredocBodies(text) : text);
+  // a heredoc inside a substitution (`gzip $(cat <<E … E)`): its output becomes another command's arguments, so its body is no data for the policy-file scan
+  const policyData = data && !line.some((s) => s.heredoc && s.wrappers.some((w) => w === "$(" || w === "`"));
+  const words = wordsOf(policyData ? blankHeredocBodies(text) : text);
+  const cfgWords = data ? wordsOf(blankHeredocBodies(text)) : words;
   // a Pi session file (`*.jsonl`) is no hit here: a line that only reads one (a transcript read through a path variable) is not refused; parsed write targets and path fields keep the entry
   const unread = entries.filter((e) => e.ext === undefined);
   const prot = words.filter((x) => protectedWord(x, env.cwd, env, unread));
@@ -2421,7 +2422,7 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
     }
   }
   if (UNREAD_KEYS.test(text)) {
-    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !((!reading || silent) && reads.has(x) && !others.has(x)));
+    const c = cfgWords.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !((!reading || silent) && reads.has(x) && !others.has(x)));
     if (c !== undefined) {
       const why = `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`;
       return reading && !embedded(c) ? judgeHit("config-keys", why, c) : flag("config-keys", why, c);
