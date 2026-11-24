@@ -76,7 +76,6 @@ import type { McpChildOpts } from "./mcpchild.ts";
 import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, wholeOnlyServers, wholeServerLine, workflowBindingBlock } from "./mcplaunch.ts";
 import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcpEntries } from "./mcpscope.ts";
 import { childSkillRefs } from "./skilldirs.ts";
-import { editorBackupCommand } from "./effects.ts";
 import { compareRunEnd, launchRunCwds, noticeText, readonlyRoles, spawnGit, takeStartEntry, traceLines } from "./readonlystate.ts";
 import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -4549,11 +4548,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const agents = ps ? subagentAgents(event.input as Record<string, unknown>) : [];
       const text = ps && agents.length > 0 ? rulingPickup(ps, `launch ${agents.join("+")}`) : "";
       if (text) return { block: true, reason: `pi-foreman: a newer ruling arrived before this launch; it is not started. Act on it, then launch again.\n${text}` };
-    }
-    // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
-    if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
-      sessionFor(ctx)?.trace?.emit({ event: "guard", guard: "editor_backup", toolFamily: "bash", decision: "blocked", reason: "editor_backup" });
-      return { block: true, reason: "pi-foreman: [editor_backup] deleting an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) with rm is denied; report it in your result instead." };
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;

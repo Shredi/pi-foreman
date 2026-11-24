@@ -678,32 +678,6 @@ export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null,
   return !c?.noTmp && tmpDest(r.target);
 }
 
-/** True for an operand naming an editor backup: `*~`, `*.bak`, `*.orig`, `*.swp` or `.#*` (by its last path part). */
-export function editorBackupOperand(word: string): boolean {
-  const base = word.split(/[\\/]/).pop() ?? word;
-  return /(~|\.bak|\.orig|\.swp)$/.test(base) || base.startsWith(".#");
-}
-
-/** True for `rm` / `rm -f` (any flags), `/bin/rm`, `command rm`, `sudo rm`, `unlink` with an editor-backup operand. */
-export function editorBackupDelete(words: string[]): boolean {
-  let i = 0;
-  while (i < words.length && ["command", "sudo", "env", "builtin", "exec", "nice", "nohup", "time"].includes(words[i])) {
-    i++;
-    while (i < words.length && words[i].startsWith("-")) i++;
-  }
-  const prog = (words[i] ?? "").split(/[\\/]/).pop();
-  return (prog === "rm" || prog === "unlink") && words.slice(i + 1).some((w) => !w.startsWith("-") && editorBackupOperand(w));
-}
-
-/** True when any segment of the shell command deletes an editor backup (the hook denies it for children). */
-export function editorBackupCommand(command: unknown): boolean {
-  if (typeof command !== "string") return false;
-  const chain = splitChain(command);
-  // a refused chain (an unquoted glob) is judged by its words
-  const units = chain ? chain.segments.map((s) => s.words) : command.split(/&&|\|\||[;|\n]/).map((u) => u.trim().split(/\s+/));
-  return units.some(editorBackupDelete);
-}
-
 /** A write redirect (not `<`, not an fd dup) into a child-written name of the session's own handoff dir. */
 export function handoffRedirect(r: Redirect, c: EffectCtx | null, cwd: string | null): boolean {
   return !!c && r.op !== "<" && r.op !== "dup" && handoffTarget(c, cwd, r.target);
@@ -753,7 +727,6 @@ function segmentEffectBase(c: EffectCtx, cwd: string | null, seg: Segment): Segm
     const e = sedEffect(c, cwd, words);
     return out(e.cls, true, e.label);
   }
-  if (prog === "rm" && editorBackupDelete(words)) return out("unknown", true);
   if (prog in WRITE_FLAGS) {
     const cls = writeVerb(c, cwd, prog, args);
     return out(cls, true, "effect-write-in");
