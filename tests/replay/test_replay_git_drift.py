@@ -34,11 +34,11 @@ class TestGitDrift(ReplayCase):
         pi.wait_child_notify(timeout=120)
 
         with open(rig.project / ".git" / "config", "a", encoding="utf-8") as f:
-            f.write("[replaydrift]\n\tmarker = planted-value\n")
+            f.write("[core]\n\tfsmonitor = planted-value\n")
 
         recs = pi.prompt("[[replay:g2]] deny", answers=[{"confirmed": False}], timeout=60)
         [ask] = confirms(recs)
-        self.assertIn("replaydrift.marker", ask.get("message", ""))
+        self.assertIn("core.fsmonitor", ask.get("message", ""))
         self.assertNotIn("planted-value", ask.get("message", ""))
         [(_, err, text)] = tool_results(recs, "bash")
         self.assertTrue(err)
@@ -71,7 +71,7 @@ class TestGitDrift(ReplayCase):
         pi.prompt("[[replay:g1]] launch", timeout=60)
         pi.wait_child_notify(timeout=120)
         with open(rig.project / ".git" / "config", "a", encoding="utf-8") as f:
-            f.write("[replaydrift]\n\tmarker = planted-value\n")
+            f.write("[core]\n\tfsmonitor = planted-value\n")
         presence = rig.agent / "pi-foreman" / "state" / "live" / ("%s.json" % sid)
         seen = []
 
@@ -90,7 +90,7 @@ class TestGitDrift(ReplayCase):
         recs = pi.prompt("[[replay:g3]] relaunch", answers=[look], timeout=60)
         pi.close()
         [ask] = confirms(recs)
-        self.assertIn("replaydrift.marker", ask.get("message", ""))
+        self.assertIn("core.fsmonitor", ask.get("message", ""))
         [(_, err, _)] = tool_results(recs, "subagent")
         self.assertTrue(err)
         self.assertEqual(seen[-1:], ["blocked"], seen)
