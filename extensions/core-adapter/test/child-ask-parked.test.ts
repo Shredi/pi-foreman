@@ -319,5 +319,5 @@ test("child gate: a judge that answers unsure refuses the call: nobody is asked,
   const res = await r.call("bash", { command: "git branch -D old-topic", timeout: 5 });
   assert.equal(res?.block, true);
   assert.match(String(res?.reason), /pi-foreman: refused: .*Nobody is asked/);
-  assert.equal(readChildAsk(dir), undefined);
+  assert.equal(readChildAsk(dir), null);
 });
