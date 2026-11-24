@@ -40,3 +40,12 @@ test("the outside-target text never names the worktree itself", () => {
     assert.notEqual(m[1], m[2], line);
   }
 });
+
+test("a builder's `cd \"$D\" && git commit`: the text names the unreadable cd word, not the worktree", () => {
+  for (const line of ['cd "$D" && git commit -m x', 'cd "$D"; git clean -fd', 'cd "$A" && cd "$B" && git commit -m x']) {
+    const m = /Refused: (.*?), compared with the worktree root (.*?)\. Sanctioned/.exec(run(line, "builder", false)?.reason ?? "");
+    assert.ok(m, line);
+    assert.match(m[1], /^"?\$[AD]"?$|^"?\$B"?$/, line);
+    assert.notEqual(m[1], m[2], line);
+  }
+});

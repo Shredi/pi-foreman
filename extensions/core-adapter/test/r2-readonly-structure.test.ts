@@ -207,10 +207,10 @@ test("revision: a scratch path held in a variable is substituted only when the v
       // (b) name nowhere else: resolves into the scratch dir; the decision is the literal-path line's, the rule name differs: the literal assignment is
       // its own allowed segment (`default-assign`, plan D2) beside the pipeline's `default-read`
       assert.deepEqual(verdict(held(absent), role, "ro"), { allow: true, layer: "default", rule: "default-assign+default-read" }, held(absent));
-      assert.equal(verdict(held(absent), role, "ro")?.allow, verdict(literal, role, "ro")?.allow ?? true, held(absent));
+      assert.deepEqual(verdict(literal, role, "ro"), { allow: true, rule: "default-read", layer: "default" }, literal);
     }
     // the literal path line is allowed too (default-read since the fast allow, plan D2)
-    assert.equal(verdict(literal, role, "ro")?.allow ?? true, true, literal);
+    assert.deepEqual(verdict(literal, role, "ro"), { allow: true, rule: "default-read", layer: "default" }, literal);
   }
   mustRefuse([held(inPath)]);
   if (winDrive) mustRefuse([held(absent)]);

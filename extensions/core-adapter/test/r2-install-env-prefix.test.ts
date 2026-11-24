@@ -26,7 +26,8 @@ const ROWS: [string, string[]][] = [
   ["FOO=1 pnpm install", []],
   ["npm_config_registry=http://x.invalid npm ci", []],
   ["env FOO=1 npm ci", []],
-  ["PATH=/x npm ci", []],
+  // PATH= steers which program runs: judged (owner decision, not the FOO-style names)
+  ["PATH=/x npm ci", ["danger-unknown-program"]],
   ["FOO=$(npm ci) ls", []],
   ["FOO=1 npm test", []],
   ["FOO=1 npm run build", []],
@@ -35,12 +36,14 @@ const ROWS: [string, string[]][] = [
   ["FOO=1 gh pr view 1", []],
   ["FOO=1", []],
 ];
+// a bare literal assignment is its own allowed segment (plan D2: `default-assign`)
+const ASSIGN_ONLY = new Set(["FOO=1"]);
 
 for (const [line, labels] of ROWS) {
   test(`labels of ${JSON.stringify(line)}`, { skip: posixOnly }, () => {
     for (const [role, ro] of ROLES) {
       const o = run(line, role, ro);
-      assert.deepEqual(o.result ?? {}, {}, `${role}`);
+      assert.deepEqual(o.result ?? {}, ASSIGN_ONLY.has(line) ? { allow: true, rule: "default-assign", layer: "default" } : {}, `${role}`);
       assert.deepEqual([...(o.dangers ?? [])].sort(), [...labels].sort(), `${role}`);
     }
   });

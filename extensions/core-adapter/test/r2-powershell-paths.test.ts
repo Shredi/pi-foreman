@@ -379,9 +379,9 @@ test("the child's own handoff files, a session folder file, .pi/scratch and .pi/
       assert.deepEqual(o.dangers ?? [], [], `${r}: ${line}`);
     }
   }
-  // the bash write of the handoff files and of .pi/scratch is no verdict either (the reference)
+  // the bash write of the handoff files is the fast allow since plan D2 (echo is a List A program, the target is an own root: `default-write-in`); .pi/scratch stays no verdict
   for (const line of [`echo x > ${fwd(hand)}/result.md`, `echo x > ${fwd(hand)}/plan.md`, `echo x > ${fwd(hand)}/work/x`]) {
-    for (const r of ROLES) assert.equal(ans(r, line, "bash", handRoots), "none", `${r}: ${line}`);
+    for (const r of ROLES) assert.equal(ans(r, line, "bash", handRoots), "allow:default-write-in", `${r}: ${line}`);
   }
   for (const r of ["foreman", "builder"] as const) assert.equal(ans(r, "echo x > .pi/scratch/x", "bash", handRoots), "none", r);
 });
