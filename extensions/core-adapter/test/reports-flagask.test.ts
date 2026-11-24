@@ -5,7 +5,7 @@ import { r11Rig } from "./_r11rig.ts";
 import { readRows, storeFor } from "../reports.ts";
 
 const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "unsure" });
-// C: a line that asks the owner is a judge-first one (git branch -D) the judge is unsure about; an install runs with no ask
+// C: a line that asks the owner is a judge-first one (git branch -D) the judge sends to the owner; an install runs with no ask
 const registry = {
   find: () => ({ id: "m" }),
   getProviderAuthStatus: () => ({ configured: false }),
@@ -58,3 +58,21 @@ for (const [name, config, tail] of [
     assert.equal(readRows(storeFor(r.project).file).length, tail.includes("report was written") ? 1 : 0);
   });
 }
+
+test("flag-ask: a judge that answers unsure refuses the line; nobody is asked, so no ask is there to flag", async (t) => {
+  const notes: string[] = [];
+  let selects = 0;
+  const commands = new Map<string, { handler: (a: string, c: unknown) => Promise<void> }>();
+  const unsure = { ...registry, complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "unsure", reason: "unsure" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  const ui = { notify: (m: string) => notes.push(m), confirm: async () => false, select: async () => (selects++, "allow once"), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
+  const r = await r11Rig(t, {}, {
+    ctx: { modelRegistry: unsure, ui },
+    config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } },
+    piExtra: { registerCommand: (n: string, d: { handler: (a: string, c: unknown) => Promise<void> }) => void commands.set(n, d) },
+  });
+  const res = await r.call("bash", { command: "git branch -D old-topic" });
+  assert.equal(res?.block, true);
+  assert.equal(selects, 0);
+  await commands.get("foreman")!.handler("flag-ask needless", r.ctx);
+  assert.equal(readRows(storeFor(r.project).file).length, 0);
+});

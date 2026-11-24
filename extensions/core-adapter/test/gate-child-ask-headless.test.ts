@@ -44,3 +44,22 @@ test("headless parent: the launch binding has no askDir, and the child's ask is 
   assert.deepEqual([rec.verdict, rec.kind], ["deny", "child"]);
   assert.match(String(rec.reason), new RegExp(`^${NO_PANE_TEXT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} The call was: danger-git: changes git history`));
 });
+
+test("headless parent: a child whose judge answers unsure is refused (no ask, no dialog row), not asked", async (t: T) => {
+  const parent = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: registry(ALLOW) }, config });
+  const input: Record<string, unknown> = { agent: "builder", task: "go" };
+  await parent.launch(input);
+  const binding = (input.extensionBindings as Record<string, Record<string, unknown>>)[BINDING_NS];
+  const prev = process.env[BINDINGS_ENV];
+  process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { ...binding } });
+  t.after(() => {
+    if (prev === undefined) delete process.env[BINDINGS_ENV];
+    else process.env[BINDINGS_ENV] = prev;
+  });
+  const child = await r11Rig(t, {}, { ctx: { modelRegistry: registry(JSON.stringify({ verdict: "unsure", reason: "cannot tell" })) }, config, child: true });
+  const res = await child.call("bash", { command: "git branch -D old-branch" });
+  assert.ok(res?.block);
+  assert.match(String(res.reason), /^pi-foreman: refused: .*Nobody is asked/);
+  const recs = fs.readFileSync(gateLogFile(child.agentDir), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
+  assert.equal(recs.filter((x) => x.layer === "dialog").length, 0);
+});

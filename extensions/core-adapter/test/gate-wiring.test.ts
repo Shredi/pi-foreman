@@ -22,7 +22,7 @@ function fakeRegistry(replies: Reply[], found = true) {
   };
   return { registry, calls };
 }
-const V = (verdict: string, reason: string | null): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: `because ${reason}` });
+const V = (verdict: string, reason: string | null): string => JSON.stringify({ verdict, ...(verdict === "owner" ? { class: "data-loss" } : {}), reason: `because ${reason}` });
 // presence off: an owner dialog awaits the presence probe's detached child, which keeps no event loop alive in a bare test process
 const config = { providers: { fake: { roles: { review: { model: "m" } } } }, presence: { enabled: false } };
 const DANGER = "git branch -D old-topic"; // danger-git: judge-first
@@ -76,7 +76,7 @@ test("a permissions file write is a floor deny for every kind of session", async
 });
 
 test("a default allow writes a default record and no judge call", async (t) => {
-  const r = await rig(t, [V("unsure", "judge")]);
+  const r = await rig(t, [V("owner", "judge")]);
   await r.call("bash", { command: "git status" });
   const rec = r.log().at(-1)!;
   assert.deepEqual([rec.layer, rec.verdict, rec.rule], ["default", "allow", "default-git-read"]);
@@ -84,7 +84,7 @@ test("a default allow writes a default record and no judge call", async (t) => {
 });
 
 test("a call nothing names runs: a no-rule record, no judge call", async (t) => {
-  const r = await rig(t, [V("unsure", "judge")]);
+  const r = await rig(t, [V("owner", "judge")]);
   assert.equal(await r.call("bash", { command: "somecmd --flag" }), undefined);
   assert.deepEqual([r.log().at(-1)!.layer, r.log().at(-1)!.verdict], ["mode", "allow"]);
   assert.equal(r.reg.calls.length, 0);
@@ -113,8 +113,8 @@ test("judge clear runs the call and logs a judge record; an identical repeat is 
   assert.equal(r.asked.length, 0);
 });
 
-test("judge unsure opens the dialog with the judge's reason; failures and a missing model ask too", async (t) => {
-  const esc = await rig(t, [V("unsure", null)], { selects: ["allow once"] });
+test("a judge owner verdict opens the dialog with the judge's reason; failures and a missing model are refused, nobody is asked", async (t) => {
+  const esc = await rig(t, [V("owner", null)], { selects: ["allow once"] });
   assert.equal(await esc.call("bash", { command: DANGER }), undefined);
   assert.match(esc.asked[0].title, /cause: danger-git/);
   assert.match(esc.asked[0].title, /classifier: because null/);
@@ -129,8 +129,18 @@ test("judge unsure opens the dialog with the judge's reason; failures and a miss
   assert.equal(none.log().find((x) => x.layer === "classifier")!.rule, "judge:no_model");
 });
 
-test("no UI: a judge-first call the judge is unsure of, and an ask-kind floor, are denied at once with the no-pane text", async (t) => {
-  const r = await rig(t, [V("unsure", null)], { hasUI: false });
+test("judge unsure is a refusal with the judge's reason: no dialog, a deny record", async (t) => {
+  const r = await rig(t, [V("unsure", "judge")], { selects: ["allow once"] });
+  const res = await r.call("bash", { command: DANGER });
+  assert.equal(res?.block, true);
+  assert.match(String(res?.reason), /^pi-foreman: refused: .*because judge/);
+  assert.equal(r.asked.length, 0);
+  const rec = r.log().find((x) => x.layer === "classifier")!;
+  assert.deepEqual([rec.verdict, rec.rule], ["deny", "judge:model"]);
+});
+
+test("no UI: a judge-first call the judge sends to the owner, and an ask-kind floor, are denied at once with the no-pane text", async (t) => {
+  const r = await rig(t, [V("owner", null)], { hasUI: false });
   const res = await r.call("bash", { command: DANGER });
   assert.equal(res?.block, true);
   assert.match(String(res?.reason), /nobody is at this session \(no pane\)\. The owner is absent/);
@@ -140,7 +150,7 @@ test("no UI: a judge-first call the judge is unsure of, and an ask-kind floor, a
 });
 
 test("deny and stop blocks every later gated call until the next user prompt", async (t) => {
-  const r = await rig(t, [V("unsure", null)], { selects: ["deny and stop"] });
+  const r = await rig(t, [V("owner", null)], { selects: ["deny and stop"] });
   assert.equal((await r.call("bash", { command: DANGER }))?.block, true);
   assert.match(String((await r.call("bash", { command: "somecmd" }))?.reason), /asked you to stop/);
   await r.ownerPrompt("go on");
@@ -148,7 +158,7 @@ test("deny and stop blocks every later gated call until the next user prompt", a
 });
 
 test("the log carries the shape, never the raw command, and the child session logs too", async (t) => {
-  const r = await rig(t, [V("unsure", null)], { child: true });
+  const r = await rig(t, [V("owner", null)], { child: true });
   await r.call("bash", { command: "curl -X POST -H 'Authorization: Bearer sk-abcdef0123456789abcdef' https://example.com/x && git reset --hard" });
   const rec = r.log().at(-1)!;
   assert.equal(rec.kind, "child");

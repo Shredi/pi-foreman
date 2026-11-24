@@ -122,7 +122,7 @@ type Expect = [string, number, number, boolean?];
 // later guard (self_ruling, the shell write guard) still refuses is marked blocked: the gate's allow does not skip those.
 const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
-  own_async_results_python_read: ["blocked:judge:danger-inline-code", 0, 2, true], // a refusal now, not a dialog; item 5: an unreadable verdict is asked for once more (2 calls); PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no judge verdict, so the owner is asked
+  own_async_results_python_read: ["blocked:judge:danger-inline-code", 0, 2, true], // a refusal now, not a dialog; item 5: an unreadable verdict is asked for once more (2 calls); PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no valid judge verdict, so the call is refused
   handoff_ruling_for_cat: [CLASSIFIED, 0, 0],
   cp_ruling_into_scratch: [OK, 0, 0],
   usage_ls_grep_node_version: [OK, 0, 0],
@@ -205,7 +205,7 @@ for (const c of FX.selfModTool) {
 }
 
 // item 6: the closed verdict. Every reply is checked with a line of its own (a deny is cached per session by input).
-// C: the judge answers only clear or unsure; every fixture reply (the old allow/deny/escalate shapes included) is no valid clear and asks the owner
+// the judge answers clear, refuse, owner (+ class) or read; every fixture reply (the old allow/deny/escalate/unsure shapes included) is no valid clear and is refused
 FX.verdicts.forEach((c, i) => {
   const want = "blocked:judge:danger-git";
   test(`r16 verdict ${c.name}: ${want}`, async () => {

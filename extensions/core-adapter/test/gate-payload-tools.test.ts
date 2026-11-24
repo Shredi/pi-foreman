@@ -141,7 +141,7 @@ test("a payload tool with no review model and no UI denies within 1 s", async (t
 });
 
 // An unusable judge reply is no clear; it is a refusal with its reason in every session kind (the owner is not asked).
-test("an invalid judge reply in a headless session denies with the no-pane text", async (t) => {
+test("an invalid judge reply in a headless session is refused with the judge-answer text", async (t) => {
   const reg = fakeRegistry(["not json"]);
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: reg.registry }, config });
   const res = await r.call("bash", { command: "git branch -D old-branch" });

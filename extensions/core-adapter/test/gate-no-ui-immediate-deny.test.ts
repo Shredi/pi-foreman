@@ -1,5 +1,5 @@
 // r79 items 5, 11 (was R41): a session without a UI (ctx.hasUI false: print / headless) never waits for an answer. Every owner ask (an ask-kind
-// floor, a judge that is unsure, an unreachable or missing judge model) is denied at once with the no-pane text; ui.select is never reached.
+// floor, a judge that sends the owner, an unreachable or missing judge model) is denied at once with the no-pane text; ui.select is never reached.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
@@ -21,7 +21,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], modelRegistry: unknown) {
   return r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", ui, modelRegistry }, config: { providers: { fake: { roles: { review: { model: "m" } } } } } });
 }
 
-test("no UI + a judge that is unsure: an immediate deny with the no-pane text, no dialog", async (t) => {
+test("no UI + a judge that sends the owner: an immediate deny with the no-pane text, no dialog", async (t) => {
   const r = await rig(t, registry(ESCALATE));
   const t0 = Date.now();
   const res = await r.call("bash", { command: JUDGE_FIRST_LINE });
@@ -46,5 +46,13 @@ test("no UI + an unreachable classifier (failing provider; no model): an immedia
     assert.equal(res?.block, true);
     assert.match(String(res?.reason), /^pi-foreman: refused: /);
   }
+  assert.equal(selects, 0);
+});
+
+test("no UI + a judge that answers unsure: a refusal (not the no-pane text), no dialog", async (t) => {
+  const r = await rig(t, registry(JSON.stringify({ verdict: "unsure", reason: "not covered" })));
+  const res = await r.call("bash", { command: JUDGE_FIRST_LINE });
+  assert.equal(res?.block, true);
+  assert.match(String(res?.reason), /^pi-foreman: refused: .*Nobody is asked/);
   assert.equal(selects, 0);
 });

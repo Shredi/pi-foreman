@@ -29,3 +29,13 @@ test("flag-ask notice, trace off, second flag of the same command: the report al
   assert.ok(flagged[1].endsWith("the report already exists)."), flagged[1]);
   assert.equal(readRows(storeFor(r.project).file).length, 1);
 });
+
+test("flag-ask notice: a refused line (judge unsure) opens no dialog", async (t) => {
+  let selects = 0;
+  const unsure = { ...registry, complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "unsure", reason: "unsure" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  const ui = { notify: () => undefined, confirm: async () => false, select: async () => (selects++, "allow once"), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: unsure, ui }, config: { presence: { enabled: false }, trace: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } } });
+  const res = await r.call("bash", { command: "git branch -D old-topic" });
+  assert.equal(res?.block, true);
+  assert.equal(selects, 0);
+});

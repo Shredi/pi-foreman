@@ -1,10 +1,10 @@
-// PR C: one representative line per kind of the judge-first list (defaults.ts JUDGE_FIRST). A hit goes to the judge; clear runs; unsure opens the owner dialog
-// (foreman) or is refused/asked of the parent (child). Lines of the kinds PR C removed run with no judge call.
+// PR C: one representative line per kind of the judge-first list (defaults.ts JUDGE_FIRST). A hit goes to the judge; clear runs; an owner verdict with a class opens the owner dialog
+// (foreman) or is refused/asked of the parent (child); unsure is a refusal. Lines of the kinds PR C removed run with no judge call.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
 
-const V = (verdict: string): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: "because test" });
+const V = (verdict: string): string => JSON.stringify({ verdict, ...(verdict === "owner" ? { class: "data-loss" } : {}), reason: "because test" });
 // presence off: an owner dialog awaits the presence probe's detached child, which keeps no event loop alive in a bare test process
 const config = { providers: { fake: { roles: { review: { model: "m" } } } }, presence: { enabled: false } };
 
@@ -51,8 +51,8 @@ for (const [kind, line, foreman] of KINDS) {
       assert.equal(r.asked.length, 0);
     });
 
-    test(`${kind} (${who}): unsure ${child ? "is refused or asked of the parent, never the owner dialog" : "opens the owner dialog"}`, async (t) => {
-      const r = await rig(t, "unsure", { child, selects: ["deny with comment"] });
+    test(`${kind} (${who}): an owner verdict ${child ? "is refused or asked of the parent, never the owner dialog" : "opens the owner dialog"}`, async (t) => {
+      const r = await rig(t, "owner", { child, selects: ["deny with comment"] });
       const res = await r.call("bash", { command: line });
       assert.equal(r.calls.length, 1);
       assert.equal(res?.block, true);
@@ -61,6 +61,15 @@ for (const [kind, line, foreman] of KINDS) {
         assert.equal(r.asked.length, 1);
         assert.match(r.asked[0].title, new RegExp(`cause: ${kind}`));
       }
+    });
+
+    test(`${kind} (${who}): unsure is refused, nobody is asked`, async (t) => {
+      const r = await rig(t, "unsure", { child, selects: ["allow once"] });
+      const res = await r.call("bash", { command: line });
+      assert.equal(r.calls.length, 1);
+      assert.equal(res?.block, true);
+      assert.match(String(res?.reason), /^pi-foreman: (refused|denied \(danger-write-outside\)): .*Nobody is asked/);
+      assert.equal(r.asked.length, 0);
     });
   }
 }

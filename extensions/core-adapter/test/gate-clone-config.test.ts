@@ -54,12 +54,12 @@ test("clone config: git clone without config is unchanged", () => {
 });
 
 type T = Parameters<typeof r11Rig>[0];
-const verdictText = (verdict: string): string => JSON.stringify({ verdict: verdict === "unsure" ? "owner" : verdict, ...(verdict === "unsure" ? { class: "data-loss" } : {}), reason: "stub" });
+const verdictText = (verdict: string): string => JSON.stringify({ verdict, ...(verdict === "owner" ? { class: "data-loss" } : {}), reason: "stub" });
 const ROLES = ["explorer", "builder", "reviewer"];
 
 for (const kind of ["main", "child"] as const) {
-  for (const verdict of ["unsure", "clear"] as const) {
-    test(`clone config end to end: ${kind}, judge says ${verdict}: ${verdict === "unsure" ? "a floored key asks (no owner answer or parent: refused)" : "a floored key runs"}, a harmless clone never reaches the judge`, async (t: T) => {
+  for (const verdict of ["owner", "unsure", "clear"] as const) {
+    test(`clone config end to end: ${kind}, judge says ${verdict}: ${verdict === "owner" ? "a floored key asks (no owner answer or parent: refused)" : verdict === "unsure" ? "a floored key is refused, nobody is asked" : "a floored key runs"}, a harmless clone never reaches the judge`, async (t: T) => {
       const saved = { b: process.env[BINDINGS_ENV], c: process.env.FOREMAN_CHECKOUT };
       t.after(() => {
         if (saved.b === undefined) delete process.env[BINDINGS_ENV]; else process.env[BINDINGS_ENV] = saved.b;
@@ -86,8 +86,9 @@ for (const kind of ["main", "child"] as const) {
       };
       for (const l of [`git clone --config core.sshCommand=x ${U}`, `git clone ${U} -c core.hooksPath=h`]) {
         const r = await rule(l);
-        assert.equal(r.blocked, verdict === "unsure", l);
-        if (verdict === "unsure") assert.equal(r.rule, "danger-git-config", l);
+        assert.equal(r.blocked, verdict !== "clear", l);
+        if (verdict === "owner") assert.equal(r.rule, "danger-git-config", l);
+        else if (verdict === "unsure") assert.equal(r.rule, "judge:danger-git-config", l);
         else assert.equal(r.rule, "judge:danger-git-config", l);
       }
       const ok = await rule(`git clone -c user.name=x ${U}`);
