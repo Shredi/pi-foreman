@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseBenchArgs, runBench } from "../extensions/core-adapter/judgebench.ts";
+import { checkModels, parseBenchArgs, runBench } from "../extensions/core-adapter/judgebench.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -65,6 +65,7 @@ async function main() {
   const { own, rest } = splitArgs(process.argv.slice(2));
   const args = parseBenchArgs(rest, path.join(root, "bench", "judge-corpus", "corpus.jsonl"));
   if (own.headless && !args.validate) return runHeadless(rest);
+  if (!args.validate) checkModels({ find: () => true }, args.models); // provider/id syntax first: nothing is started for a typo
   const registry = args.validate ? null : await buildRegistry(own.piRoot);
   await runBench({ args, registry, agentDir: agentDir(), log: (l) => console.log(l), outDir: process.env.FOREMAN_OUT || os.tmpdir() });
 }

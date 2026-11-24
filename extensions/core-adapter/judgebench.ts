@@ -192,7 +192,7 @@ async function runRow(row: CorpusRow, o: BenchOptions): Promise<RowResult> {
 
 /** All rows for one model, `concurrency` at a time; results keep the corpus order. */
 export async function runModel(o: BenchOptions): Promise<RowResult[]> {
-  const out = new Array<RowResult>(o.rows.length);
+  const out: RowResult[] = Array.from({ length: o.rows.length }) as RowResult[];
   let next = 0;
   const worker = async (): Promise<void> => {
     for (;;) {

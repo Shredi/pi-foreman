@@ -60,6 +60,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, keyed by workspace, repository and branch, with `foreman findings` to list, dismiss or export them, `foreman rounds` to count the review rounds of a change and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
+| [judge-bench](#judge-bench) | ops |  | opt-in | Runs the gate judge over a synthetic corpus of logged command shapes and reports false-allow in danger classes, unsure/refuse/owner on harmless rows, invalid rate, latency and tokens. | `node scripts/judge_bench.mjs --validate` | [bench](bench.md#judge-bench) |
 | [bench-climb](#bench-climb) | ops |  | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
 | [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a work tree clean of project files: the harness's own `.workflow/` and scratch files do not count). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent brief arrives, or the user changes the tier. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [read-budgets](#read-budgets) | ceremony |  | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
@@ -380,6 +381,12 @@ No config key.
 ### bench
 
 **Benchmark.** Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`.
+
+No config key.
+
+### judge-bench
+
+**Judge bench.** Runs the gate judge over a synthetic corpus of logged command shapes and reports false-allow in danger classes, unsure/refuse/owner on harmless rows, invalid rate, latency and tokens.
 
 No config key.
 
@@ -983,6 +990,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [presets](#presets) | `/foreman config`, `/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`, `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` |
 | [findings](#findings) | `foreman findings`, `foreman rounds`, `foreman retro models` |
 | [bench](#bench) | `foreman bench`, `foreman bench review`, `foreman bench review-table` |
+| [judge-bench](#judge-bench) | `/judge-bench` |
 | [bench-climb](#bench-climb) | `foreman bench review --mode climb --rungs <a>,<b>` |
 | [ceremony-tiers](#ceremony-tiers) | `/ceremony`, `/foreman plan` |
 | [read-budgets](#read-budgets) | `/foreman budget` |

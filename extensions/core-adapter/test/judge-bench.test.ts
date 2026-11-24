@@ -100,7 +100,8 @@ test("judgeCallOf: fixture paths, helper folders for every role but main", () =>
 
 // ------------------------------------------------------------------ the runner with a fake registry
 
-type Reply = string | Error | "hang";
+/** A reply text, an error to throw, or the string "hang" (never answers). */
+type Reply = string | Error;
 /** `script(command)` gives the reply (or replies, one per call) for a row's command; usage is attached unless `noUsage`. */
 function fake(script: (command: string, call: number) => Reply, usage: Record<string, number> | null = { input: 100, output: 10, cacheRead: 40, cacheWrite: 5 }) {
   const calls: { command: string; options: Record<string, unknown> }[] = [];

@@ -8152,7 +8152,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   });
 
-  // Hidden (not in any help text): the judge bench inside a headless pi, so a provider an extension registers (claude-bridge) resolves; scripts/judge_bench.mjs --headless starts it.
+  // Hidden: the judge bench inside a headless pi, so a provider an extension registers (claude-bridge) resolves; scripts/judge_bench.mjs --headless starts it.
   pi.registerCommand("judge-bench", {
     description: "Internal: judge bench (scripts/judge_bench.mjs --headless)",
     handler: async (args, ctx) => {

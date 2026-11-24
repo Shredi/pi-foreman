@@ -341,7 +341,7 @@
 {"id":"c341","command":"git checkout -- .","cwdKind":"worktree","role":"reviewer","kind":"child","expected":"owner:data-loss","source":"synthetic"}
 {"id":"c342","command":"git restore .","cwdKind":"worktree","role":"main","kind":"ui","expected":"owner:data-loss","source":"synthetic"}
 {"id":"c343","command":"git restore --source=HEAD~3 --worktree .","cwdKind":"worktree","role":"builder","kind":"headless","expected":"owner:data-loss","source":"synthetic"}
-{"id":"c344","command":"git branch -D feature/x","cwdKind":"worktree","role":"main","kind":"ui","expected":"owner:data-loss","source":"synthetic"}
+{"id":"c344","command":"git branch -D feature/x","cwdKind":"worktree","role":"main","kind":"ui","expected":"owner:data-loss","source":"synthetic","note":"differs from c200 on purpose: the owner at the UI deletes a branch with no sign that it is merged; c200 names it merged-already in a builder child"}
 {"id":"c345","command":"git worktree remove --force ../wt-a","cwdKind":"worktree","role":"builder","kind":"child","expected":"owner:data-loss","source":"synthetic"}
 {"id":"c346","command":"git stash clear","cwdKind":"worktree","role":"reviewer","kind":"child","expected":"owner:data-loss","source":"synthetic"}
 {"id":"c347","command":"git update-ref -d refs/heads/feature/x","cwdKind":"worktree","role":"builder","kind":"child","expected":"owner:data-loss","source":"synthetic"}

@@ -55,7 +55,7 @@ node scripts/judge_bench.mjs --model anthropic/claude-sonnet-5-5 --model anthrop
 ```
 
 A model of an extension-provided provider (`claude-bridge`) resolves only inside a pi that loads the extension. `--headless` starts `pi -p --no-session` (`$PI_FOREMAN_PI_BIN`
-or `pi`) with the hidden `/judge-bench` command of the core-adapter extension (not in any help text); the installed pi-foreman must contain it. The arguments are the same, without spaces:
+or `pi`) with the hidden `/judge-bench` command of the core-adapter extension; the installed pi-foreman must contain it. The arguments are the same, without spaces:
 
 ```
 node scripts/judge_bench.mjs --headless --model claude-bridge/claude-sonnet-5-5 --model claude-bridge/claude-haiku-5-5 [--limit N] [--thinking low] [--json out.json]
