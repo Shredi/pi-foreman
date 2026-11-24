@@ -342,8 +342,9 @@ test("self-test: a gate that blocks harmless for loops fails the twin property",
 });
 
 test("self-test: a gate that closes one marked gap makes the stale check name it", { skip: posixOnly }, () => {
-  const fake: Oracle = (command, role) => (command.startsWith("find ") ? "judge" : real(command, role));
-  const { found } = checkDanger(fake, [...depthOneCases(), ...pairCases(KNOWN_GAPS)]);
+  const fake: Oracle = (command, role) => (command.includes("-exec ") ? "judge" : real(command, role));
+  // the remaining marks (find-exec, npx) fail only inside the seeded sample today: depth one no longer shows one
+  const { found } = checkDanger(fake, [...depthOneCases(), ...pairCases(KNOWN_GAPS), ...sampleCases(SEED, N_DANGER.d2, N_DANGER.d3)]);
   const stale = staleGaps(sortFound(found, KNOWN_GAPS).matched, KNOWN_GAPS);
   assert.deepEqual(stale.map((g) => g.id), ["find-exec"]);
   assert.ok(describeStale(stale[0]).includes("gap find-exec is closed: remove its line from KNOWN_GAPS"));
