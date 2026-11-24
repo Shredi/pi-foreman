@@ -121,7 +121,7 @@ let lastPrompts: string[] = [];
 
 async function labeledOutcome(t: import("node:test").TestContext, role: string, mode: string, line: string): Promise<string> {
   lastPrompts = [];
-  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async (_m: unknown, req: { messages?: { content?: unknown }[] }) => { lastPrompts.push(String(req.messages?.[0]?.content ?? "")); return text(ALLOW_VERDICT); } };
+  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async (_m: unknown, req: { messages?: { content?: string }[] }) => { lastPrompts.push(req.messages?.[0]?.content ?? ""); return text(ALLOW_VERDICT); } };
   const prev = process.env[BINDINGS_ENV];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", role, launchId: "l1", kind: "first", workspace: "", perms: { mode, childDeny: true } } });
   t.after(() => {

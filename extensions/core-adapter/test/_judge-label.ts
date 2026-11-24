@@ -9,8 +9,8 @@ export function labelJudge(reply: string = REFUSE_REPLY): { prompts: string[]; r
   const registry = {
     find: () => ({ id: "m" }),
     getProviderAuthStatus: () => ({ configured: false }),
-    complete: async (_m: unknown, req: { messages?: { content?: unknown }[] }) => {
-      prompts.push(String(req.messages?.[0]?.content ?? ""));
+    complete: async (_m: unknown, req: { messages?: { content?: string }[] }) => {
+      prompts.push(req.messages?.[0]?.content ?? "");
       return { role: "assistant", content: [{ type: "text", text: reply }], usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop" };
     },
   };
