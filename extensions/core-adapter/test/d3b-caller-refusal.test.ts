@@ -21,10 +21,10 @@ after(() => {
 
 type T = Parameters<typeof r11Rig>[0];
 const ASK = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
-const registry = () => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: ASK }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
+const registry = (reply = ASK) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { gate: { askTimeoutMs: 600000 }, presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } } };
 
-async function childOf(t: T, role: string) {
+async function childOf(t: T, role: string, reply?: string) {
   const dir = fs.realpathSync(mkTestTmp("pf-d3b-caller-"));
   t.after(() => rmTestTmp(dir));
   const scratch = path.join(dir, "scratch");
@@ -36,7 +36,7 @@ async function childOf(t: T, role: string) {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  return r11Rig(t, {}, { ctx: { modelRegistry: registry() }, config, child: true });
+  return r11Rig(t, {}, { ctx: { modelRegistry: registry(reply) }, config, child: true });
 }
 
 const clearing = (n: string): string[] => [`env -i sh -c 'rm -rf $${n}/x'`, `env - sh -c 'rm -rf $${n}/x'`, `env -i -- bash -c 'rm -rf $${n}/x'`, `exec -c bash -c 'rm -rf $${n}/x'`, `env -u ${n} sh -c 'rm -rf $${n}/x'`];
@@ -58,4 +58,13 @@ test("caller path (builder): a plain $FOREMAN_OUT delete still runs", { skip: po
   const child = await childOf(t, "builder");
   assert.equal(await child.call("bash", { command: "rm -rf $FOREMAN_OUT/x" }), undefined);
   assert.equal(await child.call("bash", { command: "env FOO=1 sh -c 'rm -rf $FOREMAN_OUT/x'" }), undefined);
+});
+
+test("caller path (builder): a judge that answers unsure refuses the shapes too", { skip: posixOnly }, async (t) => {
+  const child = await childOf(t, "builder", JSON.stringify({ verdict: "unsure", reason: "cannot tell" }));
+  for (const command of clearing("FOREMAN_OUT")) {
+    const res = await child.call("bash", { command });
+    assert.equal(res?.block, true, command);
+    assert.match(String(res?.reason), /pi-foreman: refused: /, command);
+  }
 });

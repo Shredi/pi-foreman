@@ -282,15 +282,14 @@ test("an ask without the hash field is never parked: no wake notice and the re-a
 
 // ------------------------------------------------------------------ child side: the hash of the whole input
 
-async function childRig(t: T, askDir: string, ctx: Record<string, unknown>) {
+async function childRig(t: T, askDir: string, ctx: Record<string, unknown>, reply = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because" })) {
   const prev = process.env[BINDINGS_ENV];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: "builder", launchId: "L9", kind: "first", model: null, askDir } });
   t.after(() => {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const escalate = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because" });
-  const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: escalate }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   return r11Rig(t, {}, { ctx: { modelRegistry: reg, ...ctx }, config: cfg(), child: true });
 }
 
@@ -311,4 +310,14 @@ test("child gate: ask.md carries a hash of the whole tool input; another field o
   assert.match(String(hashes[0]), /^[0-9a-f]{64}$/);
   assert.equal(hashes[0], hashes[1]);
   assert.notEqual(hashes[0], hashes[2]);
+});
+
+test("child gate: a judge that answers unsure refuses the call: nobody is asked, no ask.md", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-ask-unsure-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const r = await childRig(t, dir, {}, JSON.stringify({ verdict: "unsure", reason: "because" }));
+  const res = await r.call("bash", { command: "git branch -D old-topic", timeout: 5 });
+  assert.equal(res?.block, true);
+  assert.match(String(res?.reason), /pi-foreman: refused: .*Nobody is asked/);
+  assert.equal(readChildAsk(dir), undefined);
 });

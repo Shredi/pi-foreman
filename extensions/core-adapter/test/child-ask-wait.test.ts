@@ -220,15 +220,14 @@ for (const reason of ["quit", "new", "resume", "fork", undefined]) {
   });
 }
 
-async function childRig(t: T, askDir: string, ctx: Record<string, unknown> = {}) {
+async function childRig(t: T, askDir: string, ctx: Record<string, unknown> = {}, reply = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because" })) {
   const prev = process.env[BINDINGS_ENV];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: "builder", launchId: "L9", kind: "first", model: null, askDir } });
   t.after(() => {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const escalate = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because" });
-  const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: escalate }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  const reg = { ...registry(), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   return r11Rig(t, {}, { ctx: { modelRegistry: reg, ...ctx }, config: cfg({ gate: { askTimeoutMs: 50 } }), child: true });
 }
 const CMD = { command: "git branch -D old-topic" };
@@ -241,6 +240,15 @@ test("child gate: a missing ask dir is the gone denial; the child creates no dir
   assert.match(String(res?.reason), /the session that started this helper has ended or no longer watches it/);
   assert.equal(fs.existsSync(dir), false);
   assert.equal(r.events("dialog").at(-1)!.decision, "parent-gone");
+});
+
+test("child gate: a judge that answers unsure refuses the call: no ask.md, no dialog", async (t) => {
+  const dir = tmp(t);
+  const r = await childRig(t, dir, {}, JSON.stringify({ verdict: "unsure", reason: "because" }));
+  const res = await r.call("bash", CMD);
+  assert.equal(res?.block, true);
+  assert.match(String(res?.reason), /pi-foreman: refused: .*Nobody is asked/);
+  assert.equal(fs.existsSync(path.join(dir, "ask.md")), false);
 });
 
 test("child gate: the call's abort signal blocks the call, takes no ruling and leaves ask.md", async (t) => {

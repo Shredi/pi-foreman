@@ -71,3 +71,13 @@ test("the approval dialog for a child run's call: the file keeps tool and summar
   assert.equal(kept[0].tool, "bash");
   assert.match(reAskText(kept), /call to bash \(pip install requests\)/);
 });
+
+test("the session's own guard: a judge that answers unsure refuses the call; no dialog opens and none is stored", async (t: T) => {
+  const opened: string[] = [];
+  const r = await r11Rig(t, {}, { ctx: { ui: ui(hanging(opened)), modelRegistry: registry(JSON.stringify({ verdict: "unsure", reason: "cannot tell" })) }, config });
+  const res = await r.call("bash", { command: "git branch -D old-branch" });
+  assert.equal(res?.block, true);
+  assert.match(String(res?.reason), /pi-foreman: refused: .*Nobody is asked/);
+  assert.deepEqual(opened, []);
+  assert.equal(stored(r.agentDir, r.sessionId).length, 0);
+});
