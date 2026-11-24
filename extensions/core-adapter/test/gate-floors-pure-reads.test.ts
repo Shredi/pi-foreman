@@ -27,11 +27,6 @@ const body = `import { test } from "node:test";\n// writes ${G} and ${F}\nfor (c
 const ask57 = (target: string) => `cd extensions/core-adapter; grep -n "selfmod-state-read" *.ts | grep -v "^test" | head; cat > ${target} <<'EOF'\n${body}\nEOF\ncd ../..; node --test .workflow/scratch/probe3.test.ts 2>&1 | grep -E "^R "`;
 
 const ALLOWED = [
-  ASK56,
-  ASK56.replace(/^cd [^;]*; /, ""),
-  `tail -n 3 ${G} | sed -n 1p`,
-  `sed -n 1p x; tail -n 3 ${G} | grep -o rule`,
-  `grep -n gate.judge ${F}; sed -n 1p x`,
   `for f in ${PANES}; do grep -c x "$f"; done`,
   `tail -n 3 ${G} | grep -o 'rule[^,]*'`,
   ask57("../../.workflow/scratch/probe3.test.ts"),
@@ -42,6 +37,12 @@ test("pure reads of a protected file are no floor hit, main and child", () => {
 });
 
 const JUDGED: [string, string][] = [
+  // pins changed on purpose (round 2): a `sed` without -i beside a read segment is outside the silent set (its script may write what the parser cannot see), so the placed word goes to the judge, not to silence
+  [ASK56, "danger-config-keys"],
+  [ASK56.replace(/^cd [^;]*; /, ""), "danger-config-keys"],
+  [`tail -n 3 ${G} | sed -n 1p`, "danger-policy-file"],
+  [`sed -n 1p x; tail -n 3 ${G} | grep -o rule`, "danger-policy-file"],
+  [`grep -n gate.judge ${F}; sed -n 1p x`, "danger-config-keys"],
   [`for f in ${PANES}; do sed -n 1p "$f"; done`, "danger-policy-file"],
   [`for f in ${PANES}; do jq .x "$f"; done`, "danger-policy-file"],
   // the variable is bound on another statement: the parser does not place the word as read
@@ -100,7 +101,12 @@ const gate = (command: string, child: boolean) => gateEvaluate("bash", { command
 
 test("gateEvaluate: pure reads neither ask (main) nor block (builder); the loop with sed goes to the judge", { skip: posixOnly }, () => {
   for (const child of [false, true]) {
-    for (const l of [`tail -n 3 ${G} | sed -n 1p`, `grep -n gate.judge ${F}; sed -n 1p x`, `for f in ${PANES}; do grep -c x "$f"; done`]) {
+    // `tail … | sed -n 1p` and `grep … ; sed -n 1p x` are judge hits now (changed on purpose, round 2): the judge-first label, no owner floor ask, no child floor deny
+    for (const [l, rule] of [[`tail -n 3 ${G} | sed -n 1p`, "danger-policy-file"], [`grep -n gate.judge ${F}; sed -n 1p x`, "danger-config-keys"]]) {
+      const r = gate(l, child);
+      assert.equal(child ? r.danger?.name : (r.result as Res)?.rule, rule, `${child ? "child" : "main"} ${l}`);
+    }
+    for (const l of [`for f in ${PANES}; do grep -c x "$f"; done`]) {
       const r = gate(l, child).result as Res;
       assert.ok(!r?.ask && !r?.block || /selfmod|protected|child-read/.test(r?.rule ?? ""), `${child ? "child" : "main"} ${l}: ${JSON.stringify(r)}`);
       assert.notEqual(r?.rule, "floor-policy-file");
@@ -112,5 +118,32 @@ test("gateEvaluate: pure reads neither ask (main) nor block (builder); the loop 
     // a write keeps the floor
     const w = gate(`echo hi > ${G}`, child).result as Res;
     assert.equal(w?.rule, "floor-policy-file");
+  }
+});
+
+// round 2: a protected path inside a sed script, with no space to split it off, is never silent
+const H = "$HOME/.pi/agent/pi-foreman/state/gate/log.jsonl";
+const NOSPACE = [
+  `tail -n1 ${H} | sed -n "1w${H}"`,
+  `tail -n1 ${H} | sed -n "$w${H}"`,
+  `tail -n1 ${H} | sed -n "/x/w${H}"`,
+  `tail -n1 ${H} | sed -n "s/a/b/w${H}"`,
+  `tail -n1 ${H} | sed -n "w"${H}`,
+  `grep x ${H} | sed -n "1w${H}"`,
+];
+
+test("no-space sed write of a protected file is never silent, main and child", () => {
+  for (const l of NOSPACE) for (const e of [env, kid]) {
+    const h = hitOf(l, e);
+    assert.ok(h !== null, `${e.child ? "child" : "main"}: ${l}`);
+    assert.ok(h.kind === "judge" || h.kind === "ask" || h.kind === "deny", `${l}: ${h.kind}`);
+  }
+});
+
+test("gateEvaluate: no-space sed write of a protected file is never allowed, main and builder", { skip: posixOnly }, () => {
+  for (const child of [false, true]) for (const l of NOSPACE) {
+    const r = gate(l, child);
+    const res = r.result as Res;
+    assert.ok(res?.ask || res?.block || r.danger !== undefined, `${child ? "child" : "main"} ${l}: ${JSON.stringify(res)}`);
   }
 });

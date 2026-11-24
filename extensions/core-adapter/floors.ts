@@ -2388,7 +2388,9 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   const otherSegs = line.filter((s) => !clean.includes(s));
   const segWords = (s: ShellSegment): string[] => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)];
   const others = new Set(otherSegs.flatMap((s) => segWords(s).flatMap(wordsOf)));
-  const placed = (w: string): boolean => reads.has(unquote(w)) && !others.has(unquote(w));
+  // the silent exemption: every segment is a clean read, a loop word or a bare assignment; a `sed` or `jq` beside it may write what the parser cannot see, so a placed word goes to the judge
+  const silent = line.every((s) => cleanReadSegment(s, env) || LOOP_WORDS.has(base(s.program)) || (base(s.program) === "" && s.opaque === "assignment" && s.argv.length === 0));
+  const placed = (w: string): boolean => (!reading || silent) && reads.has(unquote(w)) && !others.has(unquote(w));
   // a protected word inside a larger word of a segment that is neither a clean read nor a loop header (a sed `w` command the parser does not see as a write) keeps the ask or deny
   const embedded = (w: string): boolean => otherSegs.some((s) => !LOOP_WORDS.has(base(s.program)) && segWords(s).some((x) => unquote(x) !== w && wordsOf(x).includes(w)));
   // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
@@ -2406,7 +2408,7 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
     }
   }
   if (UNREAD_KEYS.test(text)) {
-    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
+    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !((!reading || silent) && reads.has(x) && !others.has(x)));
     if (c !== undefined) {
       const why = `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`;
       return reading && !embedded(c) ? judgeHit("config-keys", why, c) : flag("config-keys", why, c);
