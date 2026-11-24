@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-import { diffGitSnapshots, parseGitConfig, parseGitConfigLines, takeGitSnapshot } from "../gitdrift.ts";
+import { GitDriftWatch, diffGitSnapshots, parseGitConfig, parseGitConfigLines, takeGitSnapshot } from "../gitdrift.ts";
 
 const HOME = os.tmpdir();
 
@@ -219,4 +219,44 @@ test("after an unparsable [ line, a following exec key asks", (t) => {
   fs.appendFileSync(config(dir), "[broken\n\tpager = evil\n");
   assert.match(drift(dir, before).join("\n"), /unparsed lines/);
   assert.deepEqual(parseGitConfig("[a]\n\tb = 1\n[broken\n\tpager = evil\n"), [["a.b", "1"]]);
+});
+
+test("prototype-named sections do not throw and are quiet", async (t) => {
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    const dir = tempRepo(t);
+    const before = takeGitSnapshot(dir, HOME);
+    fs.appendFileSync(config(dir), `[${name}]\n\tx = 1\n`);
+    // git section names allow no underscore, so `[__proto__]` is an unparsable line and fails closed (asks), without throwing
+    const expected = name === "__proto__" ? ["git:config: added (unparsed lines)"] : [];
+    assert.deepEqual(drift(dir, before), expected, name);
+    const state = fs.mkdtempSync(path.join(os.tmpdir(), "pf-drift-proto-"));
+    t.after(() => fs.rmSync(state, { recursive: true, force: true }));
+    fs.writeFileSync(config(dir), "[core]\n\tbare = false\n");
+    const w = new GitDriftWatch();
+    w.bind(state, dir, HOME);
+    fs.appendFileSync(config(dir), `[${name}]\n\tx = 1\n`);
+    assert.deepEqual(new GitDriftWatch().bind(state, dir, HOME), expected, name);
+  }
+});
+
+test("[constructor] beside a core.fsmonitor plant still asks for core.fsmonitor", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[constructor]\n\tx = 1\n[core]\n\tfsmonitor = /tmp/SECRET\n");
+  assert.deepEqual(drift(dir, before), ["git:config: added core.fsmonitor"]);
+});
+
+test("push.default added asks", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[push]\n\tdefault = upstream\n");
+  assert.deepEqual(drift(dir, before), ["git:config: added push.default"]);
+});
+
+test("branch.<b>.merge change plus push.default = upstream asks", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.writeFileSync(config(dir), fs.readFileSync(config(dir), "utf8").replace("merge = refs/heads/main", "merge = refs/heads/other"));
+  fs.appendFileSync(config(dir), "[push]\n\tdefault = upstream\n");
+  assert.match(drift(dir, before).join("\n"), /push\.default/);
 });

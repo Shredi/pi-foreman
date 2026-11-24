@@ -590,6 +590,7 @@ function routineRemote(branch: string, a: FileSnap, b: FileSnap): boolean {
 const EXEC_SECTIONS = new Set([
   "filter", "alias", "credential", "protocol", "sendemail", "pager", "difftool", "mergetool", "safe", "web", "browser", "man", "include",
   "hook", "guitool", "imap", "instaweb", "lfs", "ssh", "extensions", "bundle", "http", "gpg", "remote", "trace2", "fsmonitor",
+  "push", // redirects where a bare `git push` lands (push.default, autoSetupRemote, ...); with a branch.<b>.merge change it reaches main
 ]);
 const EXEC_VARS: Record<string, RegExp> = {
   core: /^(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|worktree|attributesfile|alternaterefscommand|bare|repositoryformatversion|unsetenvvars)$/,
@@ -624,7 +625,7 @@ function execCapableKey(key: string): boolean {
   const section = key.slice(0, first);
   const variable = key.slice(last + 1);
   if (EXEC_SECTIONS.has(section)) return true;
-  return EXEC_VARS[section]?.test(variable) ?? false;
+  return Object.hasOwn(EXEC_VARS, section) && EXEC_VARS[section].test(variable); // own keys only: [constructor] must not reach Object.prototype
 }
 
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */
