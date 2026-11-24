@@ -2407,8 +2407,8 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
   // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
   const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line, env);
-  // a heredoc inside a substitution (`gzip $(cat <<E … E)`): its output becomes another command's arguments, so its body is no data for the policy-file scan
-  const policyData = data && !line.some((s) => s.heredoc && s.wrappers.some((w) => w === "$(" || w === "`"));
+  // a line with a command or process substitution (`gzip $(cat <<E … E)`, `cat <<E | tee "$(cat)"`): the body or its output can become another command's arguments, so the body is no data for the policy-file scan
+  const policyData = data && !line.some((s) => s.wrappers.some((w) => w === "$(" || w === "`"));
   const words = wordsOf(policyData ? blankHeredocBodies(text) : text);
   const cfgWords = data ? wordsOf(blankHeredocBodies(text)) : words;
   // a Pi session file (`*.jsonl`) is no hit here: a line that only reads one (a transcript read through a path variable) is not refused; parsed write targets and path fields keep the entry

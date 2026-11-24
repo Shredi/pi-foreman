@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { lineFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
+import { gateEvaluate } from "../gate.ts";
+import type { GateRoots } from "../pathrules.ts";
 
 const home = path.join(path.sep, "h", "me");
 const env: FloorEnv = { cwd: path.join(path.sep, "w", "repo"), home, agentDir: path.join(home, ".pi", "agent"), writeRoots: [path.join(path.sep, "w", "repo"), path.join(path.sep, "s", "scr"), path.join(path.sep, "tmp")], protectedBranches: ["release"], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
@@ -54,4 +56,41 @@ test("the top-level data heredoc onto an own scratch file stays silent", () => {
   const l = `cat > ${path.join(path.sep, "s", "scr", "probe.test.ts")} <<'EOF'\n${P}\nEOF\nnode --test ${path.join(path.sep, "s", "scr", "probe.test.ts")}`;
   assert.equal(shape(l, env), null);
   assert.equal(shape(l, { ...env, child: true }), null);
+});
+
+// the pipe feeds the protected path into a substitution of the same line: the top-level body is no data there
+const body = (tail: string): string => `cat <<'EOF' ${tail}\n${P}\nEOF`;
+const TAILS = [
+  `| tee "$(cat)"`,
+  `| cat > "$(cat)"`,
+  `| cat >> "$(head -1)"`,
+  `| tee -a "$(head -1)"`,
+  `| grep . | tee $(cat)`,
+  `| cat | cat | tee "$(cat)"`,
+  `| tee "$(grep .)"`,
+  `| tee "$(tail -n1)"`,
+  `| tee "$(sed -n 1p)"`,
+  "| tee `cat`",
+  `| tee >(cat > "$(cat)")`,
+];
+
+test("a piped heredoc whose body a substitution on the same line reads still asks (main) and denies (child)", () => {
+  const lines = [...TAILS.map(body), `tee /dev/null <<'EOF' | tee "$(cat)"\n${P}\nEOF`];
+  for (const l of lines) {
+    assert.equal(shape(l, env), "ask/floor-policy-file", `main: ${l}`);
+    for (const role of roles) assert.equal(shape(l, { ...env, child: true, role } as FloorEnv), "deny/floor-policy-file", `${role}: ${l}`);
+  }
+});
+
+test("gateEvaluate refuses the piped heredoc rows (main asks, builder and reviewer deny)", () => {
+  const roots = (child: boolean, role: string): GateRoots => ({ worktree: env.cwd, scratch: [path.join(path.sep, "s", "scr")], tmp: [path.join(path.sep, "tmp")], scratchBase: path.join(path.sep, "s"), owned: [], install: [], roundFlow: [], handoffs: [], child, role, tmpAccess: true } as GateRoots);
+  for (const tail of [TAILS[0], TAILS[1], TAILS[3]]) {
+    const l = body(tail);
+    const main = gateEvaluate("bash", { command: l }, env.cwd, { env: () => env, roots: () => roots(false, "foreman") });
+    assert.match(JSON.stringify(main), /floor-policy-file/, `main: ${l}`);
+    for (const role of roles) {
+      const o = gateEvaluate("bash", { command: l }, env.cwd, { env: () => ({ ...env, child: true, role } as FloorEnv), roots: () => roots(true, role) });
+      assert.match(JSON.stringify(o), /floor-policy-file/, `${role}: ${l}`);
+    }
+  }
 });
