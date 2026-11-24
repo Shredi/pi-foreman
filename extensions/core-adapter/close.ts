@@ -88,7 +88,7 @@ export const CLOSE_START_DEADLINE_MS = 60_000;
 
 /** The close turn's prompt; `file` is the validated path shown to the model (relative to cwd). */
 export function closePrompt(file: string): string {
-  return `pi-foreman close: write your result file now at ${file} (summary, commits, open items). Do not start new work.`;
+  return `pi-foreman close: write your result file now at ${file} (open with 2-4 plain sentences for the owner, then the dense part: summary, commits, open items). Do not start new work.`;
 }
 
 /** Allowed sources (`close.from`); a malformed value allows none. */

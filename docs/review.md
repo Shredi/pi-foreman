@@ -47,7 +47,7 @@ A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review 
 
 ## The verdict tool
 
-A reviewer gives its verdict through the tool `review_verdict`, not through its report. The harness reads gates, marks and the repeat stop only from this call; the report is for the foreman to read and no harness code reads meaning from it (the widened rule of `AGENTS.md`).
+A reviewer gives its verdict through the tool `review_verdict`, not through its report. The harness reads gates, marks and the repeat stop only from this call; the report is for the foreman to read and no harness code reads meaning from it (the widened rule of `AGENTS.md`). The report still opens with two plain lines for the owner (what was checked; pass or fail and the one thing that matters), judged by the owner-text points (`instructions/reviewer.md`, filled in from `OWNER_TEXT_POINTS`); the dense findings follow. A `RUNG_UP:` line stays first, because the ladder reads the first three non-empty lines.
 
 The call carries:
 

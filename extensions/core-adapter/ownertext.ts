@@ -113,7 +113,7 @@ export function planFormIssues(text: string, opts: { requiredHeadings?: readonly
 }
 
 /** The plain-language rule for owner text, in one place: instructions, hints and the plan-review facts point at it. */
-export const OWNER_TEXT_POINTS = "short sentences, one instruction or fact each; active voice; one word for one thing; common words, a needed term explained once; steps as a list";
+export const OWNER_TEXT_POINTS = "short sentences, one instruction or fact each; active voice with a clear actor; simple tenses (no present perfect); one word for one thing; common words, a needed term explained once; no semicolons, stacked noun clusters, hedge stacks or marketing words; keep every fact, condition and qualifier (keep the longer wording when the shorter loses precision); steps as a list";
 
 /** Facts lines of a `[plan-review]` launch, one per plan file (relative paths resolve against `cwd`). With `opts` the plan is read through readPlan: an HTML plan is checked on its markdown copy. */
 export function ownerFactsLines(planPaths: readonly string[], cwd: string, opts?: PlanOpts): string[] {
