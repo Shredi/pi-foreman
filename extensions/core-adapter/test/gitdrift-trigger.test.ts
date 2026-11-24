@@ -20,7 +20,7 @@ async function repoRig(t: T, opts: Parameters<typeof r11Rig>[2] = {}): Promise<R
 }
 
 /** A change after the snapshot: a key in the repository's own config (stands for a child-planted setting). */
-const plant = (c: Rig): void => fs.appendFileSync(path.join(c.project, ".git", "config"), "[triggerdrift]\n\tmarker = planted-value\n");
+const plant = (c: Rig): void => fs.appendFileSync(path.join(c.project, ".git", "config"), "[core]\n\tfsmonitor = planted-value\n");
 const drift = (c: Rig): Record<string, unknown>[] => c.events("git_config_drift");
 
 test("main session: bash `git status` after a planted config change is stopped by the drift gate", async (t: T) => {

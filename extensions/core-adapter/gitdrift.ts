@@ -149,25 +149,109 @@ export const sha =(s: string | Buffer): string => crypto.createHash("sha256").up
 
 /** Minimal git-config reader: key names (lower-cased section and name) and values. */
 export function parseGitConfig(text: string): Array<[string, string]> {
+  return parseGitConfigLines(text).entries;
+}
+
+/**
+ * Same reader, plus the lines it skipped (not comments, blank lines or empty section headers). It follows git's config.c: a comment (`#` or `;`
+ * outside quotes) runs to the end of the physical line and a backslash there continues nothing; inside a value a doubled backslash and a backslash-quote are escapes, quotes
+ * toggle, and only an unescaped backslash directly before the newline joins the next line. A value keeps its raw text (comment included).
+ * Anything it cannot place (bad escape, open quote, malformed header or key) is skipped to the end of its line, so a caller can fail closed.
+ */
+export function parseGitConfigLines(text: string): { entries: Array<[string, string]>; skipped: string[] } {
   const out: Array<[string, string]> = [];
-  const lines = text.replace(/\\\r?\n/g, "").split(/\r?\n/);
+  const skipped: string[] = [];
+  const n = text.length;
+  const eol = (from: number): number => {
+    const i = text.indexOf("\n", from);
+    return i < 0 ? n : i;
+  };
   let section = "";
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#") || line.startsWith(";")) continue;
-    let rest = line;
-    const hdr = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(.*)$/.exec(line);
-    if (hdr) {
-      const [name, ...sub] = hdr[1].split(".");
-      section = hdr[2] !== undefined ? `${name.toLowerCase()}.${hdr[2].replace(/\\(.)/g, "$1")}` : [name.toLowerCase(), ...sub.map((x) => x.toLowerCase())].join(".");
-      rest = hdr[3].trim();
-      if (!rest || rest.startsWith("#") || rest.startsWith(";")) continue;
+  let pos = 0;
+  while (pos < n) {
+    const c = text[pos];
+    if (c === " " || c === "\t" || c === "\r" || c === "\n") {
+      pos++;
+      continue;
     }
-    const kv = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(rest);
-    if (!kv || !section) continue;
-    out.push([`${section}.${kv[1].toLowerCase()}`, kv[2] === undefined ? "true" : kv[2].trim()]);
+    if (c === "#" || c === ";") {
+      pos = eol(pos);
+      continue;
+    }
+    const end = eol(pos);
+    const physical = text.slice(pos, end);
+    if (c === "[") {
+      const hdr = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\[\s\S])*)")?\s*\]/.exec(physical);
+      if (!hdr) {
+        section = "";
+        skipped.push(physical.trim());
+        pos = end;
+        continue;
+      }
+      const [name, ...sub] = hdr[1].split(".");
+      section = hdr[2] !== undefined ? `${name.toLowerCase()}.${hdr[2].replace(/\\([\s\S])/g, "$1")}` : [name.toLowerCase(), ...sub.map((x) => x.toLowerCase())].join(".");
+      pos += hdr[0].length;
+      continue;
+    }
+    const kv = /^[A-Za-z][A-Za-z0-9-]*/.exec(physical);
+    if (!kv || !section) {
+      skipped.push(physical.trim());
+      pos = end;
+      continue;
+    }
+    const key = `${section}.${kv[0].toLowerCase()}`;
+    let i = pos + kv[0].length;
+    while (text[i] === " " || text[i] === "\t" || text[i] === "\r") i++;
+    if (i >= n || text[i] === "\n") {
+      out.push([key, "true"]);
+      pos = i;
+      continue;
+    }
+    if (text[i] !== "=") {
+      skipped.push(physical.trim());
+      pos = end;
+      continue;
+    }
+    i++;
+    let raw = "";
+    let quoted = false;
+    let comment = false;
+    let bad = false;
+    for (; i < n; i++) {
+      const ch = text[i];
+      if (ch === "\n") break;
+      if (comment) {
+        raw += ch;
+        continue;
+      }
+      if (ch === "\\") {
+        const nx = text[i + 1];
+        if (nx === "\n") {
+          i++;
+          continue;
+        }
+        if (nx === "\r" && text[i + 2] === "\n") {
+          i += 2;
+          continue;
+        }
+        if (nx === undefined || !"\\\"ntb".includes(nx)) bad = true;
+        raw += ch + (nx ?? "");
+        i++;
+        continue;
+      }
+      if (ch === '"') quoted = !quoted;
+      else if (!quoted && (ch === "#" || ch === ";")) comment = true;
+      raw += ch;
+    }
+    if (bad || quoted) {
+      skipped.push(text.slice(pos, i).trim());
+      pos = i;
+      continue;
+    }
+    out.push([key, raw.trim()]);
+    pos = i;
   }
-  return out;
+  return { entries: out, skipped };
 }
 
 function inside(root: string, p: string): boolean {
@@ -207,9 +291,11 @@ export function takeGitSnapshot(cwd: string, home: string): GitSnapshot | null {
     if (files.has(lbl) || depth > 5) return;
     const text = readText(p);
     if (text === null) return;
-    const entries = parseGitConfig(text);
+    const { entries, skipped } = parseGitConfigLines(text);
     const grouped = new Map<string, string[]>();
     for (const [k, v] of entries) grouped.set(k, [...(grouped.get(k) ?? []), v]);
+    // A line the reader cannot parse may be anything git does read: its hash is a key of its own, so a change in it is never silent.
+    if (skipped.length) grouped.set(UNPARSED_KEY, [skipped.join("\n")]);
     const raw = new Map([...grouped].filter(([k]) => BRANCH_TRACKING.test(k)));
     files.set(lbl, { hash: sha(text), keys: new Map([...grouped].map(([k, vs]) => [k, sha(vs.join("\0"))])), raw });
     for (const [k, v] of entries) {
@@ -455,7 +541,7 @@ const BRANCH_TRACKING = /^branch\..+\.(remote|merge|rebase)$/;
 /**
  * D141: keys git writes into an absorbed submodule's `git:modules/<x>/config` (probed: `submodule add`, `submodule update --init`, `submodule status`
  * and `git -C sub worktree add` write only these, plus the routine branch tracking pair) and that cannot make git run a program. A change confined to
- * them is one grouped line; any other key (filter.*, core.hooksPath, core.fsmonitor, include.path, unknown) keeps its own file line.
+ * them is one grouped line; any other exec-capable key (filter.*, core.hooksPath, core.fsmonitor, include.path) keeps its own file line; an unknown non-exec key is silent like anywhere else.
  */
 const QUIET_MODULE_KEYS = /^(?:core\.(?:worktree|bare|repositoryformatversion|filemode|logallrefupdates|ignorecase|precomposeunicode)|remote\.[^.]+\.(?:url|fetch))$/;
 const MODULE_CONFIG = /^git:modules\/(.+)\/config$/;
@@ -491,6 +577,58 @@ function routineRemote(branch: string, a: FileSnap, b: FileSnap): boolean {
   return !!r && r.length === 1 && remoteUnchanged(r[0], a, b);
 }
 
+/**
+ * Config keys whose change can run a program or redirect git (a value there is a command, a program path, a URL rewrite or proxy, a remote
+ * target, a bundle URI, an include, or a switch of the repository, config or worktree git uses). Named by key shape: section, optional
+ * subsection, variable (all lowercased). Method: every key of `git help config` (git 2.54, ~670 entries) was read; each whose description names
+ * a command, program, hook, helper, tool, executable path, URL, proxy, include or such a switch is here, and a section most of whose keys
+ * qualify (http, gpg, remote, ...) is here as a whole. Unsure keys stay in the class (fail closed); the extensions git ships later and
+ * third-party sections (lfs) are covered by shape. Only these (plus hooks, info/attributes, includes and worktree links, which are other
+ * snapshot parts, and unparsable config lines, see UNPARSED_KEY) open the drift ask; any other key (branch.<b>.vscode-merge-base,
+ * branch.<b>.description, user.*, unknown) updates the baseline without a dialog.
+ */
+const EXEC_SECTIONS = new Set([
+  "filter", "alias", "credential", "protocol", "sendemail", "pager", "difftool", "mergetool", "safe", "web", "browser", "man", "include",
+  "hook", "guitool", "imap", "instaweb", "lfs", "ssh", "extensions", "bundle", "http", "gpg", "remote", "trace2", "fsmonitor",
+  "rebase", // instructionFormat can inject exec todo lines; neither git nor editors write rebase.* on their own
+  "push", // redirects where a bare `git push` lands (push.default, autoSetupRemote, ...); with a branch.<b>.merge change it reaches main
+]);
+const EXEC_VARS: Record<string, RegExp> = {
+  core: /^(?:fsmonitor|hookspath|sshcommand|pager|editor|askpass|gitproxy|worktree|attributesfile|alternaterefscommand|bare|repositoryformatversion|unsetenvvars)$/,
+  url: /^(?:insteadof|pushinsteadof)$/,
+  diff: /^(?:textconv|command|external|tool|guitool)$/,
+  merge: /^(?:driver|tool|guitool)$/,
+  branch: /^(?:remote|merge|rebase|pushremote)$/,
+  sequence: /^editor$/,
+  interactive: /^difffilter$/,
+  uploadpack: /^packobjectshook$/,
+  receive: /^procreceiverefs$/,
+  gc: /^(?:recentobjectshook|repackfilterto)$/,
+  fetch: /^bundleuri$/,
+  transfer: /^bundleuri$/,
+  attr: /^tree$/,
+  help: /^(?:browser|htmlpath)$/,
+  submodule: /^(?:url|update|alternatelocation|gitdir)$/,
+  init: /^templatedir$/,
+  trailer: /^(?:cmd|command)$/,
+  tar: /^command$/,
+  includeif: /^path$/,
+};
+
+/** Synthetic key in a parsed config file's key map: a hash of the lines `parseGitConfig` could not read (never their text). */
+export const UNPARSED_KEY = "(unparsed lines)";
+
+/** True when a config key (dotted, lowercased) is in the exec-capable class above. */
+function execCapableKey(key: string): boolean {
+  const first = key.indexOf(".");
+  const last = key.lastIndexOf(".");
+  if (first < 0) return true; // unparsable shape: fail closed
+  const section = key.slice(0, first);
+  const variable = key.slice(last + 1);
+  if (EXEC_SECTIONS.has(section)) return true;
+  return Object.hasOwn(EXEC_VARS, section) && EXEC_VARS[section].test(variable); // own keys only: [constructor] must not reach Object.prototype
+}
+
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */
 export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot | null): string[] {
   if (!before) return [];
@@ -511,7 +649,12 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
       quietModules.push(mod[1]);
       continue;
     }
-    if (kind === "new") state = `new file${b!.keys && b!.keys.size ? ` (${listed("keys", [...b!.keys.keys()])})` : ""}`;
+    if (kind === "new") {
+      const nk = b!.keys ? [...b!.keys.keys()] : [];
+      const ek = nk.filter(execCapableKey);
+      if (nk.length && !ek.length) continue; // only bookkeeping keys: no dialog
+      state = `new file${nk.length ? ` (${listed("keys", ek)})` : ""}`;
+    }
     else if (kind === "removed") state = "removed";
     else {
       const ka = a!.keys ?? new Map<string, string>();
@@ -521,10 +664,13 @@ export function diffGitSnapshots(before: GitSnapshot | null, after: GitSnapshot 
       const added = [...kb.keys()].filter((k) => !ka.has(k) && !routine(k));
       const removed = [...ka.keys()].filter((k) => !kb.has(k) && !BRANCH_TRACKING.test(k));
       const changed = [...kb.keys()].filter((k) => ka.has(k) && ka.get(k) !== kb.get(k) && !routine(k));
-      const parts = [listed("added", added), listed("changed", changed), listed("removed", removed)].filter(Boolean);
+      // Only keys that can run a program or redirect git are named; a change confined to other keys updates the baseline without a dialog.
+      const [eAdded, eChanged, eRemoved] = [added, changed, removed].map((ks) => ks.filter(execCapableKey));
+      if (added.length + changed.length + removed.length && !eAdded.length && !eChanged.length && !eRemoved.length) continue;
+      const parts = [listed("added", eAdded), listed("changed", eChanged), listed("removed", eRemoved)].filter(Boolean);
       const onlyTracking = !parts.length && [...ka.keys(), ...kb.keys()].some((k) => BRANCH_TRACKING.test(k) && ka.get(k) !== kb.get(k));
       if (onlyTracking) continue;
-      if (mod && parts.length && [...added, ...changed, ...removed].every((k) => QUIET_MODULE_KEYS.test(k))) {
+      if (mod && parts.length && [...eAdded, ...eChanged, ...eRemoved].every((k) => QUIET_MODULE_KEYS.test(k))) {
         quietModules.push(mod[1]);
         continue;
       }

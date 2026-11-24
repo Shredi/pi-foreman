@@ -46,14 +46,14 @@ test("one of the 600 also adds filter.x.clean: that file is named beside the gro
   assert.doesNotMatch(lines.find((l) => l.startsWith("submodule configs"))!, /\bm1[;)]/);
 });
 
-test("core.hooksPath, core.fsmonitor and an unknown key in a submodule config are shown by name", (t) => {
+test("core.hooksPath and core.fsmonitor in a submodule config are shown by name; an unknown non-exec key is quiet", (t) => {
   const { dir, cfg } = repoWithModules(t, 3);
   const before = takeGitSnapshot(dir, HOME);
   fs.appendFileSync(cfg(0), "[core]\n\thooksPath = /x\n");
   fs.appendFileSync(cfg(1), "[core]\n\tfsmonitor = /x\n");
   fs.appendFileSync(cfg(2), "[brandnew]\n\tkey = 1\n");
   const lines = diffGitSnapshots(before, takeGitSnapshot(dir, HOME));
-  assert.deepEqual(lines, ["git:modules/m0/config: added core.hookspath", "git:modules/m1/config: added core.fsmonitor", "git:modules/m2/config: added brandnew.key"]);
+  assert.deepEqual(lines, ["git:modules/m0/config: added core.hookspath", "git:modules/m1/config: added core.fsmonitor"]);
 });
 
 test("a changed remote url is quiet; a quiet and a dangerous key in one file keeps the file line", (t) => {
