@@ -2384,8 +2384,13 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
   const reading = line.length > 0 && line.every((s) => nonWritingSegment(s, env));
   const clean = line.filter((s) => cleanReadSegment(s, env));
   const reads = new Set(clean.flatMap((s) => s.argv.map(unquote)));
-  const others = new Set(line.filter((s) => !clean.includes(s)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)].map(unquote)));
+  // the split words of every other segment: a path inside a script argument (`sed -n "w $P"`) is carried by that segment, not read by the clean one
+  const otherSegs = line.filter((s) => !clean.includes(s));
+  const segWords = (s: ShellSegment): string[] => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)];
+  const others = new Set(otherSegs.flatMap((s) => segWords(s).flatMap(wordsOf)));
   const placed = (w: string): boolean => reads.has(unquote(w)) && !others.has(unquote(w));
+  // a protected word inside a larger word of a segment that is neither a clean read nor a loop header (a sed `w` command the parser does not see as a write) keeps the ask or deny
+  const embedded = (w: string): boolean => otherSegs.some((s) => !LOOP_WORDS.has(base(s.program)) && segWords(s).some((x) => unquote(x) !== w && wordsOf(x).includes(w)));
   // a settings-file name that only a data here-document body holds is data (the key words are read from the whole text: a body written to a variable target still counts); a body fed to a shell or interpreter stays read
   // (`tee >(bash) <<E`: the body reaches a shell through a substitution the data test does not see)
   const data = dataBodies(line) && !line.some((s) => s.wrappers.includes("$(") && shellConsumer(s)) && bodiesOnlyCatTee(line, env);
@@ -2397,14 +2402,14 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellS
     const w = reading ? prot.find((x) => !placed(x)) : prot[0];
     if (w !== undefined) {
       const why = `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`;
-      return reading ? judgeHit("policy-file", why, w) : flag("policy-file", why, w);
+      return reading && !embedded(w) ? judgeHit("policy-file", why, w) : flag("policy-file", why, w);
     }
   }
   if (UNREAD_KEYS.test(text)) {
     const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(!/[$`*?[{~]/.test(x) && editableSchema(path.resolve(env.cwd, x), env)) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) {
       const why = `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`;
-      return reading ? judgeHit("config-keys", why, c) : flag("config-keys", why, c);
+      return reading && !embedded(c) ? judgeHit("config-keys", why, c) : flag("config-keys", why, c);
     }
   }
   return null;
