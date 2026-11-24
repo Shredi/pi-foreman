@@ -422,6 +422,16 @@ function assignW(a: Assignment, vars?: Map<string, string | undefined>): W {
 
 const harmless = (a: Assign): boolean => !a.append && a.value !== null && (HARMLESS.has(a.name) || a.name.startsWith("LC_"));
 
+/** Names a later command of the line reads as more than data: the search path, the shell's own variables, a loader, a tool's or the harness's settings. Case folded (zsh ties `path` to `PATH`). */
+const STEERING = /^(PATH|IFS|HOME|SHELL|ENV|CDPATH|GLOBIGNORE|PS[0-9]|PROMPT_COMMAND|FCEDIT|EDITOR|VISUAL|TMPDIR|OLDPWD|PWD|SHLVL|OPTIND|OPTARG|POSIXLY_CORRECT|BASH_.*|BASHOPTS|SHELLOPTS|LD_.*|DYLD_.*|GIT_.*|NODE_.*|PYTHON.*|PERL.*|RUBY.*|FOREMAN_.*|PI_.*|MAIL.*|HIST.*|TERM.*|NPM_.*|XDG_.*|USER|LOGNAME|LANG|LC_.*)$/i;
+
+/** Names whose setting makes a shell or loader run code the line does not show (a prompt, a startup file, a function body, the search path, a preload, the harness folders): a command under one is judged. */
+const RUNS_CODE = /^(PATH|IFS|ENV|BASH_ENV|BASH_FUNC_.*|BASHOPTS|SHELLOPTS|PS[0-9]|PROMPT_COMMAND|CDPATH|GLOBIGNORE|LD_.*|DYLD_.*|FOREMAN_.*)$/;
+const steersCode = (a: Assign | undefined): boolean => !!a && !harmless(a) && RUNS_CODE.test(a.name);
+
+/** A standalone `NAME=literal`: no expansion in the value, no append, a name that steers nothing. It names a string for later words, which are read as they stand (an unresolved `$NAME` stays opaque). */
+const literalAssign = (a: Assign): boolean => !a.append && a.value !== null && !STEERING.test(a.name);
+
 /** The command substitutions and process substitutions inside `node`, not descending into their scripts. */
 function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undefined; label: string }>; proc: boolean }): void {
   const stack: SyntaxNode[] = [];
@@ -715,12 +725,16 @@ function doCommand(cmd: Command, sc: Scope): string | null {
   c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" && closes : !cmd.name);
   if (!cmd.name) {
     // standalone assignments (and bare redirects): harmless names, or the closed grammar's own assignment
-    const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && harmless(a.assign));
+    const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && (harmless(a.assign) || literalAssign(a.assign)));
     seg(sc, "", [], ok ? null : "assignment", c);
+    if (prefix.some((a) => steersCode(a.assign))) markUnknown(sc);
     return sc.cwd;
   }
   for (const a of prefix) if (!(a.assign && harmless(a.assign))) c.reason = pick(c.reason, "assignment");
-  return run(words, c, sc.cwd);
+  const before = sc.run.out.length;
+  const end = run(words, c, sc.cwd);
+  if (prefix.some((a) => steersCode(a.assign)) && sc.run.out.length > before) markUnknown(sc);
+  return end;
 }
 
 /** Options of a wrapper: the leading `-x` words. A non-literal word ends them (it is the operand or command). */
@@ -1101,6 +1115,7 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
       // env's own rule: every operand with an `=` before the program is a setting; a name that is not a shell identifier (an exported function, `A-B=1`) is read by the program, which may rebind anything
       let startup = false;
       let odd = false;
+      let steers = false;
       while (args.length && !(args[0].value ?? args[0].text).startsWith("-") && (args[0].value ?? args[0].text).includes("=")) {
         const a = args[0].assign ?? asAssign(args[0]);
         if (!a) {
@@ -1109,13 +1124,14 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
           c.reason = pick(c.reason, "assignment");
         } else {
           if (!harmless(a)) c.reason = pick(c.reason, "assignment");
+          if (steersCode(a)) steers = true;
           // a harness folder name set here is rebound for the wrapped program, whatever wrapper or `env` sits between
           if (RUNS_FILE_VARS.has(a.name) || HARNESS_NAMES.includes(a.name)) startup = true;
         }
         args = args.slice(1);
       }
       wrap(args, "env", at, true, clears, startup);
-      if (odd) markUnknown(sc);
+      if (odd || steers) markUnknown(sc);
       return cwd;
     }
     case "timeout": {
@@ -1237,6 +1253,14 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
       if (file && sourcesStream(file)) return bad("unsupported", true);
       return bad(runnerReason(name));
     }
+    case "trap": {
+      // `trap 'cmd' SIG`: the action runs later in this shell; a literal one is read as the command it holds (as an alias value is), any other makes the line judged. `-l`, `-p` and `-` hold none.
+      const r = plain(prog, name, rest, c, cwd);
+      const act = rest.find((a) => a.value === null || !a.value.startsWith("-") || a.value === "-");
+      if (act && act.value === null) markUnknown(sc);
+      else if (act && act.value !== "-" && act.value !== "") runString("trap", act.value as string, c, cwd);
+      return r;
+    }
     default:
       // a runner the walker does not unwrap (`ionice`, `chroot`, `unbuffer`, `parallel`): the program behind it was not walked
       if (RUNNERS.has(name) && !BUILTINS.has(name) && name !== "script") return bad(runnerReason(name), runnerReason(name) === "unsupported");
@@ -1248,6 +1272,8 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
       }
       const r = plain(prog, name, rest, c, cwd);
       lookBehind(name, rest, c, cwd);
+      if (name === "find") lookBehindExec(rest, c, cwd);
+      if (name === "compgen" || name === "readarray" || name === "mapfile") callbackOption(rest, c, cwd);
       return r;
   }
 }
@@ -1267,9 +1293,31 @@ const BEHIND_BUDGET = 1000;
  * (no look-behind inside it), and hang on the segment just emitted as `behind`. Nothing here adds a segment to the line's own list.
  */
 function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
+  if (c.sc.run.behind || (modelled(name) && name !== "npx")) return;
+  attachBehind(rest, rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : [])), c, cwd);
+}
+
+/** `find -exec CMD ... ;`: the words after each exec action read as a command of their own (`find . -exec sh -c 'rm x' \;`), like the words behind an unmodelled program. */
+function lookBehindExec(rest: W[], c: Cmd, cwd: string | null): void {
+  if (c.sc.run.behind) return;
+  attachBehind(rest, rest.flatMap((a, k) => (FIND_EXEC.has(a.value ?? "") && rest[k + 1] && rest[k + 1].value !== null ? [k + 1] : [])), c, cwd);
+}
+
+/** `compgen -C CMD`, `readarray -C CMD`: the callback command is run by the shell; a literal one is read as the command it holds, any other makes the segment unknown. */
+function callbackOption(rest: W[], c: Cmd, cwd: string | null): void {
+  for (let k = 0; k < rest.length; k++) {
+    const v = rest[k].value;
+    const attached = v !== null && /^-[A-Za-z]*C./.test(v) ? v.slice(v.indexOf("C") + 1) : null;
+    if (v === null || !(/^-[A-Za-z]*C$/.test(v) || attached !== null)) continue;
+    const a = attached !== null ? { value: attached, text: attached } : rest[k + 1];
+    if (!a || a.value === null) markUnknown(c.sc);
+    else runString("callback", a.value, c, cwd);
+  }
+}
+
+/** Starts a trial walk at each of the `starts` words of `rest` and hangs the results on the segment just emitted (`ShellSegment.behind`). */
+function attachBehind(rest: W[], starts: number[], c: Cmd, cwd: string | null): void {
   const sc = c.sc;
-  if (sc.run.behind || modelled(name)) return;
-  const starts = rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : []));
   if (!starts.length) return;
   const real = sc.run.out[sc.run.out.length - 1];
   if (!real) return;

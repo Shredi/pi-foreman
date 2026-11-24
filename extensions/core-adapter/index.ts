@@ -4153,6 +4153,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(resolved ? { rules: { env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
       ...(resolved?.noteTools.length ? { noteTools: resolved.noteTools } : {}),
+      ...(gs && get(gs.config.config, "gate.unclassified") === "judge" ? { unclassified: "judge" as const } : {}),
     });
     const r = out.result;
     const role = gs?.isChild ? gs.usage.line.role : "foreman";

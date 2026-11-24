@@ -18,7 +18,7 @@ import { r11Rig } from "./_r11rig.ts";
 import { posixOnly } from "./_platform.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import {
-  CONSTRUCTS, DANGEROUS, FIXED, HARMLESS, KNOWN_GAPS, MATRIX_PAYLOADS, MATRIX_ROLES, PLAIN_GAPS, ROLES, ROLE_DIFFERENCES, ROLE_MATRIX, TWIN_PINS, WRAPS, buildCommand, checkDanger, checkHarmlessChains, checkPlainGaps, checkTwins, chainNames, construct, depthOneCases, describeStale,
+  CONSTRUCTS, DANGEROUS, FIXED, HARMLESS, KNOWN_GAPS, MATRIX_PAYLOADS, MATRIX_ROLES, PLAIN_GAPS, type PlainGap, ROLES, ROLE_DIFFERENCES, ROLE_MATRIX, TWIN_PINS, WRAPS, buildCommand, checkDanger, checkHarmlessChains, checkPlainGaps, checkTwins, chainNames, construct, depthOneCases, describeStale,
   describeTwin, describeUnexpected, gateOracle, letterOf, makeLayout, matrixOracle, memoOracle, pairCases, sampleCases, sampleChains, sortFound, staleGaps, sq,
   type Chain, type Cls, type DangerCase, type Found, type Needs, type Oracle,
 } from "./_gate-gen.ts";
@@ -342,21 +342,22 @@ test("self-test: a gate that blocks harmless for loops fails the twin property",
 });
 
 test("self-test: a gate that closes one marked gap makes the stale check name it", { skip: posixOnly }, () => {
-  const fake: Oracle = (command, role) => (command.startsWith("trap ") ? "judge" : real(command, role));
+  const fake: Oracle = (command, role) => (command.startsWith("find ") ? "judge" : real(command, role));
   const { found } = checkDanger(fake, [...depthOneCases(), ...pairCases(KNOWN_GAPS)]);
   const stale = staleGaps(sortFound(found, KNOWN_GAPS).matched, KNOWN_GAPS);
-  assert.deepEqual(stale.map((g) => g.id), ["trap"]);
-  assert.ok(describeStale(stale[0]).includes("gap trap is closed: remove its line from KNOWN_GAPS"));
+  assert.deepEqual(stale.map((g) => g.id), ["find-exec"]);
+  assert.ok(describeStale(stale[0]).includes("gap find-exec is closed: remove its line from KNOWN_GAPS"));
 });
 
 test("self-test: a gate that closes the plain git-outside-tilde line makes the stale check name it", { skip: posixOnly }, () => {
   const fake: Oracle = (command, role) => (command.includes("~/other") ? "block" : real(command, role));
-  const { stale, unexpected } = checkPlainGaps(fake, PLAIN_GAPS);
+  const tilde: PlainGap[] = [{ id: "git-outside-tilde", command: "git -C ~/other stash push", silentFor: ["builder"], source: "fixture: the line that was silent for the builder before the judge-first labels" }];
+  const { stale, unexpected } = checkPlainGaps(fake, tilde);
   assert.equal(unexpected.length, 0);
   assert.equal(stale.length, 1);
   assert.ok(stale[0].includes("gap git-outside-tilde is closed: remove its line from PLAIN_GAPS"));
   const loose: Oracle = (command, role) => (command.includes("~/other") ? "silent" : real(command, role));
-  assert.ok(checkPlainGaps(loose, PLAIN_GAPS).unexpected.some((m) => m.includes("[reviewer]")));
+  assert.ok(checkPlainGaps(loose, tilde).unexpected.some((m) => m.includes("[reviewer]")));
 });
 
 test("seed settings: a non-numeric or non-positive value fails with a message, a positive integer parses", () => {

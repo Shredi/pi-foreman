@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { JUDGE_FIRST, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
+import { readGlobSegment } from "./fastallow.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
@@ -39,6 +40,8 @@ export interface GateDeps {
   rules?: { env: RuleEnv };
   /** `gate.readTools`: extension tool name -> path field (null: none); judged like read/grep (Read rules, path floors, owned-path allows). */
   readTools?: ReadToolMap;
+  /** `gate.unclassified`: with `judge`, a shell line no floor, built-in allow or judge-first entry names goes to the judge as `danger-unclassified`; `allow` (the default) runs it. */
+  unclassified?: "allow" | "judge";
   /** The merged protected targets (permconfig `Resolved.protected`); absent or empty: no protected check. */
   protected?: ProtectedEntry[];
   /** `floors.noteTools` of the owner's permissions file (`Resolved.noteTools`): note tools by name, added to `NOTE_TOOLS`; their prose fields skip the raw floors. */
@@ -403,6 +406,9 @@ export interface GateOutcome {
 
 const baseProg = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCase().replace(/\.exe$/, "");
 
+/** The catch-all label of `gate.unclassified: "judge"` (the text is the one the judge bench reads, judgebench.ts). */
+const UNCLASSIFIED: DangerHit = { name: "danger-unclassified", reason: "the code could not classify this call" };
+
 /** The name of the built-in allow of a plain download (`webReadAllow`, r79 Addendum S5). */
 export const WEB_READ_RULE = "builtin-web-read";
 
@@ -489,7 +495,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
         const s = segs[i];
         if (!s || toolName === "powershell") return null;
         // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
-        const r = opaque ? null : segmentDefault(s, cmd, dctx, ec);
+        // a plain glob of a read program is no opaque unit (fastallow.ts readGlobSegment)
+        const r = opaque && !readGlobSegment(s) ? null : segmentDefault(s, cmd, dctx, ec);
         if (r !== null) return r;
         const bn = boundNames(cmd);
         const pubs = pubKeyReadWords([s], env, bn.any ? new Set(["HOME", "USERPROFILE"]) : bn.names);
@@ -505,6 +512,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const floorDanger = dangerOfFloor(h);
       const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reasonOf?.(dcall, denv) ?? hits[0].reason } : null);
       const labels = [...new Set([...(floorDanger ? [floorDanger.name, ...(h?.also ?? [])] : []), ...hits.map((r) => r.name)])];
+      // gate.unclassified = judge: nothing above named the line and no built-in allow covered it (`ruled` returned nothing)
+      if (!danger && deps.unclassified === "judge" && toolName !== "powershell") return { result: undefined, danger: UNCLASSIFIED, segments: segs, dangers: [UNCLASSIFIED.name] };
       return { result: undefined, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
     }
     const readField = readFieldOf(readTools, toolName);

@@ -70,6 +70,8 @@ export interface EffectCtx {
   handoffWrite?: (abs: string, real: string) => boolean;
   /** A `cp` source is a read for the write-outside check (defaults.ts): it need not lie in an allowed place; only the destination does. */
   cpSourceRead?: boolean;
+  /** Reads anywhere (defaults.ts fast allow): a read path need not lie in an allowed place; the secret floors and the protected targets run before and stay. Never set for a write. */
+  readAny?: boolean;
 }
 
 export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform, readRoots: unknown = [], role?: NetRole, netOut?: string[]): EffectCtx {
@@ -200,6 +202,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
 }
 
 function containedIn(c: EffectCtx, cwd: string | null, word: string, write: boolean, only: string[] | undefined, link: boolean, rootSelf: boolean): boolean {
+  if (!write && c.readAny && !only && cwd !== null && word && !word.startsWith("~") && !/[=:]~/.test(word)) return true;
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
@@ -290,9 +293,19 @@ export interface SegmentEffect {
   wrapped?: boolean;
 }
 
-const READ = new Set(["ls", "cat", "head", "tail", "cut", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find"]);
-/** The programs of the read class (floors.ts reads a line as read-looking by them). */
-export const READ_CLASS: ReadonlySet<string> = READ;
+const READ_FLOORS = new Set(["ls", "cat", "head", "tail", "cut", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find"]);
+/** The programs of the read class (floors.ts reads a line as read-looking by them); `LIST_A` is not in it, so no floor loosens. */
+export const READ_CLASS: ReadonlySet<string> = READ_FLOORS;
+/** Data programs: their words are text, not paths (`echo`, `printf`, `tr`, `jq` filters, `test` operands). */
+const LIST_A_DATA = ["echo", "printf", "tr", "basename", "dirname", "true", "false", "pwd", "test", "[", "which", "jq"];
+/** File readers: their operands are read as paths like `cat`'s. */
+const LIST_A_FILES = ["od", "fold", "nl", "realpath", "cmp", "du", "df", "strings", "hexdump", "md5sum", "shasum", "sha256sum"];
+/** List A of the gate-verify plan (D2): programs the classifier reads as a read, together with `READ_CLASS`. */
+export const LIST_A: ReadonlySet<string> = new Set([...LIST_A_DATA, ...LIST_A_FILES]);
+const LIST_A_TEXT: ReadonlySet<string> = new Set(LIST_A_DATA);
+const READ = new Set([...READ_FLOORS, ...LIST_A]);
+/** The classifier's read set: `READ_CLASS` and List A. */
+export const LIST_READ: ReadonlySet<string> = READ;
 export const FIND_BAD = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-H", "-follow"]);
 
 function shortHas(a: string, ch: string): boolean {
@@ -306,9 +319,12 @@ function readVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[]
   if (/^[ef]?grep$/.test(prog) && opts.some((a) => a === "--dereference-recursive" || shortHas(a, "R"))) return false;
   // GNU diff -r follows symlinks below its operands
   if (prog === "diff" && opts.some((a) => a === "--recursive" || shortHas(a, "r"))) return false;
-  if (prog === "tree" && opts.some((a) => a === "-o" || a === "-l")) return false;
+  if (prog === "tree" && opts.some((a) => a === "-o" || a === "-l" || /^--(output|fromfile)(=|$)/.test(a))) return false;
+  if (prog === "diff" && opts.some((a) => a === "-o" || /^--output(=|$)/.test(a))) return false;
   if (prog === "file" && opts.some((a) => shortHas(a, "C") || a === "--compile")) return false;
   const skip = new Set<number>();
+  // List A text programs: the words are data; an option must not name a program or hold a path outside
+  if (LIST_A_TEXT.has(prog)) return opts.every((a) => !a.startsWith("-") || a === "-" || optionOk(c, cwd, a, false));
   if (prog === "rg" || /^[ef]?grep$/.test(prog)) {
     // the first operand is the pattern unless -e/-f (or --regexp/--file) gave one
     const given = opts.some((a) => /^--(regexp|file)(=|$)/.test(a) || (/^-[A-Za-z]+$/.test(a) && /[ef]/.test(a.slice(1))));

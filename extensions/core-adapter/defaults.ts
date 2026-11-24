@@ -3,7 +3,10 @@
 // returns null and falls through to the review. Rule names: `default-<name>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
+import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, LIST_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
+import { SKIP_ONLY, readGlobSegment, skipOnlyOk } from "./fastallow.ts";
+import { webReadAllow } from "./webread.ts";
+import { GIT_GREP_PAGER } from "./patternargs.ts";
 import type { EffectCtx } from "./effects.ts";
 import { BRACE_LIMIT, lineFloors, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments as nestedSegmentsOf, remoteCommand, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
@@ -196,7 +199,7 @@ function commitOk(rest: string[]): boolean {
 }
 
 const BRANCH_LIST = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--list", "--show-current"]);
-const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev", "reflog", "show-branch", "check-ignore", "var", "ls-remote", "whatchanged", "verify-commit"]);
+const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev", "reflog", "show-branch", "check-ignore", "var", "ls-remote", "whatchanged", "verify-commit", "grep"]);
 const REFLOG_WRITE = new Set(["expire", "delete", "drop"]);
 
 /**
@@ -271,7 +274,8 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   }
   if (!sub || sub.startsWith("-")) return null; // global options (-C, -c, --git-dir ...) are never a default
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
-  if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !gitReadSubWrite(sub, rest) ? "default-git-read" : null;
+  // `git grep -O<cmd>` / `--open-files-in-pager` runs a program on the matched files
+  if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !gitReadSubWrite(sub, rest) && !(sub === "grep" && rest.some((a) => GIT_GREP_PAGER.test(a))) ? "default-git-read" : null;
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
   if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
   switch (sub) {
@@ -305,8 +309,8 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
 // ------------------------------------------------------------------ gh / glab
 
 const GH_CMDS: Record<string, ReadonlySet<string>> = {
-  gh: new Set(["run view", "run list", "run download", "pr view", "pr checks", "pr diff", "pr list", "pr status", "issue view", "issue list", "issue status", "repo view", "search prs", "search issues", "search repos", "search commits", "search code", "release view", "release list", "label list"]),
-  glab: new Set(["mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "repo view", "release view", "release list", "label list"]),
+  gh: new Set(["run view", "run list", "run download", "pr view", "pr checks", "pr diff", "pr list", "pr status", "issue view", "issue list", "issue status", "repo view", "search prs", "search issues", "search repos", "search commits", "search code", "release view", "release list", "label list", ...["run", "pr", "issue", "repo", "release", "workflow"].flatMap((g) => ["view", "list", "checks", "status"].map((v) => `${g} ${v}`))]),
+  glab: new Set(["mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "repo view", "release view", "release list", "label list", ...["run", "pr", "mr", "issue", "repo", "release", "workflow"].flatMap((g) => ["view", "list", "checks", "status"].map((v) => `${g} ${v}`))]),
 };
 const GH_FLAGS = new Set(["--log", "--log-failed", "--name-only", "--paginate", "-i", "--include", "--comments"]);
 const GH_VALUES = new Set(["-R", "--repo", "--json", "-q", "--jq", "-L", "--limit", "-b", "--branch", "-s", "--state", "--author", "--job", "-j", "-n", "--name", "-D", "--dir", "--page", "--per-page"]);
@@ -435,18 +439,23 @@ function rulingWrite(seg: ShellSegment, c: DefaultCtx, ec: EffectCtx): boolean {
 /** The default rule one segment matches, or null. */
 export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, ec: EffectCtx = effectCtxOf(c)): string | null {
   if (seg.opaque === null && seg.wrappers.length === 0 && rulingWrite(seg, c, ec)) return "default-write-handoff-ruling";
-  if (seg.opaque !== null || seg.heredoc || !seg.wrappers.every((w) => w === "timeout")) return null;
+  // a plain glob of a read program, and a here-document fed to a read or List B program, are data (fastallow.ts); every other opaque or here-document segment is no default
+  const readsData = LIST_READ.has(seg.program) || SKIP_ONLY.has(seg.program);
+  if ((seg.opaque !== null && !readGlobSegment(seg)) || (seg.heredoc && (!readsData || seg.dynamicCode)) || !seg.wrappers.every((w) => w === "timeout")) return null;
   if (seg.program === "") return seg.argv.length === 0 && seg.redirects.length === 0 ? "default-assign" : null;
   const cwd = seg.cwd;
   const chain = toChain(seg);
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;
   // r79 item 3: a segment of the dangerous class is never a built-in allow (the class is the question the classifier answers)
   if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts, floor: c.floor }) !== null) return null;
-  for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform) && !handoffRedirect(r, ec, cwd)) return null;
+  // a read program reads anywhere (the secret floors and the protected targets ran before this); a write is judged as before
+  const ecr: EffectCtx = LIST_READ.has(seg.program) || SKIP_ONLY.has(seg.program) ? { ...ec, readAny: true } : ec;
+  for (const r of chain.redirects) if (!redirectOk(r, ecr, cwd, ec.scratch ?? [], c.platform) && !handoffRedirect(r, ec, cwd)) return null;
   if (seg.program === "cd" && cdIntoOwn(seg.argv, cwd, c)) return "default-read";
   if (seg.program === "git") return gitDefault(seg.argv, text, cwd, c, ec, chain);
   if (seg.program === "gh" || seg.program === "glab") return ghDefault(seg.program, seg.argv, cwd, ec) ? "default-gh-read" : null;
-  const e = segmentEffect(ec, cwd, chain);
+  if (SKIP_ONLY.has(seg.program)) return skipOnlyOk(seg.program, seg.argv) ? "default-skip" : null;
+  const e = segmentEffect(ecr, cwd, chain);
   // a dependency install runs lifecycle scripts and reaches the registry: a runner, not a default
   if (seg.program === "npm" && ["install", "i", "ci"].includes(seg.argv[0])) return null;
   return e.cls === "read" ? "default-read" : e.cls === "build-test" ? "default-build-test" : e.cls === "write-in" ? "default-write-in" : null;
@@ -517,10 +526,11 @@ function positionals(argv: string[], valued: ReadonlySet<string> = new Set()): s
 }
 
 /**
- * The segments the refuse and judge-first checks read: the readable ones, and those a non-harmless assignment before the command (`X=1 git ...`, `env X=1 git ...`) made opaque (the program, its words and its
- * cwd are still right). Only a refuse or a judge-first hit reads these; an allow keeps the `opaque === null` filter.
+ * The segments the refuse and judge-first checks read: the readable ones, those a non-harmless assignment before the command (`X=1 git ...`, `env X=1 git ...`) made opaque (the program, its words and its
+ * cwd are still right), an `xargs` command (its input only adds operands), and a git call whose `-C` target the parse cannot read (its words are right, its folder unknown). Only a refuse or a judge-first hit
+ * reads these; an allow keeps the `opaque === null` filter.
  */
-const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => (s.opaque === null || s.opaque === "assignment") && s.program !== "");
+const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => (s.opaque === null || s.opaque === "assignment" || s.opaque === "xargs_stdin" || (s.opaque === "unresolved_var" && progOf(s) === "git")) && s.program !== "");
 const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "bg_run", "powershell"]);
 
 const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B", "--base", "-H", "--head", "-t", "--title", "--body", "-q", "--jq", "--json", "-L", "--limit", "-s", "--state", "-a", "--assignee", "-l", "--label", "-m", "--milestone", "-A", "--author", "-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "--template", "-D", "--dir", "-n", "--name", "-j", "--job", "--page", "--per-page", "--cache", "-p"]);
@@ -1233,9 +1243,47 @@ const behindHit = (s: ShellSegment, c: DangerCall, e: DangerEnv): boolean =>
     return JUDGE_FIRST.some((r) => r.test(call, e)) || (!!e.roots.child && (outsideTarget(call, e) !== null || writesIntoCheckout(call, e)));
   });
 
+const PKG_GLOBAL = new Set(["npm", "pnpm", "yarn", "bun"]);
+const PKG_MANAGERS = new Set(["winget", "scoop", "choco"]);
+const PKG_SYSTEM = new Set(["apt", "apt-get", "dnf"]);
+
+/**
+ * An install or removal that reaches beyond the project: a global package manager install (`-g`, `--global`, `--location=global`, `npm link`, `yarn global add`), a tool, language or
+ * system package install (`brew`, `cargo install`, `go install`, `gem install`, `pipx install`, `uv tool install`, `winget`/`scoop`/`choco`, `apt`/`dnf`, `pacman -S*`/`-R*`). A project-level
+ * install (`npm install`, `pip install`) is not one: the code cannot tell a virtual environment from a global one.
+ */
+function installSeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  const a = s.argv;
+  const sub = positionals(a)[0];
+  if (PKG_GLOBAL.has(p)) {
+    if (p === "yarn" && sub === "global") return a.indexOf("global") >= 0 && ["add", "remove", "upgrade", "upgrade-interactive"].includes(a[a.indexOf("global") + 1] ?? "");
+    if (p === "npm" && (sub === "link" || sub === "ln")) return true;
+    const global = a.some((w, i) => w === "-g" || w === "--global" || w === "--location=global" || (w === "--location" && a[i + 1] === "global"));
+    return global && !PKG_READ_VERBS.has(sub ?? "");
+  }
+  if (p === "brew") return ["install", "upgrade", "uninstall"].includes(sub ?? "");
+  if (p === "cargo" || p === "go" || p === "gem" || p === "pipx") return sub === "install";
+  if (p === "uv") return sub === "tool" && positionals(a)[1] === "install";
+  if (PKG_MANAGERS.has(p)) return sub === "install" || sub === "uninstall";
+  if (PKG_SYSTEM.has(p)) return sub === "install" || sub === "remove";
+  // the query forms (-Ss, -Si, -Sl, -Sg) read the package database
+  if (p === "pacman") return a.some((w) => /^-[SR]/.test(w) && !/^-S[silg]/.test(w));
+  return false;
+}
+
+/** A curl, wget or fetch call the plain-download rule (webread.ts) does not accept: it sends data, carries credentials, or writes outside the scratch folder. */
+function netWrite(c: DangerCall, e: DangerEnv): boolean {
+  const out = e.roots.child && e.roots.out ? { out: e.roots.out } : {};
+  const v = webReadAllow(c.tool, c.input, { cwd: e.cwd, scratch: e.roots.scratch, ...out, platform: e.platform });
+  return v.candidate && !v.ok;
+}
+
 export const JUDGE_FIRST: readonly DangerRule[] = [
-  { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 },
+  { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && (unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 || (c.segments ?? []).some((s) => progOf(s) === "git" && s.cwd === null && gitWriteForm(s))) },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, rebase, amend of published work, stash drop, worktree removal, history rewrite) or runs a program or moves credentials through git", test: segs(gitSeg) },
+  { name: "danger-install", reason: "installs or removes a package, tool or program beyond the project (a global install, brew, cargo or go install, a system package manager)", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && installSeg(s)) },
+  { name: "danger-net-write", reason: "a network call that does more than a plain download: it sends data, carries credentials, or writes outside the scratch folder", test: netWrite },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
   { name: "danger-inline-code", reason: "runs code the harness cannot read: an interpreter one-liner (python -c, node -e), a script built at run time or fed on stdin to a shell or interpreter, or one run by a shell the harness does not parse (zsh, pwsh, cmd, script -c)", reasonOf: (c, e) => (inlineCodeHits(c, e).every(codeInCommand) ? "runs inline code the gate does not parse; the code is in the command" : "runs code the harness cannot read"), test: (c, e) => inlineCodeHits(c, e).length > 0 },
   { name: "danger-remote", reason: "runs a command on another machine or in a container (ssh, docker or podman exec, kubectl exec), which the harness cannot check", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && remoteCommand(s, progOf(s)) !== null) },
