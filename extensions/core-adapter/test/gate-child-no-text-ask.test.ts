@@ -23,8 +23,8 @@ test("child: a heredoc into the scratch dir naming git config, then echo and ls 
   const out = run(`cat > ${s}/notes.md <<'EOF'\nrun git config user.email x@example.org first\nEOF\necho done && ls ${s}`);
   assert.equal(isAsk(out), false, JSON.stringify(out.result));
   assert.equal(out.danger, null, JSON.stringify(out.danger));
-  // no result and no danger: a write inside the child's scratch dir, which the mode step lets run
-  assert.equal(out.result, undefined);
+  // plan D2: a here-doc fed to a read program is data, so the line now runs as a default-read allow (pin switched from "no result")
+  assert.deepEqual(out.result, { allow: true, layer: "default", rule: "default-read" });
 });
 
 test("child: the same through $FOREMAN_SCRATCH", () => {
