@@ -171,7 +171,7 @@ import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
-import { ownerFactsLines, ownerFormHints, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
+import { OWNER_TEXT_POINTS, ownerFactsLines, ownerFormHints, ownerSectionIssues, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
 import { isPlanNotice, NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageLineServed, planPageOutcome, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { pageLinks } from "./pagelinks.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
@@ -3202,7 +3202,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerInstructionsCache = null;
         }
       }
-      const extra = applyVariants(reviewerInstructionsCache ?? "", promptVariants(s)).trim();
+      const extra = applyVariants(reviewerInstructionsCache ?? "", promptVariants(s)).replaceAll("{{ownerTextPoints}}", () => OWNER_TEXT_POINTS).trim();
       if (extra) event.systemPromptOptions.sections["pi-foreman"] = extra;
       return;
     }

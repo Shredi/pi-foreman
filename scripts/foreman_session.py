@@ -356,7 +356,7 @@ def footer(label, plan_first):
         ] + plan_first_notes(True)
         n += 1
     lines += [
-        "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines because the parent reads it into its own limited context, written per the `handoff`" % n,
+        "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines because the parent reads it into its own limited context, opening with 2-4 plain sentences for the owner, then the dense part, written per the `handoff`" % n,
         "   skill: link commits, PR, plan and ledger instead of restating them) and send",
         "   `Result from %s: <absolute path of result.md>`." % label,
         "%d. A later decision here: append a `## Update` section to result.md and send" % (n + 1),
@@ -435,7 +435,7 @@ def remote_footer(label, plan_first):
         ] + plan_first_notes(False)
         n += 1
     lines += [
-        "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines because the parent reads it into its own limited context, written per the `handoff`" % n,
+        "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines because the parent reads it into its own limited context, opening with 2-4 plain sentences for the owner, then the dense part, written per the `handoff`" % n,
         "   skill: link commits, PR, plan and ledger instead of restating them) and run",
         "       %s result" % base,
         "%d. A later decision here: append a `## Update` section to result.md and run" % (n + 1),
