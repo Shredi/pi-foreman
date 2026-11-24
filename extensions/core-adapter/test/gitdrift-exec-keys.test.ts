@@ -190,6 +190,9 @@ test("differential: key names match git config --list", { skip: !gitOk }, (t) =>
     "[a] b = 1\n[c] ; d\n\te = 2\n",
     "[a]\n\tb = \"x\\\n y\"\n[core]\n\thooksPath = h\n",
     "[a]\n\tb = x\\\r\n y\r\n[core]\r\n\tpager = p\r\n",
+    "[filter \"x\\\r\"]\n\tclean = evil\n",
+    "[filter \"x\\\u2028\"]\n\tclean = evil\n",
+    "[filter \"x\\\u2029\"]\n\tclean = evil\n",
   ];
   cases.forEach((text, i) => {
     const f = path.join(dir, `c${i}`);
@@ -198,4 +201,22 @@ test("differential: key names match git config --list", { skip: !gitOk }, (t) =>
     assert.equal(r.status, 0, `git rejects case ${i}: ${r.stderr}`);
     assert.deepEqual(parseGitConfig(text).map(([k]) => k), r.stdout.split("\n").filter(Boolean), `case ${i}`);
   });
+});
+
+test("a header with an escaped CR, U+2028 or U+2029 is placed; keys under it are not filed under the previous section", (t) => {
+  for (const ch of ["\r", "\u2028", "\u2029"]) {
+    const dir = tempRepo(t);
+    fs.appendFileSync(config(dir), `[filter "x\\${ch}"]\n\tsmudge = a\n`);
+    const before = takeGitSnapshot(dir, HOME);
+    fs.appendFileSync(config(dir), "\tclean = evil\n");
+    assert.match(drift(dir, before).join("\n"), /filter\.x[\s\S]*\.clean/);
+  }
+});
+
+test("after an unparsable [ line, a following exec key asks", (t) => {
+  const dir = tempRepo(t);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.appendFileSync(config(dir), "[broken\n\tpager = evil\n");
+  assert.match(drift(dir, before).join("\n"), /unparsed lines/);
+  assert.deepEqual(parseGitConfig("[a]\n\tb = 1\n[broken\n\tpager = evil\n"), [["a.b", "1"]]);
 });

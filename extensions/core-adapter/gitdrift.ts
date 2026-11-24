@@ -181,14 +181,15 @@ export function parseGitConfigLines(text: string): { entries: Array<[string, str
     const end = eol(pos);
     const physical = text.slice(pos, end);
     if (c === "[") {
-      const hdr = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]/.exec(physical);
+      const hdr = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\[\s\S])*)")?\s*\]/.exec(physical);
       if (!hdr) {
+        section = "";
         skipped.push(physical.trim());
         pos = end;
         continue;
       }
       const [name, ...sub] = hdr[1].split(".");
-      section = hdr[2] !== undefined ? `${name.toLowerCase()}.${hdr[2].replace(/\\(.)/g, "$1")}` : [name.toLowerCase(), ...sub.map((x) => x.toLowerCase())].join(".");
+      section = hdr[2] !== undefined ? `${name.toLowerCase()}.${hdr[2].replace(/\\([\s\S])/g, "$1")}` : [name.toLowerCase(), ...sub.map((x) => x.toLowerCase())].join(".");
       pos += hdr[0].length;
       continue;
     }
