@@ -116,8 +116,12 @@ const LABELED = [
 ];
 const ALLOW_VERDICT = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
 
+/** The request texts the stub judge saw in the last labeledOutcome call: the judge-first label is in them. */
+let lastPrompts: string[] = [];
+
 async function labeledOutcome(t: import("node:test").TestContext, role: string, mode: string, line: string): Promise<string> {
-  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => text(ALLOW_VERDICT) };
+  lastPrompts = [];
+  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async (_m: unknown, req: { messages?: { content?: unknown }[] }) => { lastPrompts.push(String(req.messages?.[0]?.content ?? "")); return text(ALLOW_VERDICT); } };
   const prev = process.env[BINDINGS_ENV];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", role, launchId: "l1", kind: "first", workspace: "", perms: { mode, childDeny: true } } });
   t.after(() => {
@@ -140,8 +144,10 @@ for (const mode of ["auto", "allow"]) {
       const builder = await labeledOutcome(t, "builder", mode, line);
       for (const role of ROLES) assert.equal(await labeledOutcome(t, role, mode, line), builder, `${role} (${mode}): ${line}`);
       // `ssh host true` is judge-first since the PR C security round (danger-remote), no run
-      if (line === "ssh host true") assert.match(builder, /pi-foreman: refused: /, `the judge reads it (the stub verdict is no clear, so it refuses): ${line}`);
-      else if (mode === "allow") assert.equal(builder, "run", `a builder runs it in mode allow: ${line}`);
+      if (line === "ssh host true") {
+        assert.match(lastPrompts.join("\n"), /danger-remote/, `the judge is asked under danger-remote: ${line}`);
+        assert.match(builder, /pi-foreman: refused: /, `the stub verdict is no valid answer, so it refuses: ${line}`);
+      } else if (mode === "allow") assert.equal(builder, "run", `a builder runs it in mode allow: ${line}`);
     }
   });
 }
