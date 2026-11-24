@@ -880,6 +880,8 @@ No config key.
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.readTools` | `{}` | not in project/session (user or overlay config only) |
 | `gate.logMaxBytes` | `20971520` | not in project/session (user or overlay config only) |
+| `gate.log.fullCommand` | `false` | not in project/session (user or overlay config only) |
+| `gate.unclassified` | `"allow"` | not in project/session (user or overlay config only) |
 | `safety.git.protectedBranches` | `["main", "master"]` | tighten-only (entries are added, never removed) |
 | `safety.git.commit.messagePattern` | unset | any layer (no longer used) |
 | `safety.git.commit.requiredTrailers` | unset | any layer (no longer used) |

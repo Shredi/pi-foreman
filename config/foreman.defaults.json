@@ -83,7 +83,7 @@
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },
   "paths": { "hubWorkflow": [] },
-  "gate": { "reviewTimeoutMs": 15000, "childAsk": "parent", "tmpAccess": true, "judgeReads": true, "logMaxBytes": 20971520, "readTools": {}, "protected": { "check": "model" } },
+  "gate": { "reviewTimeoutMs": 15000, "childAsk": "parent", "tmpAccess": true, "judgeReads": true, "logMaxBytes": 20971520, "log": { "fullCommand": false }, "unclassified": "allow", "readTools": {}, "protected": { "check": "model" } },
   "safety": {
     "preBash": { "hooks": [], "strict": false },
     "requiredChildExtensions": [],
