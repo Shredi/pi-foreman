@@ -127,7 +127,7 @@ test("a worktree that lies inside the package root: its own files are not asked,
 });
 
 test("open, verdict of today: a change that names no path is not install-root-write", () => {
-  // `npm install -g` names no folder: it stays the install danger class (a judge or the owner decides it); a write after `cd "$X"` has no target the gate can read
+  // `npm install -g` names no folder: it is `danger-install` (judge-first; the judge refuses it or names the class global-install); a write after `cd "$X"` has no target the gate can read
   for (const l of ["npm install -g left-pad", 'cd "$X" && touch f', "pip install requests"]) assert.notEqual(sh(l), IR, l);
 });
 

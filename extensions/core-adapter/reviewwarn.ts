@@ -1,5 +1,5 @@
 // The "no classifier model" warning (ledger item 26, r79 wording), one text for `foreman doctor`, `/foreman setup` and the gate's one-time session notice.
-// Role launches never reach the classifier; only calls of the dangerous class do, and without a model they are refused with that reason.
+// Role launches never reach the classifier; only judge-first calls do (the dangerous class, and with `gate.unclassified: judge` lines the code cannot classify), and without a model they are refused with that reason.
 
 export const REVIEW_MODEL_KEY = "providers.<p>.roles.review.model";
 
