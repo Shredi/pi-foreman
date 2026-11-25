@@ -11,6 +11,7 @@
 | Pin update | 2026-10-08: pin bumped to Pi 1.1.0 (range 1.1.x); typecheck, unit, installer and replay suites re-run on 1.1.0 (replay 92 run, 0 fail), no fixture changed. pi-subagents 0.75.0 and pi-intercom 0.17.0 held; their peer ranges accept 1.1.0. Bench pin pi-claude-bridge 0.9.2 (forwards Pi's custom prompt sections, which carry the foreman rules; 0.9.1 dropped them). Pi 1.1 OSC 7501 program status: Herdr 0.9.3 does not answer the query and the then-used permission package's prompt (`ui.custom`) was not reported as blocked, so the Herdr state feed below stays as is. |
 | Pin update | 2026-11-17: pi-subagents 0.78.0 -> 0.89.0, @inquirer/prompts 8.7.4 -> 8.8.0, unbash 6.0.1 -> 6.0.4 (Pi 1.5.2 and both forks held). 0.89 sends the parent-wake notice itself with `triggerTurn:true` (a custom run, no `input` event), so the adapter classifies a wake by its custom message type and runs the trailing catch-up at each custom `message_end`; it moves the package root under `bundle/` for the main import (role skills are found by walking up to `package.json`); it wraps notices in `<pi_subagents_notice>` (the self-warm capture follows the wrap); and it aborts a child whose allowlisted, registered tool is missing from the request, so a child never hides an allowlisted tool. D25b and the `/dev/null` case are fixed upstream; D25a stays a documented limit. |
 | Pin update | 2026-11-20: Pi 1.5.2 -> 1.6.0 (range 1.6.x), pi-subagents 0.89.0 -> 0.89.1, pi-polish 0.1.2 -> 0.1.13, pi-quiver 6.14.2 -> 6.15.2. 0.89.1 checks the child allowlist against the *active* tools, not the registered ones (so a tool a child run has switched off no longer aborts it). setup writes `control.notifyChannels: ["event"]` into the subagent config, so a child's attention notice arrives once (the intercom copy is off). |
+| Pin update | 2026-11-25: Pi 1.6.0 -> 1.6.1 (range 1.6.x); no harness change needed. |
 | Latency run | `.github/workflows/guard-latency.yml` (see that workflow's Actions runs) |
 | Upstream core | Python core from `Shredi/fable5-opus5-orchestrator` (MIT), a fork of `Rylaa/fable5-opus5-orchestrator` (now `Rylaa/fable5-opus5.5-orchestrator`), credited in `NOTICE` |
 
@@ -592,7 +593,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 
 | Capability | Choice | Version tested | Evidence summary |
 |---|---|---|---|
-| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.6.0 | All runs; signatures read from installed types |
+| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.6.1 | All runs; signatures read from installed types |
 | Subagents | **adopt** `pi-subagents`, every role detached | 0.75.0 | Hands-on: package roles discovered and launched; provider switch changes child model; full-id thinking override; codemode in child; required child extension blocks; strict tool allowlist. FAIL: foreground ask forwarding. |
 | Subagents (fallback) | fallback `@gotgenes/pi-subagents`, used only if the primary blocks | 22.0.0 | Hands-on: forwards foreground asks. Role and provider features not tested. |
 | Permission map | **replaced** by the own tool gate (r41); formerly `@gotgenes/pi-permission-system` 39.0.2 | n/a | Hands-on in the earlier layer notes; see `docs/permissions.md` |
