@@ -5,7 +5,7 @@ export const REVIEW_MODEL_KEY = "providers.<p>.roles.review.model";
 
 /** The warning body (no WARN prefix). `provider` is the active provider, if any. */
 export function noClassifierModelText(provider: string | undefined): string {
-  return `no classifier model for provider ${provider ?? "(none)"}: the classifier is off, so every call on the judge-first list (docs/permissions.md#who-decides) is refused with that reason and nobody is asked; the agent rewrites the call or reports it. A protected target still asks you where the code itself sees the write; a protected call the code cannot read is refused. Everything else follows your rules and runs. Set ${REVIEW_MODEL_KEY} in foreman.json`;
+  return `no classifier model for provider ${provider ?? "(none)"}: the classifier is off, so every call on the judge-first list (docs/permissions.md#who-decides) is refused with that reason and nobody is asked; the agent rewrites the call or reports it. A call on a protected target is refused too, unless that target's check is set to ask (then you are asked); a protected call the code cannot read is always refused. Everything else follows your rules and runs. Set ${REVIEW_MODEL_KEY} in foreman.json`;
 }
 
 /** The warning body when the classifier model is the cheapest role-map model, not one the config names (no WARN prefix). */

@@ -11,3 +11,9 @@ test("noClassifierModelText points to the judge-first list and claims no judge-f
   assert.ok(!t.includes("deploys") && !t.includes("forge writes"), t);
   assert.ok(t.includes("providers.<p>.roles.review.model"), t);
 });
+
+test("noClassifierModelText says a protected target is refused unless its check is ask", () => {
+  const t = noClassifierModelText("fake");
+  assert.ok(t.includes("unless that target's check is set to ask"), t);
+  assert.ok(!t.includes("sees the write"), t);
+});
