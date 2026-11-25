@@ -281,6 +281,22 @@ class ReviewDenyCountTest(unittest.TestCase):
         self.assertEqual([d["method"] for d in status["asks_denied"]], ["confirm", "review_defer_child", "review_defer_headless"])
         self.assertEqual(status["asks_denied"][1]["role"], "builder")
 
+    def test_judge_refusal_of_a_child_call_counts_as_denied_ask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Path(tmp) / "agent"
+            gate = agent / "pi-foreman" / "state" / "gate"
+            gate.mkdir(parents=True)
+            lines = [
+                {"kind": "child", "role": "builder", "tool": "bash", "verdict": "deny", "rule": "judge:model"},
+                {"kind": "child", "role": "builder", "tool": "bash", "verdict": "allow", "rule": "judge:model"},
+                {"kind": "child", "role": "builder", "tool": "bash", "verdict": "deny", "rule": "floor:x"},
+                {"kind": "owner", "role": "foreman", "tool": "bash", "verdict": "deny", "rule": "judge:model"},
+            ]
+            (gate / "log.jsonl").write_text("\n".join(json.dumps(r) for r in lines) + "\n", "utf-8")
+            status = {"asks": 0, "asks_denied": []}
+            ws.count_review_denies(agent, status)
+        self.assertEqual((status["asks"], [d["method"] for d in status["asks_denied"]]), (1, ["judge_refusal"]))
+
     def test_gate_dialog_deny_record_counts_as_one_denied_ask(self):
         with tempfile.TemporaryDirectory() as tmp:
             agent = Path(tmp) / "agent"
