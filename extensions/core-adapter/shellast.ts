@@ -1705,27 +1705,34 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
 }
 
 /**
- * The text before the statement that holds the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position
- * and are not empty, with the here-document bodies and closing delimiter lines of those statements. Null when `cmd` parses, throws, or no statement precedes the error.
+ * The texts a shell runs before the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position and are
+ * not empty (cut a), and the same with the here-document bodies and closing delimiter lines of those statements (cut b, when it is longer). Both are returned so a
+ * caller can check each: a longer cut that carries a nested syntax error in a body may parse differently from the shorter one. Empty when `cmd` parses, throws, or no statement precedes the error.
  */
-export function beforeParseError(cmd: string): string | null {
+export function parseErrorCuts(cmd: string): string[] {
   let script: Script | undefined;
   try {
     script = parse(cmd);
   } catch {
-    return null;
+    return [];
   }
   const err = (script as any)?.errors?.[0] as { pos: number } | undefined;
-  if (!script || !err) return null;
-  let cut = 0;
-  // a statement ends before the bodies of its here-documents: the cut runs to the end of the last closing delimiter line of the kept statements
+  if (!script || !err) return [];
+  let short = 0;
+  let long = 0;
   const heredocEnd = (n: SyntaxNode): number => {
     let e = n.type === "HereDoc" ? ((n as any).closing?.end ?? (n as any).body?.end ?? n.end) : 0;
     forEachChild(n, (c) => { e = Math.max(e, heredocEnd(c)); });
     return e;
   };
-  for (const st of script.commands) if (st.end > st.pos && st.end <= err.pos) cut = Math.max(cut, st.end, Math.min(heredocEnd(st), err.pos));
-  return cut > 0 ? cmd.slice(0, cut) : null;
+  for (const st of script.commands) {
+    if (st.end > st.pos && st.end <= err.pos) {
+      short = Math.max(short, st.end);
+      long = Math.max(long, st.end, Math.min(heredocEnd(st), err.pos));
+    }
+  }
+  if (short === 0) return [];
+  return long > short ? [cmd.slice(0, short), cmd.slice(0, long)] : [cmd.slice(0, short)];
 }
 
 const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);

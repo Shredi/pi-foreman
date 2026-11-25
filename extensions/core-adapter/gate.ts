@@ -10,7 +10,7 @@ import { readGlobSegment } from "./fastallow.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, parsedPrefix, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, strongerHit, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, parsedPrefixes, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, strongerHit, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -475,8 +475,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
       const segs = parsed.map(relaxPatternWords);
       // a line that does not parse: the statements before the error run, so the write checks below also read them (the judge never clears what a floor refuses)
-      const before = toolName === "powershell" ? null : parsedPrefix(cmd, parsed, { cwd, platform: env.platform, ...scratchVar });
-      const fsegs = before ? [...before.parsed.map(relaxPatternWords), ...segs] : segs;
+      const before = toolName === "powershell" ? [] : parsedPrefixes(cmd, parsed, { cwd, platform: env.platform, ...scratchVar });
+      const fsegs = before.length ? [...before.flatMap((b) => b.parsed.map(relaxPatternWords)), ...segs] : segs;
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       // the words of a powershell line are write targets for the self-modification rules and the protected folders (`.git`); no word earns an allow
