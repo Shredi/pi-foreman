@@ -443,7 +443,9 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   const readsData = LIST_READ.has(seg.program) || SKIP_ONLY.has(seg.program);
   if ((seg.opaque !== null && !readGlobSegment(seg)) || (seg.heredoc && (!readsData || seg.dynamicCode)) || !seg.wrappers.every((w) => w === "timeout")) return null;
   // an assignment unit with arithmetic or a subscript on a value not shown to be a number runs code the line does not show: no default, the judge-first rule looks
-  if (seg.program === "") return seg.argv.length === 0 && seg.redirects.length === 0 && seg.programUnknown !== true ? "default-assign" : null;
+  // the walk could not state what this segment runs or evaluates (`test -v 'a[$(x)]'`: bash evaluates the subscript): the judge-first rule looks, no built-in allow
+  if (seg.programUnknown === true) return null;
+  if (seg.program === "") return seg.argv.length === 0 && seg.redirects.length === 0 ? "default-assign" : null;
   const cwd = seg.cwd;
   const chain = toChain(seg);
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;

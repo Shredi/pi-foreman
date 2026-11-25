@@ -1889,8 +1889,10 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
   const nameShown = (n: string, at: number): boolean => INT_SPECIALS.includes(n) || (/[a-z]/.test(n) && allNum(n) && !(firstAny < at));
   /** Assigned on the line, every time one plain literal name, and no site that may bind any name before. */
   const nameLit = (n: string, at: number): boolean => /[a-z]/.test(n) && !!bindings.get(n)?.length && bindings.get(n)!.every((b) => b.kind !== "input" && b.lit !== null && PLAIN_NAME.test(b.lit)) && !(firstAny < at);
+  /** `$((..))` is a number only when no command substitution sits inside it: bash evaluates one there, even in a quoted subscript the walk never enters. */
+  const arithExpShown = (p: any): boolean => !/\$\((?!\()|`/.test(String(p.text ?? "`"));
   const atomShown = (text: string, parts: readonly any[] | undefined, at: number): boolean => {
-    if (parts?.length === 1 && parts[0].type === "ArithmeticExpansion") return true;
+    if (parts?.length === 1 && parts[0].type === "ArithmeticExpansion") return arithExpShown(parts[0]);
     // a lone plain expansion (`$x`, `${x}`, `$?`) is read by its text
     if (parts?.length && !(parts.length === 1 && (parts[0].type === "SimpleExpansion" || (parts[0].type === "ParameterExpansion" && !parts[0].operation && !parts[0].prefix && !parts[0].index)))) return false;
     if (parts?.length) text = String(parts[0].text);
@@ -1927,7 +1929,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
     if (!parts) return atomShown(String(w.value ?? w.text ?? ""), undefined, at);
     if (parts.length !== 1) return false;
     const p = parts[0];
-    if (p.type === "ArithmeticExpansion") return true;
+    if (p.type === "ArithmeticExpansion") return arithExpShown(p);
     if (p.type === "SimpleExpansion" || p.type === "ParameterExpansion") return !(p.operation || p.prefix || p.index) && atomShown(String(p.text), undefined, at);
     return p.type === "Literal" && atomShown(String(p.value), undefined, at);
   };
