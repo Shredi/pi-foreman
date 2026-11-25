@@ -1706,7 +1706,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
 
 /**
  * The text before the statement that holds the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position
- * and are not empty. Null when `cmd` parses, throws, or no statement precedes the error.
+ * and are not empty, with the here-document bodies and closing delimiter lines of those statements. Null when `cmd` parses, throws, or no statement precedes the error.
  */
 export function beforeParseError(cmd: string): string | null {
   let script: Script | undefined;
@@ -1718,7 +1718,13 @@ export function beforeParseError(cmd: string): string | null {
   const err = (script as any)?.errors?.[0] as { pos: number } | undefined;
   if (!script || !err) return null;
   let cut = 0;
-  for (const st of script.commands) if (st.end > st.pos && st.end <= err.pos) cut = Math.max(cut, st.end);
+  // a statement ends before the bodies of its here-documents: the cut runs to the end of the last closing delimiter line of the kept statements
+  const heredocEnd = (n: SyntaxNode): number => {
+    let e = n.type === "HereDoc" ? ((n as any).closing?.end ?? (n as any).body?.end ?? n.end) : 0;
+    forEachChild(n, (c) => { e = Math.max(e, heredocEnd(c)); });
+    return e;
+  };
+  for (const st of script.commands) if (st.end > st.pos && st.end <= err.pos) cut = Math.max(cut, st.end, Math.min(heredocEnd(st), err.pos));
   return cut > 0 ? cmd.slice(0, cut) : null;
 }
 

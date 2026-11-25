@@ -19,9 +19,7 @@ for (const r of fx("shellast-pin.json").rows) if (r.tool === "bash") lines.add(S
 for (const r of fx("destructive-parity.json").rows) if (r.tool === "bash") lines.add(String(r.line));
 
 /** The fixture lines that parse and that some role refuses with a floor deny. */
-// not read by this change: a heredoc whose body nests four `$( )` deep loses its floor with any tail line after the terminator (open issue reported with the round)
-const EXCLUDED = (l: string): boolean => l.startsWith("bash <<'E'\nx=$(true; $(true; $(true; $(true;");
-const refused = [...lines].filter((l) => !EXCLUDED(l)).filter((l) => !parseShell(l, { cwd: env.cwd }).some((s) => s.opaque === "parse_error") && roles.some(([, e]) => shape(l, e)?.startsWith("deny/")));
+const refused = [...lines].filter((l) => !parseShell(l, { cwd: env.cwd }).some((s) => s.opaque === "parse_error") && roles.some(([, e]) => shape(l, e)?.startsWith("deny/")));
 
 test("every refused fixture line is still refused with a trailing parse error, in main, builder and reviewer", () => {
   assert.ok(refused.length >= 22, String(refused.length));
@@ -64,4 +62,27 @@ test("the named forms are refused with and without the trailing parse error", ()
 test("a line that is only a parse error does not recurse and keeps no floor", () => {
   assert.equal(shape("fi", env), null);
   assert.equal(shape("(", env), null);
+});
+
+const HD: [string, string][] = [
+  ["depth 1", "bash <<'E'\nx=$(rm -rf ~)\nE"],
+  ["depth 2", "bash <<'E'\nx=$(y=$(rm -rf ~))\nE"],
+  ["depth 4", "bash <<'E'\nx=$(true; $(true; $(true; $(rm -rf ~))))\nE"],
+];
+
+test("a here-document fed to bash keeps its floor with a trailing parse error, in main, builder and reviewer", () => {
+  for (const [name, l] of HD) for (const [role, e] of roles) {
+    const want = shape(l, e);
+    assert.ok(want?.startsWith("deny/"), `${name} (${role}) is refused without the tail: ${want}`);
+    assert.equal(shape(l + TAIL, e), want, `${name} (${role})`);
+  }
+});
+
+test("a here-document with a harmless body and a trailing parse error is judged, not refused", () => {
+  for (const [role, e] of roles) {
+    const l = "cat <<E\nhello\nE";
+    assert.equal(shape(l + TAIL, e), shape(l, e), role);
+    assert.ok(!shape(l + TAIL, e)?.startsWith("deny/"), role);
+    assert.ok(parseShell(l + TAIL, { cwd: e.cwd }).some((s) => s.opaque === "parse_error"), role);
+  }
 });
