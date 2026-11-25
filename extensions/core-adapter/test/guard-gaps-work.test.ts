@@ -178,7 +178,7 @@ test("item 15: nesting the parser rejects is refused or judge-first, never an al
 });
 
 // Revision round, item 15: a walker stack overflow (a huge arithmetic expansion) is no allow either; the text floors still run on the raw line.
-test("item 15: a walker stack overflow is refused or judge-first, never an allow", () => {
+test("item 15: a huge arithmetic expansion is read like a short one: the dangerous parts are caught, the harmless twin runs", () => {
   const sum = rep("1", 50000, "+");
   for (const role of ["main", "builder"] as const) {
     check(`echo $(( ${sum}+$(rm -rf ~) ))`, role, "J");
