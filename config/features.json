@@ -402,7 +402,7 @@
       "id": "auto-review",
       "area": "safety",
       "title": "Permission auto-review",
-      "purpose": "Before a call runs, the judge reads it when it is on the judge-first list (deletes and writes whose target the gate cannot read, writes outside the session, git config and remotes, losing local git work, remote commands and inline code, kills by process name, terminal inject, whole-disk scans, protected targets); every other call that no floor refuses runs. Unset, the judge model is the inexpensive rung of the role map, and with none the call asks you.",
+      "purpose": "Before a call runs, the judge reads it when it is on the judge-first list (deletes and writes whose target the gate cannot read, writes outside the session, git config and remotes, losing local git work, remote commands and inline code, kills by process name, terminal inject, whole-disk scans, protected targets); every other call that no floor refuses runs. Unset, the judge model is the inexpensive rung of the role map, and with none the call is refused with the no-model reason.",
       "doc": "docs/roles.md#auto-review-model",
       "keys": ["providers.<x>.review"],
       "commands": [],

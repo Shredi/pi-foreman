@@ -178,7 +178,7 @@
             "description": "Model review of permission asks (link foreman-review) while this provider is active. Without it every ask goes to the human. Ignored in the project and session layers (it loosens).",
             "properties": {
               "model": { "type": "string", "description": "Reviewer model, <provider>/<model> or a bare model id of this provider." },
-              "timeoutMs": { "type": "integer", "minimum": 100, "description": "Review timeout in ms (default 15000); a timeout defers to the human." }
+              "timeoutMs": { "type": "integer", "minimum": 100, "description": "No effect on the permission gate: gate.reviewTimeoutMs sets the judge's time limit." }
             }
           },
           "fallback": {
@@ -597,7 +597,7 @@
       "description": "The tool gate (gate.ts) that decides every tool call.",
       "properties": {
         "mode": { "type": "string", "enum": ["full", "floors-only"], "description": "No effect: there are no permission modes. The key (and the retired value floors-only) is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
-        "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
+        "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout refuses the call with the reason." },
         "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "No effect: a child's ask ends after a fixed 15 minutes. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "readClear": { "type": "boolean", "description": "No effect: the read question was removed (docs/permissions.md#the-read-question). The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
