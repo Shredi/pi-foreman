@@ -238,6 +238,9 @@ export function writeChildRuling(dir: string, n: number, a: ChildAnswer): void {
   fs.renameSync(tmp, path.join(dir, `ruling-${n}.md`));
 }
 
+/** The longest delay a Node timer takes (2^31-1 ms, about 24.8 days); a longer one fires at 1 ms. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 export interface AskTimers {
   set: (f: () => void, ms: number) => unknown;
   clear: (h: unknown) => void;
@@ -341,7 +344,13 @@ export class ChildAskWatch {
         let ans: ChildAnswer;
         this.shown = a;
         const stop = new AbortController();
-        const timer = a.deadline ? this.timers.set(() => stop.abort(), Math.max(1, a.deadline - this.now())) : undefined;
+        // one-shot, and inside the timer's range: a delay past 2^31-1 ms would make a Node timer fire every 1 ms and close the dialog at once
+        const timer: unknown = a.deadline
+          ? this.timers.set(() => {
+              this.timers.clear(timer);
+              stop.abort();
+            }, Math.min(MAX_TIMER_MS, Math.max(1, a.deadline - this.now())))
+          : undefined;
         try {
           ans = await this.answer(a, stop.signal);
         } catch (e) {

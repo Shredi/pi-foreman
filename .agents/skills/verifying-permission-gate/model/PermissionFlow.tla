@@ -14,8 +14,8 @@
 (*    the owner's yes (one ask, one run: an allow once is not carried).    *)
 (* P2 AnswerOnlyForItsCall: an answer applies only to the call it was      *)
 (*    asked for (ask n; the park key has the hash of the input).           *)
-(* P3 AskEnds: every ask ends (answer, away, gone, timeout) and the child  *)
-(*    is told; an ask never stays open with nobody waiting for it, and a   *)
+(* P3 AskEnds: every ask ends (answer, gone, timeout; an away owner means *)
+(*    the deadline) and the child is told; an ask never stays open with nobody waiting for it, and a   *)
 (*    waiting child always has an open ask.                                *)
 (***************************************************************************)
 EXTENDS Integers
@@ -31,7 +31,7 @@ Prot == {2}
 TryMax(c) == IF c = 1 THEN MaxTry ELSE 1   \* the second attempt is only needed on the call that is asked, parked and asked again
 Verdicts == {"clear", "refuse", "owner", "other", "timeout"}   \* unsure and invalid_verdict take the same branch as refuse
 Parents == {"present", "away", "restarted", "closed"}
-Ends == {"allow", "deny", "timeout", "gone", "away"}
+Ends == {"allow", "deny", "timeout", "gone"}
 
 VARIABLES
   parent,                  \* the parent session: owner there, owner away, restarted (dialogs lost, not yet re-adopted), closed (ask dir gone)
@@ -155,12 +155,6 @@ OwnerAnswer(end) ==
   /\ parked' = IF runEnded THEN [call |-> askOf[cur], val |-> end, src |-> cur] ELSE parked
   /\ UNCHANGED <<parent, tries, rounds, rule, nAsks, askOf, age, runEnded, first>>
 
-\* the owner is away: the dialog is refused with its own text
-AwayDeny ==
-  /\ cur # 0 /\ parent = "away"
-  /\ Close("away")
-  /\ UNCHANGED <<parent, tries, rounds, rule, nAsks, askOf, age, runEnded, first, parked>>
-
 \* the ask dir is gone (the starting session ended): the child's gone check ends the wait within one interval, not at the deadline
 Gone ==
   /\ cur # 0 /\ parent = "closed"
@@ -214,10 +208,10 @@ RuleAdd(c) ==
 Next ==
   \/ \E c \in Calls: Attempt(c) \/ JudgeRead(c) \/ JudgeReadAtCap(c) \/ AskOpen(c) \/ RuleAdd(c)
   \/ \E c \in Calls, v \in Verdicts: JudgeAnswer(c, v)
-  \/ OwnerAnswer("allow") \/ OwnerAnswer("deny") \/ AwayDeny \/ Gone \/ Timeout \/ Tick
+  \/ OwnerAnswer("allow") \/ OwnerAnswer("deny") \/ Gone \/ Timeout \/ Tick
   \/ ParentStep \/ EndRun \/ Resume
 
-Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Timeout) /\ WF_vars(Gone) /\ WF_vars(AwayDeny)
+Spec == Init /\ [][Next]_vars /\ WF_vars(Tick) /\ WF_vars(Timeout) /\ WF_vars(Gone)
 
 TypeOK ==
   /\ parent \in Parents
@@ -231,6 +225,8 @@ RunsAuthorised ==
     /\ r.via = "clear" => r.verdict = "clear" /\ ~(r.call \in Prot /\ r.parent = "closed")
     /\ r.via = "rule" => rule[r.call]
     /\ r.via \in {"owner", "parked"} => r.ask # 0
+    \* the owner's run follows the owner's yes on its ask (a timeout or a gone parent is never an allow)
+    /\ r.via = "owner" => askSt[r.ask] = "allow"
     \* an allow once is not carried: one ask, one run
     /\ \A q \in runs: (r.ask # 0 /\ r.ask = q.ask) => (r.call = q.call /\ r.try = q.try)
 

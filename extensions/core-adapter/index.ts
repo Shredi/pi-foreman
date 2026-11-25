@@ -37,7 +37,7 @@ import { askOwner, DEFAULT_ASK_TIMEOUT_MS, STOP_TEXT } from "./gatedialog.ts";
 import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
-import { CHILD_ASK_TIMEOUT_TEXT, CHILD_AWAY_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
+import { CHILD_ASK_TIMEOUT_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -4387,9 +4387,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Math.max(0, deadline - Date.now()), 250, notBefore, undefined, undefined, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "gone") return done("parent-gone", false, CHILD_GONE_TEXT);
-        // a timeout or an away parent is nobody's refusal of this call: no repeat-stop count, and the text says what happened
+        // a timeout is nobody's refusal of this call: no repeat-stop count, and the text says what happened
         if (w.answer === "timeout") return done("parent-timeout", false, CHILD_ASK_TIMEOUT_TEXT);
-        if (w.answer === "away") return done("parent-away", false, CHILD_AWAY_TEXT);
         if (w.answer === "aborted") return done("parent-aborted", false, "pi-foreman: the call was aborted while it waited for the parent's ruling; the question stays open in ask.md.");
         const parentDeny = (text: string): { block: true; reason: string } | undefined => (w.answer === "deny" ? denyCounted("parent-deny", text, "parent-deny") : done("parent-deny", false, text));
         return parentDeny(w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}${tool === "bash" ? (n2 => (n2 ? ` ${n2}` : ""))(childNpmNote(strOf((input as Record<string, unknown> | undefined)?.command), launchBinding?.install === true)) : ""}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);

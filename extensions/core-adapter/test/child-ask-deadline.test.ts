@@ -275,3 +275,37 @@ test("a parked allow for ask n does not cover a different call as the next ask, 
   assert.equal(fs.existsSync(path.join(b.askDir, "ruling-2.md")), false, "a dialog, no answer from the park");
   assert.equal(r.events("ask_parked_used").length, 0);
 });
+
+test("the deadline timer never gets a delay a Node timer would fire every 1 ms: far-future deadlines are clamped, a past one aborts once", async (t) => {
+  const ft = fakeTimers();
+  const delays: number[] = [];
+  const timers: AskTimers = { set: (f, ms) => (delays.push(ms), ft.timers.set(f, ms)), clear: ft.timers.clear };
+  const a = tmp(t);
+  const signals: AbortSignal[] = [];
+  const w = new ChildAskWatch(
+    (_ask, signal) => {
+      signals.push(signal);
+      return new Promise((res) => signal.addEventListener("abort", () => res({ allow: false, noRuling: true }), { once: true }));
+    },
+    () => undefined,
+    timers,
+    () => 1000,
+  );
+  writeChildAsk(a, { ...FIELDS, payload: "far", deadline: 1000 + 40 * 24 * 3600 * 1000 });
+  w.add(a);
+  w.poll();
+  await until(() => signals.length === 1);
+  assert.ok(delays.some((d) => d === 2 ** 31 - 1), "the delay is clamped to the timer maximum");
+  assert.equal(
+    delays.every((d) => d <= 2 ** 31 - 1),
+    true,
+    "no delay beyond the timer maximum",
+  );
+  const live = [...ft.live.values()].find((x) => x.ms === 2 ** 31 - 1);
+  assert.ok(live);
+  live.f();
+  assert.equal(ft.live.size > 0, true, "only the poll timer is left: the deadline timer cleared itself");
+  assert.equal([...ft.live.values()].some((x) => x.ms === 2 ** 31 - 1), false);
+  await until(() => signals[0].aborted);
+  w.stop();
+});
