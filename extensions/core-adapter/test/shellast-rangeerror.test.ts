@@ -15,16 +15,22 @@ type Outcome = { segments?: number; opaque?: string | null; tooDeep?: boolean; t
 
 test("parseShell: a stack overflow inside the parse ends the line as one tooDeep parse_error segment, never a partial list", { timeout: 5 * CHILD_TIMEOUT_MS }, () => {
   const outcomes: Outcome[] = [];
+  const notes: string[] = [];
   // the stack a node child starts with differs by version and flags: a few small sizes, each scanned over the band where the parse runs out
-  for (const size of [85, 100, 120]) {
+  for (const size of [70, 85, 100, 120]) {
     const run = spawnSync(process.execPath, [...process.execArgv.filter((a) => !a.startsWith("--stack-size")), `--stack-size=${size}`, fixture], { encoding: "utf8", timeout: CHILD_TIMEOUT_MS });
     // a child killed by the timeout (error ETIMEDOUT) is a loaded machine; a child ended by a signal or a nonzero status is a crash: both fail, with the cause named
     const cause = run.error ? `spawn error ${(run.error as NodeJS.ErrnoException).code ?? run.error.message} (timeout ${CHILD_TIMEOUT_MS} ms)` : run.signal ? `killed by ${run.signal}` : `status ${run.status}`;
     assert.equal(run.status, 0, `--stack-size=${size}: ${cause}; stderr: ${run.stderr}`);
-    outcomes.push(...(JSON.parse(run.stdout) as Outcome[]));
+    const out = JSON.parse(run.stdout) as { total: number; scannedTo: number; fullAt: number; results: Outcome[] };
+    notes.push(`size ${size}: total ${out.total}, headroom scanned 0..${out.scannedTo}, first full read at ${out.fullAt}, ${out.results.filter((o) => o.tooDeep).length} tooDeep`);
+    outcomes.push(...out.results);
   }
+  const kinds = { tooDeep: 0, full: 0, threw: 0, overflowedOutside: 0 };
+  for (const o of outcomes) kinds[o.tooDeep ? "tooDeep" : o.threw ? "threw" : o.overflowedOutside ? "overflowedOutside" : "full"]++;
+  const summary = `${JSON.stringify(kinds)}; ${notes.join("; ")}`;
   const stopped = outcomes.filter((o) => o.tooDeep);
-  assert.ok(stopped.length > 0, "the scan reached the backstop at least once");
+  assert.ok(stopped.length > 0, `the scan reached the backstop at least once: ${summary}`);
   for (const o of stopped) assert.deepEqual(o, { segments: 1, opaque: "parse_error", tooDeep: true });
   // every other outcome that reached the end is the full read of the line (five segments); the rest ran out of stack before parseShell was called or in the handler itself
   for (const o of outcomes.filter((x) => x.segments !== undefined && !x.tooDeep)) assert.deepEqual(o, { segments: 5, opaque: null, tooDeep: false });
