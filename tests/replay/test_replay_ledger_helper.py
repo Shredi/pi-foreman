@@ -83,7 +83,7 @@ class TestLedgerHelper(ReplayCase):
 
     def test_permission_denied_ledger_bash_traced_not_allowed(self):
         # PR C: a ledger line runs (the other tests here), so the denial comes from the judge: both lines end in `git branch -D old-topic`
-        # (judge-first), the judge answers unsure and the owner dismisses the dialog: the gate text is "pi-foreman: ..." and both lines are traced as not allowed
+        # (judge-first), the judge answers unsure and refuses both with no dialog (Who decides): the gate text is "pi-foreman: refused: ..." and both lines are traced as not allowed
         rig = self.rig("lh-h", load_fixture("ledger_helper"), config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
         pi = rig.start()
         sid = pi.session_id()
