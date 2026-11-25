@@ -1,5 +1,5 @@
 // B2: a git write whose `-C` target cannot be read (`git -C "$D" commit`) has no folder to compare with the worktree root. A read-only role gets
-// child-readonly-write (not child-write-outside naming the worktree as "outside"); a builder is not denied by the floor (the judge decides).
+// child-readonly-write (not child-write-outside naming the worktree as "outside"); a builder is refused by child-write-outside.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

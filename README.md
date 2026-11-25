@@ -161,7 +161,7 @@ Use the lifetime your provider documents instead of `600`. Details: [docs/cache.
 
 ## Permissions
 
-A tool call that no rule decides simply runs. Deploys, publishing, installs, network writes and similar dangerous calls go to a cheap classifier that may only clear them by citing a sentence you wrote in `permissions.json`; a call the classifier cannot clear is refused with its reason and nobody is asked; only a classifier answer naming one of six danger classes asks you in a dialog. Floors for secrets, force pushes and the like stay on in every mode. See [docs/permissions.md](docs/permissions.md).
+A tool call that no floor or judge-first entry names simply runs. Only a short list goes to a cheap judge first (losing local work through git, a global install, a curl or wget call that sends data, and a few more); deploys, forge writes, project installs and the like run with no judge call. A judge that does not clear a call refuses it with its reason and nobody is asked; only a judge answer naming one of six danger classes asks you in a dialog. The judge reads no `permissions.json` sentence. Floors for secrets, force pushes, package publishing and the like stay on in every mode. See [docs/permissions.md](docs/permissions.md#who-decides).
 
 ## Learn more
 
