@@ -543,7 +543,13 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
       // the script inside was never walked: a consumer must not read the segment as a plain unresolved word
       if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     }
-    else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
+    else if (!s.script || s.script.errors?.length) {
+      // a shell runs the statements before the error: they are walked as written (the floors and write checks read them), then the error stays one opaque segment
+      const at = (s.script?.errors as Array<{ pos: number }> | undefined)?.[0]?.pos;
+      const before = at === undefined ? [] : s.script!.commands.filter((st) => st.end > st.pos && st.end <= at);
+      if (before.length > 0 && sc.depth + 1 <= MAX_DEPTH) isolated(sc.run, () => walkList(before, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined }));
+      seg(sc, s.label, [], "parse_error");
+    }
     else {
       const body = s.script.commands;
       isolated(sc.run, () => walkList(body, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined }));

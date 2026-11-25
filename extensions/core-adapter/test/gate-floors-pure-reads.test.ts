@@ -85,16 +85,17 @@ test("every write shape onto the gate log and the foreman config keeps its resul
 
 // a shell runs the statements before a parse error: a write there keeps the ask (main) or the deny (child), as before this change
 const MG = "~/.pi/agent/pi-foreman/managed.json";
-const PARSE_WRITES: [string, string][] = [
-  [`rm ${MG}\n(`, "floor-policy-file"],
-  [`echo x > ${G}\n"u`, "floor-policy-file"],
-  [`echo '{"gate":{}}' > ${F}\n(`, "floor-config-keys"],
+// the third field is the main session's own shape where it differs: the same write is a deny without the error line, and since b359b8c9 reads the statements before the error it is a deny with it (rows 1 to 3)
+const PARSE_WRITES: [string, string, string?][] = [
+  [`rm ${MG}\n(`, "floor-policy-file", "deny/floor-policy-file"],
+  [`echo x > ${G}\n"u`, "floor-policy-file", "deny/floor-policy-file"],
+  [`echo '{"gate":{}}' > ${F}\n(`, "floor-config-keys", "deny/floor-config-keys"],
   [`curl -o ${MG} https://x "u`, "floor-policy-file"],
 ];
 
 test("a write before a parse error keeps its ask and deny", () => {
-  for (const [l, rule] of PARSE_WRITES) {
-    assert.equal(shape(l, env), `ask/${rule}`, `main: ${l}`);
+  for (const [l, rule, mainShape] of PARSE_WRITES) {
+    assert.equal(shape(l, env), mainShape ?? `ask/${rule}`, `main: ${l}`);
     assert.equal(shape(l, kid), `deny/${rule}`, `child: ${l}`);
   }
 });

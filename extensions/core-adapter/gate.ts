@@ -509,7 +509,7 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
         if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };
-      const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
+      const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, fsegs);
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
       const denv = { roots, platform, cwd, facts, floor: env };
       if (result) return { result, danger: null, segments: segs };
