@@ -89,7 +89,8 @@ for (const child of [false, true]) {
         const ok = await yes.r.call("bash", { command: line });
         // the main session's shell-write guard (index.ts) refuses a write it cannot read before the gate: a refusal, never a silent run
         if (yes.prompts.length === 0) {
-          assert.ok(!child && ok?.block === true && /shell write into project files refused/.test(String(ok.reason)), `${name}: ${JSON.stringify(ok)}`);
+          // a child's write outside its worktree before the error keeps its floor refusal (item 17 revision), the judge is never asked
+          assert.ok((!child && ok?.block === true && /shell write into project files refused/.test(String(ok.reason))) || (child && ok?.block === true && /child-write-outside/.test(String(ok.reason))), `${name}: ${JSON.stringify(ok)}`);
           continue;
         }
         assert.match(yes.prompts.join("\n"), /danger-unparsed/, name);

@@ -1911,12 +1911,27 @@ export function cleanLine(segments: ShellSegment[]): boolean {
  * stricter of the two. A text whose cut still fails to parse is not read further.
  */
 function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
+  const cut = parsedPrefix(text, segments, { cwd: segments[0]?.cwd ?? env.cwd, platform: env.platform });
+  if (!cut) return null;
+  const { prefix, parsed } = cut;
+  // the segment floors of the statements before the error: a deny wins, else the stronger judge-first hit
+  let seg: FloorHit | null = null;
+  for (const s of parsed) {
+    const h = segmentFloors(s, env, parsed);
+    if (h?.kind === "deny") return h;
+    seg = strongerHit(seg, h);
+  }
+  const n = nestedKinds(prefix, parsed, env, false);
+  return n?.kind === "deny" ? n : strongerHit(seg, n);
+}
+
+/** The segments of the statements a shell runs before the first syntax error of a line that is one `parse_error` segment, when that text parses; else null. */
+export function parsedPrefix(text: string, segments: ShellSegment[], opts: Parameters<typeof parseShell>[1]): { prefix: string; parsed: ShellSegment[] } | null {
   if (segments.length !== 1 || segments[0].opaque !== "parse_error") return null;
   const prefix = beforeParseError(text);
   if (prefix === null) return null;
-  const parsed = parseShell(prefix, { cwd: segments[0].cwd, platform: env.platform });
-  if (parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error")) return null;
-  return nestedKinds(prefix, parsed, env, false);
+  const parsed = parseShell(prefix, opts);
+  return parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error") ? null : { prefix, parsed };
 }
 
 /**
