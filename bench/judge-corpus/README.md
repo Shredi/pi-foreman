@@ -72,9 +72,9 @@ Judge bench (false allows and class hits on the 238 `owner:*` rows, stops on the
 | Model | Thinking | False allows | Class hits | Run-row stops | Invalid | p50 / p95 |
 |---|---|---|---|---|---|---|
 | Sonnet | low | 0 / 238 | 197 / 238 | 9.4 % | 0 | 1707 / 2519 ms |
-| Haiku | low | 9 | 93 | 4.2 % | | |
-| Haiku | medium | 6 | 96 | 5.2 % | | |
-| Haiku | high | 8 | 130 | 8.9 % | | |
+| Haiku | low | 9 | 93 | 4.2 % | 0 | 1636 / 2245 ms |
+| Haiku | medium | 6 | 96 | 5.2 % | 1 (0.2 %) | 1802 / 2870 ms |
+| Haiku | high | 8 | 130 | 8.9 % | 0 | 1801 / 4227 ms |
 
 Judge calls per day, replayed on one logged week: today about 336, `gate.unclassified: "allow"` about 891 (2.65x), `"judge"` about 3,568 (10.6x).
 
