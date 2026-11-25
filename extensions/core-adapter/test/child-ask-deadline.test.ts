@@ -276,7 +276,7 @@ test("a parked allow for ask n does not cover a different call as the next ask, 
   assert.equal(r.events("ask_parked_used").length, 0);
 });
 
-test("the deadline timer never gets a delay a Node timer would fire every 1 ms: far-future deadlines are clamped, a past one aborts once", async (t) => {
+test("the deadline timer never gets a delay a Node timer would fire every 1 ms: far-future deadlines are clamped", async (t) => {
   const ft = fakeTimers();
   const delays: number[] = [];
   const timers: AskTimers = { set: (f, ms) => (delays.push(ms), ft.timers.set(f, ms)), clear: ft.timers.clear };
@@ -307,5 +307,27 @@ test("the deadline timer never gets a delay a Node timer would fire every 1 ms: 
   assert.equal(ft.live.size > 0, true, "only the poll timer is left: the deadline timer cleared itself");
   assert.equal([...ft.live.values()].some((x) => x.ms === 2 ** 31 - 1), false);
   await until(() => signals[0].aborted);
+  w.stop();
+});
+
+test("an ask whose deadline passed before its turn is dropped as expired: no dialog, no timer", async (t) => {
+  const ft = fakeTimers();
+  const timers: AskTimers = { set: ft.timers.set, clear: ft.timers.clear };
+  const a = tmp(t);
+  const events: ChildAskEvent[] = [];
+  let shown = 0;
+  const w = new ChildAskWatch(
+    async () => (shown++, { allow: false, noRuling: true }),
+    (e) => events.push(e),
+    timers,
+    () => 1000,
+  );
+  writeChildAsk(a, { ...FIELDS, payload: "past", deadline: 999 });
+  w.add(a);
+  w.poll();
+  await until(() => events.length === 1);
+  assert.equal(events[0].kind, "expired");
+  assert.equal(shown, 0, "the owner is never asked for an expired ask");
+  assert.equal([...ft.live.values()].some((x) => x.ms === 1), false, "no deadline timer was set (only the poll timer is live)");
   w.stop();
 });

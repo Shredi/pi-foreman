@@ -64,3 +64,21 @@ node scripts/judge_bench.mjs --headless --model claude-bridge/claude-sonnet-5-5 
 `--headless` works for an `anthropic/...` model too. The first model is the baseline. The scripts call the real models (cost): run them on purpose. They print a short table (false
 allows on `owner:*` rows, stops on `run` rows, invalid rate, latency p50/p95, input/output/cache-read tokens) and write the full JSON report (`--json`, default `$FOREMAN_OUT` or the temp dir).
 Standalone, the registry is built from Pi's `ModelRuntime` with the agent dir's `auth.json` and `models.json`. CI validates the corpus format only.
+
+## Measured 2026-11-24
+
+Judge bench (false allows and class hits on the 238 `owner:*` rows, stops on the harmless `run` rows):
+
+| Model | Thinking | False allows | Class hits | Run-row stops | Invalid | p50 / p95 |
+|---|---|---|---|---|---|---|
+| Sonnet | low | 0 / 238 | 197 / 238 | 9.4 % | 0 | 1707 / 2519 ms |
+| Haiku | low | 9 | 93 | 4.2 % | | |
+| Haiku | medium | 6 | 96 | 5.2 % | | |
+| Haiku | high | 8 | 130 | 8.9 % | | |
+
+Judge calls per day, replayed on one logged week: today about 336, `gate.unclassified: "allow"` about 891 (2.65x), `"judge"` about 3,568 (10.6x).
+
+Owner dialogs in the logged week: harmless ones 511 -> 0. Dangerous ones now open only on a judge `owner` verdict that names a class. The harmless corpus rows (`run`, `refuse-ok`)
+are pinned by `gate-harmless-corpus.test.ts`: in no role and in neither `gate.unclassified` mode does one reach the owner, with a judge that answers clear or unsure.
+
+Decision: the default stays `allow` (judge mode misses the 3x call budget). The judge of the `claude-bridge` presets moved to Sonnet.

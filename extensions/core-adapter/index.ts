@@ -4384,7 +4384,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           throw e;
         }
         const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
-        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Math.max(0, deadline - Date.now()), 250, notBefore, undefined, undefined, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
+        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Math.max(0, deadline - Date.now()), 250, notBefore, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "gone") return done("parent-gone", false, CHILD_GONE_TEXT);
         // a timeout is nobody's refusal of this call: no repeat-stop count, and the text says what happened

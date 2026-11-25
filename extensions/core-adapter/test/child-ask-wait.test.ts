@@ -40,18 +40,18 @@ test("awaitChildRuling: an infinite timeout waits and a later ruling applies", a
 test("awaitChildRuling: the abort signal ends the wait with aborted, and an existing ruling is not taken then", async (t) => {
   const dir = tmp(t);
   const ac = new AbortController();
-  const p = awaitChildRuling(dir, 1, Infinity, 5, undefined, undefined, undefined, { signal: ac.signal });
+  const p = awaitChildRuling(dir, 1, Infinity, 5, undefined, { signal: ac.signal });
   await sleep(40);
   ac.abort();
   assert.equal((await p).answer, "aborted");
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
-  assert.equal((await awaitChildRuling(dir, 1, 2000, 5, undefined, undefined, undefined, { signal: ac.signal })).answer, "aborted");
+  assert.equal((await awaitChildRuling(dir, 1, 2000, 5, undefined, { signal: ac.signal })).answer, "aborted");
 });
 
 test("awaitChildRuling: a missing ask dir is gone at the next check", async (t) => {
   const dir = path.join(tmp(t), "asks");
   fs.mkdirSync(dir);
-  const p = awaitChildRuling(dir, 1, 3000, 5, undefined, undefined, undefined, { gone: { everyMs: 30 } });
+  const p = awaitChildRuling(dir, 1, 3000, 5, undefined, { gone: { everyMs: 30 } });
   await sleep(50);
   fs.rmSync(dir, { recursive: true });
   assert.equal((await p).answer, "gone");
@@ -68,7 +68,7 @@ test("awaitChildRuling: a missing or stale live file on two checks in a row is g
   const clock = { t: 1_700_000_000_000 };
   live.beat(clock.t - 500_000); // stale: older than staleMs
   const gone = { everyMs: 100, liveFile: live.file, staleMs: 1000, now: () => clock.t };
-  const p = awaitChildRuling(dir, 1, 1500, 5, undefined, undefined, undefined, { gone });
+  const p = awaitChildRuling(dir, 1, 1500, 5, undefined, { gone });
   clock.t += 100;
   await sleep(60); // check 1: stale, counted once
   let done = false;
@@ -83,7 +83,7 @@ test("awaitChildRuling: a fresh heartbeat keeps waiting; a ruling then applies",
   const dir = tmp(t);
   const live = liveFile(t);
   const clock = { t: 1_700_000_000_000 };
-  const p = awaitChildRuling(dir, 1, 3000, 5, undefined, undefined, undefined, { gone: { everyMs: 100, liveFile: live.file, staleMs: 1000, now: () => clock.t } });
+  const p = awaitChildRuling(dir, 1, 3000, 5, undefined, { gone: { everyMs: 100, liveFile: live.file, staleMs: 1000, now: () => clock.t } });
   for (let i = 0; i < 6; i++) {
     clock.t += 100;
     live.beat(clock.t);
@@ -98,7 +98,7 @@ test("awaitChildRuling: one stale check after a clock jump does not end the wait
   const live = liveFile(t);
   const clock = { t: 1_700_000_000_000 };
   live.beat(clock.t);
-  const p = awaitChildRuling(dir, 1, 3000, 5, undefined, undefined, undefined, { gone: { everyMs: 100, liveFile: live.file, staleMs: 1000, now: () => clock.t } });
+  const p = awaitChildRuling(dir, 1, 3000, 5, undefined, { gone: { everyMs: 100, liveFile: live.file, staleMs: 1000, now: () => clock.t } });
   clock.t += 100;
   await sleep(50); // check 1: fresh
   clock.t += 50_000; // the machine slept: the heartbeat now looks old

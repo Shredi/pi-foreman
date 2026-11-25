@@ -15,8 +15,8 @@
 (* P2 AnswerOnlyForItsCall: an answer applies only to the call it was      *)
 (*    asked for (ask n; the park key has the hash of the input).           *)
 (* P3 AskEnds: every ask ends (answer, gone, timeout; an away owner means *)
-(*    the deadline) and the child is told; an ask never stays open with nobody waiting for it, and a   *)
-(*    waiting child always has an open ask.                                *)
+(*    the deadline) and the child is told; an ask never stays open with    *)
+(*    nobody waiting for it, and a waiting child always has an open ask.   *)
 (***************************************************************************)
 EXTENDS Integers
 

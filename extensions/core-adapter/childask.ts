@@ -129,9 +129,9 @@ export function writeChildAsk(dir: string, a: ChildAskInput): number {
   return n;
 }
 
-export type RulingAnswer = { answer: "allow" | "deny" | "other" | "timeout" | "away" | "gone" | "aborted"; first?: string; reason?: string };
+export type RulingAnswer = { answer: "allow" | "deny" | "other" | "timeout" | "gone" | "aborted"; first?: string; reason?: string };
 
-/** Re-check cadence of the parent-away probe and of the gone check while a child waits. */
+/** Re-check cadence of the gone check while a child waits. */
 export const AWAY_CHECK_MS = 60_000;
 
 /** More that can end a wait: the call's abort signal, and the check whether the starting session is gone. */
@@ -156,14 +156,12 @@ function liveStale(file: string | undefined, now: number, staleMs: number): bool
 
 /**
  * Poll `<dir>/ruling-<n>.md` until it exists or `timeoutMs` passes; its first line ALLOW / DENY (case-insensitive) decides, the rest is the reason.
- * A ruling whose mtime is before `notBefore` (ms) is stale and ignored. `away` (the presence of the parent's owner, presencewait.ts) is polled
- * every `AWAY_CHECK_MS`; when it says away the wait ends at once with `away` instead of running to the deadline. `timeoutMs` may be `Infinity`.
+ * A ruling whose mtime is before `notBefore` (ms) is stale and ignored. `timeoutMs` may be `Infinity`.
  * `opts`: an aborted signal ends the wait with `aborted` (no ruling is taken then); `opts.gone` ends it with `gone` (see RulingOptions).
  */
-export async function awaitChildRuling(dir: string, n: number, timeoutMs: number, pollMs = 250, notBefore?: number, away?: () => boolean | Promise<boolean>, awayEveryMs = AWAY_CHECK_MS, opts: RulingOptions = {}): Promise<RulingAnswer> {
+export async function awaitChildRuling(dir: string, n: number, timeoutMs: number, pollMs = 250, notBefore?: number, opts: RulingOptions = {}): Promise<RulingAnswer> {
   const file = path.join(dir, `ruling-${n}.md`);
   const end = Date.now() + timeoutMs;
-  let nextAway = Date.now() + awayEveryMs;
   const { signal } = opts;
   const goneClock = opts.gone?.now ?? Date.now;
   const goneEvery = opts.gone?.everyMs ?? AWAY_CHECK_MS;
@@ -185,14 +183,6 @@ export async function awaitChildRuling(dir: string, n: number, timeoutMs: number
     }
     const left = end - Date.now();
     if (left <= 0) return { answer: "timeout" };
-    if (away && Date.now() >= nextAway) {
-      nextAway = Date.now() + awayEveryMs;
-      try {
-        if (await away()) return { answer: "away" };
-      } catch {
-        // unknown counts as present
-      }
-    }
     if (opts.gone && goneClock() >= nextGone) {
       const t = goneClock();
       const jumped = t - lastGone >= 2 * goneEvery;
