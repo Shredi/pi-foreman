@@ -161,7 +161,7 @@ Use the lifetime your provider documents instead of `600`. Details: [docs/cache.
 
 ## Permissions
 
-A tool call that no rule decides simply runs. Deploys, publishing, installs, network writes and similar dangerous calls go to a cheap classifier that may only clear them by citing a sentence you wrote in `permissions.json`; whatever it cannot clear asks you in a dialog, and "allow and remember" grows your list. Floors for secrets, force pushes and the like stay on in every mode. See [docs/permissions.md](docs/permissions.md).
+A tool call that no rule decides simply runs. Deploys, publishing, installs, network writes and similar dangerous calls go to a cheap classifier that may only clear them by citing a sentence you wrote in `permissions.json`; a call the classifier cannot clear is refused with its reason and nobody is asked; only a classifier answer naming one of six danger classes asks you in a dialog. Floors for secrets, force pushes and the like stay on in every mode. See [docs/permissions.md](docs/permissions.md).
 
 ## Learn more
 

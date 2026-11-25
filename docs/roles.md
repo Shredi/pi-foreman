@@ -91,7 +91,7 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 ## Auto review model
 
 The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-judge)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
-cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you. The judge thinks at `providers.<p>.roles.review.thinking`, else the model's `:level` suffix, else `high` (capped by `maxThinking`). `/foreman doctor` prints `classifier model: <p>/<m> (configured, thinking <level>, timeout <n> ms)`; `/foreman doctor` and `/foreman setup` print a WARN when the model came from the auto pick (it can change with the registry; set `providers.<p>.roles.review.model`) or when there is none.
+cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, every judge-first call is refused with the no-model reason and nobody is asked. The judge thinks at `providers.<p>.roles.review.thinking`, else the model's `:level` suffix, else `high` (capped by `maxThinking`). `/foreman doctor` prints `classifier model: <p>/<m> (configured, thinking <level>, timeout <n> ms)`; `/foreman doctor` and `/foreman setup` print a WARN when the model came from the auto pick (it can change with the registry; set `providers.<p>.roles.review.model`) or when there is none.
 
 ## Review critic
 
