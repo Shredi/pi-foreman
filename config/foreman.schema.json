@@ -598,7 +598,7 @@
       "properties": {
         "mode": { "type": "string", "enum": ["full", "floors-only"], "description": "No effect: there are no permission modes. The key (and the retired value floors-only) is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
         "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
-        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "No effect: a child's ask waits for its parent's ruling-<n>.md without a time limit. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
+        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "No effect: a child's ask ends after a fixed 15 minutes. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "readClear": { "type": "boolean", "description": "No effect: the read question was removed (docs/permissions.md#the-read-question). The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
         "readonlyClear": { "type": "boolean", "description": "No effect: the judge step for a read-only role's shell lines (docs/permissions.md#the-role-question) was removed. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
