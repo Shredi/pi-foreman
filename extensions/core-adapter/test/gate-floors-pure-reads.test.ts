@@ -83,7 +83,7 @@ test("every write shape onto the gate log and the foreman config keeps its resul
   }
 });
 
-// a shell runs the statements before a parse error: a write there keeps the ask (main) or the deny (child), as before this change
+// a shell runs the statements before a parse error: a write there is refused as without the error line (deny in main and child, rows 1 to 3; the ask of a curl row stays in main)
 const MG = "~/.pi/agent/pi-foreman/managed.json";
 // the third field is the main session's own shape where it differs: the same write is a deny without the error line, and since b359b8c9 reads the statements before the error it is a deny with it (rows 1 to 3)
 const PARSE_WRITES: [string, string, string?][] = [
@@ -93,7 +93,7 @@ const PARSE_WRITES: [string, string, string?][] = [
   [`curl -o ${MG} https://x "u`, "floor-policy-file"],
 ];
 
-test("a write before a parse error keeps its ask and deny", () => {
+test("a write before a parse error is refused as without the error line", () => {
   for (const [l, rule, mainShape] of PARSE_WRITES) {
     assert.equal(shape(l, env), mainShape ?? `ask/${rule}`, `main: ${l}`);
     assert.equal(shape(l, kid), `deny/${rule}`, `child: ${l}`);

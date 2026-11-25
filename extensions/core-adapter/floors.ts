@@ -1913,16 +1913,8 @@ export function cleanLine(segments: ShellSegment[]): boolean {
 function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
   const cut = parsedPrefix(text, segments, { cwd: segments[0]?.cwd ?? env.cwd, platform: env.platform });
   if (!cut) return null;
-  const { prefix, parsed } = cut;
-  // the segment floors of the statements before the error: a deny wins, else the stronger judge-first hit
-  let seg: FloorHit | null = null;
-  for (const s of parsed) {
-    const h = segmentFloors(s, env, parsed);
-    if (h?.kind === "deny") return h;
-    seg = strongerHit(seg, h);
-  }
-  const n = nestedKinds(prefix, parsed, env, false);
-  return n?.kind === "deny" ? n : strongerHit(seg, n);
+  // the prefix parses, so its `lineFloors` meets no parse_error segment and does not come back here
+  return lineFloors(cut.prefix, cut.parsed, env);
 }
 
 /** The segments of the statements a shell runs before the first syntax error of a line that is one `parse_error` segment, when that text parses; else null. */
