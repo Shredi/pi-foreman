@@ -1,12 +1,22 @@
 // F1: clearing a high-stakes FAIL from another checkout passes only the entries whose PASS stood just before the FAIL; work done during the high-stakes run stays open.
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { test } from "node:test";
 import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { gatesClearFail, gatesMarkStood, gatesVerdict } from "../reviewgates.ts";
-import { build, commitIn, end, hsRun, launch, persisted, settle, setup, worktree } from "./_hsrig.ts";
+import { build, commitIn, end, hsRun, launch, persisted, settle, setup, tick, worktree } from "./_hsrig.ts";
 
 const sized = (risk: string[]) => ({ size: { files: ["src/a/x.ts"] }, risk });
 const passed = onReviewVerdicts(initialReviewGate(), ["pass"], 1, "r0");
+
+/** The checkout the PASS mark was taken in (the builder works there); the mark lands after the git reads. */
+async function passCwd(w: Parameters<typeof persisted>[0]): Promise<string> {
+  const marks = (): Record<string, { cwd: string }> => (((w.ceremonyEntries().at(-1)?.data ?? {}) as { gate?: { passMarks?: Record<string, { cwd: string }> } }).gate?.passMarks ?? {});
+  const stop = Date.now() + 8000;
+  while (Date.now() < stop && Object.keys(marks()).length < 1) await tick(50);
+  return Object.values(marks())[0].cwd;
+}
 
 /** FAIL in A (a PASS stood there; a builder runs in A during the run when `during`), then a fix passed in B whose reviewer got the findings. */
 async function failInAClearInB(t: Parameters<typeof setup>[0], during: boolean): Promise<string> {
@@ -19,6 +29,7 @@ async function failInAClearInB(t: Parameters<typeof setup>[0], during: boolean):
   if (during) {
     const x = await launch(a, "builder", "more work");
     assert.equal(x.blocked, null, String(x.blocked));
+    fs.writeFileSync(path.join(await passCwd(w), `chg-${Math.random().toString(36).slice(2)}.ts`), "export const x = 1;\n");
     await end(a, x, "builder", "done");
   }
   await end(a, s, "reviewer", "1. FAIL src/x.ts:1 broken\nOverall verdict: FAIL");

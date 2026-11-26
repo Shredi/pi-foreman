@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { combined, gatesRevise, gatesVerdict, goneDropped, standsFor, vAccepts, type ReviewGates } from "../reviewgates.ts";
-import { PlanReviews, planReviewHash, planReviewResults, type PlanVerdict } from "../planreview.ts";
-import type { ReviewResult } from "../occasion.ts";
+import { execFileSync } from "node:child_process";
+import * as os from "node:os";
+import { commentOnlySince } from "../commentonly.ts";
+import { rmTestTmp } from "./_tmpbase.ts";
+import { world as rworld } from "./_r46world.ts";
+import { gatesRevise, gatesVerdict, goneDropped, standsFor, vAccepts, type ReviewGates } from "../reviewgates.ts";
 import type { World } from "./_hsrig.ts";
 import { build, end, launch, settle, setup, tick, worktree } from "./_hsrig.ts";
 
@@ -82,7 +85,6 @@ test("D189a end to end: a builder run that changed nothing withdraws the revisio
   const { a, w } = await setup(t, { world: { realSnapshot: true } });
   await build(a);
   await marked(w);
-  await marked(w);
   await tick(300);
   const ta = await launch(a, "builder", "look around");
   assert.equal(ta.blocked, null);
@@ -117,17 +119,60 @@ test("D203 end to end: a FAIL in B after a PASS in A: a reviewer launch in A is 
   assert.equal(again.blocked, null, String(again.blocked));
 });
 
-test("D185: an invalid plan-review verdict leaves the round count unchanged; a following valid FAIL is round 1", () => {
-  const P = "/ws/.workflow/scratch/plan-x.md";
-  const h = planReviewHash(Buffer.from("# A\n"));
-  const r = new PlanReviews();
-  const invalid = { index: 0, role: "plan-reviewer", text: "garbage", verdict: null, items: [], findings: [], suites: [], incomplete: false, occasion: "plan-review", primary: true } as unknown as ReviewResult;
-  const kept = planReviewResults([invalid]);
-  assert.deepEqual(kept, []);
-  for (const x of kept as { verdict: "pass" | "fail" }[]) r.record(P, { hash: h, verdict: x.verdict, model: "p/m", findings: Promise.resolve([]) } as PlanVerdict);
-  assert.equal(r.newest(), null);
-  assert.deepEqual(r.all(), []);
-  r.record(P, { hash: h, verdict: "fail", model: "p/m", findings: Promise.resolve([]) });
-  assert.equal(r.newest()?.rounds, 1);
-  assert.equal(combined({}).last, null);
+test("D185 end to end: a plan-review run end with no valid verdict counts no round and sets no [review_loop]; the next two equal FAILs are rounds 1 and 2", async (t) => {
+  const w = rworld(t);
+  const a = await w.adapter("startup");
+  const events = async (name: string) => (await w.traceEvents()).filter((e) => e.event === name).length;
+  const waitFor = async (name: string, want: number): Promise<void> => {
+    const stop = Date.now() + 10_000;
+    while ((await events(name)) < want && Date.now() < stop) await tick(25);
+    assert.equal(await events(name), want, `${name} x${want}`);
+  };
+  const FAIL = "1. FAIL plan.md:1: the scope is unclear\nOverall verdict: FAIL";
+  const run = async (report: string): Promise<string | null> => {
+    const r = await a.reviewLaunch();
+    if (r.blocked) return r.blocked;
+    a.endRun(r.id, report);
+    return null;
+  };
+  assert.equal(await run("garbage, no verdict at all"), null);
+  await tick(500);
+  assert.equal(await events("plan_review"), 0, "the invalid verdict is dropped");
+  assert.equal(await events("review_loop"), 0);
+  assert.equal(await run(FAIL), null);
+  await waitFor("plan_review", 1);
+  assert.equal(await run("still garbage"), null);
+  await tick(500);
+  assert.equal(await events("plan_review"), 1, "no second round from the invalid verdict");
+  assert.equal(await events("review_loop"), 0, "one FAIL round: no loop stop");
+  assert.equal(await run(FAIL), null);
+  await waitFor("plan_review", 2);
+  await waitFor("review_loop", 1);
+  assert.match((await a.reviewLaunch()).blocked ?? "", /\[review_loop\]/, "the second equal FAIL round stops the loop, as if the invalid run had not happened");
+});
+
+test("D189a: an owner edit under .workflow/ after a PASS keeps the standing PASS", async (t) => {
+  const { a, w } = await setup(t, { world: { realSnapshot: true } });
+  await build(a, {}, w.project);
+  await marked(w);
+  await tick(300);
+  const cwd = markCwd(w);
+  assert.equal(fs.realpathSync(cwd), fs.realpathSync(w.project), "the PASS stands in the session's own checkout");
+  const notes = path.join(cwd, ".workflow", "owner-notes.md");
+  fs.mkdirSync(path.dirname(notes), { recursive: true });
+  fs.writeFileSync(notes, "first\n");
+  assert.equal((await a.call("write", { path: notes, content: "first\n" })).block, undefined);
+  await tick(300);
+  assert.equal(await settle(a), "", "a .workflow/ write is no revision");
+});
+
+test("D189a: an unreadable diff keeps the revision (commentOnlySince is null, not the empty list)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-d189a-"));
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    assert.equal(await commentOnlySince({ cwd: dir, tree: "0".repeat(40) }), null);
+    assert.equal(await commentOnlySince({ cwd: path.join(dir, "missing"), tree: "0".repeat(40) }), null);
+  } finally {
+    rmTestTmp(dir);
+  }
 });

@@ -115,7 +115,7 @@ const reasonOf = (e: ReviewGate): string => {
 /**
  * The refusal hint of the open entries. The text of `reviewHint` when the only open key is the session's own checkout (`own`) or the session-wide one;
  * otherwise each open key with its path (relative to the session cwd when inside it, else the toplevel; "" is "unknown checkout") and its reason, then the ways out:
- * a review in each, and for a side checkout `supersededGone` could drop once its worktree is gone the removal of that worktree.
+ * a review in each, or, for a side checkout, the removal of its worktree (`goneDropped` then drops the entry).
  */
 export function openHint(g: ReviewGates, o: { cwd: string; own: string }): string {
   const open = openRoots(g);

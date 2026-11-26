@@ -1,7 +1,7 @@
 // The judge's file reads (docs/permissions.md "What it may read"): the judge may answer `read` with paths instead of a verdict; this module decides what of
-// those paths is shown. A path is shown only when its real path lies inside the session's worktree, cwd, a helper's own folders or an allow-listed part of the
-// Pi agent dir (the agent dir wins over a project root that contains it), and no exclusion (secret paths, login and token files, git and Claude folders,
-// histories) names it. The gate parses no command text: the model names the paths, this module checks the folder bound and the exclusions.
+// those paths is shown. Any absolute path is shown (labelled by the worktree, cwd or a helper's own folder it lies in, else by its filesystem root) except inside
+// the Pi agent dir outside its allow-listed parts (the agent dir wins over a project root that contains it), and when an exclusion (secret paths, login and token
+// files, git and Claude folders, histories) names it. The gate parses no command text: the model names the paths, this module checks the folder bound and the exclusions.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
