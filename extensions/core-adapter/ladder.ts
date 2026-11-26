@@ -60,6 +60,9 @@ export const HANDOFF_MAX = 8_000;
 /** Default `ladder.contextCap.<role>`: absolute context tokens of one call. A role with no entry has no cap. */
 export const DEFAULT_CONTEXT_CAP: Record<string, number> = { builder: 250_000 };
 const LEDGER_LINES_MAX = 12;
+/** The turn warning (`ChildLadder.warnOf`): at this share of the limit, for a limit of at least this many turns. */
+const WARN_SHARE = 0.8;
+const WARN_MIN_TURNS = 10;
 
 export type ClimbCause = "context" | "turns" | "stuck" | "checks_failed";
 
@@ -139,6 +142,7 @@ export interface ChildSteer {
  */
 export class ChildLadder {
   private steered = false;
+  private warned = false;
   private turns = 0;
   private baseline: number | null = null;
   private readonly o: { strongAbove?: number; maxTurns?: number; contextCap?: number; bottom?: boolean };
@@ -168,6 +172,17 @@ export class ChildLadder {
       return { trigger: "turns", count: this.turns, limit: this.o.maxTurns, rung, text: this.o.bottom ? steerText("turns", why) : `pi-foreman ladder: ${why}. Stop now and start no new work. Reply with your report: Done, Remaining, Files touched, and what kept you looping.` };
     }
     return null;
+  }
+
+  /**
+   * The one warning before the cap (call after `onUsage` of the same message): at 80 % of `maxTurns`, for a limit of 10 or more (below that 80 % is too close to the cap to help),
+   * once, and not after the cap steer. It sets no `steered`: the cap steer still fires.
+   */
+  warnOf(turns: number = this.turns): { text: string; turns: number; limit: number } | null {
+    const max = this.o.maxTurns;
+    if (this.warned || this.steered || !posInt(max) || max < WARN_MIN_TURNS || turns < Math.ceil(WARN_SHARE * max) || turns > max) return null;
+    this.warned = true;
+    return { turns, limit: max, text: `pi-foreman ladder: ${turns} of ${max} turns used; finish your work and do your end step within the next ${max - turns} turns.` };
   }
 }
 

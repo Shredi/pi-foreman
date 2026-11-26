@@ -145,13 +145,26 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
     return 0;
   }
   // url <path>
+  if (!path.isAbsolute(argv[1] ?? "")) {
+    err("page url: the path must be absolute\n");
+    return 1;
+  }
   const file = pageFileOf(argv[1]);
-  if (!file) return 1;
+  if (!file) {
+    err("page url: not a page file of a show pages/ folder\n");
+    return 1;
+  }
   const rec = await ensureServer(d.ensureDeps());
-  if (!rec) return 1;
+  if (!rec) {
+    err("page server did not start\n");
+    return 1;
+  }
   const id = registerRoot(stateDir, path.dirname(file), "dir", d.now());
   const url = id ? servedUrl(rec, cfg.cfg, id, path.basename(file)) : null;
-  if (!url) return 1;
+  if (!url) {
+    err("page url: no served URL for this page\n");
+    return 1;
+  }
   out(`${url}\n`);
   return 0;
 }

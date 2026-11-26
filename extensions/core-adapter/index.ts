@@ -193,7 +193,7 @@ import { forcedProjection, replayable, subagentNoticeWrap } from "./warmreplay.t
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
-import { applyLedgerItems, criticOf, failFindingsText, reReviewLine } from "./ledgerblock.ts";
+import { applyLedgerItems, criticOf, earlierFindingsBlock, failFindingsText, reReviewLine } from "./ledgerblock.ts";
 import { taskLedger } from "./ledgerpath.ts";
 import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
@@ -266,7 +266,7 @@ import { closeLines } from "./reviewrounds.ts";
 import { currentBranch, repoOf, workspaceKeyOf } from "./workspacekey.ts";
 import { appendPrRow, diffLinesOf, filesOfDiff, findingsOfResult, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, buildDirtyBase, CEREMONY_ENTRY, DIRTY_BASE_ENTRY, restoreDirtyBase, emptyCeremonyState, latestCeremonyState, persistedGate, RUNNING_BUILDERS_CAP, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
-import { PLAN_SAME_BATCH_LINE, PlanReviews, claimsHintLine, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PLAN_SAME_BATCH_LINE, PlanReviews, claimsHintLine, planDiffLines, planFactsBlock, earlierLinesOf, planPathsOf, planReviewLostNotice, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
 import { ensureSessionFolder, folderLine, primaryCheckout, type SessionFolder } from "./sessionfolder.ts";
@@ -355,6 +355,8 @@ interface Session {
   childExtensionErrors?: string[];
   /** Set when the permission system cannot be resolved: child launches are refused. */
   openPrs: OpenPrsRefresher | null;
+  /** The config page links read (`pages.server.*`): reloads when the user or overlay layers change, so a new baseUrl reaches the next link without a restart. */
+  pageCfg: ReloadingConfig<MergedConfig>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
   owned: OwnedRoots;
   /** True until `npm root -g` resolved or failed: a custom worktree root is not owned and `--worktree` open is refused meanwhile. */
@@ -634,6 +636,12 @@ interface Session {
   overrideDeclined: boolean;
   /** Foreman only: tool call ids whose launch the owner approved at critical load, with the launch arguments; settled at tool_execution_end (one approval, one launch). */
   overridden: Map<string, Record<string, unknown>>;
+}
+
+/** The config a page link reads: the session's, reloaded when its layers changed. */
+async function pagesConfigOf(s: Session) {
+  await s.pageCfg.refresh();
+  return s.pageCfg.current().config;
 }
 
 export interface AdapterDeps {
@@ -1305,6 +1313,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       paneResume: null,
       show: null,
       openPrs: null,
+      pageCfg: new ReloadingConfig(agentDir, config, () => loadMergedConfig({ python: python.ok ? python.info.executable : null, pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner }), (c) => c.source === "cli"),
       pressureSampler: null,
       stripSampler: null,
       pressureQ: null,
@@ -1484,7 +1493,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild || !s.ceremonyRestored) return;
     const data = buildCeremonyState({
       plan: s.plan,
-      lineages: s.planReviews.all().map((l) => ({ path: l.path, hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds, reviews: l.reviews })),
+      lineages: s.planReviews.all().map((l) => ({ path: l.path, hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds, reviews: l.reviews, ...(l.latest.verdict === "fail" && l.latest.earlier?.length ? { findings: l.latest.earlier } : {}) })),
       userTier: s.ceremony.userTier,
       tier: s.ceremony.tier,
       tierSource: s.ceremony.source,
@@ -1573,11 +1582,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  /** The gates the finish readers see (D165): a deleted checkout superseded by a later PASS elsewhere is left out (`supersededGone`); `ctx` gives each dropped checkout one visible line. */
-  function liveGates(s: Session, ctx?: ExtensionContext): ReviewGates {
+  /** The checkouts with a builder launched and not ended (a null root list = every checkout). */
+  function runningRoots(s: Session): Set<string> {
     const running = new Set<string>();
     for (const roots of s.runningBuilders.values()) for (const r of roots ?? Object.keys(s.reviewGates)) running.add(r);
-    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync, running);
+    return running;
+  }
+
+  /** The gates the finish readers see (D165): a deleted checkout superseded by a later PASS elsewhere is left out (`supersededGone`); `ctx` gives each dropped checkout one visible line. */
+  function liveGates(s: Session, ctx?: ExtensionContext): ReviewGates {
+    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync, runningRoots(s));
     for (const d of dropped) {
       if (!ctx || s.droppedGone.has(d.dir)) continue;
       s.droppedGone.add(d.dir);
@@ -2243,7 +2257,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const e = latestCeremonyState((ctx.sessionManager.getBranch?.() ?? []) as unknown[]);
     s.ceremonyRestored = true;
     if (!e) return persistCeremonyState(s); // a plan phase entered through the env is recorded at once
-    for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
+    for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]), ...(l.findings ? { earlier: l.findings } : {}) }, l.rounds, l.reviews);
     s.planPhase = e.planPhase;
     s.planPhaseOrigin = e.planPhaseOrigin ?? "owner"; // an entry without the field: the owner's origin (a PASS does not end it)
     if (!s.planPhase && process.env.PI_FOREMAN_PLAN_PHASE !== undefined) {
@@ -2367,7 +2381,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function restoreStoredPlans(s: Session, ctx: ExtensionContext): void {
     if (s.isChild || roundStateDir(process.env)) return;
     const r = restoreFromStore(s.agentDir, planOpts(s, ctx));
-    for (const v of r.reviews) if (!s.planReviews.lineage(v.plan.path)) s.planReviews.restore(v.plan.path, { hash: v.plan.hash, verdict: v.review.verdict, model: v.review.model, findings: Promise.resolve([]) }, v.review.rounds);
+    for (const v of r.reviews) if (!s.planReviews.lineage(v.plan.path)) s.planReviews.restore(v.plan.path, { hash: v.plan.hash, verdict: v.review.verdict, model: v.review.model, findings: Promise.resolve([]), ...(v.review.findings?.length ? { earlier: v.review.findings } : {}) }, v.review.rounds);
     const a = r.approved;
     if (a && !s.plan) s.plan = { topic: a.plan.topic, path: a.plan.path, hash: a.plan.hash, status: "approved", approvedAt: a.at, by: a.by, note: "restored after reload from the approval store" };
     if (a || r.reviews.length) {
@@ -3904,11 +3918,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const r of planReviewResults(results)) {
       s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
       const findings = Promise.resolve(findingsOfResult(r));
+      const earlier = r.verdict === "fail" ? earlierLinesOf(failFindingsText(r.findings, r.items)) : [];
       for (const rp of readPlansOnce(plans, opts)) {
         // the verdict counts for the version the run's reviewer read; a plan changed while it ran stays unreviewed. No snapshot (after a reload): the bytes on disk now.
         const snap = s.planReviews.keepRun(rp.plan.path, runId);
         const hash = snap?.hash ?? rp.plan.hash;
-        s.planReviews.record(rp.plan.path, { hash, verdict: r.verdict, model: r.model, findings });
+        s.planReviews.record(rp.plan.path, { hash, verdict: r.verdict, model: r.model, findings, ...(earlier.length ? { earlier } : {}) });
         s.planReviews.closeRun(runId);
         s.show?.planReviewed(r.verdict === "pass", hash); // plan page state and milestone (show.ts)
         reviewed.add(rp.plan.path);
@@ -3921,7 +3936,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           loopCheck(s, runId, prev, rec);
         });
         const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
-        saveStored(s.agentDir, hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
+        saveStored(s.agentDir, hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds, ...(earlier.length ? { findings: earlier } : {}) } }); // survives /reload (checkpoint.ts)
       }
     }
     for (const p of reviewed) {
@@ -3935,6 +3950,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "plan_phase", decision: "kept", cause });
       }
     }
+    const lost = s.reviewRuns.byRun.get(runId)?.entries.some((e) => e.occasion === "plan-review" && e.shadow === null) ? planReviewLostNotice(results, plans, reviewed.size) : null;
+    if (lost) pi.sendMessage({ customType: "pi-foreman-plan-review-lost", content: lost, display: true }, { triggerTurn: false });
     persistRounds(s);
   }
 
@@ -5318,6 +5335,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const before = s.planReviews.reviewedText(rp.plan.path);
             if (s.planReviews.lineage(rp.plan.path)) {
               rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
+              const prior = s.planReviews.lineage(rp.plan.path)?.latest;
+              if (prior?.verdict === "fail" && prior.earlier?.length) rereview.push(earlierFindingsBlock(prior.earlier.join("\n")));
               // a plan write in the tool batch of this launch may land after the bytes above were read: no diff is claimed then
               rereview.push(...(sameBatchPlanWrite(s, ctx, rp.plan.topic) ? [PLAN_SAME_BATCH_LINE] : before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
             }
@@ -5651,6 +5670,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, baseline: steer.baseline ?? null, rung: steer.rung, reason: steer.cap !== undefined ? "context_cap" : "context" });
       pi.sendUserMessage(steer.text, { deliverAs: "steer" });
+    }
+    const warn = s.isChild ? s.childLadder.warnOf() : null;
+    if (warn) {
+      s.trace?.emit({ event: "child_turn_warning", role: s.usage.line.role, turns: warn.turns, limit: warn.limit });
+      pi.sendUserMessage(warn.text, { deliverAs: "steer" });
     }
     const usageRecord = usageLine(s.usage.line, event.message);
     if (!appendUsage(s.usage.file, pricedLine(usageRecord, loadPrices(PKG_ROOT), lookupRate(ctx.modelRegistry as never, usageRecord.provider, usageRecord.model)))) notifyOnce(s, ctx, "usage", `pi-foreman: could not append to the usage log ${s.usage.file}; /foreman cost will be incomplete.`);
@@ -6954,7 +6978,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       savePause(s);
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
-        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s), running: runningRoots(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
@@ -6971,7 +6995,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     savePause(s);
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s), running: runningRoots(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }
@@ -7360,7 +7384,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the served URL goes to the owner's screen only, never into the tool result (the model sees no secret link)
           if (r.page && ctx.hasUI) {
             try {
-              const url = await pageLinks.url(r.page, "dir", s.config.config);
+              const url = await pageLinks.url(r.page, "dir", await pagesConfigOf(s));
               if (url) ctx.ui.notify(`Note page: ${url}`, "info");
             } catch {
               // no served link: the file path stays
@@ -7786,7 +7810,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         try {
           const page = await planPageOutcome(planPage, undefined, showOffReason(!!s.live, s.id));
           // the served URL (UI lines only, never a tool result); null keeps today's file link
-          const url = "path" in page ? await pageLinks.url(page.path, "dir", s.config.config) : null;
+          const url = "path" in page ? await pageLinks.url(page.path, "dir", await pagesConfigOf(s)) : null;
           ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${url ? planPageLineServed(page, url) : planPageLineOf(page)}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
           const spec: DialogSpec = {
             ask: `Approve the plan for ${plan.topic}?`,

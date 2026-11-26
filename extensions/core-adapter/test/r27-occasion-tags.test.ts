@@ -36,7 +36,7 @@ test("the V refusal and the finish hint name the last counted PASS run, or say t
   const failed = onReviewVerdicts(passed, ["fail"], 2, "run-fail-2");
   const refusal = planLedgerCall({ action: "mark", items: ["V"] }, { child: false, gate: failed });
   assert.ok("error" in refusal && refusal.error.includes("last counted PASS: run run-pass-1"), JSON.stringify(refusal));
-  assert.equal(reviewHint(onRevision(onReviewVerdicts(initialReviewGate(), ["pass"], 1, "run-p"))), "(re-review needed: revised after the last PASS) (run run-p)");
+  assert.equal(reviewHint(onRevision(onReviewVerdicts(initialReviewGate(), ["pass"], 1, "run-p"))), "(re-review needed: revised after the last PASS) (run run-p) - run a reviewer in this checkout again");
   const none = planLedgerCall({ action: "mark", items: ["V"] }, { child: false, gate: initialReviewGate() });
   assert.ok("error" in none && none.error.includes("no counted PASS this round"), JSON.stringify(none));
 });

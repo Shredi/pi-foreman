@@ -9,6 +9,8 @@ import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
 
 const { keys, prefixes } = JSON.parse(fs.readFileSync(new URL("./session-env.json", import.meta.url), "utf8"));
 for (const k of keys) delete process.env[k];
+// foreman_test_run.mjs must not answer a test's run from an earlier recorded pass; reuse tests set FOREMAN_TEST_REUSE=1.
+process.env.FOREMAN_TEST_REUSE ??= "0";
 // A runner inside a Herdr pane must not hand its pane to the adapters under test: their presence files would name it.
 for (const k of Object.keys(process.env)) if (prefixes.some((p) => k.startsWith(p))) delete process.env[k];
 

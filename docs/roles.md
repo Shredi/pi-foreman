@@ -11,7 +11,7 @@ Role ids are neutral: `foreman` (the main session: triage, plan, ledger, delegat
 change) and `reviewer` (diff review against ledger items, plan review; it loads the shipped `security-review` skill
 when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input). The foreman
 writes the heavy plan itself. `session-foreman` is not a launchable role: its mapped model is the model of sessions opened by `/foreman session open` (default: the opening session's own model; only the `model` of the mapping is used, the opened session keeps Pi's default thinking; `--model` overrides; `subagent({agent: "session-foreman"})` is refused). Role files are in `agents/`. Display names come only from config: the preset
-`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock; it starts them detached as its first step and collects them with `--wait <id>`, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
+`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock; it starts them detached as its first step and collects them with `--wait <id> --max 540` under a 600-second shell timeout, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
 provider in `foreman.json` (see [install](install.md)). Design record: `design/architecture.md`
 [section 4](../design/architecture.md#4-role-model).
 
@@ -24,7 +24,7 @@ which relaunches it with `model: "strong"`:
 
 - **Context**: a bottom-rung child whose context (input + cacheRead + cacheWrite) has grown by more than
   `strongAbove` (default 100000) over its first call's context is steered once to stop and return a handoff report starting `RUNG_UP: context`.
-- **Turns**: past the role's turn limit (`ladder.maxTurns.<role>`: builder 100; otherwise `childMaxTurns`, default 60)
+- **Turns**: at 80 % of a turn limit of 10 or more the child gets one warning to finish and do its end step (trace `child_turn_warning`); past the role's turn limit (`ladder.maxTurns.<role>`: builder 100; otherwise `roles.<role>.childMaxTurns` (reviewer 100), then `childMaxTurns`, default 60)
   a bottom-rung child hands off (`RUNG_UP: turns`); a top-rung child is told to stop and report. Trace events:
   `child_turn_cap` and `child_turn_limit {role, turns, limit}`.
 - **Context cap**: a single-launch child on any rung whose call context reaches `ladder.contextCap.<role>` (builder 250000, 0 = off)
@@ -118,7 +118,7 @@ Design record for the ladder: `design/architecture.md`
 | `roles.<role>.denyTools` | Tool-name globs (`*` wildcard) a child of the role never gets: the call is denied, never asked, before the permission gate. Defaults: `mcp__*` for `explorer` and `reviewer`, so MCP tools are denied for the read-only roles. Layers only add entries; none removes one. A child whose launch binding cannot be read gets `mcp__*` denied. The check runs in the `tool_call` hook, and every inner call of a codemode script runs through the hooks on its own, so the deny applies to those calls too. |
 | `roles.<role>.launch` | How the role is launched; only `detached` exists (detached children forward permission asks to the parent). Not settable by project/session. |
 | `roles.<role>.timeoutMinutes` | Run-time default of one launch: written as the launch's `timeoutMs` when the launch passes none. A launch `timeoutMs` (or `maxRuntimeMs`) wins in either direction; every written deadline is capped at `ceremony.launchTimeoutCapMinutes` (default 120), the only hard ceiling. |
-| `roles.<role>.childMaxTurns` | Ladder: assistant turns after which a child of this role is steered once to stop and hand off (rung up when on its bottom rung). |
+| `roles.<role>.childMaxTurns` | Ladder: assistant turns after which a child of this role is steered once to stop and hand off (rung up when on its bottom rung). Default: reviewer 100. It wins over `providers.<p>.childMaxTurns` and `ladder.childMaxTurns`; `ladder.maxTurns.<role>` wins over it. |
 | `providers.<p>.costTier` | Relative cost tier; a fallback to a higher tier needs one confirmation per session. |
 | `providers.<p>.roles.<role>.model`, `providers.<p>.roles.<role>.thinking`, `providers.<p>.roles.<role>.codemode` | The provider's model for the role as `<provider>/<model>`, its thinking level (capped by `maxThinking`) and a per-provider codemode override. |
 | `providers.<p>.roles.<role>.strong.model`, `providers.<p>.roles.<role>.strong.thinking` | Stronger model for the role, picked by the strength keyword `strong` (the builder also on a heavy tier). User or overlay config only. |

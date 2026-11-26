@@ -88,7 +88,7 @@ When the server is off (`enabled: false`), cannot start, the config call fails, 
 | Command | What it does |
 |---|---|
 | `foreman pages ensure` | starts the server when it is not running (reuses a running server; restarts it only when its build differs from this install and this install's files are newer than the server's start); prints the port, exits 1 when the server is off or did not start |
-| `foreman pages url <path>` | prints the served URL of a page file; only a page file of a show `pages/` folder (`.../show/<session id>/pages/<plan\|result\|note-N>.html`, a regular file, no symlink); anything else prints nothing and exits 1 |
+| `foreman pages url <path>` | prints the served URL of a page file; only a page file of a show `pages/` folder (`.../show/<session id>/pages/<plan\|result\|note-N>.html`, a regular file, no symlink); anything else (a relative path included) prints one line on stderr saying why, nothing on stdout, and exits 1 |
 | `foreman pages status` | the server's pid, port, bind, version and roots, and why links are file links when they are |
 | `foreman pages stop` | asks the server to exit |
 | `foreman pages rotate` | deletes every secret: all old links stop working, the next link registers anew |

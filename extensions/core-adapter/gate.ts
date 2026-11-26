@@ -240,6 +240,19 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
       return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${what}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
     }
   }
+  if (env.roots.role === "reviewer") {
+    // a reviewer's file tool writes only the targets a child may write outside the worktree: its scratch and output dirs (real paths: a link in scratch cannot point into the worktree) and its own handoff files; its shell lines are judged as before
+    const { roots, platform, cwd } = env;
+    // `out` is one of `scratch` (childscratch.ts), so pathDecide covers both with its real-path and `.git` checks
+    const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
+    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
+      if (dir !== "write") continue;
+      const abs = resolveWord(platform, cwd, w);
+      if (abs !== null && sanctioned(abs)) continue;
+      return deny("child-reviewer-write", `Your role writes files only with the write tool into your scratch dir (${roots.scratch[0] ?? "$FOREMAN_SCRATCH"}) or your output dir (${roots.out ?? "$FOREMAN_OUT"}), never into the worktree or elsewhere. Refused: ${abs ?? String(w)}. Write probe and test data there, with a literal path.`);
+    }
+  }
   return undefined;
 }
 
