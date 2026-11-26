@@ -10,6 +10,8 @@ import { scrubSessionEnv } from "../../scripts/session_env.mjs";
 
 // A session's own variables (session-env.json) go first: the HERDR_ prefix would remove the HERDR_APP_HOME set below.
 scrubSessionEnv(process.env);
+// foreman_test_run.mjs must not answer a test's run from an earlier recorded pass; reuse tests set FOREMAN_TEST_REUSE=1.
+process.env.FOREMAN_TEST_REUSE ??= "0";
 
 // An empty temp directory, removed on exit (the same style as the npm-root seed in extensions/core-adapter/test/_hermetic-env.mjs).
 const appHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-app-home-")));
