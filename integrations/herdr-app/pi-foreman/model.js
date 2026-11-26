@@ -552,6 +552,19 @@ export function joinChildren(kids, tree, machine = null, taken = new Set()) {
     used.add(n);
     out.set(addr, n);
   }
+  // The first seconds of a session: its node has no `hcTerminal` yet (no live file) but its terminal is listed, named by the node's key
+  // (the hc name of the registry child). A local node without `hcTerminal` that is not ended joins the terminal of that name.
+  if (!machine) {
+    const byKey = new Map();
+    for (const n of allSessions(tree)) if (!n.hcTerminal && n.key && n.state !== "done" && !isEnded(n) && !n.machine) byKey.set(n.key, n);
+    for (const k of Array.isArray(kids) ? kids : []) {
+      const addr = str(k?.address);
+      const n = byKey.get(str(k?.name));
+      if (!addr || addr.includes("/") || out.has(addr) || !n || used.has(n) || taken.has(n)) continue;
+      used.add(n);
+      out.set(addr, n);
+    }
+  }
   return out;
 }
 
