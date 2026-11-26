@@ -327,15 +327,20 @@ function gatedTree(start: TreeState, end: SetTree): TreeState {
 const GIT_BASE = ["-c", "core.fsmonitor=false"];
 const NO_WORKFLOW = [".", ":(exclude).workflow"];
 
+/** The cache key of an lstat: exact size, ns times and id. */
+export function lsKeyOf(st: fs.BigIntStats): string {
+  return `${st.size}:${st.mtimeNs}:${st.ctimeNs}:${st.ino}`;
+}
+
 /** lstat first; a regular file is hashed through a non-blocking no-follow open that checks fstat; nothing here blocks or throws. */
 async function contentOf(abs: string, ctx: Ctx): Promise<{ tag: string | null; ls: string }> {
-  let st: fs.Stats;
+  let st: fs.BigIntStats;
   try {
-    st = await fsp.lstat(abs);
+    st = await fsp.lstat(abs, { bigint: true });
   } catch (e) {
     return gone(e) ? { tag: "absent", ls: "absent" } : { tag: "unreadable", ls: "unreadable" };
   }
-  const ls = `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}`;
+  const ls = lsKeyOf(st);
   if (st.isSymbolicLink()) {
     try {
       return { tag: `link:${sha(await fsp.readlink(abs))}`, ls };
@@ -345,7 +350,7 @@ async function contentOf(abs: string, ctx: Ctx): Promise<{ tag: string | null; l
   }
   if (st.isDirectory()) return { tag: "dir", ls };
   if (!st.isFile()) return { tag: `type:${st.isFIFO() ? "fifo" : st.isSocket() ? "socket" : st.isCharacterDevice() ? "char" : "other"}`, ls };
-  if (ctx.budget.paths > MAX_PATHS || st.size > MAX_BYTES - ctx.budget.bytes) return { tag: null, ls };
+  if (ctx.budget.paths > MAX_PATHS || Number(st.size) > MAX_BYTES - ctx.budget.bytes) return { tag: null, ls };
   try {
     const h = await hashRegular(abs, ctx.signal, MAX_BYTES - ctx.budget.bytes, false);
     if (!h) return { tag: null, ls };

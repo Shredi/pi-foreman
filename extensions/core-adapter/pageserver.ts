@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { sameFileId } from "./fileid.ts";
 import { get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json } from "./config.ts";
 import { piAgentDir } from "./env.ts";
@@ -411,6 +412,11 @@ function segmentsOf(raw: string[]): string[] | null {
   return out;
 }
 
+/** The opened handle is the lstat'ed file: exact dev/ino, an unknown id does not match. */
+export function openedMatches(lst: fs.BigIntStats, st: fs.BigIntStats): boolean {
+  return sameFileId(st, lst);
+}
+
 /** Opens `target` under the guarded-read rules of show.ts: no symlink in the last component, real path inside the root, one hard link, regular file, dev/ino of the opened handle equal to the lstat. */
 export function readGuarded(rootReal: string, kind: RootKind, target: string): Buffer | null {
   let fd = -1;
@@ -422,7 +428,7 @@ export function readGuarded(rootReal: string, kind: RootKind, target: string): B
     fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
     const st = fs.fstatSync(fd, { bigint: true });
     if (!st.isFile() || st.nlink !== 1n || st.size > BigInt(MAX_FILE_BYTES)) return null;
-    if (st.dev !== lst.dev || st.ino !== lst.ino) return null;
+    if (!openedMatches(lst, st)) return null;
     const buf = Buffer.alloc(Number(st.size));
     let off = 0;
     while (off < buf.length) {

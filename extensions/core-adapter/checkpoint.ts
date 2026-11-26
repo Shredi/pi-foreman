@@ -16,6 +16,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { scratchRoot } from "./editmode.ts";
+import { sameFileId } from "./fileid.ts";
 import { htmlToMarkdown } from "./htmlmd.ts";
 import type { HiddenFact } from "./htmlmd.ts";
 import { resolveToolPath } from "./payload.ts";
@@ -348,25 +349,30 @@ export function readHandoffResult(handoffDir: string, platform: string): { path:
   return readHandoffFile(handoffDir, HANDOFF_RESULT, platform);
 }
 
+/** The opened handle is the lstat'ed file: a regular single-link file of at most 256 KiB, same exact id and size; an unknown id fails. */
+export function handoffStatsMatch(first: fs.BigIntStats, st: fs.BigIntStats): boolean {
+  return st.isFile() && st.nlink === 1n && st.size <= BigInt(PLAN_MAX_BYTES) && sameFileId(st, first) && st.size === first.size;
+}
+
 function readHandoffFile(handoffDir: string, name: string, platform: string): { path: string; bytes: Buffer } | { error: string } {
   const f = fold(platform);
   if (!path.isAbsolute(handoffDir)) return { error: "the handoff dir is not absolute" };
   const candidate = path.join(realDeep(path.resolve(handoffDir)), name);
   if (f(realDeep(candidate)) !== f(candidate)) return { error: "the path passes through a symlink" };
   let fd: number;
-  let first: fs.Stats;
+  let first: fs.BigIntStats;
   try {
-    first = fs.lstatSync(candidate);
+    first = fs.lstatSync(candidate, { bigint: true });
     if (!first.isFile()) return { error: "not a regular file" };
-    if (first.nlink !== 1) return { error: "the file has more than one hard link" };
-    if (first.size > PLAN_MAX_BYTES) return { error: "the file is larger than 256 KiB" };
+    if (first.nlink !== 1n) return { error: "the file has more than one hard link" };
+    if (first.size > BigInt(PLAN_MAX_BYTES)) return { error: "the file is larger than 256 KiB" };
     fd = fs.openSync(candidate, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   } catch {
     return { error: "the file does not exist or cannot be read" };
   }
   try {
-    const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > PLAN_MAX_BYTES || st.ino !== first.ino || st.size !== first.size) return { error: "the file changed while it was read" };
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!handoffStatsMatch(first, st)) return { error: "the file changed while it was read" };
     const bytes = fs.readFileSync(fd);
     if (bytes.length > PLAN_MAX_BYTES) return { error: "the file is larger than 256 KiB" };
     return { path: candidate, bytes };

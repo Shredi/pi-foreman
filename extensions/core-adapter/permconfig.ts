@@ -274,10 +274,12 @@ interface Slot {
   parsed: ParsedFile | { ok: false; error: string } | null;
 }
 
+/** The cache signature of an lstat: exact ns time, size and id. */
+export const sigOfStats = (l: fs.BigIntStats): string => `${l.mtimeNs}:${l.size}:${l.ino}:${l.isSymbolicLink() ? "l" : "f"}`;
+
 const sigOf = (file: string): string => {
   try {
-    const l = fs.lstatSync(file);
-    return `${l.mtimeMs}:${l.size}:${l.ino}:${l.isSymbolicLink() ? "l" : "f"}`;
+    return sigOfStats(fs.lstatSync(file, { bigint: true }));
   } catch {
     return "missing";
   }
