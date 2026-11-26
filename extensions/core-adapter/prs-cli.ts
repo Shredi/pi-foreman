@@ -572,7 +572,7 @@ function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { 
     const old = before[k];
     const head = e.snap.head;
     const upgrade = !old?.exp && !!old?.snap && head !== "" && old.snap.head === head && settledOf(old.snap.runs, old.snap.required).result === "pass" && !old.unsettled;
-    const { state, facts } = expectStep(old?.exp, { head, runs: e.snap.runs, required: e.snap.required, cut: e.snap.cut === true, draft: e.meta?.draft === true, ...(old?.snap && old.snap.head !== head ? { prevRuns: old.snap.runs } : {}), upgrade, baseline }, now);
+    const { state, facts } = expectStep(old?.exp, { head, runs: e.snap.runs, required: e.snap.required, cut: e.snap.cut === true, draft: e.meta?.draft === true, ...(old?.snap && old.snap.head !== head ? { prevRuns: old.snap.runs } : {}), upgrade, baseline, ...(phases.length > 0 ? { expected: (n: string) => phaseOf(phases, p.repo, { name: n }) === 1 } : {}) }, now);
     e.exp = state;
     const { expect: _drop, learn: _old, ...rest } = e.snap;
     const open = settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed" && x.phase === undefined);

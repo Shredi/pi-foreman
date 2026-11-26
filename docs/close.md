@@ -128,7 +128,7 @@ A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and 
   the owner's typed `/foreman close` in the child pane or a close Herdr drives with it) in a session with such a memory runs the self-finish: `## Merge cleanup` in
   the result file, the same checks and the detached cleanup as the last step. A refused close (for example a child run still active) leaves the memory for the next close.
   Without a handoff dir nothing changes. When the cleanup of a parent's close does not start, the
-  parent gets the reason as its own reply, `PR #n merged, closing (cleanup: not started (<reason>); ...)`, before the
+  parent gets the reason as its own reply, `PR #n merged, closing (cleanup: not started (<reason>); ...)` (for a PR the session did not open with `pr_create` or watch by number, a bare `pr_watch` that followed the branch's PR, the reply is `closing (cleanup: not started (<reason>); ...)`: the reason, no PR number), before the
   `foreman:closed <file>[ CLOSE: x]` line (the ack is sent quiet, `noWake`; the reason line keeps waking), which never carries the reason; a remote parent's reply cannot carry a line, so the
   reason is in the result file only. The result file of a parent's close sits in the worktree's `.workflow/` and the cleanup
   removes it with the worktree. When the cleanup starts, the finished file (with `## Merge cleanup`) is first copied into the
@@ -178,7 +178,7 @@ A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) never closes itself, and 
   session with its cwd inside.
 - **Checks before the exit.** The preconditions are checked in the session. A refusal (`worktree_dirty`, `stash_references_branch`,
   `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
-  message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`; for `ignored_files` the reason names the first files: `ignored_files: a, b, c, +N more`, and the owner copies or deletes them); nothing is spawned, and the worktree
+  message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`, or `closing (...)` without the number for a PR the session neither opened nor watched by number; for `ignored_files` the reason names the first files: `ignored_files: a, b, c, +N more`, and the owner copies or deletes them); nothing is spawned, and the worktree
   and the branch stay. Each such line names the real worktree root (and the branch, where one is checked out) and what the owner does:
   the action for the reason (commit or discard changes, copy or delete the ignored files, wait for the merge), then the owner
   reads the cleanup preconditions here before removing anything. For any other reason (an unknown one, or a check that gave no
