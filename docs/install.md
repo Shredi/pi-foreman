@@ -491,11 +491,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.6.0, range 1.6.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.6.1, range 1.6.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.6.0
+npm i -g @earendil-works/pi-coding-agent@1.6.1
 /foreman setup --dry-run   # inside Pi
 /foreman setup             # inside Pi
 ```
@@ -562,7 +562,7 @@ Pi's `bash` tool and the add-on's `bg_run` run commands in Git Bash, so Git for 
 1. **Git for Windows**: `winget install Git.Git` (or the installer from git-scm.com). Keep the default location (`C:\Program Files\Git`); setup also finds `bash.exe` on `PATH`, but never the WSL launcher in `C:\Windows\System32`.
 2. **Node 22.19 or newer**: `winget install OpenJS.NodeJS.LTS`. Check with `node --version`.
 3. **Python 3.13 or newer** with the py launcher: `winget install Python.Python.3.13`. Check with `py -3 --version`.
-4. **Open a new terminal**, so `PATH` has all three, then **Pi**: `npm i -g @earendil-works/pi-coding-agent@1.6.0` (the pinned version is in `packages.lock.json`). Check with `pi --version`.
+4. **Open a new terminal**, so `PATH` has all three, then **Pi**: `npm i -g @earendil-works/pi-coding-agent@1.6.1` (the pinned version is in `packages.lock.json`). Check with `pi --version`.
 5. **The package**: `pi install git:github.com/Shredi/pi-foreman`.
 6. **Setup**: `/foreman setup --dry-run` in Pi, read it, then `/foreman setup` (or `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs` before Pi has loaded the package; `<agentDir>` is `%USERPROFILE%\.pi\agent` unless `PI_CODING_AGENT_DIR` is set).
 
