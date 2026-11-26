@@ -54,7 +54,7 @@ test("doctor: install state, trusted overrides in the intercom config, Herdr hin
   lines = intercomDoctor(agent, [["npm:other@1.0.0"], undefined], { HERDR_ENV: "1" });
   assert.ok(lines.some((l) => l.startsWith("INFO pi-intercom not installed")));
   assert.ok(lines.some((l) => l.startsWith("WARN") && l.includes("brokerCommand, crossMachine")), lines.join("\n"));
-  assert.ok(lines.includes("INFO Herdr detected; run `herdr integration install pi` for pane state"));
+  assert.ok(lines.some((l) => l.startsWith("WARN Herdr detected") && l.includes("herdr-agent-state.ts") && l.includes("herdr integration install pi")), lines.join("\n"));
   fs.mkdirSync(path.join(agent, "extensions"));
   fs.writeFileSync(path.join(agent, "extensions", "herdr-agent-state.ts"), "");
   assert.ok(!intercomDoctor(agent, [], { HERDR_ENV: "1" }).some((l) => l.includes("Herdr")));

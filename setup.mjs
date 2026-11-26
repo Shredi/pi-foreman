@@ -14,6 +14,7 @@ import { createInterface } from "node:readline/promises";
 import {
   MODS, appHome, assignment, diffMods, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, refreshMods, resolveSetupPython, splitBlockedMods, toggleable,
 } from "./extensions/core-adapter/profiles.mjs";
+import { herdrPiStep } from "./setup/herdr-pi.mjs";
 import { applyRealHomeGuard, realHomeDir, realHomeGuard, writeTargets } from "./setup/real-home.mjs";
 import { isolationDir, loginSigns } from "./extensions/core-adapter/bridgelogin.mjs";
 import { migrateGateConfig } from "./scripts/foreman_migrate_gate.mjs";
@@ -1984,6 +1985,7 @@ async function main(argv) {
       else for (const l of (await import("./setup/persist-env.mjs")).persistEnv(envVars, { home, shell: process.env.SHELL ?? "", platform: process.env.PI_FOREMAN_PLATFORM || process.platform, setx: process.env.PI_FOREMAN_SETX_BIN ? (k, v) => { const r = spawnSync(process.execPath, [process.env.PI_FOREMAN_SETX_BIN, k, v], { encoding: "utf8" }); return { status: r.status, error: (r.stderr || "").trim() }; } : undefined, dry })) say(`  ${l}`);
     }
     await resumeHookStep();
+    for (const l of herdrPiStep({ agentDir, env: process.env, dry })) say(l);
     for (const a of addonRegistry) {
       if (present.some((i) => i.id === a.id) || addonNew.some((n) => n.id === a.id)) continue;
       say(`optional add-on ${a.id}: ${a.purpose} Spec npm:${a.package}@${a.version}. ${a.clashes.join(" ")} Install with: foreman setup --addon ${a.id}`);

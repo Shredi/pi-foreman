@@ -109,7 +109,7 @@ export function intercomDoctor(agentDir: string, packageLists: unknown[], env: N
   if (all.includes("stableId")) out.push(`WARN ${intercomConfigPath(agentDir)} sets stableId: every Pi session of this agent dir, child sessions included, registers under that one intercom id, so a child can pose as the foreman's parent (foreman:close). Remove it and set PI_INTERCOM_STABLE_ID per session if you need a fixed id.`);
   if (risks.length) out.push(`WARN ${intercomConfigPath(agentDir)} sets ${risks.join(", ")}: brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH or hc. Fine if you set them on purpose.`);
   if (env.HERDR_ENV === "1" && !fs.existsSync(path.join(agentDir, "extensions", "herdr-agent-state.ts"))) {
-    out.push("INFO Herdr detected; run `herdr integration install pi` for pane state");
+    out.push(`WARN Herdr detected but ${path.join(agentDir, "extensions", "herdr-agent-state.ts")} is missing, so panes do not show Pi state (also a resumed pane): run \`herdr integration install pi\` or \`foreman setup\``);
   }
   return out;
 }
