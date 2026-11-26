@@ -23,6 +23,16 @@ function cluster(argv: string[], i: number, flags: string, valued: string, value
   return 1;
 }
 
+const MODE = /^(?:[0-7]{1,4}|[ugoa]*[-+=][rwxXst]*(?:,[ugoa]*[-+=][rwxXst]*)*)$/;
+
+/** How many words of `mkdir`'s `argv` the option at `i` uses when it is a mode option (`-m 700`, `-m700`, `-pm 700`, `--mode 700`, `--mode=700`), else 0. */
+export function mkdirModeWords(argv: string[], i: number): number {
+  const w = argv[i];
+  if (w === "--mode") return argv[i + 1] !== undefined ? 2 : 0;
+  if (w.startsWith("--mode=")) return 1;
+  return /^-[A-Za-z]*m/.test(w) ? cluster(argv, i, "pv", "m", MODE) : 0;
+}
+
 /** Walks `argv` with `step` (words used, 0 = refused); the operands come back through `operand`. */
 function walk(argv: string[], step: (i: number) => number, operand: (w: string) => boolean): boolean {
   let opts = true;

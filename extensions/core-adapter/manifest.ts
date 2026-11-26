@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { under } from "./triage.ts";
 import { strOf } from "./strof.ts";
+import { mkdirModeWords } from "./fastallow.ts";
 
 export type ManifestKind = "worktree" | "scratch";
 export interface ManifestEntry {
@@ -121,9 +122,11 @@ export function bashCandidates(command: unknown, c: ManifestCtx): ManifestEntry[
     }
     if (w[0] === "mkdir") {
       let opts = true;
-      for (const a of w.slice(1)) {
+      const args = w.slice(1);
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
         if (opts && a === "--") opts = false;
-        else if (opts && a.startsWith("-")) continue;
+        else if (opts && a.startsWith("-")) i += Math.max(mkdirModeWords(args, i), 1) - 1;
         else {
           const abs = resolveWord(a, cwd, c.platform);
           const dir = abs ? scratchDirOf(abs, c, 1) : null;

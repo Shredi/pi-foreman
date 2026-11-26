@@ -83,7 +83,7 @@ for (const who of CHILDREN) {
   // these programs are no write verb of the effect classifier: the verdict on the root is the one of today (no decision, the same as for a path below the root), pinned so a change shows
   test(`${who}: rmdir, chmod, chown, ln and mkdir -m on the scratch root keep today's verdict`, { skip: posixOnly }, () => {
     for (const l of [`rmdir ${scr}`, `chmod 777 ${scr}`, `chown u ${scr}`, `ln -sfn x ${scr}`, `mkdir -m 777 ${scr}`]) {
-      assert.equal(what(verdict(l, who)), l.startsWith("mkdir -m") && who === "reviewer" ? "block:child-readonly-write" : "none", l);
+      assert.equal(what(verdict(l, who)), l.startsWith("mkdir -m") ? "allow:default-write-in" : "none", l); // D187: `-m 777` is mkdir's mode, no path, so mkdir of the scratch root is a write inside
       const below = l.replace(scr, `${scr}/sub`);
       assert.equal(what(verdict(below, who)), what(verdict(l, who)), below);
     }

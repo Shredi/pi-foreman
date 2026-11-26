@@ -16,7 +16,7 @@ import { childHandoffDirs, isSelfHost, openedHandoffDirs, literalOwnedDirs, npmR
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, sessionScratchRoot, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
-import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
+import { baseFloorEnv, unreadableWriteText, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
@@ -38,7 +38,7 @@ import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { CHILD_ASK_TIMEOUT_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
-import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
+import { HANDOFF_CHILD_NAMES, PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
@@ -4304,7 +4304,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // a child's write the gate cannot read (and no other judge-first label on the line): the refusal names the way out
       const labels = out.dangers ?? [danger.name];
       if (gs.isChild && labels.includes("danger-write-outside") && labels.every((n) => n === "danger-write-outside" || n === "danger-unknown-write-target")) {
-        return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true), judged.cause === "model" ? "write-outside" : null);
+        return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true, roots), judged.cause === "model" ? "write-outside" : null);
       }
       return refused(`judge:${danger.name}`, "classifier", judgeRefusalText(judged.cause, judged.reason), count);
     } catch (e) {
@@ -4347,11 +4347,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function judgeRefusalText(cause: string, judgeReason: string): string {
     const why = cause === "model" ? "the permission judge refused it" : cause === "timeout" ? "the permission judge did not answer in time" : cause === "invalid_verdict" ? "the permission judge's answer could not be read" : cause === "no_model" ? "no permission judge model is configured" : "the permission judge failed";
     return `pi-foreman: refused: ${why}${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. Rewrite the call (split it, use a tool, use paths the gate can read) or report it to the foreman.`;
-  }
-  /** The refusal of a child's write whose target the gate cannot read when the judge did not clear it: the cause, the judge's reason and the way out. */
-  function unreadableWriteText(judgeReason: string, mayWriteWorktree: boolean): string {
-    const dirs = mayWriteWorktree ? "`$FOREMAN_SCRATCH`, `$FOREMAN_OUT` or your worktree" : "`$FOREMAN_SCRATCH` or `$FOREMAN_OUT`";
-    return `pi-foreman: denied (danger-write-outside): this write goes to a target the gate cannot read (a variable, a substitution, \`~\` or a changed directory), and the permission judge did not clear it${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. Write to a path the gate can read, such as a literal path in ${dirs}, or report this line to the foreman.`;
   }
   /**
    * The dialog step of the gate (r79 items 5, 7). A child asks its parent through ask.md; a headless session denies at once; the owner pane opens
@@ -6284,6 +6279,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
       // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is not traced and adds no plan-phase text (a shell refusal never changes the tier)
       const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
+      if (v.handoffOnly) return { block: true, reason: `${reason} pi-foreman: the handoff dir${ownHandoff ? ` ${ownHandoff}` : ""} takes only ${HANDOFF_CHILD_NAMES.filter((n) => !n.startsWith(".")).join(", ")}, ask-<n>.md and anything below work/; other names there belong to the parent.` };
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };

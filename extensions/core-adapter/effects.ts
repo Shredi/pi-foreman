@@ -22,6 +22,7 @@ import { isTestPath } from "./diffscan.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import { insideScratch, expandScratchVar, scratchScriptRun } from "./childscratch.ts";
 import { isReadOnlySed } from "./sedread.ts";
+import { mkdirModeWords } from "./fastallow.ts";
 import { harnessRebound } from "./shellast.ts";
 import { splitChain } from "./shellchain.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -438,13 +439,19 @@ function sedEffect(c: EffectCtx, cwd: string | null, words: string[]): { cls: Ef
 
 export const WRITE_FLAGS: Record<string, RegExp> = { mkdir: /^-[pv]+$/, touch: /^-[acm]+$/, cp: /^-[Rapfnv]+$/, mv: /^-[fnv]+$/, rm: /^-[rRfdv]+$/, tee: /^-[aip]+$/ };
 
+const SCREEN_SINKS: ReadonlySet<string> = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
+
 function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[]): EffectClass {
   const ops: string[] = [];
   let opts = true;
-  for (const a of args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
     if (opts && a === "--") opts = false;
     else if (opts && a.startsWith("-") && a !== "-") {
-      if (!WRITE_FLAGS[prog].test(a)) return "unknown";
+      // mkdir's mode option takes a value that is no path
+      const mode = prog === "mkdir" ? mkdirModeWords(args, i) : 0;
+      if (mode) i += mode - 1;
+      else if (!WRITE_FLAGS[prog].test(a)) return "unknown";
     } else ops.push(a);
   }
   if (prog !== "tee" && ops.length < (prog === "cp" || prog === "mv" ? 2 : 1)) return "unknown";
@@ -454,7 +461,8 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   const recursive = prog === "cp" && args.some((a) => /^-[A-Za-z]*[rRa]/.test(a));
   if (recursive && !c.cpSourceRead && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
   const reads = prog === "cp" ? ops.slice(0, -1) : [];
-  const writes = prog === "cp" ? ops.slice(-1) : ops;
+  // the discard device and the screen outputs are no write target (`cp x -` writes a real file named `-`, so only these three)
+  const writes = (prog === "cp" ? ops.slice(-1) : ops).filter((o) => !SCREEN_SINKS.has(o));
   // rm and mv never reach into the shared /tmp (`rm -rf /tmp/...` stays reviewed)
   const where = prog === "rm" || prog === "mv" ? [...(c.root ? [c.root] : []), ...(c.scratch ?? [])] : undefined;
   // mv into an existing dir: every moved name was judged above, so the dir itself needs no check of its own
@@ -462,7 +470,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   if (prog === "cp" || prog === "mv") {
     // the path really written: the destination itself, or `dest/<basename of src>` in an existing dir,
     // and neither may be a symlink (cp writes through it; `d/f -> outside` may be committed)
-    const dest = resolveWord(c, cwd, ops[ops.length - 1]);
+    const dest = SCREEN_SINKS.has(ops[ops.length - 1]) ? null : resolveWord(c, cwd, ops[ops.length - 1]);
     const isLink = c.isLink ?? isLinkDefault;
     if (dest && isLink(dest)) return "write-out";
     if (dest && (c.isDir ?? isDirDefault)(dest)) {
