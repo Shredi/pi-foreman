@@ -707,6 +707,35 @@ def _setup(req, allowed):
     return args, cfg, cfg.get("prHost", "auto")
 
 
+PR_URL_RE = re.compile(r"^https://([^/\s]+)/([^/\s]+)/([^/\s]+)/pull/([0-9]+)(?:[/?#].*)?$")
+
+
+def _status_threads(host, root, view):
+    """The open review threads of the viewed pull request through one GraphQL call (`gh pr view --json` cannot list them); None when they cannot be read
+    (a url that names no pull request, a host without the field, any failure): pr_status never fails for it."""
+    url = view.get("url") if isinstance(view, dict) else None
+    m = PR_URL_RE.match(url) if isinstance(url, str) else None
+    if not m:
+        return None
+    hostname, owner, name, n = m.group(1), m.group(2), m.group(3), int(m.group(4))
+    query = "query($owner: String!, $name: String!, $n: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $n) { %s} } }" % THREADS_QUERY
+    path = _body_file(json.dumps({"query": query, "variables": {"owner": owner, "name": name, "n": n}}))
+    try:
+        argv = [host.program, "api", "graphql"] + ([] if hostname == "github.com" else ["--hostname", hostname]) + ["--input", _argpath(path)]
+        code, out, err = run_host(argv, root, [_argpath(path)])
+    except (ActionError, Precondition):
+        return None
+    finally:
+        _unlink(path)
+    try:
+        d = json.loads(out)
+    except ValueError:
+        return None
+    data = d.get("data") if isinstance(d, dict) else None
+    repo = data.get("repository") if isinstance(data, dict) else None
+    return open_threads(repo.get("pullRequest") if isinstance(repo, dict) else None)
+
+
 def op_pr_status(req):
     args, cfg, pr_host = _setup(req, ("number", "repo", "host"))
     number = arg_number(args)
@@ -721,9 +750,14 @@ def op_pr_status(req):
     hostname = fallback_host(cfg, host, repo, hostname)
     rflag = repo_flag(host, repo, hostname)
     if host.kind == "gh":
-        return gh_status(gh_view(host, root, number,
-                                 "number,url,title,state,isDraft,mergeable,reviewDecision,headRefOid,headRefName,baseRefName,updatedAt",
-                                 rflag))
+        view = gh_view(host, root, number,
+                       "number,url,title,state,isDraft,mergeable,reviewDecision,headRefOid,headRefName,baseRefName,updatedAt",
+                       rflag)
+        out = gh_status(view)
+        th = _status_threads(host, root, view)
+        if th is not None:
+            out["openThreads"] = th
+        return out
     return glab_status(glab_view(host, root, number, rflag))
 
 
@@ -1364,7 +1398,29 @@ def _merged_query():
             "commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { %s } } } } } } } }" % nodes)
 
 
-def _pr_query(count, watch=False, policy=True, runs=False, merged=()):
+THREADS_QUERY = "reviewThreads(first: 100) { pageInfo { hasNextPage } nodes { isResolved comments(first: 1) { nodes { body } } } } "
+THREAD_LINES = 5
+
+
+def open_threads(pr):
+    """The open review threads of a pull request node read with THREADS_QUERY: {"open": n, "more": bool, "lines": [first line of each of the first few]}, or None when
+    the node carries none (the host did not know the field: the count is unknown). Only the first page of 100 threads is counted; `more` then says "at least"."""
+    rt = pr.get("reviewThreads") if isinstance(pr, dict) else None
+    nodes = rt.get("nodes") if isinstance(rt, dict) else None
+    if not isinstance(nodes, list):
+        return None
+    opened = [t for t in nodes if isinstance(t, dict) and t.get("isResolved") is False]
+    lines = []
+    for t in opened[:THREAD_LINES]:
+        cs = t.get("comments")
+        cn = cs.get("nodes") if isinstance(cs, dict) else None
+        body = cn[0].get("body") if isinstance(cn, list) and cn and isinstance(cn[0], dict) else None
+        lines.append(first_line(body) if isinstance(body, str) else "no detail")
+    page = rt.get("pageInfo")
+    return {"open": len(opened), "more": bool(isinstance(page, dict) and page.get("hasNextPage") is True), "lines": lines}
+
+
+def _pr_query(count, watch=False, policy=True, runs=False, merged=(), threads=False):
     # watch: the extra fields pr_watch reads (head, base, head repository, updatedAt, run identity and link);
     # policy: with them, the merge state and the base branch's required checks (a host without these fields is asked again without);
     # runs: each check's check suite app and workflow run event; merged: the entry indexes that also ask the merged pull requests
@@ -1372,6 +1428,8 @@ def _pr_query(count, watch=False, policy=True, runs=False, merged=()):
     if watch and policy:
         pr_extra += ("mergeStateStatus baseRef { branchProtectionRule { requiredStatusCheckContexts } rules(first: 30) { nodes { "
                      "parameters { ... on RequiredStatusChecksParameters { requiredStatusChecks { context } } } } } } ")
+    if watch and threads:
+        pr_extra += THREADS_QUERY
     run_extra = "databaseId detailsUrl completedAt " if watch else ""
     if watch and runs:
         run_extra += "checkSuite { app { slug } workflowRun { event workflow { name } } } "
@@ -1419,6 +1477,7 @@ def _enum(v, allowed):
     return v if v in allowed else None
 
 
+THREAD_FIELDS = ("reviewThreads", "isResolved")
 POLICY_FIELDS = ("mergeStateStatus", "baseRef", "branchProtectionRule", "requiredStatusCheckContexts", "RequiredStatusChecksParameters",
                  "requiredStatusChecks", "rules", "parameters")
 # the fields of the expected-checks facts: the merged pull requests and each check's check suite app and workflow run event
@@ -1450,8 +1509,8 @@ def op_pr_batch(req):
     for i, (repo, n) in enumerate(entries):
         owner, name = two_part(repo)
         variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
-    def ask(policy, runs, merged):
-        path = _body_file(json.dumps({"query": _pr_query(len(entries), watch, policy, runs, [i for i, f in enumerate(flags) if f] if merged else []), "variables": variables}))
+    def ask(policy, runs, merged, threads):
+        path = _body_file(json.dumps({"query": _pr_query(len(entries), watch, policy, runs, [i for i, f in enumerate(flags) if f] if merged else [], threads), "variables": variables}))
         try:   # the body goes through a file: 50 queries overflow the Windows command line
             argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
                 ["--input", _argpath(path)]
@@ -1471,7 +1530,7 @@ def op_pr_batch(req):
     def rate_limited(a):
         return any(x.get("type") == "RATE_LIMITED" for x in a[3])
 
-    cfg = {"policy": True, "runs": watch, "merged": watch and any(flags)}
+    cfg = {"policy": True, "runs": watch, "merged": watch and any(flags), "threads": watch}
     dropped = None   # why the merged field was left out: "rejected" (the host does not know it) or "failed" (any other failure)
     first = ask(**cfg)
     last, tried = first, 0
@@ -1482,6 +1541,8 @@ def op_pr_batch(req):
         # and a retry that fails too leaves the first error
         if cfg["policy"] and any(_rejects_policy_fields(x) for x in last[3]):
             cfg = dict(cfg, policy=False)
+        elif cfg["threads"] and any(_rejects_fields(x, THREAD_FIELDS) for x in last[3]):
+            cfg = dict(cfg, threads=False)   # a host without review threads: no count (unknown, no hold)
         elif (cfg["runs"] or cfg["merged"]) and any(_rejects_fields(x, EXPECT_FIELDS) for x in last[3]):
             dropped = "rejected" if cfg["merged"] else dropped
             cfg = dict(cfg, runs=False, merged=False)
@@ -1536,6 +1597,9 @@ def op_pr_batch(req):
                          "mergeState": _enum(pr.get("mergeStateStatus"), MERGE_STATES)})
             if run_list_cut(roll, runs):
                 item["cut"] = True
+            th = open_threads(pr) if cfg["threads"] else None
+            if th and th["open"] > 0:
+                item["threads"] = th
             if flags[i] and cfg["merged"]:
                 item["baseline"] = baseline_names(node, alias, pr.get("baseRefName"), errs)
             elif flags[i] and dropped == "failed":

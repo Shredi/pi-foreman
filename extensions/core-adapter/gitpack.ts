@@ -198,7 +198,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_status",
     op: "pr_status",
     label: "PR status",
-    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, and review (the head reviewed, or not reviewed with the last PASS head, or no review record, or not available in a child session). Read-only. ${PR_CAPS}`,
+    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, openThreads (the open review threads: count, first lines; only when there are any), and review (the head reviewed, or not reviewed with the last PASS head, or no review record, or not available in a child session). Read-only. ${PR_CAPS}`,
     parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR)."), ...where }, additionalProperties: false },
     foremanOnly: false,
   },
@@ -681,7 +681,7 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey, bodyMark?: { head: string; run: string }, hold = false): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false, explicit?: PrKey, bodyMark?: { head: string; run: string }, hold = false, named = false): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = explicit ?? (await watchKey(s, ctx, n, url, cwd));
@@ -703,12 +703,12 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     tracked ??= await track();
     // the watch owns the PR's draft state only when it was opened as a draft, a tracker runs and it will report the PR
     const owned = draftAsked && !hold && st?.kind !== "down" && (tracked === "added" || tracked === "present");
-    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created, bodyMark, hold);
+    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created, bodyMark, hold, named);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
       if (createdHead) await s.cover?.(cwd ?? ctx.cwd, createdHead).catch(() => undefined);
       const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
-      s.watches.startPending(key, undefined, seed, owned, created, bodyMark, hold);
+      s.watches.startPending(key, undefined, seed, owned, created, bodyMark, hold, named);
     }
     s.trace({ event: "pr_watch", outcome: "started" });
     return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked, owned };
@@ -765,7 +765,7 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
     url = st.result.url;
     if (n === undefined) return failure(`${tool}: the host gave no PR number; nothing was done.`, { decision: "error" });
   }
-  const armed = await armWatch(s, ctx, n, url, false, undefined, undefined, false, explicit);
+  const armed = await armWatch(s, ctx, n, url, false, undefined, undefined, false, explicit, undefined, false, params.number !== undefined);
   // a bare pr_watch follows the checkout's own PR, so its branch is the checkout's; a named number says nothing about the PR's branch
   await notePr(s, armed, { cwd: ctx.cwd, branch: params.number === undefined ? currentBranch(ctx.cwd) : null, head: "key" in armed ? armed.snap?.head ?? null : null });
   const tracked = armed.tracked ? { tracked: armed.tracked } : {};

@@ -46,6 +46,7 @@ function flowRig(fin: SelfFinish | (() => Promise<SelfFinish>)) {
     selfFinish: async () => (log.push("selfFinish"), typeof fin === "function" ? fin() : fin),
     appendResult: (f, t) => void files.set(f, (files.get(f) ?? "") + t),
     mergedPr: () => 7, // the merge the session remembers (the watch's merged event)
+    mergedOwn: () => true, // a PR the session opened
   };
   const ctx = { isIdle: () => true, shutdown: () => void log.push("shutdown") };
   return { log, files, flow: new CloseFlow(deps), ctx };
