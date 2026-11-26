@@ -4,6 +4,7 @@
 // (a link placed in `.pi/scratch` that points at `.pi/settings.json` is the settings file), and by inode for a hard link.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileIdOf, sameFileId } from "./fileid.ts";
 import { opsOf, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { carryFacts, type ShellSegment } from "./shellast.ts";
@@ -39,11 +40,14 @@ function spellings(platform: string, a: string, real: (p: string) => string | nu
   return r === a ? [a] : [a, r];
 }
 
+/** A multi-link file is the protected file when the ids are equal or either id is unknown (fails closed). */
+export function sameFileStats(sa: fs.BigIntStats, sb: fs.BigIntStats): boolean {
+  return sa.isFile() && sa.nlink > 1n && (sameFileId(sa, sb) || fileIdOf(sa) === null || fileIdOf(sb) === null);
+}
+
 function sameFile(a: string, b: string): boolean {
   try {
-    const sa = fs.statSync(a);
-    const sb = fs.statSync(b);
-    return sa.isFile() && sa.nlink > 1 && sa.ino === sb.ino && sa.dev === sb.dev;
+    return sameFileStats(fs.statSync(a, { bigint: true }), fs.statSync(b, { bigint: true }));
   } catch {
     return false;
   }
