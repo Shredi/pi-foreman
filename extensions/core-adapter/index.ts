@@ -195,7 +195,8 @@ import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf, earlierFindingsBlock, failFindingsText, reReviewLine } from "./ledgerblock.ts";
 import { taskLedger } from "./ledgerpath.ts";
-import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
+import { rewriteLocked, sameStamp, stampOf, type FileStamp } from "./ledgerfile.ts";
+import { citedItems, hintFailTrace, ledgerHint, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
@@ -317,6 +318,8 @@ function writeHint(ledgerPath: string | null, cited: readonly string[], text: st
 }
 
 /** Holds taken by foreman bash calls that run `ledger`, by tool call id: released at tool_execution_end or session shutdown. */
+/** D181: stamp of a ledger taken at the tool_call of a full read, by tool call id. */
+const readStamps = new Map<string, FileStamp>();
 const ledgerHolds = new Map<string, { gate: LedgerGate; key: string; sid: string }>();
 
 function releaseLedgerHold(toolCallId: string): void {
@@ -528,6 +531,8 @@ interface Session {
   unresolvedDirs: Set<string>;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
+  /** The stamp of each ledger file as this session last read it in full or wrote it itself (memory only): a host `write` over the bound ledger is refused when the file's stamp differs (D181). */
+  ledgerStamps: Map<string, FileStamp>;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
   hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
@@ -1254,6 +1259,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       checkoutMemo: new Map(),
       unresolvedDirs: new Set(),
       ledgerRev: 0,
+      ledgerStamps: new Map(),
       hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
@@ -1445,8 +1451,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!file) return;
     ledgerGate(file).defer(() => {
       try {
-        const next = withVItem(fs.readFileSync(file, "utf8"));
-        if (next !== null) fs.writeFileSync(file, next, "utf8");
+        rewriteLocked(file, (text) => ({ next: withVItem(text), value: null }));
       } catch {
         // an unreadable or unwritable ledger is reported by the next ledger call
       }
@@ -4569,6 +4574,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
       }
     }
+    // D181: the stamp of a ledger is taken before a full read runs (a change during the read leaves the stamp older, so a later write is refused).
+    if (event.toolName === "read") {
+      const rs = sessionFor(ctx);
+      const inp = (event.input ?? {}) as Record<string, unknown>;
+      if (rs && !rs.isChild && typeof inp.path === "string" && inp.offset === undefined && inp.limit === undefined) {
+        const file = resolveToolPath(inp.path, ctx.cwd, os.homedir());
+        const bound = boundLedger(rs.markerDir, rs.id);
+        const st = file && (isLedgerTarget(file) || isBoundLedgerPath(file, bound ?? "")) ? stampOf(file) : null;
+        if (st) readStamps.set(event.toolCallId, st);
+      }
+    }
+    // D181: a host `write` over the bound ledger replaces the whole file from the model's copy; it is refused when the file is not as this session last read or wrote it.
+    if (event.toolName === "write") {
+      const ws = sessionFor(ctx);
+      const given = (event.input as Record<string, unknown> | undefined)?.path;
+      const bound = ws && !ws.isChild ? boundLedger(ws.markerDir, ws.id) : null;
+      const target = bound && typeof given === "string" ? resolveToolPath(given, ctx.cwd, os.homedir()) : null;
+      if (ws && bound && isBoundLedgerPath(target, bound)) {
+        const now = stampOf(bound);
+        if (now !== null) {
+          let known: FileStamp | undefined;
+          for (const [k, v] of ws.ledgerStamps) if (isBoundLedgerPath(k, bound)) known = v;
+          if (!sameStamp(now, known ?? null)) {
+            ws.trace?.emit({ event: "guard", guard: "ledger_stale_write", toolFamily: "write", decision: "blocked", reason: known ? "changed_on_disk" : "not_read" });
+            return { block: true as const, reason: "pi-foreman: the ledger changed on disk since this session last read or wrote it (another session or a harness note), or this session has not read it yet; read it again, then write. An edit keeps other changes." };
+          }
+        }
+      }
+    }
     // A newer ruling (ruling-*.md, steer-*.md) in the handoff dir is read before any child launch: the launch waits, the ruling text is the reason.
     if (event.toolName === "subagent") {
       const ps = sessionFor(ctx);
@@ -6456,6 +6490,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
     }
+    // D181: remember the stamp of a ledger this session read in full (taken before the read ran) or wrote itself; harness writes never update it.
+    if (owner && !owner.isChild) {
+      const readStamp = readStamps.get(event.toolCallId);
+      readStamps.delete(event.toolCallId);
+      const given = (event.input as Record<string, unknown>).path;
+      if (!event.isError && typeof given === "string") {
+        const file = resolveToolPath(given, ctx.cwd, os.homedir());
+        const bound = boundLedger(owner.markerDir, owner.id);
+        if (file && (event.toolName === "write" || event.toolName === "edit") && (isLedgerTarget(file) || isBoundLedgerPath(file, bound ?? ""))) {
+          const st = stampOf(file);
+          if (st) owner.ledgerStamps.set(file, st);
+        } else if (file && event.toolName === "read" && readStamp && (event.details as { truncation?: unknown } | undefined)?.truncation === undefined) {
+          owner.ledgerStamps.set(file, readStamp);
+        }
+      }
+    }
     const bashSnap = bashRulingSnaps.get(event.toolCallId);
     if (owner && bashSnap) {
       bashRulingSnaps.delete(event.toolCallId);
@@ -7596,34 +7646,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ok = false;
           }
           else {
-            const r = rewriteItemText(content, item, u.text);
-            if ("error" in r) {
-              out.push(r.error);
-              ok = false;
-            }
-            else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
-            else {
-              const tmp = path.join(path.dirname(file), `.ledger-${process.pid}-${Date.now()}.tmp`);
-              try {
-                fs.writeFileSync(tmp, r.file, "utf8");
-                try {
-                  fs.chmodSync(tmp, fs.statSync(file).mode & 0o7777);
-                } catch {
-                  // keep the default mode
-                }
-                const rr = renameRetry(tmp, file);
-                if (rr.error) throw rr.error;
+            try {
+              // Read, change and replace inside the cross-process ledger lock (ledgerfile.ts), so a ledger.py in another process lands first.
+              const r = rewriteLocked(file, (text) => {
+                const x = rewriteItemText(text, item, u.text);
+                return { next: "error" in x || !x.changed ? null : x.file, value: x };
+              });
+              if ("error" in r) {
+                out.push(r.error);
+                ok = false;
+              } else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
+              else {
                 out.push(`upserted ${u.item}`);
                 bumpLedgerRev(s);
-              } catch (err) {
-                try {
-                  fs.rmSync(tmp, { force: true });
-                } catch {
-                  // best effort
-                }
-                out.push(`ledger: ${(err as Error).message}`);
-                ok = false;
               }
+            } catch (err) {
+              out.push(`ledger: ${(err as Error).message}`);
+              ok = false;
             }
           }
           };
