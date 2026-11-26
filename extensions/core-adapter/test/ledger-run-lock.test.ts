@@ -74,3 +74,39 @@ test("the helper's argv: the run and the resolve command keep the shim's python,
   assert.equal(buildLedgerRun(["only-script"], ""), null);
   assert.deepEqual(buildLedgerRun([script, "python", "--"], "")?.run.args, ["-E", "-s", script]);
 });
+
+test("a release leaves a lock that a takeover gave to another holder", async () => {
+  const { takeLedgerLock } = await import("../ledgerlockfs.ts");
+  const dir = fs.mkdtempSync(path.join((await import("node:os")).tmpdir(), "llrel-"));
+  try {
+    const file = path.join(dir, "L.md");
+    const release = takeLedgerLock(file);
+    fs.writeFileSync(`${file}.lock`, `4242 ${Date.now()} other\n`); // another holder took over
+    release();
+    assert.equal(fs.readFileSync(`${file}.lock`, "utf8").startsWith("4242 "), true);
+    fs.rmSync(`${file}.lock`);
+    takeLedgerLock(file)();
+    assert.equal(fs.existsSync(`${file}.lock`), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the shim helper says so on stderr when ledger.py runs without the lock (lock file cannot be created)", async () => {
+  const os = await import("node:os");
+  const { spawnSync } = await import("node:child_process");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llun-"));
+  try {
+    fs.mkdirSync(path.join(dir, "ro"));
+    const file = path.join(dir, "ro", "L.md");
+    fs.writeFileSync(file, "# Ledger: x\nTier: standard\n\n- [ ] 1. a\n");
+    fs.chmodSync(path.join(dir, "ro"), 0o555);
+    const script = path.join(root, "core", "scripts", "ledger.py");
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", path.join(root, "bin", "ledger-run.mjs"), script, "python3", "--", "-f", file, "status"], { encoding: "utf8" });
+    if (process.getuid?.() === 0) return; // root can create the lock: nothing to see
+    assert.match(r.stderr, /ledger-run: running without the ledger lock/);
+  } finally {
+    fs.chmodSync(path.join(dir, "ro"), 0o755);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

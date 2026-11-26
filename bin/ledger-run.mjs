@@ -53,6 +53,12 @@ function runLedger(spec) {
   return r.status ?? 1;
 }
 
+/** The run goes on without the lock: one stderr line says so. */
+function unlocked(plan, why) {
+  process.stderr.write(`ledger-run: running without the ledger lock (${why})\n`);
+  return runLedger(plan.run);
+}
+
 function main() {
   let lockMod = null;
   return import("../extensions/core-adapter/ledgerlockfs.ts").then(
@@ -64,11 +70,11 @@ function main() {
       process.stderr.write("ledger-run: bad arguments\n");
       return 2;
     }
+    if (!lockMod) return unlocked(plan, "the lock module did not load");
     let target = "";
-    if (lockMod) {
-      const r = exec(plan.resolve);
-      if (r.status === 0 && !r.error) target = (r.stdout ?? "").trim();
-    }
+    const r = exec(plan.resolve);
+    if (r.status === 0 && !r.error) target = (r.stdout ?? "").trim();
+    // no target: ledger.py reports its own error (or the read-only use needs no lock), so this case stays quiet
     if (!target) return runLedger(plan.run);
     let release;
     try {
@@ -78,7 +84,7 @@ function main() {
         process.stderr.write(`${err.message}\n`);
         return 1;
       }
-      return runLedger(plan.run); // the lock file cannot be created (read-only directory): ledger.py reports its own failure
+      return unlocked(plan, "the lock file cannot be created"); // read-only directory: ledger.py reports its own failure
     }
     try {
       return runLedger(plan.run);

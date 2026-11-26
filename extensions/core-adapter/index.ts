@@ -5915,6 +5915,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.touchUps.delete(runId);
     if (touchUp !== undefined) s.reviewSync = s.reviewSync.then(async () => {
       const g = s.reviewGates[touchUp];
+      // another builder still running in this checkout (unknown checkouts count) may have written code: its own end decides
+      const others = [...s.runningBuilders].filter(([, r]) => r === null || r.includes(touchUp));
+      if (others.length > 0) {
+        const next = others.find(([, r]) => r !== null);
+        if (g?.last === "pass" && g.revised && next) s.touchUps.set(next[0], touchUp); // the last of them to end decides
+        return;
+      }
       if (g?.last === "pass" && g.revised && (await commentOnlyNow(s, touchUp))) {
         s.reviewGates = { ...s.reviewGates, [touchUp]: { ...g, revised: false } };
         persistCeremonyState(s);
@@ -6966,7 +6973,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
     // A parent ruling never satisfies the gate (R6 lane 4c, ruling 3); after a FAIL the refusal names it.
-    const gates = liveGates(s, ctx); // a deleted checkout superseded by a later PASS elsewhere is not read (D165)
+    const gates = liveGates(s, ctx); // a deleted checkout is not read (D189b)
     const gate = combined(gates); // every checkout with work or a review must have a standing PASS
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).

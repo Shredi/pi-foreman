@@ -50,17 +50,29 @@ function lockAgeMs(lock: string): { content: string; age: number } {
   return { content, age: Date.now() - (Number.isFinite(t) && t > 0 ? t : fs.statSync(lock).mtimeMs) };
 }
 
-/** One attempt: true when taken; false when a live holder has it. Takes over a stale lock. */
-function tryTake(lock: string): boolean {
+/** Delete `lock` only while it still holds what this holder wrote (a taken-over lock belongs to its new holder). */
+function releaseOwn(lock: string, mine: string): () => void {
+  return () => {
+    try {
+      if (fs.readFileSync(lock, "utf8") === mine) fs.rmSync(lock, { force: true });
+    } catch {
+      /* already gone */
+    }
+  };
+}
+
+/** One attempt: the content this holder wrote when taken; null when a live holder has it. Takes over a stale lock. */
+function tryTake(lock: string): string | null {
   for (;;) {
     try {
       const fd = fs.openSync(lock, "wx");
+      const mine = `${process.pid} ${Date.now()} ${Math.random().toString(36).slice(2)}\n`;
       try {
-        fs.writeSync(fd, `${process.pid} ${Date.now()}\n`);
+        fs.writeSync(fd, mine);
       } finally {
         fs.closeSync(fd); // closed before any delete (Windows)
       }
-      return true;
+      return mine;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
@@ -73,7 +85,7 @@ function tryTake(lock: string): boolean {
     } catch {
       continue; // vanished between the create and the read: try again
     }
-    return false;
+    return null;
   }
 }
 
@@ -81,20 +93,22 @@ function tryTake(lock: string): boolean {
 export function takeLedgerLock(file: string, waitMs = LOCK_WAIT_MS): () => void {
   const lock = `${file}.lock`;
   const deadline = Date.now() + waitMs;
-  while (!tryTake(lock)) {
+  for (;;) {
+    const mine = tryTake(lock);
+    if (mine !== null) return releaseOwn(lock, mine);
     if (Date.now() >= deadline) throw new LedgerLockedError(file);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
   }
-  return () => fs.rmSync(lock, { force: true });
 }
 
 /** takeLedgerLock that waits without blocking the event loop. */
 export async function takeLedgerLockAsync(file: string, waitMs = LOCK_WAIT_MS): Promise<() => void> {
   const lock = `${file}.lock`;
   const deadline = Date.now() + waitMs;
-  while (!tryTake(lock)) {
+  for (;;) {
+    const mine = tryTake(lock);
+    if (mine !== null) return releaseOwn(lock, mine);
     if (Date.now() >= deadline) throw new LedgerLockedError(file);
     await new Promise<void>((res) => setTimeout(res, 10));
   }
-  return () => fs.rmSync(lock, { force: true });
 }
