@@ -179,10 +179,10 @@ class TestDestructiveGuard(ReplayCase):
 
 class TestAskHandling(ReplayCase):
     """A judge-first ask: RPC answers it through extension_ui_request; print/JSON mode blocks it.
-    The command is `git branch -D old-topic`: on the judge-first list, and the fake judge (`review-ask`) is unsure, so the owner is asked."""
+    The command is `git branch -D old-topic`: on the judge-first list, and the fake judge (`review-owner`) answers `owner` with a class, so the owner is asked (an unsure judge refuses and asks nobody: test_replay_review.py)."""
 
     def test_ask_rpc_approve_deny_and_no_ui(self):
-        rig = self.rig("ask", load_fixture("ask"), config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
+        rig = self.rig("ask", load_fixture("ask"), config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-owner" % PROVIDER_A}}}})
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:d1]] approve", answers=[{"value": "allow once"}], timeout=60)

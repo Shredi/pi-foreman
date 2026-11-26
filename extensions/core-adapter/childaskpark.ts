@@ -26,6 +26,12 @@ export class ChildAskPark {
     this.parked.set(key, allow);
   }
 
+  /** Every parked answer of the launch dir `dir` is dropped: the first ask of a resumed run ends the parked ask's life, whether or not it matched. */
+  dropDir(dir: string): void {
+    const base = path.basename(dir);
+    for (const k of [...this.parked.keys()]) if ((JSON.parse(k) as unknown[])[0] === base) this.parked.delete(k);
+  }
+
   /** The parked answer of `key`, removed (single use), or undefined. */
   take(key: string): boolean | undefined {
     const v = this.parked.get(key);

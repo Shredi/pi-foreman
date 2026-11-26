@@ -123,12 +123,12 @@ test("control lines still run", { skip: posixOnly }, () => {
   for (const c of controls("FOREMAN_OUT", "FOREMAN_SCRATCH")) assert.equal(allowed(c, "builder"), true, c);
 });
 
-const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
-const registry = () => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: ASK }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
+const ASK = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
+const registry = (reply = ASK) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { gate: { askTimeoutMs: 600000 }, presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } } };
 
 type T = Parameters<typeof r11Rig>[0];
-async function childOf(t: T, role: string) {
+async function childOf(t: T, role: string, reply?: string) {
   const dir = fs.realpathSync(mkTestTmp("pf-d3c-caller-"));
   t.after(() => rmTestTmp(dir));
   const sc = path.join(dir, "scratch");
@@ -140,7 +140,7 @@ async function childOf(t: T, role: string) {
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  return r11Rig(t, {}, { ctx: { modelRegistry: registry() }, config, child: true });
+  return r11Rig(t, {}, { ctx: { modelRegistry: registry(reply) }, config, child: true });
 }
 
 for (const role of ["reviewer", "builder"]) {
@@ -152,3 +152,12 @@ for (const role of ["reviewer", "builder"]) {
     if (role === "builder") for (const command of controls("FOREMAN_OUT", "FOREMAN_SCRATCH")) assert.equal(await child.call("bash", { command }), undefined, command);
   });
 }
+
+test("caller path (builder): a judge that answers unsure refuses the nameref shapes", { skip: posixOnly }, async (t) => {
+  const child = await childOf(t, "builder", JSON.stringify({ verdict: "unsure", reason: "cannot tell" }));
+  for (const command of shapes("FOREMAN_OUT")) {
+    const res = await child.call("bash", { command });
+    assert.equal(res?.block, true, command);
+    assert.match(String(res?.reason), /pi-foreman: refused: /, command);
+  }
+});

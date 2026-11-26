@@ -54,7 +54,7 @@ test("a transport-opaque call asks with remote_opaque", async (t) => {
   const r = await rig(t);
   const res = await r.call("bash", { command: "cat s.sh | ssh prod-db bash" });
   assert.ok(res && res.block);
-  assert.deepEqual([r.events("protected_check")[0].accepted, r.events("protected_check")[0].cause], ["ask", "remote_opaque"]);
+  assert.deepEqual([r.events("protected_check")[0].accepted, r.events("protected_check")[0].cause], ["refuse", "remote_opaque"]);
 });
 
 test("an entry's check tightens: read-only refuses a write verdict, ask never asks the model", async (t) => {

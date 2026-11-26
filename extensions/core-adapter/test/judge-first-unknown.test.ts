@@ -87,7 +87,6 @@ const KEEP = [
   "echo $FOREMAN_SCRATCH",
   "env FOO=1 node x.js",
   "env -u PATH ls",
-  "env -i PATH=/usr/bin ls",
   "timeout 900 node --test x",
   "command -v git",
   "exec node x.js",
@@ -131,6 +130,12 @@ for (const role of ROLES) {
       assert.notEqual(g.danger, "danger-unknown-program", `${l}: ${JSON.stringify(g)}`);
       assert.ok(!g.result?.block, `${l}: ${JSON.stringify(g.result)}`);
     }
+  });
+}
+// PATH chooses which program a name runs (plan D2: a steering name stays marked), so `env -i PATH=/usr/bin ls` is a judge look, not a silent run (pin moved out of the list above)
+for (const role of ROLES) {
+  test(`${role}: a PATH assignment steers which program runs, so the line goes to the judge`, { skip: posixOnly }, () => {
+    assert.equal(gate("env -i PATH=/usr/bin ls", role).danger, "danger-unknown-program");
   });
 }
 test("a delete floor and the controls keep their verdicts", { skip: posixOnly }, () => {

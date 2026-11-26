@@ -11,11 +11,13 @@ try {
 }
 parentPort.postMessage({ ready: !!mod && typeof mod.renderMermaid === "function" });
 
-parentPort.on("message", async (m) => {
+async function render(m) {
   try {
     const svg = await mod.renderMermaid(m.src, { bg: m.bg, fg: m.fg });
     parentPort.postMessage({ id: m.id, svg });
   } catch (e) {
     parentPort.postMessage({ id: m.id, error: String(e && e.message ? e.message : e).slice(0, 200) });
   }
-});
+}
+
+parentPort.on("message", (m) => void render(m));

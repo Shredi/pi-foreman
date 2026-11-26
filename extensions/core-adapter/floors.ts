@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAX_DEPTH, beforeParseError, carryFacts, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
+import { MAX_DEPTH, parseErrorCuts, carryFacts, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, READ_PROGS, RUNNERS, gitReadWrites } from "./effects.ts";
@@ -1748,7 +1748,7 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
     // A3: a child cannot answer an owner question about a line the parser could not read: a deterministic deny that says how to rephrase
     const flag = env.child ? opaqueDeny : askHit;
     if (env.child && !env.builder && push && push !== dynamic) return flag("git-push-child", `The unparsed line looks like a git push. ${PUSH_CHILD_TEXT}`);
-    // git config words are judge-first (a child's judge-first hit asks its parent): they wait behind the push floors and the denies below
+    // git config words are judge-first (the judge decides; only an owner answer naming a class asks, a child its parent): they wait behind the push floors and the denies below
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
     if (key !== undefined) soft = judgeHit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`, key);
     else if (calls.some((c) => c.verb === "remote" && /^\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(c.tail))) soft = judgeHit("git-config", "The unparsed line changes a git remote.");
@@ -1907,16 +1907,33 @@ export function cleanLine(segments: ShellSegment[]): boolean {
 
 /**
  * A line that does not parse is one `parse_error` segment, but a shell runs the statements before the error. The text before the statement that holds the parser's first
- * error (by its own offsets) is parsed once more and, when it parses, gets the restored checks; the parse error itself stays opaque for the rest, so the result is the
- * stricter of the two. A text whose cut still fails to parse is not read further.
+ * error (by its own offsets) is cut twice (`parseErrorCuts`: at the statement end, and after its here-document bodies); each cut that parses gets the restored checks and the
+ * strictest result counts (a deny over an ask over a judge-first hit over none), so a longer cut can only add a floor. The parse error itself stays opaque for the rest, so the result is the
+ * stricter of the two. A cut that still fails to parse at the top is not read further.
  */
 function completeLines(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
-  if (segments.length !== 1 || segments[0].opaque !== "parse_error") return null;
-  const prefix = beforeParseError(text);
-  if (prefix === null) return null;
-  const parsed = parseShell(prefix, { cwd: segments[0].cwd, platform: env.platform });
-  if (parsed.length === 0 || parsed.some((x) => x.opaque === "parse_error")) return null;
-  return nestedKinds(prefix, parsed, env, false);
+  let best: FloorHit | null = null;
+  // a cut parses at the top, so its `lineFloors` meets no top-level parse_error segment and does not come back here
+  for (const cut of parsedPrefixes(text, segments, { cwd: segments[0]?.cwd ?? env.cwd, platform: env.platform })) {
+    const h = lineFloors(cut.prefix, cut.parsed, env);
+    if (h?.kind === "deny") return h;
+    best = strongerHit(best, h);
+  }
+  return best;
+}
+
+/**
+ * The segments of each cut of the statements a shell runs before the first syntax error of a line that is one `parse_error` segment, for each cut that parses.
+ * A nested parse_error segment (an error inside a `$( )` or here-document body) is kept: `lineFloors` reads it; a cut that is one parse_error segment is dropped.
+ */
+export function parsedPrefixes(text: string, segments: ShellSegment[], opts: Parameters<typeof parseShell>[1]): { prefix: string; parsed: ShellSegment[] }[] {
+  if (segments.length !== 1 || segments[0].opaque !== "parse_error") return [];
+  const out: { prefix: string; parsed: ShellSegment[] }[] = [];
+  for (const prefix of parseErrorCuts(text)) {
+    const parsed = parseShell(prefix, opts);
+    if (parsed.length > 0 && !(parsed.length === 1 && parsed[0].opaque === "parse_error")) out.push({ prefix, parsed });
+  }
+  return out;
 }
 
 /**
@@ -2357,14 +2374,12 @@ function cleanReadSegment(seg: ShellSegment, env: FloorEnv): boolean {
 }
 
 /**
- * The one segment of an unparsable line reads only when the statements a shell runs before the error (`beforeParseError`, as `completeLines` cuts) parse
+ * The one segment of an unparsable line reads only when the statements a shell runs before the error (`parseErrorCuts`, as `completeLines` cuts) parse
  * cleanly and none of them writes. A cut that cannot be made (the first statement holds the error) counts as a write.
  */
 function unparsedReads(text: string, seg: ShellSegment, env: FloorEnv): boolean {
-  const prefix = beforeParseError(text);
-  if (prefix === null) return false;
-  const parsed = parseShell(prefix, { cwd: seg.cwd, platform: env.platform });
-  return parsed.length > 0 && parsed.every((x) => x.opaque !== "parse_error" && nonWritingSegment(x, env));
+  const cuts = parsedPrefixes(text, [seg], { cwd: seg.cwd, platform: env.platform });
+  return cuts.length > 0 && cuts.every((c) => c.parsed.every((x) => x.opaque !== "parse_error" && nonWritingSegment(x, env)));
 }
 
 /**

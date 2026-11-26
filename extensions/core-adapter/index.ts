@@ -22,7 +22,7 @@ import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel, WITHHELD } from "./classifier.ts";
 import { autoClassifierModelText, classifierModelLine, noClassifierModelText } from "./reviewwarn.ts";
-import { effectiveCheckMode } from "./protected.ts";
+import { PROTECTED_COUNTED_CAUSES, effectiveCheckMode } from "./protected.ts";
 import { PermStore, PROTECTED_CHECK_MODES, cleanProtected, protectedBlock, workFoldersBlock } from "./permconfig.ts";
 import { mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
@@ -33,11 +33,11 @@ import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
 import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, inputHash, writeChildAsk } from "./childask.ts";
 import { ChildAskPark, parkKey } from "./childaskpark.ts";
 import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
-import { askOwner, STOP_TEXT } from "./gatedialog.ts";
+import { askOwner, DEFAULT_ASK_TIMEOUT_MS, STOP_TEXT } from "./gatedialog.ts";
 import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
-import { CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
+import { CHILD_ASK_TIMEOUT_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -76,7 +76,6 @@ import type { McpChildOpts } from "./mcpchild.ts";
 import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, wholeOnlyServers, wholeServerLine, workflowBindingBlock } from "./mcplaunch.ts";
 import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcpEntries } from "./mcpscope.ts";
 import { childSkillRefs } from "./skilldirs.ts";
-import { editorBackupCommand } from "./effects.ts";
 import { compareRunEnd, launchRunCwds, noticeText, readonlyRoles, spawnGit, takeStartEntry, traceLines } from "./readonlystate.ts";
 import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -242,7 +241,7 @@ import type { ShellConfigFn } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overrideAvailability, overrideDeclinedReason, overrideHint, overrideShape, overrideSpec, overrideUnavailableReason, takePressureOverride, taskHash, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
-import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
+import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_KEY_PREFIX, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { samePath, selfFinish, spawnDetached, verifiedMergeFor, worktreeRoot as containingWorktree } from "./selffinish.ts";
@@ -3516,7 +3515,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const childAskWatches = new Map<string, ChildAskWatch>();
   const childAskWatchFor = (s: Session, ctx: ExtensionContext): ChildAskWatch => {
     let w = childAskWatches.get(s.id);
-    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a) => answerChildAsk(s, ctx, a), (e) => reportChildAsk(s, e, ctx))));
+    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a, signal) => answerChildAsk(s, ctx, a, signal), (e) => reportChildAsk(s, e, ctx))));
     return w;
   };
   // D3: answers of asks whose run ended while the child waited, and the run -> launch map of resumes (childaskpark.ts); memory only, per session
@@ -3539,6 +3538,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return `pi-foreman: the run ended while waiting for the owner on ${open.tool}: ${open.payload.replace(/\s+/g, " ").trim().slice(0, 100)}; the question is still open, do not work around it.`;
     }
     childAskWatches.get(s.id)?.remove(dir);
+    parkFor(s).dropDir(dir);
     fs.rmSync(dir, { recursive: true, force: true });
     return null;
   };
@@ -3594,16 +3594,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.sendMessage({ customType: "pi-foreman-ask-answered", content: `pi-foreman notice: the owner answered the question the ended run (${e.ask.role}, launch ${e.ask.run}) left open on ${e.ask.tool}: ${e.allow ? "allowed" : "denied"}. The run can be resumed; its identical call is answered once without asking again.`, display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
   };
   /** The parent's answer to one child ask (r79 item 5): the owner dialog in the parent's own pane with the child's role, run and the full command; never a model. */
-  async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk): Promise<ChildAnswer> {
+  async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk, signal?: AbortSignal): Promise<ChildAnswer> {
     if (!ctx.hasUI) return { allow: false, reason: NO_PANE_TEXT };
     const rt = gateRuntimeOf(s);
     // D3: the owner already answered this exact call of a run that ended while it waited: used once, no dialog
+    // the parked answer lives until the first ask of the resumed run: it covers that ask when the call is the same, and is dropped either way
     const parked = a.inputHash ? parkFor(s).take(parkKey(a.dir, a.tool, a.cwd, a.inputHash)) : undefined;
+    parkFor(s).dropDir(a.dir);
     if (parked !== undefined) {
       s.trace?.emit({ event: "ask_parked_used", role: a.role, toolFamily: a.tool, decision: parked ? "allow" : "deny" });
       return parked ? { allow: true, how: "allow-parked" } : { allow: false, reason: "pi-foreman: the owner denied this call while the run had ended; it is not run again. Report this line to the foreman and continue with what you can.", how: "deny-parked" };
     }
-    const ans = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run } }, ownerDeps(s, ctx, rt)), { tool: a.tool, summary: typeof a.payload === "string" ? a.payload : "" }, (r) => r.how === "aborted");
+    const ans = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run } }, ownerDeps(s, ctx, rt, signal)), { tool: a.tool, summary: typeof a.payload === "string" ? a.payload : "" }, (r) => r.how === "aborted");
     if (ans.allow === false && ans.how === "aborted") return { allow: false, reason: ans.reason, how: ans.how, noRuling: true };
     return ans.allow === true ? { allow: true, how: "allow-once" } : { allow: false, reason: ans.reason, how: ans.how };
   }
@@ -3997,6 +3999,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     childDenyCounts.set(key, n);
     return n >= 2 ? repeatRefusalStop(s, ctx, reason) : undefined;
   }
+  /**
+   * The repeat stop for a refusal of the judge, the protected check or the child ask: keyed on the refusal kind and the hash of the call (tool and input), not
+   * on the text, so the same call refused twice stops the run whatever the reason says.
+   */
+  function refusalRepeat(s: Session, ctx: ExtensionContext, reason: string, kindWord: string, tool: string, input: unknown): { block: true; reason: string } | undefined {
+    return repeatedDeny(s, ctx, reason, `${REPEAT_KEY_PREFIX}${kindWord} ${inputHash({ tool, input })}`);
+  }
   /** Child sessions stopped by repeatRefusalStop, with the block reason every later tool call of the run gets. */
   const repeatStopped = new Map<string, string>();
 
@@ -4096,7 +4105,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let rt = gateRuntimes.get(s.id);
     if (!rt) {
       const store = new PermStore({ agentDir: s.agentDir, cwd: s.cwd, home: os.homedir() });
-      const log = openGateLog({ agentDir: s.agentDir, session: s.id, kind: s.isChild ? "child" : "owner", role: s.isChild ? s.usage.line.role : "foreman", cwd: s.cwd, maxBytes: get(s.config.config, "gate.logMaxBytes"), roots: { worktree: workspaceOf(s.cwd).root, scratch: s.scratch.live(null)[0], tmp: os.tmpdir(), home: os.homedir() } });
+      const log = openGateLog({ agentDir: s.agentDir, session: s.id, kind: s.isChild ? "child" : "owner", role: s.isChild ? s.usage.line.role : "foreman", cwd: s.cwd, maxBytes: get(s.config.config, "gate.logMaxBytes"), fullCommand: () => get(s.config.config, "gate.log.fullCommand") === true, roots: { worktree: workspaceOf(s.cwd).root, scratch: s.scratch.live(null)[0], tmp: os.tmpdir(), home: os.homedir() } });
       rt = { store, log, classifier: new Classifier() };
       gateRuntimes.set(s.id, rt);
     }
@@ -4164,6 +4173,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(resolved ? { rules: { env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
       ...(resolved?.noteTools.length ? { noteTools: resolved.noteTools } : {}),
+      ...(gs && get(gs.config.config, "gate.unclassified") === "judge" ? { unclassified: "judge" as const } : {}),
     });
     const r = out.result;
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
@@ -4187,6 +4197,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (layer !== "classifier" && layer !== "cache") note(layer, "deny", rule, reason);
       return { block: true as const, reason };
     };
+    // a refusal nobody is asked about; `repeat` names the refusal kind that counts towards a child's repeat stop (never a timeout, an invalid answer, a missing model, a provider error or an exception)
+    const refused = (rule: string, layer: GateLayer, reason: string, repeat: string | null): { block: true; reason: string } => {
+      const d = denied(rule, layer, reason);
+      return (repeat ? refusalRepeat(gs, ctx, reason, repeat, event.toolName, event.input) : undefined) ?? d;
+    };
     if (r && "allow" in r) return allowed(r.rule, r.layer ?? "default", r.rule);
     try {
       if (gateStopped.has(gs.id)) return denied("user-stop", "dialog", STOP_TEXT);
@@ -4196,7 +4211,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
         if (shellWrite) return shellWrite;
       }
-      // a protected-target match: the check (a small model, capped by the deterministic classes) decides allow / ask / deny; every failure asks
+      // a protected-target match: the check (a small model, capped by the deterministic classes) decides allow / ask / refuse / deny; the owner is asked only
+      // for a line the code reads in full (see PROTECTED_ASK_CAUSES), every failure and every line it cannot read is a refusal with its reason
       if (r && "ask" in r && r.cause === "protected" && r.match) {
         const m = r.match;
         const ids = m.entries.map((e) => e.id).join(",");
@@ -4204,8 +4220,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const lead = m.entries[0];
         const named = `${lead.id}${lead.note ? ` (${lead.note})` : ""}`;
         // a child with no route to its parent (the route decideByDialog uses) or a session without UI fails closed; the owner's own session ignores presence
-        const away = gs.isChild ? !childAskRoute(gs) : !ctx.hasUI;
+        const route = gs.isChild ? childAskRoute(gs) : undefined;
+        const away = gs.isChild ? !route || !fs.existsSync(route) : !ctx.hasUI;
         let askCause = `${named} is protected.`;
+        let failedText: string | undefined;
         const checkRaw = get(gs.config.config, "gate.protected.check");
         const checkMode = effectiveCheckMode(checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model", m.entries);
         try {
@@ -4235,16 +4253,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           });
           if (v.accepted === "allow") return allowed(rule, "protected", rule, false, v.reason);
           if (v.accepted === "deny" && v.entry) return denied(`${rule};classifier.deny:${v.entry}`, "protected", denyText(v.entry, resolved.prose.deny.find((e) => e.id === v.entry)?.text ?? ""));
+          if (v.accepted === "refuse") return refused(rule, "protected", `pi-foreman: refused: ${named} is protected and the check did not allow this call (${v.cause ?? "refused"}): ${v.reason || "no reason given"} Nobody is asked. Rewrite the call as plain commands the gate can read, or report it to the foreman.`, v.cause && PROTECTED_COUNTED_CAUSES.has(v.cause) ? "protected-refused" : null);
           askCause = `${named} is protected. The check rates this ${v.effect} with ${v.confidence} confidence: ${v.reason || v.cause || "no reason given"}.`;
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          askCause = `${named} is protected. The check failed (${msg}).`;
+          failedText = `pi-foreman: refused: ${named} is protected and the check failed (${msg}). Nobody is asked. Report it to the foreman.`;
           gs.trace?.emit({
             event: "protected_check", rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
-            opaque: m.opaque || m.remoteOpaque, accepted: "ask", cause: "exception", away, mode: checkMode, globs: m.entries.map((x) => x.glob).join(","),
+            opaque: m.opaque || m.remoteOpaque, accepted: "refuse", cause: "exception", away, mode: checkMode, globs: m.entries.map((x) => x.glob).join(","),
             ...denyFields(msg.slice(0, 200), event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
           });
         }
+        if (failedText) return refused(rule, "protected", failedText, null);
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule, role });
         return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: askCause });
       }
@@ -4261,21 +4281,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const facts = reviewGitFacts(ctx.cwd);
       const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
       const launchTask = launchTaskOf(gs);
-      const ledger = (() => {
-        try {
-          const f = boundLedger(gs.markerDir, gs.id);
-          return ledgerTaskText(f ? fs.readFileSync(f, "utf8") : null);
-        } catch {
-          return "";
-        }
-      })();
       // the task text is not passed for the riskiest kinds: any judge-first label of the call decides (a structured field), never the first one alone
       const withhold = (out.dangers ?? [danger.name]).some((n) => WITHHELD.has(n));
-      // the judge reads the call first: a clear runs it; unsure, an invalid answer or a failure asks the owner (a child asks its parent)
+      // the judge reads the call first: a clear runs it; an owner answer naming one of six classes asks the owner (a child asks its parent); a refuse, an
+      // unsure, an invalid answer and every failure refuse the call with the reason, nobody is asked
       // file reads: not for the withheld kinds (the judge sees no task text for them on purpose); a child adds its own output and scratch dirs
       const readScope = withhold ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never });
       const judged = await rt.classifier.judge(
-        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(ledger ? { ledger } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
+        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, defaultBranch: facts.defaultBranch, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
         {
           registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
           recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
@@ -4285,12 +4298,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
       );
       if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}`);
-      // a child's write the gate cannot read (and no other judge-first label on the line): a judge that does not clear it refuses it, nobody is asked
+      if (judged.cause === "owner") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: `${cause} (judge: ${judged.class})`, classifierReason: judged.reason, dangerName: danger.name });
+      // a refusal: nobody is asked. The judge logged its own `deny` row; only a refuse or unsure answer counts towards a child's repeat stop (a timeout, an invalid answer and a missing model never do)
+      const count = judged.cause === "model" ? "judge-refused" : null;
+      // a child's write the gate cannot read (and no other judge-first label on the line): the refusal names the way out
       const labels = out.dangers ?? [danger.name];
       if (gs.isChild && labels.includes("danger-write-outside") && labels.every((n) => n === "danger-write-outside" || n === "danger-unknown-write-target")) {
-        return denied("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true));
+        return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true), judged.cause === "model" ? "write-outside" : null);
       }
-      return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, classifierReason: judged.reason, dangerName: danger.name });
+      return refused(`judge:${danger.name}`, "classifier", judgeRefusalText(judged.cause, judged.reason), count);
     } catch (e) {
       const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
       note("floor", "deny", "gate-error", reason);
@@ -4327,6 +4343,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function childAskRoute(gs: Session): string | undefined {
     return launchBinding?.askDir && get(gs.config.config, "gate.childAsk") === "parent" ? launchBinding.askDir : undefined;
   }
+  /** The refusal text of a judge answer that is no clear and no owner: why, the judge's reason and the way out. */
+  function judgeRefusalText(cause: string, judgeReason: string): string {
+    const why = cause === "model" ? "the permission judge refused it" : cause === "timeout" ? "the permission judge did not answer in time" : cause === "invalid_verdict" ? "the permission judge's answer could not be read" : cause === "no_model" ? "no permission judge model is configured" : "the permission judge failed";
+    return `pi-foreman: refused: ${why}${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. Rewrite the call (split it, use a tool, use paths the gate can read) or report it to the foreman.`;
+  }
   /** The refusal of a child's write whose target the gate cannot read when the judge did not clear it: the cause, the judge's reason and the way out. */
   function unreadableWriteText(judgeReason: string, mayWriteWorktree: boolean): string {
     const dirs = mayWriteWorktree ? "`$FOREMAN_SCRATCH`, `$FOREMAN_OUT` or your worktree" : "`$FOREMAN_SCRATCH` or `$FOREMAN_OUT`";
@@ -4348,13 +4369,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       askFlag.overlay({ command: df.command, rule, approved: allow, session: gs.id });
       return allow ? (a.allowed(rule, "dialog", `dialog:${answer}`, false, answer), undefined) : a.denied(rule, "dialog", reason ?? "pi-foreman: denied.");
     };
+    // a refusal of a child's ask that counts towards the repeat stop: no parent to ask, or the parent's deny (a gone or aborted parent never counts)
+    const denyCounted = (answer: string, reason: string, repeat: string): { block: true; reason: string } | undefined => {
+      const d = done(answer, false, reason);
+      return (d ? refusalRepeat(gs, ctx, reason, repeat, tool, input) : undefined) ?? d;
+    };
     if (kind === "child") {
       const askDir = childAskRoute(gs);
       if (!askDir) {
         const cfgOff = get(gs.config.config, "gate.childAsk") !== "parent";
         // child asks off (own config, or the parent launched it with them off) vs nobody at the parent's pane
         const off = launchBinding?.noAsk !== "no-pane" && (cfgOff || launchBinding?.noAsk === "deny");
-        return done("no-parent", false, off ? childAskOffText(cause) : `${NO_PANE_TEXT} The call was: ${cause}.`);
+        return denyCounted("no-parent", off ? childAskOffText(cause) : `${NO_PANE_TEXT} The call was: ${cause}.`, "no-parent");
       }
       const turn = childAskChain; // one ask.md at a time: parallel tool calls of the child queue here
       let free: () => void = () => {};
@@ -4364,13 +4390,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the child never creates the ask dir: a missing one means the starting session ended or no longer watches this helper
         if (!fs.existsSync(askDir)) return done("parent-gone", false, CHILD_GONE_TEXT);
         const askCause = a.dangerName ?? (cause === "no rule matches" || cause.startsWith("rule ") ? cause : cause.startsWith("self-modification") ? "selfmod" : cause);
-        const n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, inputHash: inputHash(input) });
+        // owner decision (e): a child's ask ends after DEFAULT_ASK_TIMEOUT_MS on both sides (the deadline is in ask.md, the parent aborts its dialog at it)
+        const deadline = Date.now() + DEFAULT_ASK_TIMEOUT_MS;
+        let n: number;
+        try {
+          n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, deadline, inputHash: inputHash(input) });
+        } catch (e) {
+          // the dir went between the check and the write: the starting session is gone (the child never creates it)
+          if (!fs.existsSync(askDir)) return done("parent-gone", false, CHILD_GONE_TEXT);
+          throw e;
+        }
         const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
-        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Infinity, 250, notBefore, undefined, undefined, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
+        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Math.max(0, deadline - Date.now()), 250, notBefore, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "gone") return done("parent-gone", false, CHILD_GONE_TEXT);
+        // a timeout is nobody's refusal of this call: no repeat-stop count, and the text says what happened
+        if (w.answer === "timeout") return done("parent-timeout", false, CHILD_ASK_TIMEOUT_TEXT);
         if (w.answer === "aborted") return done("parent-aborted", false, "pi-foreman: the call was aborted while it waited for the parent's ruling; the question stays open in ask.md.");
-        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}${tool === "bash" ? (n2 => (n2 ? ` ${n2}` : ""))(childNpmNote(strOf((input as Record<string, unknown> | undefined)?.command), launchBinding?.install === true)) : ""}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+        const parentDeny = (text: string): { block: true; reason: string } | undefined => (w.answer === "deny" ? denyCounted("parent-deny", text, "parent-deny") : done("parent-deny", false, text));
+        return parentDeny(w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}${tool === "bash" ? (n2 => (n2 ? ` ${n2}` : ""))(childNpmNote(strOf((input as Record<string, unknown> | undefined)?.command), launchBinding?.install === true)) : ""}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
       } catch (e) {
         return done("parent-deny", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this line to the foreman.`);
       } finally {
@@ -4542,11 +4580,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const agents = ps ? subagentAgents(event.input as Record<string, unknown>) : [];
       const text = ps && agents.length > 0 ? rulingPickup(ps, `launch ${agents.join("+")}`) : "";
       if (text) return { block: true, reason: `pi-foreman: a newer ruling arrived before this launch; it is not started. Act on it, then launch again.\n${text}` };
-    }
-    // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
-    if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
-      sessionFor(ctx)?.trace?.emit({ event: "guard", guard: "editor_backup", toolFamily: "bash", decision: "blocked", reason: "editor_backup" });
-      return { block: true, reason: "pi-foreman: [editor_backup] deleting an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) with rm is denied; report it in your result instead." };
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
@@ -8176,6 +8209,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   });
 
+  // Hidden: the judge bench inside a headless pi, so a provider an extension registers (claude-bridge) resolves; scripts/judge_bench.mjs --headless starts it.
+  pi.registerCommand("judge-bench", {
+    description: "Internal: judge bench (scripts/judge_bench.mjs --headless)",
+    handler: async (args, ctx) => {
+      const jb = await import("./judgebench.ts");
+      const out = (l: string): void => void process.stdout.write(`${l}\n`);
+      try {
+        const parsed = jb.parseBenchArgs(args.trim().split(/\s+/).filter(Boolean), path.join(PKG_ROOT, "bench", "judge-corpus", "corpus.jsonl"));
+        await jb.runBench({ args: parsed, registry: ctx.modelRegistry as never, agentDir: piAgentDir(process.env, os.homedir()), log: out, outDir: process.env.FOREMAN_OUT || os.tmpdir() });
+      } catch (e) {
+        const msg = `judge_bench: ${e instanceof Error ? e.message : String(e)}`;
+        process.exitCode = 1;
+        out(msg);
+        ctx.ui.notify(msg, "error");
+      }
+    },
+  });
+
   pi.registerCommand("foreman", {
     description: "pi-foreman commands: /foreman doctor [warm] | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms list | protect add|remove",
     handler: async (args, ctx) => {
@@ -8522,7 +8573,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(...intercomDoctor(s.agentDir, [settings?.packages, projectSettings?.packages], process.env, PKG_ROOT));
     const ct = classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
     if (!ct) out.push(`WARN ${noClassifierModelText(ctx.model?.provider)}`);
-    else if (!ctx.modelRegistry.find(ct.provider, ct.modelId)) fail(`classifier model ${ct.provider}/${ct.modelId} not in the model registry; dangerous-class calls ask you`, "correct providers.<p>.roles.review.model.");
+    else if (!ctx.modelRegistry.find(ct.provider, ct.modelId)) fail(`classifier model ${ct.provider}/${ct.modelId} not in the model registry; dangerous-class calls are refused`, "correct providers.<p>.roles.review.model.");
     else if (ct.auto) out.push(`WARN ${autoClassifierModelText(ctx.model?.provider, `${ct.provider}/${ct.modelId}`)} (thinking ${judgeLevel(s.config.config, ct)}, timeout ${ct.timeoutMs} ms)`);
     else ok(classifierModelLine(ct, judgeLevel(s.config.config, ct)));
     const gp = gateRuntimeOf(s);

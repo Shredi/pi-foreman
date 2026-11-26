@@ -11,7 +11,7 @@
 // after that user message, so the script is stateless across processes and turns.
 //
 // Judge models (`<provider>/review-<kind>`) ignore the script and answer every request with a fixed verdict: clear (allow),
-// unsure (ask), an invalid one, an unreachable or erroring provider, or a hang (never answers until aborted).
+// unsure (ask), an owner verdict with a class (owner), an invalid one, an unreachable or erroring provider, or a hang (never answers until aborted).
 //
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
 // assert the four token kinds. A step's own "usage" object overrides single numbers (ladder replay).
@@ -45,13 +45,15 @@ export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
 // Judge models (the judge-first list): allow (clear), ask (unsure), invalid (a verdict the closed set does not know), unreachable (throws like review-error),
 // error (the provider throws), hang (never answers until aborted). child-ask: clear for the owner, unsure for a child; child-unreachable: clear for the owner,
-// the provider throws for a child.
-export const REVIEW_MODELS = ["allow", "ask", "invalid", "unreachable", "child-unreachable", "child-ask", "error", "hang"].map((k) => `review-${k}`);
+// the provider throws for a child; child-owner: clear for the owner, an owner verdict (class data-loss) for a child.
+export const REVIEW_MODELS = ["allow", "ask", "owner", "invalid", "unreachable", "child-unreachable", "child-ask", "child-owner", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
   "review-allow": '{"verdict":"clear","reason":"scripted clear"}',
   "review-ask": '{"verdict":"unsure","reason":"scripted unsure"}',
   "review-child-ask": '{"verdict":"clear","reason":"scripted clear (owner)"}',
   "review-child-unreachable": '{"verdict":"clear","reason":"scripted clear (owner)"}',
+  "review-owner": '{"verdict":"owner","class":"data-loss","reason":"scripted owner"}',
+  "review-child-owner": '{"verdict":"clear","reason":"scripted clear (owner)"}',
   "review-invalid": '{"verdict":"allow"}',
 };
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
@@ -212,10 +214,12 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
   if (model.id === "review-child-unreachable" && (context.messages as { role: string; content: unknown }[]).some((m) => textOf(m.content).includes("session kind: child"))) throw new Error("fake: scripted provider failure");
   // review-child-ask: the owner's calls are allowed, every child call is an ask
   const childAsk = model.id === "review-child-ask" && (context.messages as { role: string; content: unknown }[]).some((m) => textOf(m.content).includes("session kind: child"));
+  // review-child-owner: the owner's calls are allowed, every child call is an owner verdict (the parent is asked)
+  const childOwner = model.id === "review-child-owner" && (context.messages as { role: string; content: unknown }[]).some((m) => textOf(m.content).includes("session kind: child"));
   const stream = createAssistantMessageEventStream();
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
     .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));
-  const step: Step = model.id.startsWith("review-") ? { text: childAsk ? REVIEW_REPLIES["review-ask"] : REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
+  const step: Step = model.id.startsWith("review-") ? { text: childAsk ? REVIEW_REPLIES["review-ask"] : childOwner ? REVIEW_REPLIES["review-owner"] : REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
   if (process.env.FOREMAN_FAKE_FROZEN === "1" && !model.id.startsWith("review-") && !summary) freezeTools(step, context);
   const output: AssistantMessage = {
     role: "assistant",

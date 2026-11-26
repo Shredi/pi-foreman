@@ -32,6 +32,8 @@ export const OWNER_AWAY_TEXT = "pi-foreman: denied: the owner is away from the m
 export const NO_PANE_TEXT = "pi-foreman: denied: nobody is at this session (no pane). The owner is absent; do not wait or retry, report this line and continue with what you can.";
 /** The deny text for a child whose wait on its parent ends because the starting session is gone (its ask dir is missing, or its live file is missing or stale on two checks). */
 export const CHILD_GONE_TEXT = "pi-foreman: denied: the session that started this helper has ended or no longer watches it, so nobody can answer. Do not retry; report this line and continue with what you can.";
+/** The deny text for a child whose ask got no answer in `DEFAULT_ASK_TIMEOUT_MS` (gatedialog.ts): the question is closed on both sides. */
+export const CHILD_ASK_TIMEOUT_TEXT = "pi-foreman: denied: no answer in 15 minutes; the question is closed. Rewrite the call so it needs no answer, or report this line to the foreman and continue with what you can.";
 /** The deny text for a child whose ask cannot go to the parent because child asks are off (`gate.childAsk` is `deny`), not because nobody is at the pane. */
 export const childAskOffText = (cause: string): string => `pi-foreman: denied: this call needs the owner's answer and child asks are off (gate.childAsk is "deny"). Report this line to the foreman, who can run it or ask the owner. The call was: ${cause}.`;
 

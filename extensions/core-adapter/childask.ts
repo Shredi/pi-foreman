@@ -96,7 +96,10 @@ export function nextAskN(dir: string): number {
   return n + 1;
 }
 
-/** Write `<dir>/ask.md` (header `# Ask <n>: <topic>`, `key: value` lines, then the whole payload in a fence; no cut) atomically and return n. */
+/**
+ * Write `<dir>/ask.md` (header `# Ask <n>: <topic>`, `key: value` lines, then the whole payload in a fence; no cut) atomically and return n.
+ * The child never creates `dir`: a missing dir means the starting session ended or no longer watches this helper, and the write throws (the caller counts the child as gone).
+ */
 export function writeChildAsk(dir: string, a: ChildAskInput): number {
   const n = nextAskN(dir);
   const text = [
@@ -120,16 +123,15 @@ export function writeChildAsk(dir: string, a: ChildAskInput): number {
     "```",
     "",
   ].join("\n");
-  fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.ask.md.${process.pid}.tmp`);
   fs.writeFileSync(tmp, text, "utf8");
   fs.renameSync(tmp, path.join(dir, "ask.md"));
   return n;
 }
 
-export type RulingAnswer = { answer: "allow" | "deny" | "other" | "timeout" | "away" | "gone" | "aborted"; first?: string; reason?: string };
+export type RulingAnswer = { answer: "allow" | "deny" | "other" | "timeout" | "gone" | "aborted"; first?: string; reason?: string };
 
-/** Re-check cadence of the parent-away probe and of the gone check while a child waits. */
+/** Re-check cadence of the gone check while a child waits. */
 export const AWAY_CHECK_MS = 60_000;
 
 /** More that can end a wait: the call's abort signal, and the check whether the starting session is gone. */
@@ -154,14 +156,12 @@ function liveStale(file: string | undefined, now: number, staleMs: number): bool
 
 /**
  * Poll `<dir>/ruling-<n>.md` until it exists or `timeoutMs` passes; its first line ALLOW / DENY (case-insensitive) decides, the rest is the reason.
- * A ruling whose mtime is before `notBefore` (ms) is stale and ignored. `away` (the presence of the parent's owner, presencewait.ts) is polled
- * every `AWAY_CHECK_MS`; when it says away the wait ends at once with `away` instead of running to the deadline. `timeoutMs` may be `Infinity`.
+ * A ruling whose mtime is before `notBefore` (ms) is stale and ignored. `timeoutMs` may be `Infinity`.
  * `opts`: an aborted signal ends the wait with `aborted` (no ruling is taken then); `opts.gone` ends it with `gone` (see RulingOptions).
  */
-export async function awaitChildRuling(dir: string, n: number, timeoutMs: number, pollMs = 250, notBefore?: number, away?: () => boolean | Promise<boolean>, awayEveryMs = AWAY_CHECK_MS, opts: RulingOptions = {}): Promise<RulingAnswer> {
+export async function awaitChildRuling(dir: string, n: number, timeoutMs: number, pollMs = 250, notBefore?: number, opts: RulingOptions = {}): Promise<RulingAnswer> {
   const file = path.join(dir, `ruling-${n}.md`);
   const end = Date.now() + timeoutMs;
-  let nextAway = Date.now() + awayEveryMs;
   const { signal } = opts;
   const goneClock = opts.gone?.now ?? Date.now;
   const goneEvery = opts.gone?.everyMs ?? AWAY_CHECK_MS;
@@ -183,14 +183,6 @@ export async function awaitChildRuling(dir: string, n: number, timeoutMs: number
     }
     const left = end - Date.now();
     if (left <= 0) return { answer: "timeout" };
-    if (away && Date.now() >= nextAway) {
-      nextAway = Date.now() + awayEveryMs;
-      try {
-        if (await away()) return { answer: "away" };
-      } catch {
-        // unknown counts as present
-      }
-    }
     if (opts.gone && goneClock() >= nextGone) {
       const t = goneClock();
       const jumped = t - lastGone >= 2 * goneEvery;
@@ -236,6 +228,9 @@ export function writeChildRuling(dir: string, n: number, a: ChildAnswer): void {
   fs.renameSync(tmp, path.join(dir, `ruling-${n}.md`));
 }
 
+/** The longest delay a Node timer takes (2^31-1 ms, about 24.8 days); a longer one fires at 1 ms. */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
 export interface AskTimers {
   set: (f: () => void, ms: number) => unknown;
   clear: (h: unknown) => void;
@@ -253,7 +248,8 @@ export type ChildAskEvent = { kind: "answered" | "late" | "expired" | "failed" |
 
 /**
  * The ask dirs of one session's running children. Each new ask is queued; `answer` runs for one ask at a time (one dialog at a time
- * per session). An ask whose deadline passed before its turn is dropped; an answer that comes after the deadline is reported as
+ * per session). An ask whose deadline passed before its turn is dropped (`expired`); the dialog of a shown ask is aborted (its signal) at the
+ * deadline so the queue moves on, nothing is written and the ask is reported `late`; an answer that comes after the deadline is reported as
  * `late` and never written.
  */
 export class ChildAskWatch {
@@ -262,12 +258,12 @@ export class ChildAskWatch {
   private busy = false;
   private shown: ChildAsk | null = null;
   private handle: unknown;
-  private readonly answer: (a: ChildAsk) => Promise<ChildAnswer>;
+  private readonly answer: (a: ChildAsk, signal: AbortSignal) => Promise<ChildAnswer>;
   private readonly report: (e: ChildAskEvent) => void;
   private readonly timers: AskTimers;
   private readonly now: () => number;
 
-  constructor(answer: (a: ChildAsk) => Promise<ChildAnswer>, report: (e: ChildAskEvent) => void, timers: AskTimers = REAL_TIMERS, now: () => number = Date.now) {
+  constructor(answer: (a: ChildAsk, signal: AbortSignal) => Promise<ChildAnswer>, report: (e: ChildAskEvent) => void, timers: AskTimers = REAL_TIMERS, now: () => number = Date.now) {
     this.answer = answer;
     this.report = report;
     this.timers = timers;
@@ -337,14 +333,24 @@ export class ChildAskWatch {
         }
         let ans: ChildAnswer;
         this.shown = a;
+        const stop = new AbortController();
+        // one-shot, and inside the timer's range: a delay past 2^31-1 ms would make a Node timer fire every 1 ms and close the dialog at once
+        const timer: unknown = a.deadline
+          ? this.timers.set(() => {
+              this.timers.clear(timer);
+              stop.abort();
+            }, Math.min(MAX_TIMER_MS, Math.max(1, a.deadline - this.now())))
+          : undefined;
         try {
-          ans = await this.answer(a);
+          ans = await this.answer(a, stop.signal);
         } catch (e) {
           ans = { allow: false, reason: `the parent could not answer (${e instanceof Error ? e.message : String(e)})` };
         }
+        if (timer !== undefined) this.timers.clear(timer);
         this.shown = null;
         if (ans.noRuling) {
-          this.report({ kind: "aborted", ask: a });
+          // closed by the deadline: whatever the owner would have answered is late and never written
+          this.report(stop.signal.aborted ? { kind: "late", ask: a, detail: "dialog closed at the deadline" } : { kind: "aborted", ask: a });
           continue;
         }
         if (a.deadline && this.now() > a.deadline) {

@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
+import { labelRig } from "./_judge-label.ts";
 
 const FLOOR = "danger-delete-unknown-target";
 const MODES = ["floors-only", "full"] as const;
@@ -22,12 +23,12 @@ async function refused(t: Parameters<typeof r11Rig>[0], tool: string, line: stri
 async function judged(t: Parameters<typeof r11Rig>[0], tool: string, line: string, label = "delete-unknown-target", roles: boolean[] = [false, true]): Promise<void> {
   for (const mode of MODES) {
     for (const child of roles) {
-      const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode } }, child });
+      const { r, prompts } = await labelRig(t, { child, gate: { mode } });
       const res = await r.call(tool, { command: line });
       assert.equal(res?.block, true, `${mode} ${child ? "child" : "foreman"}: ${line}`);
       assert.doesNotMatch(String(res?.reason), /denied by the permission floor/, `${mode} ${child ? "child" : "foreman"}: ${line}: ${String(res?.reason)}`);
-      // a child's empty or unresolved-cd target also meets the child write check's own refusal first
-      if (child) assert.match(String(res?.reason), new RegExp(`danger-(${label}|write-outside)|child-write-outside`), `${mode}: ${line}: ${String(res?.reason)}`);
+      // a child's empty or unresolved-cd target also meets the child write check's own refusal first; otherwise the judge was asked under the label
+      if (child) assert.match(`${prompts.join("\n")}\n${String(res?.reason)}`, new RegExp(`danger-(${label}|write-outside)|child-write-outside`), `${mode}: ${line}: ${String(res?.reason)}`);
     }
   }
 }
@@ -105,21 +106,21 @@ test(`${FLOOR}: git clean with -e or --exclude is refused`, async (t) => {
 
 test(`${FLOOR}: the old Python check's refusals reach the judge for a child as well as the foreman`, async (t) => {
   for (const l of ["find $X -delete", "chmod -R 755 $X", "truncate -s 0 $X", "echo hi > $X", "dd if=/dev/zero of=$X", "git clean -fd -e keep"]) {
-    const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode: "floors-only" } }, child: true });
+    const { r, prompts } = await labelRig(t, { child: true, gate: { mode: "floors-only" } });
     const res = await r.call("bash", { command: l });
     assert.equal(res?.block, true, l);
     assert.doesNotMatch(String(res?.reason), /denied by the permission floor/, l);
-    assert.match(String(res?.reason), /danger-/, l);
+    assert.match(`${prompts.join("\n")}\n${String(res?.reason)}`, /danger-/, l);
   }
 });
 
 test(`${FLOOR}: a literal recursive PowerShell or cmd delete outside the worktree is the owner's question (a refusal for a child) in mode allow; inside it runs`, async (t) => {
   for (const [tool, l] of [["powershell", "Remove-Item -Recurse /var/stuff"], ["bash", "pwsh -c 'Remove-Item -Recurse /var/stuff'"], ["bash", "cmd /c rd /s /q /var/stuff"]] as const) {
     for (const child of [false, true]) {
-      const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode: "floors-only" } }, child });
+      const { r, prompts } = await labelRig(t, { child, gate: { mode: "floors-only" } });
       const res = await r.call(tool, { command: l });
       assert.equal(res?.block, true, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
-      assert.match(String(res?.reason), /delete-outside|outside the worktree|dialog was dismissed/, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
+      assert.match(`${prompts.join("\n")}\n${String(res?.reason)}`, /delete-outside|outside the worktree|dialog was dismissed/, `${child ? "child" : "foreman"}: ${l}: ${JSON.stringify(res)}`);
     }
   }
   await runs(t, "pwsh -c 'Remove-Item -Recurse build'");
@@ -127,10 +128,10 @@ test(`${FLOOR}: a literal recursive PowerShell or cmd delete outside the worktre
 
 test(`${FLOOR}: bg_run gets the same judge-first handling as bash (guard parity of rm -rf -- "$1"/*)`, async (t) => {
   for (const mode of MODES) {
-    const r = await r11Rig(t, {}, { config: { presence: { enabled: false }, gate: { mode } }, child: true });
+    const { r, prompts } = await labelRig(t, { child: true, gate: { mode } });
     const res = await r.call("bg_run", { command: 'rm -rf -- "$1"/*' });
     assert.equal(res?.block, true, mode);
-    assert.match(String(res?.reason), /danger-delete-unknown-target/, mode);
+    assert.match(`${prompts.join("\n")}\n${String(res?.reason)}`, /danger-delete-unknown-target/, mode);
   }
 });
 

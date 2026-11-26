@@ -23,7 +23,7 @@ function fakeRegistry(replies: Reply[], found = true) {
   };
   return { registry, calls };
 }
-const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 // presence off: an owner dialog in a rig awaits the presence probe otherwise
 const baseConfig = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } };
 
@@ -151,4 +151,16 @@ test("selfmod rule, child and headless: a deny that says nobody is at the sessio
   const head = await rig(t, [], { headless: true, answers: ["allow once"] });
   assert.match(String((await head.call("write", SETTINGS))?.reason), /selfmod-project-settings|nobody is at this session/);
   assert.equal(child.titles.length + head.titles.length, 0);
+});
+
+test("a judge that answers unsure refuses the call in the main, child and headless session: no dialog, no ask", async (t) => {
+  const UNSURE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+  for (const o of [{}, { child: true }, { headless: true }]) {
+    const r = await rig(t, [UNSURE], { ...o, answers: ["allow once"] });
+    const res = await r.call("bash", CMD);
+    assert.equal(res?.block, true, JSON.stringify(o));
+    assert.match(String(res?.reason), /^pi-foreman: refused: .*Nobody is asked/, JSON.stringify(o));
+    assert.deepEqual(r.titles, [], JSON.stringify(o));
+    assert.equal(r.log().filter((x) => x.layer === "dialog").length, 0, JSON.stringify(o));
+  }
 });

@@ -55,16 +55,16 @@ const v = (o: Partial<ProtectedVerdict> = {}): ProtectedVerdict => ({ verdict: "
 test("judgeProtected: every cause", () => {
   const cases: [string, ProtectedVerdict, ProtectedFacts, string, string | undefined][] = [
     ["mode", v(), facts({ mode: "ask" }), "ask", "mode"],
-    ["no_classes", v(), facts({ classes: [] }), "ask", "no_classes"],
-    ["low_confidence", v({ confidence: "low" }), facts(), "ask", "low_confidence"],
-    ["local_opaque", v(), facts({ opaque: true }), "ask", "local_opaque"],
-    ["remote_opaque", v(), facts({ remoteOpaque: true }), "ask", "remote_opaque"],
+    ["no_classes", v(), facts({ classes: [] }), "refuse", "no_classes"],
+    ["low_confidence", v({ confidence: "low" }), facts(), "refuse", "low_confidence"],
+    ["local_opaque", v(), facts({ opaque: true }), "refuse", "local_opaque"],
+    ["remote_opaque", v(), facts({ remoteOpaque: true }), "refuse", "remote_opaque"],
     ["remote_write read", v(), facts({ remoteClasses: ["write-out"] }), "ask", "remote_write"],
     ["remote_write write verdict, owner present, mode model", v({ effect: "write" }), facts({ remoteClasses: ["write-out"] }), "ask", "remote_write"],
     ["local_write", v(), facts({ classes: ["write-out"] }), "ask", "local_write"],
     ["read_only", v({ effect: "write" }), facts({ mode: "read-only" }), "ask", "read_only"],
     ["away", v({ effect: "deploy" }), facts({ away: true }), "ask", "away"],
-    ["unknown_effect", v({ effect: "unknown" }), facts(), "ask", "unknown_effect"],
+    ["unknown_effect", v({ effect: "unknown" }), facts(), "refuse", "unknown_effect"],
     ["judge_ask", v({ verdict: "ask" }), facts(), "ask", "judge_ask"],
     ["deny without entry", v({ verdict: "deny" }), facts(), "ask", "judge_ask"],
     ["allow read", v(), facts(), "allow", undefined],
@@ -78,7 +78,7 @@ test("judgeProtected: every cause", () => {
   }
 });
 
-test("failure paths ask with their cause: no model, timeout, provider error, junk, extra field, low confidence", async () => {
+test("failure paths refuse with their cause: no model, timeout, provider error, junk, extra field, low confidence", async () => {
   const line = "ssh prod-db 'vendorctl status'";
   const rows: [string, Reply[], string, boolean?][] = [
     ["no model", [V({})], "no_model", false],
@@ -90,13 +90,13 @@ test("failure paths ask with their cause: no model, timeout, provider error, jun
   ];
   for (const [name, replies, cause, found] of rows) {
     const r = await check(line, replies, {}, found !== false);
-    assert.deepEqual([r.accepted, r.cause], ["ask", cause], name);
+    assert.deepEqual([r.accepted, r.cause], ["refuse", cause], name);
   }
 });
 
 test("a transport-opaque remote command asks with remote_opaque, an away write verdict with away", async () => {
   const piped = await check("cat s.sh | ssh prod-db bash", [V({})]);
-  assert.deepEqual([piped.accepted, piped.cause], ["ask", "remote_opaque"]);
+  assert.deepEqual([piped.accepted, piped.cause], ["refuse", "remote_opaque"]);
   const away = await check("ssh prod-db 'vendorctl restart'", [V({ effect: "write" })], { away: true });
   assert.deepEqual([away.accepted, away.cause], ["ask", "away"]);
 });

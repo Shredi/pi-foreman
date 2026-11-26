@@ -189,3 +189,7 @@ Harvested tasks: `foreman findings export` ([review](review.md#foreman-findings)
 `ground_truth.json` and set `"confirmed": true`; a dir without `harvest.json` is always used.
 
 Design record: `design/architecture.md` [section 12](../design/architecture.md#12-benchmark-design-design-only-no-runs).
+
+## Judge bench
+
+`node scripts/judge_bench.mjs --model provider/id [--model ...]` runs the real gate judge over the synthetic corpus in `bench/judge-corpus/` (rebuilt from logged shapes and the false-alarm list; the gate log keeps masked shapes only) and reports false-allow in danger classes, unsure/refuse/owner on harmless rows, invalid rate, latency and tokens. `--validate` checks the corpus and calls no model. `--headless` runs the bench inside a headless pi through the hidden `/judge-bench` command, so providers that an extension registers (claude-bridge) resolve. See `bench/judge-corpus/README.md`.

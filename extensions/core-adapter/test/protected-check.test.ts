@@ -54,28 +54,30 @@ test("allow: a high-confidence read verdict on a read call is accepted, cached, 
 });
 
 test("ask: an ask verdict, a low confidence and an unknown effect all ask", async () => {
-  for (const reply of [V({ verdict: "ask" }), V({ confidence: "low" }), V({ effect: "unknown" })]) {
+  assert.equal((await checkProtected(CALL, ctx([V({ verdict: "ask" })]).c)).accepted, "ask");
+  // a low confidence and an unknown effect are refusals now (the owner is not asked what the model could not tell)
+  for (const reply of [V({ confidence: "low" }), V({ effect: "unknown" })]) {
     const r = await checkProtected(CALL, ctx([reply]).c);
-    assert.equal(r.accepted, "ask", reply);
+    assert.equal(r.accepted, "refuse", reply);
   }
 });
 
-test("deny: a cited deny entry denies; an unknown entry or none fails closed to ask", async () => {
+test("deny: a cited deny entry denies; an unknown entry or none fails closed to a refusal", async () => {
   const d = await checkProtected(CALL, ctx([V({ verdict: "deny", effect: "write", entry: "D1", reason: "touches the prod db" })]).c);
   assert.deepEqual([d.accepted, d.entry], ["deny", "D1"]);
   for (const reply of [V({ verdict: "deny", entry: "D9" }), V({ verdict: "deny", entry: null })]) {
-    assert.equal((await checkProtected(CALL, ctx([reply]).c)).accepted, "ask", reply);
+    assert.equal((await checkProtected(CALL, ctx([reply]).c)).accepted, "refuse", reply);
   }
 });
 
-test("fail closed: a model error, a timeout, junk and no model all ask", async () => {
+test("fail closed: a model error, a timeout, junk and no model all refuse", async () => {
   for (const reply of [new Error("boom"), "hang" as const, "not json", "{\"verdict\":\"allow\"}", `${V({})} trailing`]) {
     const r = await checkProtected(CALL, ctx([reply]).c);
-    assert.equal(r.accepted, "ask", String(reply));
+    assert.equal(r.accepted, "refuse", String(reply));
   }
   const none = ctx([V({})], {}, false);
   const r = await checkProtected(CALL, none.c);
-  assert.deepEqual([r.accepted, r.cause], ["ask", "no_model"]);
+  assert.deepEqual([r.accepted, r.cause], ["refuse", "no_model"]);
   assert.equal(none.reg.calls.length, 0);
 });
 
@@ -84,7 +86,7 @@ test("the no-model notice is shown once per cache", async () => {
   const { c, notes } = ctx([V({})], { config: { providers: { fake: { roles: {} } } } });
   const r = await checkProtected(CALL, c, cache);
   await checkProtected(CALL, c, cache);
-  assert.deepEqual([r.accepted, r.cause], ["ask", "no_model"]);
+  assert.deepEqual([r.accepted, r.cause], ["refuse", "no_model"]);
   assert.equal(notes.length, 1);
 });
 
@@ -92,9 +94,9 @@ test("hard floor: the model cannot allow a write-out or unknown class, nor an op
   const allowWrite = V({ effect: "write" });
   assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: ["write-in"] }) }).c)).accepted, "allow");
   assert.equal((await checkProtected(CALL, ctx([V({})], { match: MATCH({ classes: ["write-out"] }) }).c)).accepted, "ask");
-  assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: ["write-in"], opaque: true }) }).c)).accepted, "ask");
-  assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: ["write-in"], remoteOpaque: true }) }).c)).accepted, "ask");
-  assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: [] }) }).c)).accepted, "ask");
+  assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: ["write-in"], opaque: true }) }).c)).accepted, "refuse");
+  assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: ["write-in"], remoteOpaque: true }) }).c)).accepted, "refuse");
+  assert.equal((await checkProtected(CALL, ctx([allowWrite], { match: MATCH({ classes: [] }) }).c)).accepted, "refuse");
 });
 
 test("owner away: only a read-only verdict allows; a write verdict asks, and a cached read still allows while a write is never cached", async () => {

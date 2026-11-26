@@ -20,7 +20,7 @@ function fakeRegistry(replies: Reply[], found = true) {
   return { registry, calls };
 }
 const V = (verdict: string, reason = "because"): string => JSON.stringify({ verdict, reason });
-const CALL: JudgeCall = { tool: "bash", payload: "git config core.hooksPath x", reason: "danger-git-config: changes git config", kind: "owner", role: "foreman", cwd: "/w", worktree: "/w", branch: "main", remotes: ["origin"], ownerMessage: "set the hooks path" };
+const CALL: JudgeCall = { tool: "bash", payload: "git config core.hooksPath x", reason: "danger-git-config: changes git config", kind: "owner", role: "foreman", cwd: "/w", worktree: "/w", defaultBranch: "main", ownerMessage: "set the hooks path" };
 const config = { providers: { fake: { roles: { review: { model: "fake/m" } } } } };
 
 function ctx(replies: Reply[], found = true) {

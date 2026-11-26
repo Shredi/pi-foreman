@@ -571,6 +571,16 @@ def count_review_denies(agent, status):
                 denies.append({"method": rec["event"], "title": "", "role": rec.get("role", "?")})
             elif rec.get("event") == "dialog" and rec.get("guard") == "gate" and rec.get("decision") in GATE_DIALOG_DENIES:
                 gate_denied.append({"method": "gate_dialog", "title": str(rec.get("toolFamily") or ""), "role": rec.get("role", "?")})
+    # a judge refusal of a child's call opens no dialog and leaves no trace record: it is a deny line in the gate log
+    log = agent / "pi-foreman" / "state" / "gate" / "log.jsonl"
+    if log.is_file():
+        for line in log.read_text("utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("kind") == "child" and rec.get("verdict") == "deny" and str(rec.get("rule", "")).startswith("judge:"):
+                denies.append({"method": "judge_refusal", "title": str(rec.get("tool") or ""), "role": rec.get("role", "?")})
     # an owner dialog the driver answered is both an RPC request and a trace record: add only the shortfall
     denies.extend(gate_denied[len(status.get("asks_denied") or []):])
     status["asks"] = status.get("asks", 0) + len(denies)

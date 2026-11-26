@@ -19,9 +19,10 @@ export const LINE_MAX_CHARS = 300;
 export const LINE_HEAD_CHARS = 200;
 export const LINE_TAIL_CHARS = 80;
 
-/** Leading texts of every gate deny (floors, rules, whitelist, dialog answers, self-modification, handler failure); the ledger trace reads them. */
+/** Leading texts of every gate deny (floors, rules, whitelist, dialog answers, judge and protected-target refusals, self-modification, handler failure); the ledger trace reads them. */
 export const GATE_DENY_PREFIXES = [
   "pi-foreman: denied",
+  "pi-foreman: refused:",
   "pi-foreman: policy ",
   "pi-foreman: the permission review is unreachable",
   "pi-foreman: the permission gate failed",

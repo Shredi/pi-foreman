@@ -21,7 +21,7 @@ from test_replay import REASON, ReplayCase
 class TestPresenceStates(ReplayCase):
     def setUp(self):
         super().setUp()
-        self.rig_ = self.rig("presence", load_fixture("presence_states"), config={"wait": {"batchWindowSeconds": 0}, "providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
+        self.rig_ = self.rig("presence", load_fixture("presence_states"), config={"wait": {"batchWindowSeconds": 0}, "providers": {PROVIDER_A: {"review": {"model": "%s/review-owner" % PROVIDER_A}}}})
 
     def _file(self, pi):
         return self.rig_.agent / "pi-foreman" / "state" / "live" / ("%s.json" % pi.session_id())
@@ -68,7 +68,7 @@ class TestPresenceStates(ReplayCase):
         pi.close()
 
     def test_replay_presence_needs_you(self):  # an own permission ask is needs-you since round 73 (was waiting-owner)
-        # the ask is the owner dialog of a judge-first line (`git branch -D old-topic`) the fake judge is unsure about
+        # the ask is the owner dialog of a judge-first line (`git branch -D old-topic`) the fake judge answers `owner` with a class for (an unsure judge refuses and opens no dialog)
         pi = self.rig_.start()
         path = self._file(pi)
         seen = []

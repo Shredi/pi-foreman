@@ -34,7 +34,7 @@ function recorder() {
 
 type Branch = unknown[];
 const entryOf = (piSessionId: string, task: string) => ({ type: "custom", customType: LAUNCH_TASK_ENTRY, data: { piSessionId, task } });
-const taskBlock = (req: string): string => /BEGIN DATA LAUNCH TASK \w+\n([\s\S]*?)\nEND DATA LAUNCH TASK /.exec(req)?.[1] ?? "";
+const taskBlock = (req: string): string => /BEGIN DATA TASK \w+\n([\s\S]*?)\nEND DATA TASK /.exec(req)?.[1] ?? "";
 
 /** A rig (child, or an owner / session child) whose model clears everything; `branch` is the session branch, shared between rigs to simulate a reload. */
 async function rig(t: T, o: { child: boolean; sid?: string; branch?: Branch } = { child: true }) {
@@ -122,20 +122,18 @@ test("session child (a handoff dir with brief.md, local and remote footer): the 
   const owner = await rig(t, { child: false });
   await owner.prompt("clean up the branches");
   await owner.gitCall();
-  assert.equal(taskBlock(owner.last()), "");
+  assert.equal(taskBlock(owner.last()), "clean up the branches", "the owner's own message, no launch task");
   assert.equal(launchEntries(owner).length, 0);
 });
 
-test("every session passes its ledger: the owner session's judge request carries the title and the open items", async (t) => {
+test("no session passes a ledger: the owner session's judge request has no ledger block even when the marker names one", async (t) => {
   const r = await rig(t, { child: false });
   const ledger = path.join(r.project, ".workflow", "LEDGER-x.md");
   fs.writeFileSync(ledger, "# Ship the parser\n\n- [ ] 1. port the tokenizer\n- [x] 2. done thing\n");
   const marker = path.join(r.agentDir, "pi-foreman", "state", `fable-orch-model-${r.sid.replace(/[^A-Za-z0-9_-]/g, "")}.json`);
   fs.writeFileSync(marker, JSON.stringify({ ...JSON.parse(fs.readFileSync(marker, "utf8")), ledger: fs.realpathSync(ledger) }));
   await r.gitCall();
-  const m = /BEGIN DATA LEDGER \w+\n([\s\S]*?)\nEND DATA LEDGER /.exec(r.last());
-  assert.equal(m?.[1], "Ship the parser\n- [ ] 1. port the tokenizer");
-  assert.equal(taskBlock(r.last()), "");
+  assert.doesNotMatch(r.last(), /LEDGER|Ship the parser|port the tokenizer/);
 });
 
 // ------------------------------------------------------------------ withholding
@@ -161,9 +159,12 @@ test("a call with any withheld label reaches the judge without the task or the l
       const before = r.rec.requests.length;
       await r.call("bash", { command: `${line} # ${++n}` });
       assert.equal(r.rec.requests.length, before + 1, `${child}: ${line}`);
-      if (child) assert.ok(!r.last().includes(TASK), `${child}: ${line}`); // an owner session shows its own prompt as the owner message
-      assert.equal(taskBlock(r.last()), "");
-      assert.ok(r.last().includes("(not shown for this kind of call)"), `${child}: ${line}`);
+      // a helper's launch task is withheld; an owner session shows its own prompt as the owner message
+      if (child) {
+        assert.ok(!r.last().includes(TASK), `${child}: ${line}`);
+        assert.equal(taskBlock(r.last()), "");
+        assert.ok(r.last().includes("(not shown for this kind of call)"), `${child}: ${line}`);
+      } else assert.equal(taskBlock(r.last()), TASK, `${child}: ${line}`);
     }
   }
 });

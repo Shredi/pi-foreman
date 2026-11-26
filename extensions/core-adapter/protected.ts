@@ -51,7 +51,7 @@ export interface ProtectedFacts {
 }
 
 export interface ProtectedVerdict {
-  verdict: "allow" | "ask" | "deny";
+  verdict: "allow" | "ask" | "unsure" | "deny";
   effect: "read" | "write" | "deploy" | "network" | "unknown";
   confidence: "high" | "low";
   entry: string | null;
@@ -69,15 +69,29 @@ export function effectiveCheckMode(global: ProtectedFacts["mode"], entries: read
 /** Classes that a read-only verdict must not coexist with, locally or remotely. */
 const WRITING: ReadonlySet<EffectClass> = new Set(["write-in", "write-out", "build-test"]);
 
-/** What a model verdict may do, and why the gate asks when it does: the plan's table (see docs/permissions.md). Every `ask` carries a cause. Never `allow` without a high-confidence verdict on a fully modelled call. */
-export function judgeProtected(v: ProtectedVerdict, f: ProtectedFacts): { decision: "allow" | "ask" | "deny"; cause?: ProtectedCause } {
+/**
+ * The causes for which the owner is asked: the call changes the protected target in a way the code sees (`read_only`, `local_write`, `remote_write`,
+ * `away`), the owner set the target to always ask (`mode`), or the model says the call needs the owner (`judge_ask`). Every other cause is a refusal.
+ */
+export const PROTECTED_ASK_CAUSES: ReadonlySet<ProtectedCause> = new Set<ProtectedCause>(["mode", "read_only", "local_write", "remote_write", "away", "judge_ask"]);
+
+/** Causes of a refusal that count towards the repeat stop: what the model answered (`judge_unsure`, `low_confidence`, `unknown_effect`) and what the code saw (`local_opaque`, `remote_opaque`, `no_classes`). */
+export const PROTECTED_COUNTED_CAUSES: ReadonlySet<ProtectedCause> = new Set<ProtectedCause>(["judge_unsure", "low_confidence", "unknown_effect", "local_opaque", "remote_opaque", "no_classes"]);
+
+/**
+ * What a model verdict may do, and why the gate does not allow when it does: the plan's table (see docs/permissions.md). Every `ask` and `refuse` carries a
+ * cause. Never `allow` without a high-confidence verdict on a fully modelled call. A line the code cannot fully read (opaque) is refused first, before the
+ * check mode and whatever the model said: the owner could not approve what nobody can read.
+ */
+export function judgeProtected(v: ProtectedVerdict, f: ProtectedFacts): { decision: "allow" | "ask" | "refuse" | "deny"; cause?: ProtectedCause } {
   const ask = (cause: ProtectedCause): { decision: "ask"; cause: ProtectedCause } => ({ decision: "ask", cause });
+  const refuse = (cause: ProtectedCause): { decision: "refuse"; cause: ProtectedCause } => ({ decision: "refuse", cause });
+  if (f.opaque) return refuse("local_opaque");
+  if (f.remoteOpaque) return refuse("remote_opaque");
   if (f.mode === "ask") return ask("mode");
-  if (f.classes.length === 0) return ask("no_classes");
+  if (f.classes.length === 0) return refuse("no_classes");
   if (v.verdict === "allow") {
-    if (v.confidence !== "high") return ask("low_confidence");
-    if (f.opaque) return ask("local_opaque");
-    if (f.remoteOpaque) return ask("remote_opaque");
+    if (v.confidence !== "high") return refuse("low_confidence");
     // a remote segment the harness sees as a write always asks, whatever the verdict says
     if (f.remoteClasses.some((c) => WRITING.has(c))) return ask("remote_write");
     if (v.effect === "read") return f.classes.some((c) => WRITING.has(c)) ? ask("local_write") : { decision: "allow" };
@@ -86,14 +100,15 @@ export function judgeProtected(v: ProtectedVerdict, f: ProtectedFacts): { decisi
       if (f.away) return ask("away");
       return { decision: "allow" };
     }
-    return ask("unknown_effect");
+    return refuse("unknown_effect");
   }
   if (v.verdict === "deny" && f.denyEntryExists) return { decision: "deny" };
+  if (v.verdict === "unsure") return refuse("judge_unsure");
   return ask("judge_ask");
 }
 
 /** The decision of `judgeProtected`. */
-export function acceptProtected(v: ProtectedVerdict, f: ProtectedFacts): "allow" | "ask" | "deny" {
+export function acceptProtected(v: ProtectedVerdict, f: ProtectedFacts): "allow" | "ask" | "refuse" | "deny" {
   return judgeProtected(v, f).decision;
 }
 

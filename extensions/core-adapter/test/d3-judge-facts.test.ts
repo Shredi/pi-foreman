@@ -5,7 +5,7 @@ import { Classifier, JUDGE_REASONING, classifierTarget, judgeLevel, judgeRequest
 import type { ClassifierCtx, JudgeCall } from "../classifier.ts";
 import type { GateRecord } from "../gatelog.ts";
 
-const CALL: JudgeCall = { tool: "bash", payload: "python3 - <<EOF\nprint(1)\nEOF", reason: "danger-inline-code: runs inline code", kind: "child", role: "builder", cwd: "/w", worktree: "/w", branch: "b", remotes: [] };
+const CALL: JudgeCall = { tool: "bash", payload: "python3 - <<EOF\nprint(1)\nEOF", reason: "danger-inline-code: runs inline code", kind: "child", role: "builder", cwd: "/w", worktree: "/w", defaultBranch: null };
 const DIRS = { out: "/agent/child-out/s/l", scratch: "/tmp/pi-foreman-scratch/s/l" };
 const V = JSON.stringify({ verdict: "clear", reason: "ok" });
 

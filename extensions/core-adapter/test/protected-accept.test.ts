@@ -30,14 +30,14 @@ test("a write-out segment with model verdict read asks; a trailing unknown does 
   assert.equal(acceptProtected(v({ effect: "read" }), facts({ classes: ["write-out", "unknown"] })), "ask");
 });
 
-test("opaque local or remote asks even for a read", () => {
-  assert.equal(acceptProtected(v(), facts({ opaque: true })), "ask");
-  assert.equal(acceptProtected(v(), facts({ remoteOpaque: true })), "ask");
+test("opaque local or remote is refused even for a read", () => {
+  assert.equal(acceptProtected(v(), facts({ opaque: true })), "refuse");
+  assert.equal(acceptProtected(v(), facts({ remoteOpaque: true })), "refuse");
 });
 
-test("low confidence asks", () => {
-  assert.equal(acceptProtected(v({ confidence: "low" }), facts()), "ask");
-  assert.equal(acceptProtected(v({ effect: "write", confidence: "low" }), facts()), "ask");
+test("low confidence is refused", () => {
+  assert.equal(acceptProtected(v({ confidence: "low" }), facts()), "refuse");
+  assert.equal(acceptProtected(v({ effect: "write", confidence: "low" }), facts()), "refuse");
 });
 
 test("write / deploy / network: allow only in model mode with the owner present", () => {
@@ -45,9 +45,9 @@ test("write / deploy / network: allow only in model mode with the owner present"
     assert.equal(acceptProtected(v({ effect }), facts()), "allow", effect);
     assert.equal(acceptProtected(v({ effect }), facts({ away: true })), "ask", `${effect} away`);
     assert.equal(acceptProtected(v({ effect }), facts({ mode: "read-only" })), "ask", `${effect} read-only`);
-    assert.equal(acceptProtected(v({ effect }), facts({ opaque: true })), "ask", `${effect} opaque`);
+    assert.equal(acceptProtected(v({ effect }), facts({ opaque: true })), "refuse", `${effect} opaque`);
   }
-  assert.equal(acceptProtected(v({ effect: "unknown" }), facts()), "ask");
+  assert.equal(acceptProtected(v({ effect: "unknown" }), facts()), "refuse");
 });
 
 test("deny stands only with a deny entry", () => {
@@ -60,6 +60,6 @@ test("an ask verdict asks", () => {
   assert.equal(acceptProtected(v({ verdict: "ask" }), facts()), "ask");
 });
 
-test("empty classes (defensive) ask", () => {
-  assert.equal(acceptProtected(v(), facts({ classes: [] })), "ask");
+test("empty classes (defensive) are refused", () => {
+  assert.equal(acceptProtected(v(), facts({ classes: [] })), "refuse");
 });

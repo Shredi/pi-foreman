@@ -54,8 +54,9 @@ test("shell cp, and cat f >, into an own name are an allow", { skip: posixOnly }
   }
 });
 
+// gate-verify D2: echo and printf are List A and an own-folder write is a fast allow, so the line is allowed by default-write-in
 test("shell echo >, printf > and a heredoc into an own name carry no danger mark (mode step)", { skip: posixOnly }, () => {
-  for (const l of [`echo x > ${H}/result.md`, `printf x >> ${H}/ask-1.md`, `cat > ${H}/result.md <<EOF\nhi\nEOF`, `echo x > ${H}/work/n.txt`]) assert.deepEqual(shell(l), { danger: null }, l);
+  for (const l of [`echo x > ${H}/result.md`, `printf x >> ${H}/ask-1.md`, `cat > ${H}/result.md <<EOF\nhi\nEOF`, `echo x > ${H}/work/n.txt`]) assert.deepEqual(shell(l), { allow: "default-write-in", danger: null }, l);
 });
 
 test("shell mv, touch and mkdir on own names are an allow", { skip: posixOnly }, () => {

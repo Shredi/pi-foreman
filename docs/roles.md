@@ -74,7 +74,7 @@ When the refused model is a role's own normal (mapped default) model and both it
 keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand. The rank-tier `inexpensive` preset is in [presets](presets.md):
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
-  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
+  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier (`review.model`) on Sonnet 5.5 (the judge bench: Haiku cleared owner rows at every thinking level, Sonnet at low did not; Haiku stays an explicit opt-in);
   `childPolicy: below` with `rolePolicy` reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
   `rolePolicy.<role>: at-or-below` (under an Opus foreman the builder's FAIL climb is skipped unless its risk tag calls for the strong rung); `ladder.equalOnStrongRisk: true`, because for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial: only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
@@ -91,7 +91,7 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 ## Auto review model
 
 The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-judge)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
-cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you. The judge thinks at `providers.<p>.roles.review.thinking`, else the model's `:level` suffix, else `high` (capped by `maxThinking`). `/foreman doctor` prints `classifier model: <p>/<m> (configured, thinking <level>, timeout <n> ms)`; `/foreman doctor` and `/foreman setup` print a WARN when the model came from the auto pick (it can change with the registry; set `providers.<p>.roles.review.model`) or when there is none.
+cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, every judge-first call is refused with the no-model reason and nobody is asked. The judge thinks at `providers.<p>.roles.review.thinking`, else the model's `:level` suffix, else `high` (capped by `maxThinking`). `/foreman doctor` prints `classifier model: <p>/<m> (configured, thinking <level>, timeout <n> ms)`; `/foreman doctor` and `/foreman setup` print a WARN when the model came from the auto pick (it can change with the registry; set `providers.<p>.roles.review.model`) or when there is none.
 
 ## Review critic
 
@@ -131,7 +131,7 @@ Design record for the ladder: `design/architecture.md`
 | `ladder.strongOnRevision` | A builder revision after a reviewer FAIL launches on the strong rung (`rung_up` reason `review_fail`; default true); project/session can only set false. |
 | `roles.<role>.strongOnRevision` | Per-role override of `ladder.strongOnRevision`, wins over the provider key; project/session can only set false. |
 | `providers.<p>.strongOnRevision` | `true`: every revision round relaunches the builder on its strong model (reason `revision`); `false`: no climb, also not after a FAIL; unset: `ladder.strongOnRevision` decides. Project/session can only set false. |
-| `providers.<p>.review.timeoutMs` | Timeout of the model review of permission asks (default 15000 ms); a timeout defers to the human. |
+| `providers.<p>.review.timeoutMs` | No effect on the permission gate: `gate.reviewTimeoutMs` (default 15000 ms) sets the judge's time limit, and a timeout refuses the call with a reason. |
 | `providers.<p>.fallback.provider`, `providers.<p>.fallback.confirm` | One explicit fallback provider for roles this provider does not map (auth failure or unavailability only), and whether to ask once per session first. |
 
 A skill's `SKILL.md` may carry extra frontmatter keys (`metadata`, `compatibility`, `allowed-tools`, `context`, `agent`); both Pi and pi-subagents tolerate and ignore them, so they change neither the catalog entry nor the role.

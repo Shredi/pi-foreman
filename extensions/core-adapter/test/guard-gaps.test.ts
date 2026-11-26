@@ -156,7 +156,7 @@ const CASES: [string, X, X][] = [
   ["./x.sh", "A", "A"],
   // moved pins of judge-first-unknown.test.ts: the foreman's `$FOREMAN_SCRATCH` names no folder, a child's function body is walked at its call
   ["cd $FOREMAN_SCRATCH && cat > t.mjs <<'EOF'\nconsole.log(1)\nEOF\nnode t.mjs", "J", "A"],
-  ["cd $FOREMAN_SCRATCH; f(){ curl -s -o a.html https://x; }; f; grep x a.html", "A", "R"],
+  ["cd $FOREMAN_SCRATCH; f(){ curl -s -o a.html https://x; }; f; grep x a.html", "J", "R"],
   ["$V/bin/pip install x", "A", "A"],
   ["git add .", "A", "A"],
   ["grep -r x .", "A", "A"],
@@ -179,20 +179,21 @@ test("a segment's look-behind survives carryFacts", () => {
 });
 
 // the real tool_call handler: a line the gaps let through before is judged, a twin runs with no judge call
-async function handler(t: Parameters<typeof r11Rig>[0], child: boolean) {
+async function handler(t: Parameters<typeof r11Rig>[0], child: boolean, reply = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "because test" })) {
   const calls: string[] = [];
+  const selects: string[] = [];
   const registry = {
     find: () => ({ id: "m" }),
     getProviderAuthStatus: () => ({ configured: false }),
     complete: async (_m: never, ctx: { messages: { content: string }[] }) => {
       calls.push(ctx.messages[0].content);
-      return { content: [{ type: "text", text: JSON.stringify({ verdict: "unsure", reason: "because test" }) }], stopReason: "stop", usage: { input: 1, output: 1 } };
+      return { content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } };
     },
   };
-  const ui = { notify: () => undefined, confirm: async () => false, select: async () => "deny with comment", input: async () => "", editor: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
+  const ui = { notify: () => undefined, confirm: async () => false, select: async () => (selects.push("asked"), "deny with comment"), input: async () => "", editor: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
   const config = { providers: { fake: { roles: { review: { model: "m" } } } }, presence: { enabled: false } };
   const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui, hasUI: true }, config, child });
-  return { ...r, calls };
+  return { ...r, calls, selects };
 }
 
 for (const child of [false, true]) {
@@ -210,5 +211,16 @@ for (const child of [false, true]) {
       await r.call("bash", { command: line });
       assert.equal(r.calls.length, before, line);
     }
+  });
+}
+
+for (const child of [false, true]) {
+  test(`guard gaps through the handler (${child ? "child" : "foreman"}): a judge that answers unsure refuses a gap line, nobody is asked`, async (t) => {
+    const r = await handler(t, child, JSON.stringify({ verdict: "unsure", reason: "because test" }));
+    const res = (await r.call("bash", { command: "cd $D && ./x.sh" })) as { block?: boolean; reason?: string } | undefined;
+    assert.equal(r.calls.length, 1);
+    assert.equal(res?.block, true);
+    assert.match(String(res?.reason), /^pi-foreman: refused: /);
+    assert.equal(r.selects.length, 0);
   });
 }

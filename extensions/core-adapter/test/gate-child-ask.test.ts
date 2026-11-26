@@ -17,7 +17,7 @@ type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "builder", "reviewer"];
 const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: `because ${entry}` });
 // the judge's answer for a call on the judge-first list: unsure, so the parent is asked
-const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ASK = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 // the ask file as the gate writes it (r79 item 5): a cause line and a reason line
 const writeRoundAsk = (dir: string, a: { cause: string; entry: string; reason: string }, f: Omit<Parameters<typeof writeChildAsk>[1], "cause" | "reason" | "entry">): number => writeChildAsk(dir, { ...f, cause: a.cause, reason: a.reason, entry: a.entry });
 const CMD = { command: "git branch -D old-branch" };
@@ -233,7 +233,9 @@ test("child ask: ask.md carries role and run; an ALLOW ruling lets the call run 
   assert.match(text, /cause: danger-git/);
   assert.match(text, /role: builder/);
   assert.match(text, /run: L9/);
-  assert.doesNotMatch(text, /^deadline:/m, "the gate writes no deadline");
+  // reversed on purpose (owner decision (e)): a child's ask ends after DEFAULT_ASK_TIMEOUT_MS, so the gate writes the deadline into ask.md
+  const deadline = Number(/^deadline: (\d+)$/m.exec(text)?.[1]);
+  assert.ok(deadline > Date.now() && deadline <= Date.now() + 15 * 60 * 1000, "the gate writes a deadline 15 minutes ahead");
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
   assert.equal(await p, undefined);
   const d = r.events("dialog").at(-1)!;
@@ -271,14 +273,13 @@ test("child ask: gate.askTimeoutMs has no effect; the wait goes on past it and a
   assert.equal(r.events("dialog").at(-1)!.decision, "parent-allow");
 });
 
-test("child ask: an unusable classifier reply escalates, so the ask is written for the parent", async (t) => {
+test("child ask: an unusable classifier reply is a refusal with its reason; the parent is not asked", async (t) => {
   const dir = tmpAskDir(t);
   const r = await childRig(t, dir, "this is not json");
-  const p = r.call("bash", CMD);
-  const text = await until(() => (fs.existsSync(path.join(dir, "ask.md")) ? fs.readFileSync(path.join(dir, "ask.md"), "utf8") : false));
-  assert.match(text, /cause: danger-git/);
-  fs.writeFileSync(path.join(dir, "ruling-1.md"), "DENY\n");
-  assert.ok((await p)?.block);
+  const res = await r.call("bash", CMD);
+  assert.ok(res?.block);
+  assert.match(String(res?.reason), /^pi-foreman: refused: the permission judge's answer could not be/);
+  assert.equal(fs.existsSync(path.join(dir, "ask.md")), false);
 });
 
 test("child ask: gate.childAsk deny, or no askDir in the binding, denies with the no-pane text and writes no ask", async (t) => {

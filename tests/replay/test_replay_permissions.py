@@ -56,16 +56,16 @@ class TestPermissionLayers(ReplayCase):
         # item 23: old: the package forwarded a child's ask to the parent as a dialog. Owner ruling (gate.childAsk parent): the
         # parent's pane shows the child's ask as a dialog and the parent's deny reaches the child (old assertion: no dialog and
         # "Children cannot answer asks"; that text stays for a headless parent).
-        rig = self.baseline_rig("perm-ask", config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
+        rig = self.baseline_rig("perm-ask", config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-child-owner" % PROVIDER_A}}}})
         pi = rig.start()
-        # the owner's role launch is a gate default and opens no dialog; the child's `git branch -D old-topic` (danger-git) is judge-first and the fake judge is unsure
+        # the owner's role launch is a gate default and opens no dialog; the child's `git branch -D old-topic` (danger-git) is judge-first and the fake judge answers `owner` with a class for a child (Who decides: only an owner verdict asks the parent; an unsure judge refuses)
         pi.prompt("[[replay:c2]] go", timeout=60)
         notice, recs = pi.wait_child_notify(timeout=90, answers=[{"value": "deny with reason"}, {"value": "scripted no"}])
         pi.close()
         dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select" and "asks" in str(r.get("title"))]
         self.assertEqual(len(dialogs), 1, dialogs)
         self.assertIn("cause: danger-git", dialogs[0]["title"])
-        self.assertIn("scripted unsure", dialogs[0]["title"])
+        self.assertIn("scripted owner", dialogs[0]["title"])
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
         self.assertIn("denied by the parent", text)
         self.assertNotIn("Children cannot answer asks", text)

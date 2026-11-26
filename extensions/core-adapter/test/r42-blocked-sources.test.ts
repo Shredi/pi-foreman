@@ -58,8 +58,8 @@ const within = <X>(p: Promise<X>, ms = 5000): Promise<X> => {
   const cap = new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`still pending after ${ms} ms`)), ms); });
   return Promise.race([p, cap]).finally(() => clearTimeout(timer));
 };
-// C: the judge answers clear or unsure; a judge-first line (git branch -D) the judge is unsure about asks the owner (a child: its parent)
-const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, reason: `because ${entry}` });
+// C: the judge answers clear or owner (+ class); a judge-first line (git branch -D) the judge sends to the owner asks the owner (a child: its parent)
+const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, ...(verdict === "owner" ? { class: "data-loss" } : {}), reason: `because ${entry}` });
 const registry = (reply: string) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } }, presence: { enabled: false } };
 const ASK_FIELDS = { tool: "bash", payload: "git branch -D old-topic", cwd: "/w", session: "child-s", role: "builder", run: "L9" };
@@ -92,13 +92,13 @@ const pairs = (r: Rig) => [r.events("blocked_open").length, r.events("blocked_cl
 const cleanups: (() => void | Promise<void>)[] = [];
 let shared: Rig;
 before(async () => {
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("unsure", "package-install")) }, config, deps: { spawner: launchSpawner } });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("owner", "package-install")) }, config, deps: { spawner: launchSpawner } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();
 }, { timeout: 20_000 });
 
-async function ownerRig(_t: T, reply = V("unsure", "package-install")) {
+async function ownerRig(_t: T, reply = V("owner", "package-install")) {
   confirms.length = 0;
   selects.length = 0;
   await liveBlocked(shared, undefined); // the live file of an earlier case may still show its last dialog
@@ -192,6 +192,14 @@ test("the parent's dialog about a child's ask is an owner wait (approval)", asyn
   assert.deepEqual(pairs(r), [1, 1]);
 });
 
+test("a judge that answers unsure refuses the line: no dialog, no blocked event", async (t) => {
+  const r = await ownerRig(t, V("unsure", "package-install"));
+  const res = await r.call("bash", { command: "git branch -D old-topic" });
+  assert.equal(res?.block, true);
+  assert.equal(r.selects.length, 0);
+  assert.deepEqual(r.events("blocked_open"), []);
+});
+
 test("a session waiting on its parent through ask.md (OwnAsk) is a parent wait: blockedOn parent, no owner fields", async (t) => {
   const r = await ownerRig(t);
   const dir = r.handoff("up", "child");
@@ -217,7 +225,7 @@ test("a subagent child's gate ask that waits on its parent is classed parent (tr
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("unsure", "package-install")) }, config, child: true, deps: { spawner: launchSpawner } });
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("owner", "package-install")) }, config, child: true, deps: { spawner: launchSpawner } });
   const p = r.call("bash", { command: "git branch -D old-topic" });
   await until(() => fs.existsSync(path.join(dir, "ask.md")));
   assert.deepEqual(r.events("blocked_open").map((x) => [x.on, x.kind]), [["parent", "parent-ask"]]);
@@ -225,4 +233,20 @@ test("a subagent child's gate ask that waits on its parent is classed parent (tr
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
   assert.equal(await within(p), undefined);
   assert.deepEqual(pairs(r), [1, 1]);
+});
+
+test("a child whose judge answers unsure is refused: no ask.md, no blocked event", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-r42-unsure-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const prev = process.env[BINDINGS_ENV];
+  process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: "builder", launchId: "L9", kind: "first", model: null, askDir: dir } });
+  t.after(() => {
+    if (prev === undefined) delete process.env[BINDINGS_ENV];
+    else process.env[BINDINGS_ENV] = prev;
+  });
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("unsure", "package-install")) }, config, child: true, deps: { spawner: launchSpawner } });
+  const res = await r.call("bash", { command: "git branch -D old-topic" });
+  assert.equal(res?.block, true);
+  assert.equal(fs.existsSync(path.join(dir, "ask.md")), false);
+  assert.deepEqual(r.events("blocked_open"), []);
 });

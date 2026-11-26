@@ -69,7 +69,7 @@ jobs:
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
       - name: installer tests (dry-run, idempotent second run, remove)
         run: node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"
-      - name: typescript type check (extensions, Pi 1.6.0 types)
+      - name: typescript type check (extensions, Pi 1.6.1 types)
         if: runner.os == 'Linux'
         run: npx tsc --noEmit -p tsconfig.json
       - name: ledger shims on Windows (cmd and PowerShell)
@@ -113,7 +113,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-      - name: install bundled packages (pi-subagents, intercom, Pi 1.6.0 from the lockfile)
+      - name: install bundled packages (pi-subagents, intercom, Pi 1.6.1 from the lockfile)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: replay scenarios (fake provider only, no secrets), one shard
         env:
@@ -279,7 +279,7 @@ jobs:
           test -f node_modules/pi-intercom/package.json
           test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
   review-gates-model:
-    # The TLA+ model of the review gates (.agents/skills/verifying-review-gates/model), Linux only: Java 25 and a pinned tla2tools.jar live in this job and nowhere else (not in package.json, setup, install or the macOS and Windows legs).
+    # The TLA+ models of the review gates (.agents/skills/verifying-review-gates/model) and of the permission flow (.agents/skills/verifying-permission-gate/model), Linux only: Java 25 and a pinned tla2tools.jar live in this job and nowhere else (not in package.json, setup, install or the macOS and Windows legs).
     # The model can drift from the code; the TypeScript walk in the test job is the main check. The covered files are listed in the log as a drift hint.
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -297,6 +297,8 @@ jobs:
         run: |
           printf '%s\n' extensions/core-adapter/reviewgates.ts extensions/core-adapter/bound.ts extensions/core-adapter/ledgercall.ts extensions/core-adapter/childblocked.ts
           echo "model: .agents/skills/verifying-review-gates/model/ReviewGates.tla"
+          printf '%s\n' extensions/core-adapter/childask.ts extensions/core-adapter/childaskpark.ts extensions/core-adapter/gatedialog.ts extensions/core-adapter/presencewait.ts extensions/core-adapter/index.ts
+          echo "model: .agents/skills/verifying-permission-gate/model/PermissionFlow.tla"
       - name: download tla2tools.jar and check its SHA-256
         run: |
           curl -fsSL -o "$RUNNER_TEMP/tla2tools.jar" "https://github.com/tlaplus/tlaplus/releases/download/${TLA_VERSION}/tla2tools.jar"
@@ -306,6 +308,10 @@ jobs:
         run: |
           java -version
           java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -config ReviewGates.cfg -workers auto -metadir "$RUNNER_TEMP/tlc-states" ReviewGates.tla
+      - name: TLC permission flow (same config as the local command)
+        working-directory: .agents/skills/verifying-permission-gate/model
+        run: |
+          java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -config PermissionFlow.cfg -workers auto -metadir "$RUNNER_TEMP/tlc-states-permission" PermissionFlow.tla
   ci-ok:
     # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it).
     needs: [test, replay, bench-smoke, fresh-install, review-gates-model]
