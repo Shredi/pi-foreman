@@ -605,6 +605,7 @@ peer range for `@earendil-works/pi-coding-agent` with the running Pi version, ne
 `HC_TERMINAL_ID` (an address such as `t1`), `HC_SCOPE` and `HC_TERMINAL_SOCKET` and no `HERDR_*` variable, so the TUI-only
 pieces above (the `herdr:blocked` shim, the group tag, the sidebar plugin and its tokens) stay off there by construction. A Pi
 in such a terminal reports its own state to herdr-core, so no shim is needed.
+A pane's agent and status come from Pi's own report to the terminal (OSC 7501); setup installs nothing for it. A resumed Pi (pane-resume) reports like a fresh one; during the pane-resume countdown, before Pi starts, the pane shows no agent.
 
 **Detection.** `foreman session open` reads `HC_TERMINAL_ID` and finds `hc` on PATH, or at `HC_BIN`. The rule lives in one
 place, `backend_of` in `scripts/foreman_session.py`. With `HERDR_PANE_ID` set the TUI wins, even inside an herdr-app terminal.

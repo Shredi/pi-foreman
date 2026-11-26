@@ -752,7 +752,7 @@ session makes that started turn the close turn (no extra turn); to a busy sessio
 
 ## Herdr
 
-Herdr's Pi integration (`herdr integration install pi`; `foreman setup` runs it for the setup's agent dir when `herdr` is on PATH, its dry run lists the step, and `/foreman doctor` warns when a session inside Herdr has no `herdr-agent-state.ts`) shows a session
+Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session
 as working, idle or blocked. pi-foreman emits `herdr:blocked` on `pi.events` while any dialog waits for you, so
 the pane reads blocked ("?") instead of working. The foreman tree in Herdr's Agents panel is a separate plugin:
 [Herdr sidebar](herdr.md). In a Herdr pane the session also pushes its own sidebar tokens (`sidebar.py push`, on every state change and every 5 s; the header carries a dense braille frame while it works or waits on something; `ui.spinner: false` turns that off); see [who publishes what](herdr.md#who-publishes-what). Design record: `design/architecture.md`
