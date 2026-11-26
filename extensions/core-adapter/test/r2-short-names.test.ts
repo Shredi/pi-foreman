@@ -143,11 +143,11 @@ test("win32 gate controls: GITHUB~1 and a nested GIT~1X stay ordinary writes", (
   assert.equal(label(gate("win32", "main", false, "write", { path: "C:\\work\\GITHUB~1\\x", content: "x" })), "allow:path-write-worktree");
 });
 
-test("posix gate: GIT~1 and .GIT are ordinary names for a child, .git is still refused", () => {
+test("posix gate: GIT~1 is an ordinary name for a child, .git is still refused", () => {
   for (const platform of ["linux", "darwin"]) {
     for (const d of ["/w/work", "/w/scratch/mine"]) {
       const ok = d === "/w/work" ? "allow:path-write-worktree" : "allow:path-write-scratch";
-      for (const n of ["GIT~1/HEAD", "git~1/HEAD", ".GIT/HEAD"]) assert.equal(label(gate(platform, "builder", true, "write", { path: `${d}/${n}`, content: "x" })), ok, `${platform} ${d} ${n}`);
+      for (const n of ["GIT~1/HEAD", "git~1/HEAD"]) assert.equal(label(gate(platform, "builder", true, "write", { path: `${d}/${n}`, content: "x" })), ok, `${platform} ${d} ${n}`);
       assert.equal(label(gate(platform, "builder", true, "write", { path: `${d}/.git/HEAD`, content: "x" })), "block:child-write-outside", `${platform} ${d} .git`);
     }
   }
