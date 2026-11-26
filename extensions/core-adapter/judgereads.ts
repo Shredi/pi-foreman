@@ -90,19 +90,17 @@ const realOf = (p: string): string | undefined => {
 };
 
 /**
- * The read scope of one judge call; undefined when `gate.judgeReads` is false. A project root that does not exist, the filesystem root, the real home dir
- * and any ancestor of it are dropped.
+ * The read scope of one judge call; undefined when `gate.judgeReads` is false. A project root that does not exist is dropped. Every other absolute path lies
+ * in the root of its own filesystem (drive or share), so the exclusions alone decide what is shown.
  */
 export function judgeReadScope(a: { cwd: string; worktree: string; out?: string; scratch?: string; agentDir: string; home?: string; platform?: string; config: Json | undefined }): JudgeReadScope | undefined {
   if (get(a.config, "gate.judgeReads") === false) return undefined;
   const platform = a.platform ?? process.platform;
-  const homes = a.home ? [path.resolve(a.home), realOf(a.home)].filter((h): h is string => !!h) : [];
   const roots: ReadRoot[] = [];
   for (const [label, p] of [["<worktree>", a.worktree], ["<cwd>", a.cwd], ["<out>", a.out], ["<scratch>", a.scratch]] as const) {
     if (!p) continue;
     const real = realOf(p);
-    if (!real || path.parse(real).root === real) continue;
-    if (homes.some((h) => inside(platform, h, real))) continue;
+    if (!real) continue;
     if (roots.some((r) => fold(platform, r.real) === fold(platform, real))) continue;
     roots.push({ label, real, lex: path.resolve(p) });
   }
@@ -133,13 +131,18 @@ interface Place {
   agent: boolean;
 }
 
-/** Where a real path lies: the agent dir first, else the most specific project root; null when it lies in none. */
+/** Where a real path lies: the agent dir first, else the most specific project root, else the root of its filesystem (drive or share on Windows); null only for a path without a root. */
 function placeOf(real: string, scope: JudgeReadScope): Place | null {
   const pf = scope.platform;
   if (scope.agent && inside(pf, real, scope.agent.real)) return { label: "<agent>", rel: segs(pf, scope.agent.real, real), agent: true };
   let best: ReadRoot | undefined;
   for (const r of scope.roots) if (inside(pf, real, r.real) && (!best || r.real.length > best.real.length)) best = r;
-  return best ? { label: best.label, rel: segs(pf, best.real, real), agent: false } : null;
+  if (best) return { label: best.label, rel: segs(pf, best.real, real), agent: false };
+  const pp = pf === "win32" ? path.win32 : path;
+  const top = pp.parse(real).root;
+  if (!top) return null;
+  const rel = pp.relative(top, real);
+  return { label: `<${top}>`, rel: rel ? rel.split(pp.sep) : [], agent: false };
 }
 
 /** The segments a lexical path adds to the root it lies in (all of its segments when it lies in none). */
