@@ -50,8 +50,9 @@ export interface ReadRecord {
   asked: string;
   outcome: ReadOutcome;
   real?: string;
-  dev?: number;
-  ino?: number;
+  /** Decimal strings of the bigint stat: a 64-bit NTFS file id loses its low bits as a double. */
+  dev?: string;
+  ino?: string;
   size?: number;
   mtimeMs?: number;
   ctimeMs?: number;
@@ -152,7 +153,7 @@ interface Resolution {
   outcome: "ok" | "dir" | "not-found" | "withheld" | "outside";
   real?: string;
   ancestor?: string;
-  st?: fs.Stats;
+  st?: fs.BigIntStats;
   window?: { from: number; to: number };
   /** The asked name, `#L…` suffix included, exists as it is and was read as that file. */
   literal?: boolean;
@@ -287,37 +288,45 @@ function resolvePath(asked: string, window: { from: number; to: number } | undef
     if (!ancestorReadable(hint, scope)) return outside();
     return { outcome: "not-found", real: target, ancestor: hint, window };
   }
-  let st: fs.Stats;
+  let st: fs.BigIntStats;
   try {
-    st = fs.lstatSync(target);
+    st = fs.lstatSync(target, { bigint: true });
   } catch {
     return { outcome: "not-found", real: target, ancestor: realAnc, window };
   }
   if (st.isDirectory()) return { outcome: "dir", real: target, st, window };
   if (!st.isFile()) return { outcome: "withheld", real: target, window, why: "not a regular file" };
-  if (st.nlink > 1) return { outcome: "withheld", real: target, window, why: "more than one hard link" };
+  if (st.nlink > 1n) return { outcome: "withheld", real: target, window, why: "more than one hard link" };
   return { outcome: "ok", real: target, st, window };
 }
 
 // ------------------------------------------------------------------ reading
 
-const ofStat = (st: fs.Stats): Pick<ReadRecord, "dev" | "ino" | "size" | "mtimeMs" | "ctimeMs"> => ({ dev: st.dev, ino: st.ino, size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs });
+const msOf = (ns: bigint): number => Number(ns) / 1e6;
 
-function readFileBlock(res: Resolution & { real: string; st: fs.Stats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
+const ofStat = (st: fs.BigIntStats): Pick<ReadRecord, "dev" | "ino" | "size" | "mtimeMs" | "ctimeMs"> => ({ dev: String(st.dev), ino: String(st.ino), size: Number(st.size), mtimeMs: msOf(st.mtimeNs), ctimeMs: msOf(st.ctimeNs) });
+
+/** True when two bigint stats name the same file in the same state (device, full-width inode, size, times). */
+export function sameFileState(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
+function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   const win32 = scope.platform === "win32";
   const flags = fs.constants.O_RDONLY | (win32 ? 0 : (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
   readHooks.afterStat?.(res.real);
   let fd: number | undefined;
   try {
     fd = fs.openSync(res.real, flags);
-    const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.dev !== res.st.dev || st.ino !== res.st.ino) return { outcome: "changed", body: "changed while it was read: not shown" };
+    const st = fs.fstatSync(fd, { bigint: true });
+    if (!st.isFile() || st.nlink !== 1n || !sameFileState(st, res.st)) return { outcome: "changed", body: "changed while it was read: not shown" };
     if (realOf(res.real) !== res.real) return { outcome: "changed", body: "changed while it was read: not shown" };
-    const buf = Buffer.alloc(Math.min(st.size, MAX_SCAN_BYTES));
+    const size = Number(st.size);
+    const buf = Buffer.alloc(Math.min(size, MAX_SCAN_BYTES));
     const n = buf.length ? fs.readSync(fd, buf, 0, buf.length, 0) : 0;
     const data = buf.subarray(0, n);
     if (data.subarray(0, 8192).includes(0)) return { outcome: "binary", body: "binary file, not shown" };
-    const partial = st.size > MAX_SCAN_BYTES;
+    const partial = size > MAX_SCAN_BYTES;
     const text = data.toString("utf8");
     const lines = text.split("\n");
     if (text.endsWith("\n")) lines.pop();
@@ -455,7 +464,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       body = "(outside the places you may read)";
     } else if (res.outcome === "dir") {
       rec.real = res.real;
-      if (res.st) rec.mtimeMs = res.st.mtimeMs;
+      if (res.st) rec.mtimeMs = msOf(res.st.mtimeNs);
       const r = listFolder(res as Resolution & { real: string }, scope, budget);
       rec.outcome = r.outcome;
       body = r.body;
@@ -465,12 +474,12 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
       body = "(not a folder)";
     } else {
       rec.real = res.real;
-      Object.assign(rec, ofStat(res.st as fs.Stats));
+      Object.assign(rec, ofStat(res.st as fs.BigIntStats));
       if (budget.left <= 0) {
         rec.outcome = "budget";
         body = "not read: read budget used up";
       } else {
-        const r = readFileBlock(res as Resolution & { real: string; st: fs.Stats }, a, scope, budget);
+        const r = readFileBlock(res as Resolution & { real: string; st: fs.BigIntStats }, a, scope, budget);
         rec.outcome = r.outcome;
         body = r.body;
       }
@@ -493,8 +502,8 @@ export function readsUnchanged(records: ReadRecord[], scope: JudgeReadScope): bo
       const now = resolveReadable(r.asked, scope);
       if (now.outcome !== classOf(r.outcome)) return false;
       if ((now.real ?? undefined) !== r.real) return false;
-      if (now.outcome === "ok" && (now.st?.dev !== r.dev || now.st?.ino !== r.ino || now.st?.size !== r.size || now.st?.mtimeMs !== r.mtimeMs || now.st?.ctimeMs !== r.ctimeMs)) return false;
-      if (now.outcome === "dir" && now.st?.mtimeMs !== r.mtimeMs) return false;
+      if (now.outcome === "ok" && (!now.st || String(now.st.dev) !== r.dev || String(now.st.ino) !== r.ino || Number(now.st.size) !== r.size || msOf(now.st.mtimeNs) !== r.mtimeMs || msOf(now.st.ctimeNs) !== r.ctimeMs)) return false;
+      if (now.outcome === "dir" && (!now.st || msOf(now.st.mtimeNs) !== r.mtimeMs)) return false;
       if (now.outcome === "not-found" && now.ancestor !== r.ancestor) return false;
     }
     return true;
