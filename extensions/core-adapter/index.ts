@@ -46,7 +46,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { ReviewMemory } from "./reviewmemory.ts";
-import { combined, gateOf, gatesBuilt, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, supersededGone, type ReviewGates } from "./reviewgates.ts";
+import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, goneDropped, vAccepts, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -1577,30 +1577,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Work happened in `roots` (null: unknown): their gate entries go stale; a builder raises the builder count of each (an unknown root: of every counted one). */
   function reviseGates(s: Session, roots: readonly string[] | null, builder: boolean): void {
     if (roots === null) {
-      s.reviewGates = gatesRevise(s.reviewGates, null, Date.now());
+      s.reviewGates = gatesRevise(s.reviewGates, null);
       if (builder) for (const k of Object.keys(s.builderRunsByRoot)) s.builderRunsByRoot[k]++;
       return;
     }
     for (const r of roots) {
-      s.reviewGates = gatesRevise(s.reviewGates, r, Date.now());
+      s.reviewGates = gatesRevise(s.reviewGates, r);
       if (builder) s.builderRunsByRoot[r] = (s.builderRunsByRoot[r] ?? 0) + 1;
     }
   }
 
-  /** The checkouts with a builder launched and not ended (a null root list = every checkout). */
-  function runningRoots(s: Session): Set<string> {
-    const running = new Set<string>();
-    for (const roots of s.runningBuilders.values()) for (const r of roots ?? Object.keys(s.reviewGates)) running.add(r);
-    return running;
-  }
-
-  /** The gates the finish readers see (D165): a deleted checkout superseded by a later PASS elsewhere is left out (`supersededGone`); `ctx` gives each dropped checkout one visible line. */
+  /** The gates the finish readers see (D189b): an entry whose checkout no longer exists is left out (`goneDropped`); `ctx` gives each dropped checkout one visible line. */
   function liveGates(s: Session, ctx?: ExtensionContext): ReviewGates {
-    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync, runningRoots(s));
+    const { gates, dropped } = goneDropped(s.reviewGates, fs.existsSync);
     for (const d of dropped) {
-      if (!ctx || s.droppedGone.has(d.dir)) continue;
-      s.droppedGone.add(d.dir);
-      ctx.ui.notify(`pi-foreman: ${d.dir}: deleted, superseded by the PASS in ${d.by || "the session"}`, "info");
+      if (!ctx || s.droppedGone.has(d)) continue;
+      s.droppedGone.add(d);
+      ctx.ui.notify(`pi-foreman: ${d}: deleted, dropped from the finish check`, "info");
     }
     return gates;
   }
@@ -3692,9 +3685,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.live?.touch();
           // D27: a builder run that ends (any outcome) is work of the prompt it ends in, also when it was launched before that prompt
           if ((s.launchedRoles.get(runId) ?? []).includes("builder")) s.work.builders++;
-          // D165: the build time of its checkouts is the run end (the launch stamped an earlier one); a running builder no longer shields them
           if (s.runningBuilders.has(runId)) {
-            s.reviewGates = gatesBuilt(s.reviewGates, s.runningBuilders.get(runId) ?? null, Date.now());
             s.runningBuilders.delete(runId);
             persistCeremonyState(s);
           }
@@ -5009,7 +5000,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) && vAccepts(liveGates(s)) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -7024,7 +7015,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       savePause(s);
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
-        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s), running: runningRoots(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
@@ -7041,7 +7032,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     savePause(s);
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s), running: runningRoots(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }

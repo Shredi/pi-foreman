@@ -106,7 +106,7 @@ test("snapshot of a clean tree; a comment-only edit since lists the file; no cha
     const tree = await worktreeTree(dir);
     assert.match(tree ?? "", /^[0-9a-f]{40,64}$/);
     const snap = { cwd: dir, tree: tree! };
-    assert.equal(await commentOnlySince(snap), null, "nothing changed: no touch-up");
+    assert.deepEqual(await commentOnlySince(snap), [], "nothing changed: no revision (D189a)");
     fs.writeFileSync(path.join(dir, "hub.go"), GO.replace("// the sink", "// the real sink"));
     fs.mkdirSync(path.join(dir, ".workflow"));
     fs.writeFileSync(path.join(dir, ".workflow", "notes.txt"), "scratch\n");

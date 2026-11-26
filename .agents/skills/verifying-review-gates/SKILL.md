@@ -7,7 +7,7 @@ description: "Checks that the finish verdict over the per-checkout review gates 
 
 ## Rule
 
-The finish gate passes only when every checkout with work has a standing PASS; a deleted checkout that is open is dropped only when another existing checkout got a PASS after its last work (a builder launch or end) and last FAIL, and none is held by a builder launched there that has not ended (D165). `mark V` is accepted only while a counted PASS exists and no checkout's last review failed; later revisions do not reopen V. (c) After a dialog episode of a child ends, the parent's words say "answered" only with a stored answer at or after the episode start, and a restart of the session wins over any answer (D159).
+The finish gate passes only when every checkout with work has a standing PASS; an entry whose checkout directory no longer exists is dropped whatever its state (D189b; the session-wide entry and an existing checkout never are). `mark V` is accepted only while a counted PASS exists and no checkout's last review failed; later revisions do not reopen V. A reviewer launch is refused as a repeat only when its checkout stands and `mark V` is accepted, so the two are never both refused (D203). (c) After a dialog episode of a child ends, the parent's words say "answered" only with a stored answer at or after the episode start, and a restart of the session wins over any answer (D159).
 
 ## Harm
 
@@ -19,10 +19,10 @@ Two checks of the same rules. The main one is an exhaustive walk in the normal t
 
 ## Covered
 
-- Files and functions: `extensions/core-adapter/reviewgates.ts` (`gatesRevise`, `gatesVerdict`, `supersededGone`, `combined`), `extensions/core-adapter/bound.ts` (`onReviewVerdicts`, `onRevision`), `extensions/core-adapter/ledgercall.ts` (`planLedgerCall`, the V rule), `extensions/core-adapter/childblocked.ts` (`ChildBlocked.tick`, the ended-episode words)
+- Files and functions: `extensions/core-adapter/reviewgates.ts` (`gatesRevise`, `gatesVerdict`, `goneDropped`, `vAccepts`, `combined`), `extensions/core-adapter/bound.ts` (`onReviewVerdicts`, `onRevision`), `extensions/core-adapter/ledgercall.ts` (`planLedgerCall`, the V rule), `extensions/core-adapter/childblocked.ts` (`ChildBlocked.tick`, the ended-episode words)
 - Check files: `extensions/core-adapter/test/review-gates-generator.test.ts` (the walk) and `.agents/skills/verifying-review-gates/model/ReviewGates.tla` with `.agents/skills/verifying-review-gates/model/ReviewGates.cfg` (the model). The model's actions map to the same files: builds, launches, ends, verdicts and drops to `reviewgates.ts`, `mark V` and the V line to `ledgercall.ts`, answer and restart to `childblocked.ts`; each action has a comment naming its code.
 - Walk bound: every order of 1 to 5 events from the 16 events build, launch, end, PASS, FAIL, delete (each in checkout c0 or c1), `mark V`, tier rise (trivial to standard: `withVItem` appends V once, D164), dialog answer, session restart (D159 c): 16^1 + ... + 16^5 = 1118480 steps, each checked after the step (rules A, B, D and, after an answer or restart, C). Measured: about 1.7 s for the walk, about 3 s for the test file, on a 10-core Mac. A failing prefix is not extended. One event per tick of a counter, so no two times tie. The dialog words come from the real `ChildBlocked` with a temp agent dir, once per distinct dialog (with and without an older answer). A second test keeps the rule-c sweep of every order of up to 3 answers and restarts (30 scenarios). A third test walks every order of 1 to 4 events over 3 checkouts (22 events, 245410 steps, about 0.5 s). `FOREMAN_REVIEW_GEN_DEPTH` raises the depth (each step multiplies the cases by 16; depth 6 is about 19 million steps, about half a minute).
-- Model bound: `MaxSteps = 7` in the `.cfg`: every order of up to 7 events over 2 checkouts, 10264146 distinct states, TLC about 21 s on a 10-core Mac with Java 25. Invariants: `DropJustified`, `NoUnreviewedFinish`, `VClosedNeedsPass`, `VLineFollowsTier`, `DialogWords`; property `VStaysClosed`. The mechanism uses time stamps like the code; the invariants use history variables that record what happened without time stamps.
+- Model bound: `MaxSteps = 7` in the `.cfg`: every order of up to 7 events over 2 checkouts (after D189b/D203 the model has no builder launch/end or time stamps: 59748 distinct states, TLC about 1 s on a 10-core Mac with Java 25. Invariants: `DropJustified`, `NoUnreviewedFinish`, `VRefusedAllowsLaunch`, `VClosedNeedsPass`, `VLineFollowsTier`, `DialogWords`; property `VStaysClosed`. The mechanism uses time stamps like the code; the invariants use history variables that record what happened without time stamps.
 - Last confirmed at: `c2574051096aec6dfb3984d728adf7dde46ee998` (the walk and the model were both run green against the covered files on branch round/defects-13 on 2026-11-23, Java 25.0.5; the main-branch commit moves forward after the merge)
 
 ## Left out
@@ -87,7 +87,7 @@ The model is a second description of the rules; it can fall behind the code. On 
 
 ## After an intended change
 
-1. Confirm the check still describes the code: reread `step` against `supersededGone`, `withVItem` and the V rule in `planLedgerCall`, and the actions of `ReviewGates.tla` against the same.
+1. Confirm the check still describes the code: reread `step` against `goneDropped`, `withVItem` and the V rule (`vAccepts`), and the actions of `ReviewGates.tla` against the same.
 2. Rerun the default command, a deeper walk and TLC; fix the model the change moved, naming why.
 3. Move "Last confirmed at" forward to the new main-branch commit (`git merge-base HEAD origin/main`), only after steps 1 and 2.
 4. Adding a case: an event is an `Op` in `OPS` plus its branch in `step`, an action in `ReviewGates.tla` and the self-check; extend the self-test with a broken rule for it, and see the model fail for it too.

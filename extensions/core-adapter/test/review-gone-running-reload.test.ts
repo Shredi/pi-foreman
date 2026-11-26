@@ -1,4 +1,4 @@
-// D165: the running builders survive a reload: a builder ending after it still stamps the build time, one still running still shields its checkout.
+// The running builders survive a reload (persistedGate); a deleted checkout is dropped after it whether or not its builder is recorded as running (D189b).
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildCeremonyState, CEREMONY_ENTRY, persistedGate, latestCeremonyState } from "../planstate.ts";
@@ -24,7 +24,7 @@ test("persistedGate: running builders round-trip, malformed entries drop, the ne
   assert.deepEqual(back?.gate?.runningBuilders, { ok: ["/a"], nul: null });
 });
 
-test("reload: launch in B, build and PASS in A, reload, B's builder ends, B deleted -> the finish stays refused", async (t) => {
+test("reload: launch in B, build and PASS in A, reload, B's builder ends, B deleted -> the finish is not refused", async (t) => {
   const { a, w, b } = await two(t);
   const nb = await launch(a, "builder", "build it", { cwd: b });
   assert.equal(nb.blocked, null, String(nb.blocked));
@@ -35,11 +35,11 @@ test("reload: launch in B, build and PASS in A, reload, B's builder ends, B dele
   const a2 = await w.adapter("reload");
   await end(a2, nb, "builder", "done", b);
   git(w.project, "worktree", "remove", "--force", b);
-  assert.match(await settle(a2), /wtb/);
-  assert.equal(w.notes.filter((n) => n.includes("superseded")).length, 0);
+  assert.equal(await settle(a2), "");
+  assert.equal(w.notes.filter((n) => n.includes("deleted, dropped from the finish check")).length, 1);
 });
 
-test("reload: launch in B, build and PASS in A, reload, B deleted while its builder runs -> nothing dropped, refused once it ends", async (t) => {
+test("reload: launch in B, build and PASS in A, reload, B deleted while its builder runs -> B is dropped, the finish is not refused", async (t) => {
   const { a, w, b } = await two(t);
   const nb = await launch(a, "builder", "build it", { cwd: b });
   assert.equal(nb.blocked, null, String(nb.blocked));
@@ -50,8 +50,7 @@ test("reload: launch in B, build and PASS in A, reload, B deleted while its buil
   const a2 = await w.adapter("reload");
   git(w.project, "worktree", "remove", "--force", b);
   await settle(a2);
-  assert.equal(w.notes.filter((n) => n.includes("superseded")).length, 0);
+  assert.equal(w.notes.filter((n) => n.includes("deleted, dropped from the finish check")).length, 1);
   await end(a2, nb, "builder", "done", b);
-  assert.match(await settle(a2), /wtb/);
-  assert.equal(w.notes.filter((n) => n.includes("superseded")).length, 0);
+  assert.equal(await settle(a2), "");
 });
