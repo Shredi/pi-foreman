@@ -356,6 +356,8 @@ interface Session {
   childExtensionErrors?: string[];
   /** Set when the permission system cannot be resolved: child launches are refused. */
   openPrs: OpenPrsRefresher | null;
+  /** The config page links read (`pages.server.*`): reloads when the user or overlay layers change, so a new baseUrl reaches the next link without a restart. */
+  pageCfg: ReloadingConfig<MergedConfig>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
   owned: OwnedRoots;
   /** True until `npm root -g` resolved or failed: a custom worktree root is not owned and `--worktree` open is refused meanwhile. */
@@ -635,6 +637,12 @@ interface Session {
   overrideDeclined: boolean;
   /** Foreman only: tool call ids whose launch the owner approved at critical load, with the launch arguments; settled at tool_execution_end (one approval, one launch). */
   overridden: Map<string, Record<string, unknown>>;
+}
+
+/** The config a page link reads: the session's, reloaded when its layers changed. */
+async function pagesConfigOf(s: Session) {
+  await s.pageCfg.refresh();
+  return s.pageCfg.current().config;
 }
 
 export interface AdapterDeps {
@@ -1306,6 +1314,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       paneResume: null,
       show: null,
       openPrs: null,
+      pageCfg: new ReloadingConfig(agentDir, config, () => loadMergedConfig({ python: python.ok ? python.info.executable : null, pkgRoot: PKG_ROOT, provider, agentDir, projectDir: cwd, trusted, spawner }), (c) => c.source === "cli"),
       pressureSampler: null,
       stripSampler: null,
       pressureQ: null,
@@ -7342,7 +7351,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the served URL goes to the owner's screen only, never into the tool result (the model sees no secret link)
           if (r.page && ctx.hasUI) {
             try {
-              const url = await pageLinks.url(r.page, "dir", s.config.config);
+              const url = await pageLinks.url(r.page, "dir", await pagesConfigOf(s));
               if (url) ctx.ui.notify(`Note page: ${url}`, "info");
             } catch {
               // no served link: the file path stays
@@ -7768,7 +7777,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         try {
           const page = await planPageOutcome(planPage, undefined, showOffReason(!!s.live, s.id));
           // the served URL (UI lines only, never a tool result); null keeps today's file link
-          const url = "path" in page ? await pageLinks.url(page.path, "dir", s.config.config) : null;
+          const url = "path" in page ? await pageLinks.url(page.path, "dir", await pagesConfigOf(s)) : null;
           ctx.ui.notify(`${ownerSummary(plan.markdown)}\n${url ? planPageLineServed(page, url) : planPageLineOf(page)}\n\n${planSummary(plan.markdown, plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
           const spec: DialogSpec = {
             ask: `Approve the plan for ${plan.topic}?`,
