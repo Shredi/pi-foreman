@@ -7,13 +7,13 @@ import * as fs from "node:fs";
 import { r11Rig } from "./_r11rig.ts";
 import { gateLogFile } from "../gatelog.ts";
 
-const UNSURE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const OWNER = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 const INSTALL = "pip install requests";
 const NOMATCH = "terraform plan";
 const JUDGE_FIRST_LINE = "git branch -D old-branch";
 
 /** `mode`: a leftover `gate.mode` key in the config (it must change nothing). */
-async function rig(t: Parameters<typeof r11Rig>[0], mode: "full" | "floors-only", o: { child?: boolean } = {}) {
+async function rig(t: Parameters<typeof r11Rig>[0], mode: "full" | "floors-only", o: { child?: boolean; reply?: string } = {}) {
   const counts = { review: 0, selects: 0 };
   const notices: string[] = [];
   const registry = {
@@ -21,7 +21,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], mode: "full" | "floors-only"
     getProviderAuthStatus: () => ({ configured: false }),
     complete: async () => {
       counts.review++;
-      return { content: [{ type: "text", text: UNSURE }], stopReason: "stop", usage: { input: 1, output: 1 } };
+      return { content: [{ type: "text", text: o.reply ?? OWNER }], stopReason: "stop", usage: { input: 1, output: 1 } };
     },
   };
   const ui = { notify: (m: string) => void notices.push(m), confirm: async () => false, select: async () => (counts.selects++, undefined), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
@@ -55,7 +55,7 @@ for (const mode of ["floors-only", "full"] as const) {
     assert.equal(r.counts.selects, 0);
   });
 
-  test(`${mode}: a judge-first line goes to the judge and, unsure and unanswered, is denied; the gate.mode key does not skip it`, async (t) => {
+  test(`${mode}: a judge-first line goes to the judge and, owner and unanswered, is denied; the gate.mode key does not skip it`, async (t) => {
     const r = await rig(t, mode);
     const res = await r.call("bash", { command: JUDGE_FIRST_LINE });
     assert.equal(res?.block, true);
@@ -96,5 +96,16 @@ test("a leftover gate.mode key gives no notice at the gate", async (t) => {
   for (const mode of ["floors-only", "full"] as const) {
     const r = await rig(t, mode);
     assert.ok(!r.notices.some((n) => /floors-only|permissions mode/.test(n)), JSON.stringify(r.notices));
+  }
+});
+
+test("a judge-first line whose judge answers unsure is refused: no dialog opens", async (t) => {
+  for (const mode of ["floors-only", "full"] as const) {
+    const r = await rig(t, mode, { reply: JSON.stringify({ verdict: "unsure", reason: "cannot tell" }) });
+    const res = await r.call("bash", { command: JUDGE_FIRST_LINE });
+    assert.equal(res?.block, true, mode);
+    assert.match(String(res?.reason), /^pi-foreman: refused: /, mode);
+    assert.equal(r.counts.review, 1, mode);
+    assert.equal(r.counts.selects, 0, mode);
   }
 });

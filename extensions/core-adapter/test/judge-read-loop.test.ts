@@ -42,7 +42,7 @@ function fakeRegistry(replies: Reply[]) {
 }
 const V = (verdict: string, reason = "because"): string => JSON.stringify({ verdict, reason });
 const R = (...paths: string[]): string => JSON.stringify({ verdict: "read", paths, reason: "need the script" });
-const CALL: JudgeCall = { tool: "bash", payload: "bash tests/run.sh", reason: "danger-inline-code: runs code the harness cannot read", kind: "owner", role: "foreman", cwd: wt, worktree: wt, branch: "main", remotes: [], readScope: scope };
+const CALL: JudgeCall = { tool: "bash", payload: "bash tests/run.sh", reason: "danger-inline-code: runs code the harness cannot read", kind: "owner", role: "foreman", cwd: wt, worktree: wt, defaultBranch: "main", readScope: scope };
 const config = { providers: { fake: { roles: { review: { model: "fake/m" } } } } };
 function rig(replies: Reply[], extra: Partial<ClassifierCtx> = {}) {
   const reg = fakeRegistry(replies);

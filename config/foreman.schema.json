@@ -175,10 +175,10 @@
           "review": {
             "type": "object",
             "additionalProperties": false,
-            "description": "Model review of permission asks (link foreman-review) while this provider is active. Without it every ask goes to the human. Ignored in the project and session layers (it loosens).",
+            "description": "Model review of permission asks (link foreman-review) while this provider is active. Without it the cheapest role-map model is picked; with none, a judge-first call is refused with the reason. Ignored in the project and session layers (it loosens).",
             "properties": {
               "model": { "type": "string", "description": "Reviewer model, <provider>/<model> or a bare model id of this provider." },
-              "timeoutMs": { "type": "integer", "minimum": 100, "description": "Review timeout in ms (default 15000); a timeout defers to the human." }
+              "timeoutMs": { "type": "integer", "minimum": 100, "description": "No effect on the permission gate: gate.reviewTimeoutMs sets the judge's time limit." }
             }
           },
           "fallback": {
@@ -597,8 +597,8 @@
       "description": "The tool gate (gate.ts) that decides every tool call.",
       "properties": {
         "mode": { "type": "string", "enum": ["full", "floors-only"], "description": "No effect: there are no permission modes. The key (and the retired value floors-only) is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
-        "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
-        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "No effect: a child's ask waits for its parent's ruling-<n>.md without a time limit. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
+        "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout refuses the call with the reason." },
+        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "No effect: a child's ask ends after a fixed 15 minutes. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "readClear": { "type": "boolean", "description": "No effect: the read question was removed (docs/permissions.md#the-read-question). The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
         "readonlyClear": { "type": "boolean", "description": "No effect: the judge step for a read-only role's shell lines (docs/permissions.md#the-role-question) was removed. The key is kept so existing configs load; /foreman doctor prints one INFO line when a config sets it." },
@@ -606,7 +606,9 @@
         "tmpAccess": { "type": "boolean", "description": "Writes (and for the owner reads) under the OS temp dirs are allowed (default true)." },
         "readTools": { "type": "object", "additionalProperties": { "type": ["string", "null"] }, "description": "Extension tools that read files: tool name to the name of its path field (null when the tool has no path field and reads the cwd). A mapped tool is judged like read/grep. User or overlay config only; a project value is dropped (default {})." },
         "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." },
-        "protected": { "type": "object", "additionalProperties": false, "description": "Protected targets (docs/permissions.md#protected-targets): `protected` entries in permissions.json name hosts, paths and commands; a call that acts on one goes to a context check before the owner is asked.", "properties": { "check": { "type": "string", "enum": ["model", "read-only", "ask"], "description": "model (L1): the check may allow read-rated calls and, with the owner present and high confidence, on-task non-reads. read-only: only read-rated allows are accepted; every non-read asks. ask: no model call, every protected touch asks. In every mode a remote write the harness itself sees (an output redirect into a file, tee and the like) asks. A protected entry's own `check` may tighten the mode for that entry, never loosen it. A project or session layer may only tighten (towards ask)." } } }
+        "log": { "type": "object", "additionalProperties": false, "description": "Gate log content. User or overlay config only; a project or session value is dropped.", "properties": { "fullCommand": { "type": "boolean", "description": "Keep the full command text in the local gate log (field `input`, credentials masked) next to the masked shape (default false). A judge reply that was not a valid verdict is logged as `raw` either way, masked like the command." } } },
+        "unclassified": { "type": "string", "enum": ["allow", "judge"], "description": "What happens with a command the code cannot classify: allow runs it (default), judge sends it to the judge (docs/permissions.md). User or overlay config only; a project or session value is dropped." },
+        "protected": { "type": "object", "additionalProperties": false, "description": "Protected targets (docs/permissions.md#protected-targets): `protected` entries in permissions.json name hosts, paths and commands; a call that acts on one goes to a context check, which asks the owner or refuses (docs/permissions.md#protected-targets).", "properties": { "check": { "type": "string", "enum": ["model", "read-only", "ask"], "description": "model (L1): the check may allow read-rated calls and, with the owner present and high confidence, on-task non-reads. read-only: only read-rated allows are accepted; every non-read asks. ask: no model call, every protected touch asks. In every mode a remote write the harness itself sees (an output redirect into a file, tee and the like) asks. A protected entry's own `check` may tighten the mode for that entry, never loosen it. A project or session layer may only tighten (towards ask)." } } }
       }
     },
     "safety": {

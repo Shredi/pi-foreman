@@ -1,5 +1,5 @@
-// A line too deep for the stack sizes in use (measured up to `--stack-size=7000`): parseShell ends it as the one unreadable segment marked `tooDeep` (it does not throw), and the gate
-// decides it judge-first (main and child), never `gate-error` and never an allow.
+// A long arithmetic expression (50000 terms) no longer overflows the walks (they keep explicit stacks): parseShell reads it as one segment, not `parse_error`, not `tooDeep`,
+// and the gate decides it as its short twin, never `gate-error`. The RangeError backstop (a stack overflow ends a line as `tooDeep`, judge-first) is tested in shellast-rangeerror.test.ts.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -9,8 +9,8 @@ import type { GateRoots } from "../pathrules.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
-// Overflows the walk even with `--stack-size=7000` on Node 22 and 26 (measured), and parses in tens of milliseconds. unbash cuts the shapes that nest
-// deeply in `parse` itself short with a syntax error, so no line reaches a RangeError inside `parse`; the walk is where the overflow happens.
+// Long enough to overflow a recursive walk; the walks use explicit stacks, so it is read like a short one. unbash cuts the shapes that nest
+// deeply in `parse` itself short with a syntax error, so no line reaches a RangeError inside `parse`.
 const N = 50000;
 const rep = (s: string, n: number, sep: string): string => Array.from({ length: n }, () => s).join(sep);
 const DEEP: Record<string, string> = {
@@ -80,16 +80,15 @@ function gate(command: string, child: boolean, withRoots = true): { result: { bl
 for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
   test(`gateEvaluate (${label}): a long arithmetic expression is decided as its short twin`, () => {
     const want = gate(UNPARSABLE, child, withRoots);
-    // a plain unreadable line (a syntax error) is not judge-first and runs; a too-deep one is judge-first (below)
+    // a plain unreadable line (a syntax error) is not judge-first and runs
     assert.equal(want.result, undefined);
     assert.equal(want.danger, null, "an unreadable line is not judge-first");
     for (const [name, line] of Object.entries(DEEP)) {
       const got = gate(line, child, withRoots);
       assert.notEqual(got.result?.rule, "gate-error", name);
-      assert.ok(!got.result?.allow, `${name}: not an allow`);
-      // read, not overflowed: decided as the short twin is (an allow, as on origin/main, where nothing hides in the expression)
+      // read, not overflowed: the whole outcome (result and danger) is the short twin's
       const twin = gate("echo $(( 1+1 ))", child, withRoots);
-      assert.deepEqual({ rule: got.result?.rule, danger: (got.danger as { name?: string } | null)?.name }, { rule: twin.result?.rule, danger: (twin.danger as { name?: string } | null)?.name }, name);
+      assert.deepEqual(got, twin, name);
     }
   });
 }

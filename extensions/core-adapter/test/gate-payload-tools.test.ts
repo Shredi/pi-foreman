@@ -37,11 +37,13 @@ async function rig(t: Parameters<typeof r11Rig>[0], replies: Reply[]) {
   return { ...r, reg, log };
 }
 
-test("fetch POST runs with no judge call (the net-write entry is gone, PR C)", async (t) => {
-  const r = await rig(t, [V("allow", "A1")]);
+// plan D2: danger-net-write is a webReadAllow candidate that fails, at both call sites (gate.ts bash line and the fetch tool), so a POST fetch is judged first;
+// the stub answers in the verdict format (clear), a plain GET still makes no judge call
+test("fetch POST is judged first (danger-net-write, plan D2) and runs on a clear verdict", async (t) => {
+  const r = await rig(t, [JSON.stringify({ verdict: "clear", reason: "a plain API call" })]);
   const res = await r.call("fetch", { url: "https://example.org/api", method: "POST", body: "x" });
   assert.equal(res, undefined);
-  assert.equal(r.reg.calls.length, 0);
+  assert.equal(r.reg.calls.length, 1);
 });
 
 test("a subagent role launch runs with no classifier call", async (t) => {
@@ -140,11 +142,11 @@ test("a payload tool with no review model and no UI denies within 1 s", async (t
   assert.ok(Date.now() - t0 < 1000);
 });
 
-// An unusable judge reply is no clear; a headless session denies with the no-pane text.
-test("an invalid judge reply in a headless session denies with the no-pane text", async (t) => {
+// An unusable judge reply is no clear; it is a refusal with its reason in every session kind (the owner is not asked).
+test("an invalid judge reply in a headless session is refused with the judge-answer text", async (t) => {
   const reg = fakeRegistry(["not json"]);
   const r = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: reg.registry }, config });
   const res = await r.call("bash", { command: "git branch -D old-branch" });
   assert.ok(res && res.block);
-  assert.match(res.reason ?? "", /nobody is at this session/);
+  assert.match(res.reason ?? "", /^pi-foreman: refused: the permission judge's answer could not be read/);
 });

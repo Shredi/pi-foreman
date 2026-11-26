@@ -190,6 +190,8 @@ interface Run {
   unsafe?: Set<number>;
   /** A look-behind walk (`lookBehind`): no look-behind of its own starts inside it. */
   behind?: boolean;
+  /** The look-behind walk starts a program the line names (`npx`, `find -exec`), not an operand of an unknown one: a relative program word is judged in it too. */
+  behindRuns?: boolean;
   /** The folder flow of the walk, in walk order (see `Flow`). Set for the line's own walk; a trial copy of the run gets a copy of it. */
   flow?: Flow;
   /** The function bodies the line defines (`collectFuncs`), by name: a call walks each of them where it stands (`run`). Set for the line's own walk only. */
@@ -422,6 +424,16 @@ function assignW(a: Assignment, vars?: Map<string, string | undefined>): W {
 
 const harmless = (a: Assign): boolean => !a.append && a.value !== null && (HARMLESS.has(a.name) || a.name.startsWith("LC_"));
 
+/** Names a later command of the line reads as more than data: the search path, the shell's own variables, a loader, a tool's or the harness's settings. Case folded (zsh ties `path` to `PATH`). */
+const STEERING = /^(PATH|IFS|HOME|SHELL|ENV|CDPATH|GLOBIGNORE|PS[0-9]|PROMPT_COMMAND|FCEDIT|EDITOR|VISUAL|TMPDIR|OLDPWD|PWD|SHLVL|OPTIND|OPTARG|POSIXLY_CORRECT|BASH_.*|BASHOPTS|SHELLOPTS|LD_.*|DYLD_.*|GIT_.*|NODE_.*|PYTHON.*|PERL.*|RUBY.*|FOREMAN_.*|PI_.*|MAIL.*|HIST.*|TERM.*|NPM_.*|XDG_.*|USER|LOGNAME|LANG|LC_.*)$/i;
+
+/** Names whose setting makes a shell or loader run code the line does not show (a prompt, a startup file, a function body, the search path, a preload, the harness folders): a command under one is judged. */
+const RUNS_CODE = new RegExp(`^(PATH|IFS|ENV|BASH_ENV|BASH_FUNC_.*|BASHOPTS|SHELLOPTS|PS[0-9]|PROMPT_COMMAND|CDPATH|GLOBIGNORE|LD_.*|DYLD_.*|${HARNESS_NAMES.join("|")})$`);
+const steersCode = (a: Assign | undefined): boolean => !!a && !harmless(a) && RUNS_CODE.test(a.name);
+
+/** A standalone `NAME=literal`: no expansion in the value, no append, a name that steers nothing. It names a string for later words, which are read as they stand (an unresolved `$NAME` stays opaque). */
+const literalAssign = (a: Assign): boolean => !a.append && a.value !== null && !STEERING.test(a.name);
+
 /** The command substitutions and process substitutions inside `node`, not descending into their scripts. */
 function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undefined; label: string }>; proc: boolean }): void {
   const stack: SyntaxNode[] = [];
@@ -469,7 +481,7 @@ function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | 
   Object.defineProperty(out, "programUnknown", { value: sc.unit !== undefined && !!sc.run.unsafe?.has(sc.unit), enumerable: false, configurable: true, writable: true });
   Object.defineProperty(out, "harnessRebound", { value: reboundAt(sc), enumerable: false, configurable: true, writable: true });
   // the shell is in a folder a variable or a substitution named: a file run by a relative name is not the file the walk's cwd says (not in a look-behind trial: a word after an unknown program is mostly an operand, `curl -o a https://x`)
-  if (sc.run.flow?.dyn && !sc.run.behind && runsRelative(program, argv)) Object.defineProperty(out, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
+  if (sc.run.flow?.dyn && (!sc.run.behind || sc.run.behindRuns) && runsRelative(program, argv)) Object.defineProperty(out, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
   if (sc.fnStack?.length) Object.defineProperty(out, "walked", { value: true, enumerable: false, configurable: true, writable: true });
   sc.run.out.push(out);
 }
@@ -531,7 +543,13 @@ function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc
       // the script inside was never walked: a consumer must not read the segment as a plain unresolved word
       if (s.script && s.script.commands.length > 0) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
     }
-    else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
+    else if (!s.script || s.script.errors?.length) {
+      // a shell runs the statements before the error: they are walked as written (the floors and write checks read them), then the error stays one opaque segment
+      const at = (s.script?.errors as Array<{ pos: number }> | undefined)?.[0]?.pos;
+      const before = at === undefined ? [] : s.script!.commands.filter((st) => st.end > st.pos && st.end <= at);
+      if (before.length > 0 && sc.depth + 1 <= MAX_DEPTH) isolated(sc.run, () => walkList(before, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined }));
+      seg(sc, s.label, [], "parse_error");
+    }
     else {
       const body = s.script.commands;
       isolated(sc.run, () => walkList(body, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, docs: [], reason: null, pipe: undefined }));
@@ -715,12 +733,16 @@ function doCommand(cmd: Command, sc: Scope): string | null {
   c.redirectEnd = own === 0 || (tail ? tail.type !== "Word" && tail.type !== "Assignment" && tail.type !== "HereDoc" && tail.type !== "HereString" && closes : !cmd.name);
   if (!cmd.name) {
     // standalone assignments (and bare redirects): harmless names, or the closed grammar's own assignment
-    const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && harmless(a.assign));
+    const ok = sc.run.assignOk.has(cmd) || prefix.every((a) => a.assign && (harmless(a.assign) || literalAssign(a.assign)));
     seg(sc, "", [], ok ? null : "assignment", c);
+    if (prefix.some((a) => steersCode(a.assign))) markUnknown(sc);
     return sc.cwd;
   }
   for (const a of prefix) if (!(a.assign && harmless(a.assign))) c.reason = pick(c.reason, "assignment");
-  return run(words, c, sc.cwd);
+  const before = sc.run.out.length;
+  const end = run(words, c, sc.cwd);
+  if (prefix.some((a) => steersCode(a.assign)) && sc.run.out.length > before) markUnknown(sc);
+  return end;
 }
 
 /** Options of a wrapper: the leading `-x` words. A non-literal word ends them (it is the operand or command). */
@@ -778,6 +800,15 @@ function parseOpts(args: W[], s: OptSpec): { rest: W[]; opts: Opt[] } | OpaqueRe
 const has = (opts: Opt[], ...names: string[]): boolean => opts.some((o) => names.includes(o.name));
 const val = (opts: Opt[], ...names: string[]): string | null => opts.find((o) => names.includes(o.name))?.value ?? null;
 
+/** The word `$PWD` or `${PWD}`, bare or in double quotes. */
+const PWD_WORD = /^"?\$(?:PWD|\{PWD\})"?$/;
+
+/** The line may bind PWD (an assignment, `cd` through a bound name, `read`, `eval` ...): `boundNames` answers for any name it cannot rule out. */
+const pwdBound = (root: string): boolean => {
+  const b = boundNames(root);
+  return b.any || b.names.has("PWD");
+};
+
 /** Emits the segment of a final (non-wrapper) program. */
 function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null, stdinFlag = false): string | null {
   const sc = c.sc;
@@ -798,6 +829,9 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
     for (let i = 0; i < rest.length; ) {
       const v = rest[i].value;
       if (v === "-C") {
+        // `git -C "$PWD"` names the folder the walk tracks, while nothing on the line binds PWD: the word is that folder (the base allowed it; an unreadable `-C` target is judged)
+        const w = rest[i + 1];
+        if (w && w.value === null && at !== null && PWD_WORD.test(w.text) && sc.run.root !== undefined && !pwdBound(sc.run.root)) rest = rest.map((a, k) => (k === i + 1 ? { ...a, value: at as string, reason: null } : a));
         const d = rest[i + 1]?.value;
         at = d == null ? null : (cdTarget(["cd", d], at ?? undefined, win32(sc.run)) ?? null);
         i += 2;
@@ -1101,6 +1135,7 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
       // env's own rule: every operand with an `=` before the program is a setting; a name that is not a shell identifier (an exported function, `A-B=1`) is read by the program, which may rebind anything
       let startup = false;
       let odd = false;
+      let steers = false;
       while (args.length && !(args[0].value ?? args[0].text).startsWith("-") && (args[0].value ?? args[0].text).includes("=")) {
         const a = args[0].assign ?? asAssign(args[0]);
         if (!a) {
@@ -1109,13 +1144,14 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
           c.reason = pick(c.reason, "assignment");
         } else {
           if (!harmless(a)) c.reason = pick(c.reason, "assignment");
+          if (steersCode(a)) steers = true;
           // a harness folder name set here is rebound for the wrapped program, whatever wrapper or `env` sits between
           if (RUNS_FILE_VARS.has(a.name) || HARNESS_NAMES.includes(a.name)) startup = true;
         }
         args = args.slice(1);
       }
       wrap(args, "env", at, true, clears, startup);
-      if (odd) markUnknown(sc);
+      if (odd || steers) markUnknown(sc);
       return cwd;
     }
     case "timeout": {
@@ -1237,6 +1273,14 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
       if (file && sourcesStream(file)) return bad("unsupported", true);
       return bad(runnerReason(name));
     }
+    case "trap": {
+      // `trap 'cmd' SIG`: the action runs later in this shell; a literal one is read as the command it holds (as an alias value is), any other makes the line judged. `-l`, `-p` and `-` hold none.
+      const r = plain(prog, name, rest, c, cwd);
+      const act = rest.find((a) => a.value === null || !a.value.startsWith("-") || a.value === "-");
+      if (act && act.value === null) markUnknown(sc);
+      else if (act && act.value !== "-" && act.value !== "") runString("trap", act.value as string, c, cwd);
+      return r;
+    }
     default:
       // a runner the walker does not unwrap (`ionice`, `chroot`, `unbuffer`, `parallel`): the program behind it was not walked
       if (RUNNERS.has(name) && !BUILTINS.has(name) && name !== "script") return bad(runnerReason(name), runnerReason(name) === "unsupported");
@@ -1248,6 +1292,8 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
       }
       const r = plain(prog, name, rest, c, cwd);
       lookBehind(name, rest, c, cwd);
+      if (name === "find") lookBehindExec(rest, c, cwd);
+      if (name === "compgen" || name === "readarray" || name === "mapfile") callbackOption(rest, c, cwd);
       return r;
   }
 }
@@ -1267,9 +1313,31 @@ const BEHIND_BUDGET = 1000;
  * (no look-behind inside it), and hang on the segment just emitted as `behind`. Nothing here adds a segment to the line's own list.
  */
 function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
+  // inside a trial only `npx` (it starts the program it is given) looks behind again: the program of `npx sh -c 'find . -exec ...'` is not an operand of an unknown one
+  if ((c.sc.run.behind && name !== "npx") || (modelled(name) && name !== "npx")) return;
+  attachBehind(rest, rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : [])), c, cwd, name === "npx");
+}
+
+/** `find -exec CMD ... ;`: the words after each exec action read as a command of their own (`find . -exec sh -c 'rm x' \;`), like the words behind an unmodelled program. */
+function lookBehindExec(rest: W[], c: Cmd, cwd: string | null): void {
+  attachBehind(rest, rest.flatMap((a, k) => (FIND_EXEC.has(a.value ?? "") && rest[k + 1] && rest[k + 1].value !== null ? [k + 1] : [])), c, cwd, true);
+}
+
+/** `compgen -C CMD`, `readarray -C CMD`: the callback command is run by the shell; a literal one is read as the command it holds, any other makes the segment unknown. */
+function callbackOption(rest: W[], c: Cmd, cwd: string | null): void {
+  for (let k = 0; k < rest.length; k++) {
+    const v = rest[k].value;
+    const attached = v !== null && /^-[A-Za-z]*C./.test(v) ? v.slice(v.indexOf("C") + 1) : null;
+    if (v === null || !(/^-[A-Za-z]*C$/.test(v) || attached !== null)) continue;
+    const a = attached !== null ? { value: attached, text: attached } : rest[k + 1];
+    if (!a || a.value === null) markUnknown(c.sc);
+    else runString("callback", a.value, c, cwd);
+  }
+}
+
+/** Starts a trial walk at each of the `starts` words of `rest` and hangs the results on the segment just emitted (`ShellSegment.behind`). */
+function attachBehind(rest: W[], starts: number[], c: Cmd, cwd: string | null, runs = false): void {
   const sc = c.sc;
-  if (sc.run.behind || modelled(name)) return;
-  const starts = rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : []));
   if (!starts.length) return;
   const real = sc.run.out[sc.run.out.length - 1];
   if (!real) return;
@@ -1280,7 +1348,7 @@ function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
   }
   budget.starts += starts.length;
   const behind = starts.map((k) => {
-    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
+    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(runs ? { behindRuns: true } : {}), ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
     run(rest.slice(k), { ...c, sc: { ...sc, run: trial } }, cwd);
     return { text: rest.slice(k).map((a) => a.value ?? a.text).join(" "), segments: trial.out };
   });
@@ -1637,21 +1705,34 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
 }
 
 /**
- * The text before the statement that holds the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position
- * and are not empty. Null when `cmd` parses, throws, or no statement precedes the error.
+ * The texts a shell runs before the first parse error of `cmd`, cut by the parser's own offsets: the statements that end at or before the error position and are
+ * not empty (cut a), and the same with the here-document bodies and closing delimiter lines of those statements (cut b, when it is longer). Both are returned so a
+ * caller can check each: a longer cut that carries a nested syntax error in a body may parse differently from the shorter one. Empty when `cmd` parses, throws, or no statement precedes the error.
  */
-export function beforeParseError(cmd: string): string | null {
+export function parseErrorCuts(cmd: string): string[] {
   let script: Script | undefined;
   try {
     script = parse(cmd);
   } catch {
-    return null;
+    return [];
   }
   const err = (script as any)?.errors?.[0] as { pos: number } | undefined;
-  if (!script || !err) return null;
-  let cut = 0;
-  for (const st of script.commands) if (st.end > st.pos && st.end <= err.pos) cut = Math.max(cut, st.end);
-  return cut > 0 ? cmd.slice(0, cut) : null;
+  if (!script || !err) return [];
+  let short = 0;
+  let long = 0;
+  const heredocEnd = (n: SyntaxNode): number => {
+    let e = n.type === "HereDoc" ? ((n as any).closing?.end ?? (n as any).body?.end ?? n.end) : 0;
+    forEachChild(n, (c) => { e = Math.max(e, heredocEnd(c)); });
+    return e;
+  };
+  for (const st of script.commands) {
+    if (st.end > st.pos && st.end <= err.pos) {
+      short = Math.max(short, st.end);
+      long = Math.max(long, st.end, Math.min(heredocEnd(st), err.pos));
+    }
+  }
+  if (short === 0) return [];
+  return long > short ? [cmd.slice(0, short), cmd.slice(0, long)] : [cmd.slice(0, short)];
 }
 
 const BODY_NODES = new Set(["Function", "Select", "Coproc", "ArithmeticFor"]);
@@ -1827,8 +1908,10 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
   const nameShown = (n: string, at: number): boolean => INT_SPECIALS.includes(n) || (/[a-z]/.test(n) && allNum(n) && !(firstAny < at));
   /** Assigned on the line, every time one plain literal name, and no site that may bind any name before. */
   const nameLit = (n: string, at: number): boolean => /[a-z]/.test(n) && !!bindings.get(n)?.length && bindings.get(n)!.every((b) => b.kind !== "input" && b.lit !== null && PLAIN_NAME.test(b.lit)) && !(firstAny < at);
+  /** `$((..))` is a number only when no command substitution sits inside it: bash evaluates one there, even in a quoted subscript the walk never enters. */
+  const arithExpShown = (p: any): boolean => !/\$\((?!\()|`/.test(String(p.text ?? "`"));
   const atomShown = (text: string, parts: readonly any[] | undefined, at: number): boolean => {
-    if (parts?.length === 1 && parts[0].type === "ArithmeticExpansion") return true;
+    if (parts?.length === 1 && parts[0].type === "ArithmeticExpansion") return arithExpShown(parts[0]);
     // a lone plain expansion (`$x`, `${x}`, `$?`) is read by its text
     if (parts?.length && !(parts.length === 1 && (parts[0].type === "SimpleExpansion" || (parts[0].type === "ParameterExpansion" && !parts[0].operation && !parts[0].prefix && !parts[0].index)))) return false;
     if (parts?.length) text = String(parts[0].text);
@@ -1865,7 +1948,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
     if (!parts) return atomShown(String(w.value ?? w.text ?? ""), undefined, at);
     if (parts.length !== 1) return false;
     const p = parts[0];
-    if (p.type === "ArithmeticExpansion") return true;
+    if (p.type === "ArithmeticExpansion") return arithExpShown(p);
     if (p.type === "SimpleExpansion" || p.type === "ParameterExpansion") return !(p.operation || p.prefix || p.index) && atomShown(String(p.text), undefined, at);
     return p.type === "Literal" && atomShown(String(p.value), undefined, at);
   };

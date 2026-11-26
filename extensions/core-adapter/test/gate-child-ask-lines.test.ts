@@ -63,20 +63,3 @@ test("a ruling is read: ALLOW, DENY with a reason, a foreign first line", async 
   assert.equal((await awaitChildRuling(d, 9, 30, 5)).answer, "timeout");
 });
 
-test("the wait ends with away when the parent's owner turns away, long before the deadline", async (t) => {
-  const d = dir(t);
-  let probes = 0;
-  const t0 = Date.now();
-  const r = await awaitChildRuling(d, 1, 60_000, 5, undefined, () => ++probes >= 2, 20);
-  assert.equal(r.answer, "away");
-  assert.ok(Date.now() - t0 < 2000);
-  assert.equal(probes, 2);
-});
-
-test("a throwing away probe counts as present; a ruling that arrives still wins", async (t) => {
-  const d = dir(t);
-  setTimeout(() => writeChildRuling(d, 1, { allow: true }), 80);
-  const r = await awaitChildRuling(d, 1, 5000, 5, undefined, () => Promise.reject(new Error("probe")), 20);
-  assert.equal(r.answer, "allow");
-});
-

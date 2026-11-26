@@ -39,6 +39,6 @@ test("a spread-cloned ssh segment with no feed reads as fed: remote_opaque; the 
     return new ProtectedCache().check(call, c);
   };
   const rc = await run(mc!);
-  assert.deepEqual([rc.accepted, rc.cause], ["ask", "remote_opaque"]);
+  assert.deepEqual([rc.accepted, rc.cause], ["refuse", "remote_opaque"]);
   assert.equal((await run(mp!)).accepted, "allow");
 });

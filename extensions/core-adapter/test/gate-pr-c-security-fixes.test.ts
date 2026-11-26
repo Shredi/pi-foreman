@@ -41,7 +41,7 @@ test("the judge's clear is not reused after the owner's message changes", async 
   let n = 0;
   const reg = { find: () => ({ id: "m" }), complete: async () => { n++; return { content: [{ type: "text", text: JSON.stringify({ verdict: "clear", reason: "ok" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }; } };
   const c: ClassifierCtx = { registry: reg as never, config: { providers: { fake: { roles: { review: { model: "fake/m" } } } } }, provider: "fake", timeoutMs: 200 };
-  const call: JudgeCall = { tool: "bash", payload: "git clean -fd", reason: "danger-git", kind: "owner", role: "foreman", cwd: "/w", worktree: "/w", branch: "main", remotes: [], ownerMessage: "clean it" };
+  const call: JudgeCall = { tool: "bash", payload: "git clean -fd", reason: "danger-git", kind: "owner", role: "foreman", cwd: "/w", worktree: "/w", defaultBranch: "main", ownerMessage: "clean it" };
   const k = new Classifier();
   await k.judge(call, c);
   await k.judge(call, c);

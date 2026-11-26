@@ -6,10 +6,11 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { JUDGE_FIRST, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
+import { readGlobSegment } from "./fastallow.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, strongerHit, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, parsedPrefixes, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, strongerHit, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -39,6 +40,8 @@ export interface GateDeps {
   rules?: { env: RuleEnv };
   /** `gate.readTools`: extension tool name -> path field (null: none); judged like read/grep (Read rules, path floors, owned-path allows). */
   readTools?: ReadToolMap;
+  /** `gate.unclassified`: with `judge`, a shell line no floor, built-in allow or judge-first entry names goes to the judge as `danger-unclassified`; `allow` (the default) runs it. */
+  unclassified?: "allow" | "judge";
   /** The merged protected targets (permconfig `Resolved.protected`); absent or empty: no protected check. */
   protected?: ProtectedEntry[];
   /** `floors.noteTools` of the owner's permissions file (`Resolved.noteTools`): note tools by name, added to `NOTE_TOOLS`; their prose fields skip the raw floors. */
@@ -219,7 +222,9 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
   const outside = outsideTarget(call, env);
-  if (outside !== null) {
+  // a git write whose `-C` target cannot be read, in a read-only role: the repository it may change is the round worktree, so its own refusal names it (not an outside target)
+  const roGit = outside !== null && env.roots.roundReadOnly && readonlyWrite(tool, input, segments, cmd, env)?.gitAny === true;
+  if (outside !== null && !roGit) {
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
     const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? ` Use $FOREMAN_SCRATCH${r.scratch.length ? ` (${r.scratch[0]})` : ""}, not /tmp.` : "";
@@ -403,6 +408,9 @@ export interface GateOutcome {
 
 const baseProg = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCase().replace(/\.exe$/, "");
 
+/** The catch-all label of `gate.unclassified: "judge"` (the text is the one the judge bench reads, judgebench.ts). */
+const UNCLASSIFIED: DangerHit = { name: "danger-unclassified", reason: "the code could not classify this call" };
+
 /** The name of the built-in allow of a plain download (`webReadAllow`, r79 Addendum S5). */
 export const WEB_READ_RULE = "builtin-web-read";
 
@@ -466,16 +474,19 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const h = lineHit?.kind === "deny" ? lineHit : wordHit?.kind === "deny" ? wordHit : strongerHit(lineHit, wordHit);
       // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
       const segs = parsed.map(relaxPatternWords);
+      // a line that does not parse: the statements before the error run, so the write checks below also read them (the judge never clears what a floor refuses)
+      const before = toolName === "powershell" ? [] : parsedPrefixes(cmd, parsed, { cwd, platform: env.platform, ...scratchVar });
+      const fsegs = before.length ? [...before.flatMap((b) => b.parsed.map(relaxPatternWords)), ...segs] : segs;
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       // the words of a powershell line are write targets for the self-modification rules and the protected folders (`.git`); no word earns an allow
-      const sm = selfmodResult(shellSelfmod(psSeg ? [psSeg] : segs, cwd, roots, platform), roots.child);
+      const sm = selfmodResult(shellSelfmod(psSeg ? [psSeg] : fsegs, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
       const dctx = { roots, facts, platform, cwd, floor: env };
       if (roots.child) {
         // a powershell child: only its words inside a `.git` get the child deny set (what a bash write there gets: child-write-outside); the other words stay free
         const gitWords = psSeg ? psSeg.redirects.filter((r) => r.target.split(/[\\/]+/).some((s) => segmentAlias(platform, ".git", s))) : [];
-        const cd = psSeg ? (gitWords.length ? childDenied(toolName, inp, [powershellWordSegment(gitWords.map((r) => r.target), cwd)], cmd, dctx) : undefined) : childDenied(toolName, inp, segs, cmd, dctx);
+        const cd = psSeg ? (gitWords.length ? childDenied(toolName, inp, [powershellWordSegment(gitWords.map((r) => r.target), cwd)], cmd, dctx) : undefined) : childDenied(toolName, inp, fsegs, cmd, dctx);
         if (cd) return decided(cd);
       }
       const ec = effectCtxOf(dctx);
@@ -483,21 +494,22 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
         // the words as write targets (the own worktree is exempt inside installRootWrite): main is asked, a child is refused (its bash line meets child-write-outside first)
         const ask = installRootWrite(toolName, inp, [psSeg], cmd, dctx);
         installAsk = ask && "ask" in ask && roots.child ? { block: true, rule: ask.rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${ask.rule}): ${ask.reason}. Report what you need to the foreman and continue with what you can.` } : ask;
-      } else installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
+      } else installAsk = installRootWrite(toolName, inp, fsegs, cmd, dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, ...(roots.child && roots.out ? { out: roots.out } : {}), platform });
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
         if (!s || toolName === "powershell") return null;
-        // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
-        const r = opaque ? null : segmentDefault(s, cmd, dctx, ec);
-        if (r !== null) return r;
+        // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords); the rule comes before the default read allow so a public key read keeps its trace
         const bn = boundNames(cmd);
         const pubs = pubKeyReadWords([s], env, bn.any ? new Set(["HOME", "USERPROFILE"]) : bn.names);
         if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
+        // a plain glob of a read program is no opaque unit (fastallow.ts readGlobSegment)
+        const r = opaque && !readGlobSegment(s) ? null : segmentDefault(s, cmd, dctx, ec);
+        if (r !== null) return r;
         if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };
-      const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
+      const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, fsegs);
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
       const denv = { roots, platform, cwd, facts, floor: env };
       if (result) return { result, danger: null, segments: segs };
@@ -505,6 +517,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const floorDanger = dangerOfFloor(h);
       const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reasonOf?.(dcall, denv) ?? hits[0].reason } : null);
       const labels = [...new Set([...(floorDanger ? [floorDanger.name, ...(h?.also ?? [])] : []), ...hits.map((r) => r.name)])];
+      // gate.unclassified = judge: nothing above named the line and no built-in allow covered it (`ruled` returned nothing)
+      if (!danger && deps.unclassified === "judge" && toolName !== "powershell") return { result: undefined, danger: UNCLASSIFIED, segments: segs, dangers: [UNCLASSIFIED.name] };
       return { result: undefined, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
     }
     const readField = readFieldOf(readTools, toolName);
@@ -621,10 +635,11 @@ export const gitFacts: GitFacts = {
   hasUpstream: (cwd) => gitOut(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]) !== null,
 };
 
-/** Git facts for a classifier request: branch, HEAD, MERGE_HEAD and remote names (null / empty when git cannot say). */
-export function reviewGitFacts(cwd: string): { branch: string | null; head: string | null; mergeHead: string | null; remotes: string[] } {
+/** Git facts for a classifier request: branch, default branch (`origin/HEAD`), HEAD, MERGE_HEAD and remote names (null / empty when git cannot say). */
+export function reviewGitFacts(cwd: string): { branch: string | null; defaultBranch: string | null; head: string | null; mergeHead: string | null; remotes: string[] } {
   return {
     branch: currentBranch(cwd),
+    defaultBranch: remoteHead(cwd),
     head: gitOut(cwd, ["rev-parse", "-q", "--verify", "HEAD"]) || null,
     mergeHead: gitOut(cwd, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]) || null,
     remotes: (gitOut(cwd, ["remote"]) ?? "").split("\n").filter(Boolean),

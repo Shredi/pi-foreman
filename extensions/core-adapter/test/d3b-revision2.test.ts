@@ -59,8 +59,8 @@ test("gateEvaluate: node -e x -e \"$C\" runs code the harness cannot read", { sk
   assert.ok(reasons(`node -e x`).includes("the code is in the command") || !reasons(`node -e x`).includes("cannot read"));
 });
 
-const ASK = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
-const registry = () => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: ASK }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
+const ASK = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
+const registry = (reply = ASK) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { gate: { askTimeoutMs: 600000 }, presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } } };
 
 for (const role of ["reviewer", "builder"]) {
@@ -83,3 +83,23 @@ for (const role of ["reviewer", "builder"]) {
     }
   });
 }
+
+test("caller path (builder): a judge that answers unsure refuses the revision shapes", { skip: posixOnly }, async (t) => {
+  const dir = fs.realpathSync(mkTestTmp("pf-d3b-rev2u-"));
+  t.after(() => rmTestTmp(dir));
+  const sc = path.join(dir, "scratch");
+  const o = path.join(dir, "out");
+  for (const d of [sc, o]) fs.mkdirSync(d, { recursive: true });
+  const prev = process.env[BINDINGS_ENV];
+  process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: "builder", launchId: "L9", kind: "first", model: null, scratch: sc, out: o } });
+  t.after(() => {
+    if (prev === undefined) delete process.env[BINDINGS_ENV];
+    else process.env[BINDINGS_ENV] = prev;
+  });
+  const child = await r11Rig(t, {}, { ctx: { modelRegistry: registry(JSON.stringify({ verdict: "unsure", reason: "cannot tell" })) }, config, child: true });
+  for (const command of shapes("FOREMAN_OUT")) {
+    const res = await child.call("bash", { command });
+    assert.equal(res?.block, true, command);
+    assert.match(String(res?.reason), /pi-foreman: refused: /, command);
+  }
+});

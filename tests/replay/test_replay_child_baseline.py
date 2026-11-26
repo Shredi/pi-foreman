@@ -35,7 +35,7 @@ class TestChildBaseline(ReplayCase):
         sid = pi.session_id()
         pi.prompt("[[replay:b1]] go", timeout=60)
         # PR C: the gate decides the seven lines, no review call stands in for them: a write outside the worktree is refused by the child
-        # deny set, every other line runs (`mode:no-rule`): an opaque form (`{ cd "$D"; ls; }`) and a network write (`curl x`) are not on the judge-first list.
+        # deny set, every other line runs (`mode:no-rule`): an opaque form (`{ cd "$D"; ls; }`) is not on the judge-first list; `curl x` is an unknown program, judge-first (`danger-unknown-program`), and the baseline judge clears it.
         notice, recs = pi.wait_child_notify(timeout=120, answers=[{"confirmed": False}, {"value": "No"}, {"value": "No"}])
         pi.close()
         self.assertIn("builder child finished", notice)
@@ -48,7 +48,7 @@ class TestChildBaseline(ReplayCase):
             ("allowed", "mode:no-rule"),  # cd sub && cd ../.. && ls
             ("allowed", "mode:no-rule"),  # { cd "$D"; ls; }: opaque, no longer judged
             ("allowed", "mode:no-rule"),  # cd nonexist/deeper; cd ../.. && ls
-            ("allowed", "mode:no-rule"),  # cd sub && curl x: no longer judged
+            ("allowed", "judge:danger-unknown-program"),  # cd sub && curl x: `curl` is an unknown program, judge-first (docs/permissions.md judge-first list); the baseline judge clears it
         ], gate)
         sup = [r["decision"] for r in rig.traces()["trace-" + sid] if r.get("event") == "supervisor_request"]
         self.assertEqual(sup, ["open", "replied"])

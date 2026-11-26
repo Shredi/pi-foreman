@@ -176,7 +176,7 @@ test("a cached clear runs again without a second judge call", async (t) => {
 
 test("a line with another judge-first label keeps its question: ask.md is written, not the new refusal", async (t) => {
   const line = SHAPES[3].command;
-  const r = await rig(t, { judge: "unsure" });
+  const r = await rig(t, { judge: "unsure", reply: JSON.stringify({ verdict: "owner", class: "outside-write", reason: "cannot tell where $F points" }) });
   assert.deepEqual(labelsOf(line), SHAPES[3].labels);
   const p = r.call("bash", { command: line });
   const ask = await until(() => (r.asked() ? fs.readFileSync(path.join(r.askDir as string, "ask.md"), "utf8") : false));

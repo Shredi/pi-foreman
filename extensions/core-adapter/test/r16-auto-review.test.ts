@@ -122,12 +122,12 @@ type Expect = [string, number, number, boolean?];
 // later guard (self_ruling, the shell write guard) still refuses is marked blocked: the gate's allow does not skip those.
 const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
-  own_async_results_python_read: ["dialog:danger:comment", 1, 2, true], // item 5: an unreadable verdict is asked for once more (2 calls); PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no judge verdict, so the owner is asked
+  own_async_results_python_read: ["blocked:judge:danger-inline-code", 0, 2, true], // a refusal now, not a dialog; item 5: an unreadable verdict is asked for once more (2 calls); PR C security round: an interpreter one-liner is judge-first (danger-inline-code); this stub is no valid judge verdict, so the call is refused
   handoff_ruling_for_cat: [CLASSIFIED, 0, 0],
-  cp_ruling_into_scratch: [OK, 0, 0],
+  cp_ruling_into_scratch: ["allowed:default-write-in+default-read", 0, 0], // gate-verify D2: fast allow (own-folder write plus read), no mode step
   usage_ls_grep_node_version: [OK, 0, 0],
   pi_scratch_read: ["allowed:default-read", 0, 0],
-  own_bg_output_chain: [OK, 0, 0],
+  own_bg_output_chain: ["allowed:default-skip+default-read", 0, 0], // gate-verify D2: sleep is a skip-only list B program, the reads are fast allow
   r16_f1_ruling_append_and_cp: [OK, 0, 0],
   toolchain_probe_pipe: [CLASSIFIED, 0, 0],
   project_settings_read_mention: [OK, 0, 0],
@@ -205,27 +205,27 @@ for (const c of FX.selfModTool) {
 }
 
 // item 6: the closed verdict. Every reply is checked with a line of its own (a deny is cached per session by input).
-// C: the judge answers only clear or unsure; every fixture reply (the old allow/deny/escalate shapes included) is no valid clear and asks the owner
+// the judge answers clear, refuse, owner (+ class) or read; every fixture reply (the old allow/deny/escalate/unsure shapes included) is no valid clear and is refused
 FX.verdicts.forEach((c, i) => {
-  const want = "dialog:danger:comment";
+  const want = "blocked:judge:danger-git";
   test(`r16 verdict ${c.name}: ${want}`, async () => {
     const r = await bash(`${DANGEROUS} # v${i}`, { reply: c.reply });
-    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [want, 1, 2, true]); // an unreadable verdict is asked for once more
+    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [want, 0, 2, true]); // an unreadable verdict is asked for once more
   });
 });
 
-test("r16 unreachable review (throw, hang, no model): the owner dialog names the cause", async () => {
+test("r16 unreachable review (throw, hang, no model): a refusal, no dialog", async () => {
   const replies: [string, () => Promise<Reply>][] = [["provider_error", async (): Promise<Reply> => { throw new Error("boom"); }], ["timeout", () => new Promise<Reply>(() => {})]];
   for (const [cause, reply] of replies) {
     const r = await bash(`${DANGEROUS} # u-${cause}`, { reply });
-    assert.equal(r.outcome, "dialog:danger:comment", r.outcome);
-    assert.deepEqual([r.dialogs, r.calls, r.block?.block], [1, 1, true]);
+    assert.equal(r.outcome, "blocked:judge:danger-git", r.outcome);
+    assert.deepEqual([r.dialogs, r.calls, r.block?.block], [0, 1, true]);
     assert.equal(r.recs.find((x) => x.event === "review" && x.kind === "gate")?.cause ?? cause, cause);
   }
   found = false;
   try {
     const r = await bash(`${DANGEROUS} # u-none`);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], ["dialog:danger:comment", 1, 0, true]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], ["blocked:judge:danger-git", 0, 0, true]);
   } finally {
     found = true;
   }
@@ -238,7 +238,7 @@ test("r16 no UI: an escalate under a headless owner session is a silent deny wit
     try {
       const r = await bash(`${DANGEROUS} # nui-${env.mode}`, { reply: verdict("escalate", null as never) });
       assert.deepEqual([r.dialogs, r.calls, r.block?.block], [0, 2, true]); // an unreadable verdict is asked for once more
-      assert.match(r.block?.reason ?? "", /nobody is at this session/);
+      assert.match(r.block?.reason ?? "", /^pi-foreman: refused: /);
     } finally {
       Object.assign(ctx, { mode: "tui", hasUI: true });
     }

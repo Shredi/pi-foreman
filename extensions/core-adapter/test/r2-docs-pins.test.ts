@@ -34,10 +34,10 @@ function show(line: string, role: Role, cwd = wt): string {
   return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
 }
 
-// C: `danger-harness-folder` left the judge-first list (docs/safety.md is updated in the docs step): the read runs, for every role
+// C: `danger-harness-folder` left the judge-first list (docs/safety.md is updated in the docs step): the read runs, for every role; plan D2: `find` is a read program, the fast allow names it `default-read`
 test("find <harness folder> carries no label for any role (C: the harness-folder label is gone)", { skip: posixOnly }, () => {
   const line = `find ${HF}`;
-  for (const role of ["main", "builder", "reviewer", "explorer"] as const) assert.equal(show(line, role), "undecided  []", role);
+  for (const role of ["main", "builder", "reviewer", "explorer"] as const) assert.equal(show(line, role), "allow default-read []", role);
 });
 
 test("a child reads another session's subagent-artifacts and the agent-dir foreman.json: no rule refuses the read for any role", { skip: posixOnly }, () => {
@@ -53,11 +53,11 @@ test("a child reads another session's subagent-artifacts and the agent-dir forem
     return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
   };
   for (const [role, shellLabels] of [["builder", "[]"], ["reviewer", "[]"], ["explorer", "[]"]] as const) {
-    assert.equal(show(`cat ${cfg}`, role), `undecided  ${shellLabels}`, `${role} cat foreman.json`);
+    assert.equal(show(`cat ${cfg}`, role), `allow default-read ${shellLabels}`, `${role} cat foreman.json`);
     assert.equal(decide("read", { path: cfg }, role), "undecided  []", `${role} read foreman.json`);
-    assert.equal(show(`cat ${file}`, role), `undecided  ${shellLabels}`, `${role} cat subagent-artifacts`);
+    assert.equal(show(`cat ${file}`, role), `allow default-read ${shellLabels}`, `${role} cat subagent-artifacts`);
     assert.equal(decide("read", { path: file }, role), "undecided  []", `${role} read subagent-artifacts`);
-    assert.equal(show(`grep -r x ${sub}`, role), `undecided  ${shellLabels}`, `${role} grep subagent-artifacts`);
+    assert.equal(show(`grep -r x ${sub}`, role), `allow default-read ${shellLabels}`, `${role} grep subagent-artifacts`);
   }
 });
 

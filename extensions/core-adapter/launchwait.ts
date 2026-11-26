@@ -89,7 +89,12 @@ export const REPEAT_STOP_REASONS: readonly RegExp[] = [
   // R41 gate floors a child only hits by probing: a secret or key path, a policy or harness state file
   /' is a secret or key path \(SSH, GnuPG/,
   /', a policy file or a harness state file \(/,
+  // a refusal of the judge, the protected check or the child ask, keyed on its kind and the hash of the call (index.ts refusalRepeat): never a timeout, an invalid answer, a missing model or an exception
+  /^pi-foreman repeat-key: (?:judge-refused|protected-refused|write-outside|no-parent|parent-deny) [0-9a-f]{64}$/,
 ];
+
+/** The start of the stable sentence a counted refusal is keyed on (never shown to the model). */
+export const REPEAT_KEY_PREFIX = "pi-foreman repeat-key: ";
 
 /** The line a repeat_refusal run's report carries: stopped, not retried, not climb-eligible (the policy_block family). */
 export const REPEAT_REFUSAL_LINE = `pi-foreman: this run was stopped by its own guard (${REPEAT_REFUSAL_ERROR}: the same refusal twice in one run) and is not retried: the harness does not relaunch it and it is not climb-eligible. Read the refusal in its output; do not relaunch the same task unchanged.`;

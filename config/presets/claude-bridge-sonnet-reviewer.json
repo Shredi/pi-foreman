@@ -20,7 +20,7 @@
         "builder": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium", "strong": { "model": "claude-bridge/claude-opus-5-5", "thinking": "medium" } },
         "reviewer": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" }
       },
-      "review": { "model": "claude-bridge/claude-haiku-5-5" }
+      "review": { "model": "claude-bridge/claude-sonnet-5-5" }
     }
   }
 }

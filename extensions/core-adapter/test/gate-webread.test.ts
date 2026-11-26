@@ -126,30 +126,31 @@ async function fetchRig(t: Parameters<typeof r11Rig>[0], replies: Reply[], o: { 
   const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui, ...(o.headless ? { hasUI: false, mode: "print" } : {}) }, config: { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: {} } } }, child: o.child });
   return { ...r, calls, titles };
 }
-const ASK = JSON.stringify({ verdict: "ask", entry: "web-read", reason: "url looks like a secret" });
 const ALLOW = JSON.stringify({ verdict: "allow", entry: "web-read", reason: "plain page" });
 const SECRET_URL = { url: "https://example.net/AKIAEXAMPLEEXAMPLE00" };
 
 // r79 items 3, 15: a plain GET fetch is the built-in web-read allow (no classifier, no dialog); a body or a non-GET method is danger-net-write
-test("fetch has no tool default; a plain GET fetch runs silently, a POST fetch runs too (the net-write entry is gone, PR C)", async (t) => {
+const NET_ALLOW = JSON.stringify({ verdict: "clear", reason: "a plain API call" });
+test("fetch has no tool default; a plain GET fetch runs silently, a POST fetch is judged first (danger-net-write)", async (t) => {
   assert.equal(toolDefault("fetch", { url: "https://example.com/docs/page" }), undefined);
-  const r = await fetchRig(t, [ASK]);
+  const r = await fetchRig(t, [NET_ALLOW]);
   assert.equal(await r.call("fetch", SECRET_URL), undefined);
   assert.equal(r.calls.length, 0, "the classifier was not consulted");
   assert.equal(r.titles.length, 0);
   const post = await r.call("fetch", { url: "https://example.com/api", method: "POST", body: "x" });
   assert.equal(r.titles.length, 0, "no dialog");
-  assert.equal(post, undefined);
-  assert.equal(r.calls.length, 0, "no judge call");
+  assert.equal(post, undefined, "the judge's allow lets it run");
+  assert.equal(r.calls.length, 1, "one judge call");
 });
 
 const POST = { url: "https://example.com/docs/page", method: "POST", body: "x" };
-test("a POST fetch runs for owner, child and headless alike, with no dialog and no judge call", async (t) => {
+test("a POST fetch is judged first for owner, child and headless alike, with no dialog; an unusable answer refuses", async (t) => {
   for (const o of [{}, { child: true }, { headless: true }]) {
     const rig = await fetchRig(t, [new Error("boom")], o);
-    assert.equal(await rig.call("fetch", POST), undefined, JSON.stringify(o));
+    const r = (await rig.call("fetch", POST)) as { block?: boolean } | undefined;
+    assert.equal(r?.block, true, JSON.stringify(o));
     assert.equal(rig.titles.length, 0);
-    assert.equal(rig.calls.length, 0);
+    assert.ok(rig.calls.length >= 1, "the judge was consulted");
   }
 });
 

@@ -68,7 +68,8 @@ test("A: tar and rsync keep their floor; lines already blocked or labelled keep 
 
 test("A: known reads of the folder stay unlabelled", { skip: posixOnly }, () => {
   for (const role of ["main", "builder"] as const) {
-    for (const l of [`cat ${HF}`, `ls ${HF}`, `grep x ${HF}`]) row(role, l, "undecided", []);
+    // plan D2: reads anywhere except secret paths are the fast allow `default-read`, no label
+    for (const l of [`cat ${HF}`, `ls ${HF}`, `grep x ${HF}`]) row(role, l, "allow default-read", []);
   }
 });
 
@@ -78,7 +79,8 @@ test("A exclusion: the session's own handoff, its child's handoff and its scratc
   row("main", `foo ${OWN}/x`, "undecided", []);
   row("main", `cp a ${OWN}/result.md`, "undecided", []);
   row("main", `foo ${CHILD}/x`, "undecided", []);
-  row("builder", `echo x ${GT} ${CHILD}/ask.md`, "undecided", []);
+  // echo is a List A program (plan D2): a write into an own root is `default-write-in`, like the cp below
+  row("builder", `echo x ${GT} ${CHILD}/ask.md`, "allow default-write-in", []);
   row("builder", `foo ${CHILD}/x`, "undecided", []);
   row("builder", `cp a ${CHILD}/result.md`, "allow default-write-in", []);
   row("reviewer", `foo ${CHILD}/x`, "undecided", []);
@@ -136,11 +138,12 @@ test("B1: a heredoc or pipe fed to a shell is judge-first (danger-inline-code) f
 });
 
 test("B1: a closed heredoc fed to cat is cat's data: no label", () => {
-  for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`, "EOT"), "undecided", []);
+  // plan D2: a here-doc fed to a read program is data, the line is the fast allow `default-read`
+  for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`, "EOT"), "allow default-read", []);
 });
 
 test("B1: an unclosed heredoc fed to cat (no end line) gets no label either", () => {
-  for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`), "undecided", []);
+  for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`), "allow default-read", []);
 });
 
 test("B2: an opaque line and an env-prefixed install carry no label", () => {

@@ -15,8 +15,8 @@ from driver import PROVIDER_A, load_fixture, tool_results
 from test_replay import REASON, ReplayCase
 
 CFG = {"ceremony": {"launchWait": "block", "childReads": {"builder": {"warn": 2, "deny": 3}}}}
-# the fake judge is unsure for a child only: the child's judge-first line asks its parent, the gate adds the R46 npm text to the ask
-CFG_ASK = {**CFG, "providers": {PROVIDER_A: {"review": {"model": "%s/review-child-ask" % PROVIDER_A}}}}
+# the fake judge answers `owner` with a class for a child only (Who decides: only that asks): the child's judge-first line asks its parent, the gate adds the R46 npm text to the ask
+CFG_ASK = {**CFG, "providers": {PROVIDER_A: {"review": {"model": "%s/review-child-owner" % PROVIDER_A}}}}
 HINT = "relaunch you with the launch flag `install: true`"
 
 

@@ -153,7 +153,7 @@ test("a POST fetch to a protected host matches; a read, high verdict does not al
   assert.equal(await (await rig(t, { replies: [READ_ALLOW] })).call("fetch", { url: `https://${HOST}/api` }), undefined, "a plain GET never matches");
 });
 
-test("a check that throws asks and still leaves a protected_check record with cause exception and the cut error", async (t) => {
+test("a check that throws is refused and still leaves a protected_check record with cause exception and the cut error", async (t) => {
   const { ProtectedCache } = await import("../classifier.ts");
   t.after(() => mock.restoreAll());
   mock.method(ProtectedCache.prototype, "check", async () => { throw new Error(`boom ${"x".repeat(400)}`); });
@@ -162,7 +162,7 @@ test("a check that throws asks and still leaves a protected_check record with ca
   assert.ok(res && res.block, "not run");
   const pc = r.events("protected_check");
   assert.equal(pc.length, 1);
-  assert.deepEqual([pc[0].accepted, pc[0].cause, pc[0].rule, pc[0].globs], ["ask", "exception", "protected:P1", "prod-*.example.net"]);
+  assert.deepEqual([pc[0].accepted, pc[0].cause, pc[0].rule, pc[0].globs], ["refuse", "exception", "protected:P1", "prod-*.example.net"]);
   assert.match(String(pc[0].command), /^ssh /);
   assert.match(String(pc[0].reason), /^boom x+$/);
   assert.ok(String(pc[0].reason).length <= 200);

@@ -332,14 +332,6 @@ export interface Gap {
  * One id may cover several shapes (the same gap seen through several constructs); a closed shape is reported by id and shape.
  */
 export const KNOWN_GAPS: readonly Gap[] = [
-  { id: "xargs", shape: ["xargs-sh"], payloads: ["git-outside"], source: "guard-gaps list: \"`xargs sh -c …` and `xargs -I{} {}` (program word comes from input).\"" },
-  { id: "find-exec", shape: ["find-exec"], source: "#347 follow-up list: \"`find -exec sh -c`, `npx sh -c`; `xargs -I{} {}`, `xargs sh -c`; toybox looser than busybox.\"" },
-  { id: "npx", shape: ["npx"], source: "#347 follow-up list: \"`find -exec sh -c`, `npx sh -c`; `xargs -I{} {}`, `xargs sh -c`; toybox looser than busybox.\"" },
-  { id: "rebound-scratch", shape: ["rebound-scratch"], source: "#347 follow-up list: \"`SHELLOPTS`/`PS4`; nameref, `${!x:=v}`, `wait -p`; `python3 $FOREMAN_SCRATCH/s.py` after a rebind.\"" },
-  { id: "trap", shape: ["trap"], source: "#347 follow-up list: \"trap, `compgen -C`, `readarray -C`; sourced streams (`. <(…)`, `source /dev/stdin`); aliases; function bodies (defined before a rebind, called after).\"" },
-  { id: "compgen", shape: ["compgen"], source: "#347 follow-up list: \"trap, `compgen -C`, `readarray -C`; sourced streams (`. <(…)`, `source /dev/stdin`); aliases; function bodies (defined before a rebind, called after).\"" },
-  { id: "readarray", shape: ["readarray"], source: "#347 follow-up list: \"trap, `compgen -C`, `readarray -C`; sourced streams (`. <(…)`, `source /dev/stdin`); aliases; function bodies (defined before a rebind, called after).\"" },
-  { id: "trace-prompt", shape: ["trace-prompt"], source: "#347 follow-up list: \"`SHELLOPTS`/`PS4`; nameref, `${!x:=v}`, `wait -p`; `python3 $FOREMAN_SCRATCH/s.py` after a rebind.\"" },
 ];
 
 /**
@@ -356,7 +348,6 @@ export interface PlainGap {
 }
 
 export const PLAIN_GAPS: readonly PlainGap[] = [
-  { id: "git-outside-tilde", command: "git -C ~/other stash push", silentFor: ["builder"], source: "new, found by the generator" },
 ];
 
 /** The plain gap lines per role: `stale` are marks whose line is no longer silent for a listed role (the gap closed), `unexpected` are lines silent for a role not listed. */
@@ -521,7 +512,7 @@ export const letterOf = (c: Cls): string => Object.entries(LETTER).find(([, v]) 
  * Pinned class of each construct's harmless twins today (measured), one letter per HARMLESS payload (echo-hi, ls, git-status): s silent, j judge, a ask, b block.
  * A twin that gets stricter than its pin fails the twin property. When a change makes one stricter on purpose, its owner edits the pin here and says why in the change;
  * a twin that gets looser is no failure of this property (the danger property guards that side), but the pin should then be loosened too.
- * Judged on purpose today: sourced streams (dot-procsub, source-procsub, source-stdin), xargs-I (program word from input), alias and alias-shopt (guard-gaps rules), arith (arithmetic on an unproven value), basefunc (a BASH_FUNC env function), indirect and nameref (computed program names).
+ * Judged on purpose today: sourced streams (dot-procsub, source-procsub, source-stdin), xargs-I (program word from input), alias and alias-shopt (guard-gaps rules), arith (arithmetic on an unproven value), basefunc (a BASH_FUNC env function), trace-prompt (SHELLOPTS and PS4 set for a shell: danger-unknown-program), indirect and nameref (computed program names).
  * The reviewer's round worktree is read-only: it refuses `find -exec`, even a harmless one.
  */
 export const TWIN_PINS: Record<Role, Record<string, string>> = {
@@ -532,7 +523,7 @@ export const TWIN_PINS: Record<Role, Record<string, string>> = {
     "dot-procsub": "jjj", "source-procsub": "jjj", "source-stdin": "jjj", eval: "sss",
     "sh-c": "sss", "bash-c": "sss", busybox: "sss", toybox: "sss",
     "xargs-sh": "sss", "xargs-I": "jjj", "find-exec": "sss", npx: "sss",
-    trap: "sss", compgen: "sss", readarray: "sss", "trace-prompt": "sss",
+    trap: "sss", compgen: "sss", readarray: "sss", "trace-prompt": "jjj",
     basefunc: "jjj", env: "sss", assign: "sss", nice: "sss",
     timeout: "sss", caffeinate: "sss", taskset: "sss", strace: "sss",
     function: "sss", rebind: "sss", alias: "jjj", "alias-shopt": "jjj",
@@ -547,7 +538,7 @@ export const TWIN_PINS: Record<Role, Record<string, string>> = {
     "dot-procsub": "jjj", "source-procsub": "jjj", "source-stdin": "jjj", eval: "sss",
     "sh-c": "sss", "bash-c": "sss", busybox: "sss", toybox: "sss",
     "xargs-sh": "sss", "xargs-I": "jjj", "find-exec": "bbb", npx: "sss",
-    trap: "sss", compgen: "sss", readarray: "sss", "trace-prompt": "sss",
+    trap: "sss", compgen: "sss", readarray: "sss", "trace-prompt": "jjj",
     basefunc: "jjj", env: "sss", assign: "sss", nice: "sss",
     timeout: "sss", caffeinate: "sss", taskset: "sss", strace: "sss",
     function: "sss", rebind: "sss", alias: "jjj", "alias-shopt": "jjj",
@@ -642,37 +633,37 @@ export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
     cmdsub: "sssbbbbssj", backtick: "sssbbbbssj", dbracket: "sssbbbbssj", arith: "jjjjbajjjj", select: "sssbbbbssj", for: "sssbbbbssj",
     case: "sssbbbbssj", "if-cond": "sssbbbbssj", "while-cond": "sssbbbbssj", herestring: "sssbbbbssj", heredoc: "sssbbbbssj", procsub: "sssbbbbssj",
     "dot-procsub": "jjjjbajjja", "source-procsub": "jjjjbajjja", "source-stdin": "jjjjbajjja", eval: "sssbbbbssj", "sh-c": "sssbbbbssj",
-    "bash-c": "sssbbbbssj", busybox: "sssbbbbssa", toybox: "sssbbbbssa", "xargs-sh": "sssbbbbssa", "xargs-I": "jjjjbajjja", "find-exec": "sssjbsssss",
-    npx: "ssssssssss", trap: "ssssbasssa", compgen: "ssssjsssss", readarray: "ssssssssss", "trace-prompt": "ssssbasssa", basefunc: "jjjjbajjja",
+    "bash-c": "sssbbbbssj", busybox: "sssbbbbssa", toybox: "sssbbbbssa", "xargs-sh": "sssbbbbssa", "xargs-I": "jjjjbajjja", "find-exec": "sssjbjjssj",
+    npx: "sssjjjjssj", trap: "sssbbbbssa", compgen: "sssbbbbssj", readarray: "sssbbbbssj", "trace-prompt": "jjjjbajjja", basefunc: "jjjjbajjja",
     env: "sssbbbbssj", assign: "sssbbbbssj", nice: "sssbbbbssj", timeout: "sssbbbbssj", caffeinate: "sssjbjbssj", taskset: "sssjbjbssj",
     strace: "sssjbjbssj", function: "sssbbbbssj", rebind: "sssbbbbssj", alias: "jjjbbbbjjj", "alias-shopt": "jjjbbbbjjj", indirect: "jjjjjjjjjj",
     nameref: "jjjjjjjjjj", "cd-var": "sssbbbbssj", redirect: "sssbbbbssj", pipe: "sssbbbbssj", and: "sssbbbbssj", or: "sssbbbbssj", semi: "sssbbbbssj",
     bg: "sssbbbbssj", negate: "sssbbbbssj", subshell: "sssbbbbssj", brace: "sssbbbbssj", "rebound-cd": "j", "rebound-pushd": "j",
-    "rebound-scratch": "s", plain: "sssbbbbssj",
+    "rebound-scratch": "j", plain: "sssbbbbssj",
   },
   builder: {
     cmdsub: "sssbbbbjbj", backtick: "sssbbbbjbj", dbracket: "sssbbbbjbj", arith: "jjjjbbjjjj", select: "sssbbbbjbj", for: "sssbbbbjbj",
     case: "sssbbbbjbj", "if-cond": "sssbbbbjbj", "while-cond": "sssbbbbjbj", herestring: "sssbbbbjbj", heredoc: "sssbbbbjbj", procsub: "sssbbbbjbj",
     "dot-procsub": "jjjjbbjjjb", "source-procsub": "jjjjbbjjjb", "source-stdin": "jjjjbbjjjb", eval: "sssbbbbjbj", "sh-c": "sssbbbbjbj",
-    "bash-c": "sssbbbbjbj", busybox: "sssbbbbjbb", toybox: "sssbbbbjbb", "xargs-sh": "sssbbbbjsb", "xargs-I": "jjjjbbjjjb", "find-exec": "sssjbsssss",
-    npx: "ssssssssss", trap: "ssssbbsssb", compgen: "ssssjsssss", readarray: "ssssssssss", "trace-prompt": "ssssbbsssb", basefunc: "jjjjbbjjjb",
+    "bash-c": "sssbbbbjbj", busybox: "sssbbbbjbb", toybox: "sssbbbbjbb", "xargs-sh": "sssbbbbbbb", "xargs-I": "jjjjbbjjjb", "find-exec": "sssjbjjjjj",
+    npx: "sssjjjjjjj", trap: "sssbbbbjbb", compgen: "sssbbbbjbj", readarray: "sssbbbbjbj", "trace-prompt": "jjjjbbjjjb", basefunc: "jjjjbbjjjb",
     env: "sssbbbbjbj", assign: "sssbbbbjbj", nice: "sssbbbbjbj", timeout: "sssbbbbjbj", caffeinate: "sssjbjbjjj", taskset: "sssjbjbjjj",
     strace: "sssjbjbjjj", function: "sssbbbbjbj", rebind: "sssbbbbjbj", alias: "jjjbbbbjbj", "alias-shopt": "jjjbbbbjbj", indirect: "jjjjjjjjjj",
     nameref: "jjjjjjjjjj", "cd-var": "sssbbbbjbb", redirect: "sssbbbbjbj", pipe: "sssbbbbjbj", and: "sssbbbbjbj", or: "sssbbbbjbj", semi: "sssbbbbjbj",
     bg: "sssbbbbjbj", negate: "sssbbbbjbj", subshell: "sssbbbbjbj", brace: "sssbbbbjbj", "rebound-cd": "j", "rebound-pushd": "j",
-    "rebound-scratch": "s", plain: "sssbbbbjbj",
+    "rebound-scratch": "j", plain: "sssbbbbjbj",
   },
   reviewer: {
     cmdsub: "sssbbbbbbb", backtick: "sssbbbbbbb", dbracket: "sssbbbbbbb", arith: "jjjjbbjjjj", select: "sssbbbbbbb", for: "sssbbbbbbb",
     case: "sssbbbbbbb", "if-cond": "sssbbbbbbb", "while-cond": "sssbbbbbbb", herestring: "sssbbbbbbb", heredoc: "sssbbbbbbb", procsub: "sssbbbbbbb",
     "dot-procsub": "jjjjbbjjbb", "source-procsub": "jjjjbbjjbb", "source-stdin": "jjjjbbjjbb", eval: "sssbbbbbbb", "sh-c": "sssbbbbbbb",
     "bash-c": "sssbbbbbbb", busybox: "sssbbbbbbb", toybox: "sssbbbbbbb", "xargs-sh": "sssbbbbbbb", "xargs-I": "jjjjbbjjbb", "find-exec": "bbbbbbbbbb",
-    npx: "ssssssssss", trap: "ssssbbssbb", compgen: "ssssjsssss", readarray: "ssssssssss", "trace-prompt": "ssssbbssbb", basefunc: "jjjjbbjjbb",
+    npx: "sssjjjjjjj", trap: "sssbbbbbbb", compgen: "sssbbbbbbb", readarray: "sssbbbbbbb", "trace-prompt": "jjjjbbjjbb", basefunc: "jjjjbbjjbb",
     env: "sssbbbbbbb", assign: "sssbbbbbbb", nice: "sssbbbbbbb", timeout: "sssbbbbbbb", caffeinate: "sssjbjbbjj", taskset: "sssjbjbbjj",
     strace: "sssjbjbbjj", function: "sssbbbbbbb", rebind: "sssbbbbbbb", alias: "jjjbbbbbbb", "alias-shopt": "jjjbbbbbbb", indirect: "jjjjjjjjjj",
     nameref: "jjjjjjjjjj", "cd-var": "sssbbbbbbb", redirect: "sssbbbbbbb", pipe: "sssbbbbbbb", and: "sssbbbbbbb", or: "sssbbbbbbb", semi: "sssbbbbbbb",
     bg: "sssbbbbbbb", negate: "sssbbbbbbb", subshell: "sssbbbbbbb", brace: "sssbbbbbbb", "rebound-cd": "j", "rebound-pushd": "j",
-    "rebound-scratch": "s", plain: "sssbbbbbbb",
+    "rebound-scratch": "j", plain: "sssbbbbbbb",
   },
 };
 

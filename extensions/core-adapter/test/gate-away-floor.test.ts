@@ -9,14 +9,14 @@ import { OWNER_AWAY_TEXT } from "../presencewait.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
-async function awayRig(t: { after(fn: () => void | Promise<void>): void }, child: boolean, ctx?: Record<string, unknown>) {
+async function awayRig(t: { after(fn: () => void | Promise<void>): void }, child: boolean, ctx?: Record<string, unknown>, extraConfig: Record<string, unknown> = {}) {
   const dir = fs.realpathSync(mkTestTmp("pf-away-"));
   t.after(() => rmTestTmp(dir));
   const log = path.join(dir, "probes.log");
   const script = path.join(dir, "probe.cjs"); // node, not sh: the probe also has to run under cmd.exe
   fs.writeFileSync(script, `require("node:fs").appendFileSync(${JSON.stringify(log)}, "probe\\n");\nconsole.log(99999);\n`);
   const command = `"${process.execPath}" "${script}"`;
-  const r = await r11Rig(t, {}, { child, ...(ctx ? { ctx } : {}), config: { presence: { enabled: true, awayAfterMinutes: 1, command } } });
+  const r = await r11Rig(t, {}, { child, ...(ctx ? { ctx } : {}), config: { presence: { enabled: true, awayAfterMinutes: 1, command }, ...extraConfig } });
   const probes = (): number => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0);
   return { r, probes };
 }
@@ -49,7 +49,9 @@ test("away (owner): a real ask opens the dialog and the owner's answer applies; 
   const opened: string[] = [];
   const answers = ["allow once", undefined];
   const ui = { notify: () => undefined, confirm: async () => false, setStatus: () => undefined, setWidget: () => undefined, select: async (title: string) => (opened.push(title), answers.shift()), input: async () => undefined };
-  const { r } = await awayRig(t, false, { ui });
+  // the judge names the owner as the one to ask (a refusal or a missing judge asks nobody)
+  const modelRegistry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "owner", class: "data-loss", reason: "deletes a branch" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  const { r } = await awayRig(t, false, { ui, modelRegistry }, { providers: { fake: { review: { model: "m" }, roles: {} } } });
   const keepAlive = setInterval(() => undefined, 50); // the probe child is detached on posix, attached on win32, and unref'd: hold the loop while the gate awaits it
   try {
     assert.equal(await r.call("bash", { command: "git branch -D old-one" }), undefined);

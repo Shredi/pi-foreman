@@ -74,7 +74,8 @@ test("merge words as data are not refused", { skip: posixOnly }, () => {
   const allowed: Array<[string, Res]> = [
     ["git commit -m \"gh pr merge\"", { allow: true, rule: "default-git-commit", layer: "default" }],
     ["grep -r \"gh pr merge\" docs", { allow: true, rule: "default-read", layer: "default" }],
-    ["echo gh pr merge 1", {}],
+    // echo is a List A read program (plan D2): the fast allow decides it, the words are its data
+    ["echo gh pr merge 1", { allow: true, rule: "default-read", layer: "default" }],
   ];
   for (const [l, want] of allowed) for (const role of ["builder", "foreman"]) assert.deepEqual(res(run(l, role)), want, `${role}: ${l}`);
 });

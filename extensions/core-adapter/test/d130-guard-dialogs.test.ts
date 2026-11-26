@@ -20,7 +20,7 @@ async function until<X>(f: () => X | undefined | false, ms = 4000): Promise<X> {
   }
   throw new Error("timed out");
 }
-const ESCALATE = JSON.stringify({ verdict: "unsure", reason: "cannot tell" });
+const ESCALATE = JSON.stringify({ verdict: "owner", class: "data-loss", reason: "cannot tell" });
 const registry = (reply: string) => ({ find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) });
 const config = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: { builder: { model: "fake/builder" } } } } };
 /** A select that never answers: it ends only through the abort signal (`undefined`, a dismissal). */
@@ -70,4 +70,14 @@ test("the approval dialog for a child run's call: the file keeps tool and summar
   assert.equal(kept.length, 1, "a dialog cut off by the shutdown stays for the restart");
   assert.equal(kept[0].tool, "bash");
   assert.match(reAskText(kept), /call to bash \(pip install requests\)/);
+});
+
+test("the session's own guard: a judge that answers unsure refuses the call; no dialog opens and none is stored", async (t: T) => {
+  const opened: string[] = [];
+  const r = await r11Rig(t, {}, { ctx: { ui: ui(hanging(opened)), modelRegistry: registry(JSON.stringify({ verdict: "unsure", reason: "cannot tell" })) }, config });
+  const res = await r.call("bash", { command: "git branch -D old-branch" });
+  assert.equal(res?.block, true);
+  assert.match(String(res?.reason), /pi-foreman: refused: .*Nobody is asked/);
+  assert.deepEqual(opened, []);
+  assert.equal(stored(r.agentDir, r.sessionId).length, 0);
 });

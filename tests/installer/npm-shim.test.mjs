@@ -78,7 +78,8 @@ test("a real, non-dry setup.mjs run on a copied checkout with a stale node_modul
     fs.mkdirSync(path.join(checkout, "node_modules"));
     const marker = path.join(checkout, "node_modules", ".package-lock.json");
     fs.writeFileSync(marker, "{}");
-    const old = new Date(Date.now() - 3600_000);
+    // copyFileSync may keep the source mtime (Windows), so age the marker relative to the copied lock, not the wall clock
+    const old = new Date(fs.statSync(path.join(checkout, "package-lock.json")).mtimeMs - 3600_000);
     fs.utimesSync(marker, old, old);
     const fake = fakeRealNpm(base);
     const agentDir = path.join(base, "agent");

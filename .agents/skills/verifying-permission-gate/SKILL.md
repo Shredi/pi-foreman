@@ -1,6 +1,6 @@
 ---
 name: verifying-permission-gate
-description: "Checks that a shell line holding a dangerous command never runs without a block, a judge look or an owner ask, whatever construct hides it, after a change to extensions/core-adapter/shellast.ts, effects.ts, floors.ts, classifier.ts, gate.ts, defaults.ts or the tool_call handler in index.ts. Use when editing those files, or when asked to 'verify the permission gate', 'rerun the gate check' or 'sweep the gate seeds'. Not for a security review of a diff and not for the main session's own rules."
+description: "Checks that a shell line holding a dangerous command never runs without a block, a judge look or an owner ask, whatever construct hides it, after a change to extensions/core-adapter/shellast.ts, effects.ts, floors.ts, classifier.ts, gate.ts, defaults.ts or the tool_call handler in index.ts. Use when editing those files, or when asked to 'verify the permission gate', 'rerun the gate check' or 'sweep the gate seeds'. Also checks the order-dependent child ask flow (judge answer, rules file, parent present, away, restarted or closed, owner answer, 15-minute ask deadline, parked answer) after a change to childask.ts, childaskpark.ts, gatedialog.ts or the child branch of decideByDialog in index.ts, with a TLA+ model. Not for a security review of a diff and not for the main session's own rules."
 ---
 
 # Verifying the permission gate
@@ -27,6 +27,35 @@ A seeded generator test on the real entry point `gateEvaluate`: the question is 
 ## Marks
 
 Open gaps are expected-fail marks with an id and a source: `KNOWN_GAPS` (shapes found through constructs) and `PLAIN_GAPS` (plain lines, evaluated per role). `git-outside-tilde` is the plain line `git -C ~/other stash push`, silent for a builder today (new, found by the generator); the check fails with "gap git-outside-tilde is closed" once it stops being silent.
+
+## The child ask flow model
+
+Rule: no call runs without a clear verdict (on a protected target also a route to the parent), an allow rule or the owner's yes for that very ask; an answer applies only to the call it was asked for (an allow once is not carried, a parked answer covers only the first ask of the resumed run and only the same input hash); every ask ends (answer, gone, timeout; an away owner means the deadline, the child's wait has no away step) and the child is told.
+
+Harm: a call runs on a verdict that was not clear, on another call's answer, or an ask stays open for ever with the child stuck.
+
+Tool and why: a TLA+ model (`model/PermissionFlow.tla`, checked by TLC) because the question is every order of judge answers, parent states, run ends, resumes and clock ticks, which a unit test covers only where someone thought of it. It can drift from the code; the unit tests in `child-ask-deadline.test.ts` and its neighbours call the real code and are the main check.
+
+Covered: `childask.ts` (`writeChildAsk`, `ChildAskWatch`, `awaitChildRuling`), `childaskpark.ts`, `gatedialog.ts` (`DEFAULT_ASK_TIMEOUT_MS`), `presencewait.ts` (the child's texts), the child branch of `decideByDialog` and `childAskRoute` in `index.ts`, the protected-target route check. Properties: P1 `RunsAuthorised`, P2 `AnswerOnlyForItsCall`, P3 `WaitingHasOpenAsk` and `AskEnds`.
+
+Bound (`.cfg`): 2 calls (call 2 is on a protected target and gets one attempt, call 1 two), 1 judge read round, 2 asks, 1 tick to the deadline; 418220 distinct states, about 15 s on a 10-core Mac with Java 25. The judge words unsure and invalid_verdict are the same branch as refuse and are not separate. Left out: a resume while an ask is still open, several children, the repeat stop, the judge's own quality.
+
+Run (jar and Java as in the `verifying-review-gates` skill, "The model (TLC)"; CI runs it as a second step of the Linux job `review-gates-model`):
+
+```
+cd .agents/skills/verifying-permission-gate/model
+java -cp ~/.cache/tla/tla2tools.jar tlc2.TLC -config PermissionFlow.cfg -workers auto -metadir "$(mktemp -d)" PermissionFlow.tla
+```
+
+Green reads `Model checking completed. No error has been found.`
+
+Seen failing (scratch copies, TLC v1.7.4, Java 25):
+- `JudgeAnswer` ran a verdict `other` like `clear`: `Invariant RunsAuthorised is violated` after `Attempt`, `JudgeAnswer` (116 distinct states).
+- `KeyMatches` dropped the input hash (`TRUE`): `Invariant AnswerOnlyForItsCall is violated` (27147 distinct states): a parked answer for one call ran another.
+- `Gone` disabled: `Temporal properties were violated` (`AskEnds`; 211380 distinct states): a closed parent leaves the ask open.
+- `Close` recorded an owner run when an ask timed out (`end \in {"allow", "timeout"}`): green before the owner-yes check in `RunsAuthorised` was added (589992 distinct states), `Invariant RunsAuthorised is violated` after it (1935 distinct states): a deadline read as an allow.
+
+Drift: on a change to the files above reread each action comment of `PermissionFlow.tla` against the diff and change the model in the same change.
 
 ## Left out
 

@@ -41,7 +41,9 @@ const CHILD = { child: true, role: "builder" };
 
 test("default-read: the effects.ts read class, pipes and cd inside the worktree", () => {
   for (const l of ["ls", "ls -la src", "cat a.txt", "head -n 3 a.txt | wc -l", "grep -rn foo src", "egrep -n x a.txt", "fgrep x a.txt", "grep -E x a.txt", "rg foo src", "cd src && ls", `cat ${shPath(path.join(base, "pi", "x.d.ts"))}`]) assert.match(rule(sh(l)) ?? "", /^default-read/, l);
-  for (const l of ["egrep -R x .", "grep -ER x .", "fgrep --dereference-recursive x .", "grep -R x .", "rg -L x .", "find . -exec ls {} +", "diff -r a b", "cat /etc/hosts", "cd /etc && ls"]) assert.notEqual(kind(sh(l)), "allow", l);
+  for (const l of ["egrep -R x .", "grep -ER x .", "fgrep --dereference-recursive x .", "grep -R x .", "rg -L x .", "find . -exec ls {} +", "diff -r a b", "cd /etc && ls"]) assert.notEqual(kind(sh(l)), "allow", l);
+  // plan D2 (List A): a read anywhere except secret paths is a default, so `cat /etc/hosts` runs (pin switched from "no default")
+  assert.match(rule(sh("cat /etc/hosts")) ?? "", /^default-read/);
 });
 
 test("default-build-test: the manifest's runners at the worktree root only", () => {
@@ -121,8 +123,10 @@ test("default-gh-read: read-only gh/glab, no method, field, input or graphql; ru
 });
 
 test("opaque never defaults: every OpaqueReason, as a line and as a segment", () => {
-  const lines = ["ls $UNSET", "ls *.ts", "cat <(ls)", 'bash -c "$X"', "f() { ls; }", "alias l=ls", "FOO=bar ls", "bash < a.txt", "echo a | xargs ls", "tee a.txt", "env -S x ls", "ls \"", "powershell -c ls", "cmd /c dir", "wsl ls", "./run.ps1", "x.bat", "[[ -f a ]] && ls", "ls ~", "time -o x ls"];
+  const lines = ["ls $UNSET", "cat <(ls)", 'bash -c "$X"', "f() { ls; }", "alias l=ls", "FOO=bar ls", "bash < a.txt", "echo a | xargs ls", "tee a.txt", "env -S x ls", "ls \"", "powershell -c ls", "cmd /c dir", "wsl ls", "./run.ps1", "x.bat", "[[ -f a ]] && ls", "ls ~", "time -o x ls"];
   for (const l of lines) assert.notEqual(kind(sh(l)), "allow", l);
+  // plan D2: a glob inside cwd is a read operand for a read program, so `ls *.ts` runs (pin switched)
+  assert.match(rule(sh("ls *.ts")) ?? "", /^default-read/);
   const reasons: OpaqueReason[] = ["unresolved_var", "glob_target", "process_substitution", "nonliteral_script", "depth", "parse_error", "foreign_shell", "function_def", "shell_builtin", "assignment", "stdin_fed", "xargs_stdin", "writing_wrapper", "wrapper_option", "unsupported"];
   const c: DefaultCtx = { roots: roots(), facts: facts(), platform: process.platform, cwd: wt };
   for (const opaque of reasons) {
@@ -136,7 +140,9 @@ test("opaque never defaults: every OpaqueReason, as a line and as a segment", ()
 });
 
 test("wrappers, heredocs and path-qualified programs are no default", () => {
-  for (const l of ["env ls", "nohup ls", "xargs ls", "command ls", "./ls", "/bin/ls", "cat <<EOF\nx\nEOF", "bash -c 'ls'"]) assert.notEqual(kind(sh(l)), "allow", l);
+  for (const l of ["env ls", "nohup ls", "xargs ls", "command ls", "./ls", "/bin/ls", "bash -c 'ls'"]) assert.notEqual(kind(sh(l)), "allow", l);
+  // plan D2: a here-doc fed to a read program is data, so `cat <<EOF` runs (pin switched)
+  assert.match(rule(sh("cat <<EOF\nx\nEOF")) ?? "", /^default-read/);
   assert.equal(rule(sh("timeout 5 ls")), "default-read");
 });
 
