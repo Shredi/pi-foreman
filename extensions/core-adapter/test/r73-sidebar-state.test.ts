@@ -10,6 +10,13 @@ import type { Registry } from "../session.ts";
 import { trackedTmp } from "./_tmpbase.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(pred: () => boolean, ms = 5_000): Promise<boolean> {
+  for (let waited = 0; waited < ms; waited += 5) {
+    if (pred()) return true;
+    await sleep(5);
+  }
+  return pred();
+}
 const tmp = () => trackedTmp("r73-");
 const base = { done: false, owner: false, turn: false, children: false, externalWaits: false };
 const run = { launchId: "L", role: "builder", rung: "model" as const, model: null, state: "working" as const, tokensIn: 0, tokensOut: 0, cost: 0, startedAt: 0, endedAt: null as number | null };
@@ -44,13 +51,14 @@ test("the ticker follows the push: it ticks while the template is pushed and sto
   const out = { json: withTpl };
   const { s, reports } = rig(out);
   s.request();
-  await sleep(80);
-  assert.ok(reports.filter((r) => Object.keys(r).join() === "fm_hd").length >= 2, "template pushed: ticking");
+  const ticks = () => reports.filter((r) => Object.keys(r).join() === "fm_hd").length;
+  await waitFor(() => ticks() >= 2);
+  assert.ok(ticks() >= 2, "template pushed: ticking");
   out.json = noTpl;
   s.request();
-  await sleep(40);
+  await waitFor(() => reports.length > 0 && reports[reports.length - 1].fm_hd === "static job");
   const n = reports.length;
-  await sleep(80);
+  await sleep(100); // ten tick periods of 10 ms: a still-running ticker would report again
   assert.equal(reports.length, n, "no template: no tick");
   s.stop();
 });
@@ -59,11 +67,11 @@ test("no frozen spinner frame: when the ticking stops the static fm_hd is sent a
   const out = { json: withTpl };
   const { s, reports } = rig(out);
   s.request();
-  await sleep(60);
+  await waitFor(() => reports.some((r) => /^[ab] job$/.test(String(r.fm_hd))));
   assert.ok(reports.some((r) => /^[ab] job$/.test(String(r.fm_hd))), "a frame was shown");
   out.json = noTpl;
   s.request();
-  await sleep(60);
+  await waitFor(() => reports.length > 0 && reports[reports.length - 1].fm_hd === "static job");
   const last = reports[reports.length - 1];
   assert.equal(last.fm_hd, "static job", "the last report carries the static header, not a frame");
   s.stop();
