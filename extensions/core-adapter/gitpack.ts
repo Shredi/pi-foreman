@@ -198,7 +198,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_status",
     op: "pr_status",
     label: "PR status",
-    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, openThreads (the open review threads: count, first lines; only when there are any), and review (the head reviewed, or not reviewed with the last PASS head, or no review record, or not available in a child session). Read-only. ${PR_CAPS}`,
+    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, openThreads (the open review threads: count, first lines; present whenever the thread query worked, with open 0 when none, absent when the host rejected the field), and review (the head reviewed, or not reviewed with the last PASS head, or no review record, or not available in a child session). Read-only. ${PR_CAPS}`,
     parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR)."), ...where }, additionalProperties: false },
     foremanOnly: false,
   },
