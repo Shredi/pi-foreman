@@ -250,7 +250,7 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
       if (dir !== "write") continue;
       const abs = resolveWord(platform, cwd, w);
       if (abs !== null && sanctioned(abs)) continue;
-      return deny("child-reviewer-write", `Your role writes files only with the write tool into your scratch dir (${roots.scratch[0] ?? "$FOREMAN_SCRATCH"}) or your output dir (${roots.out ?? "$FOREMAN_OUT"}), never into the worktree or elsewhere. Refused: ${abs ?? w}. Write probe and test data there, with a literal path.`);
+      return deny("child-reviewer-write", `Your role writes files only with the write tool into your scratch dir (${roots.scratch[0] ?? "$FOREMAN_SCRATCH"}) or your output dir (${roots.out ?? "$FOREMAN_OUT"}), never into the worktree or elsewhere. Refused: ${abs ?? String(w)}. Write probe and test data there, with a literal path.`);
     }
   }
   return undefined;
