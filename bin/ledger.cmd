@@ -30,5 +30,13 @@ set "PF_RC=%ERRORLEVEL%"
 if "%PF_FOUND%"=="none" for /f "delims=" %%v in ('call "%PF_PY%" %PF_PYARGS% -c "import sys; print(sys.version.split()[0])" 2^>nul') do if defined PF_PYARGS (set "PF_FOUND=%PF_PY% %PF_PYARGS% %%v") else (set "PF_FOUND=%PF_PY% %%v")
 exit /b %PF_RC%
 :run
+rem the run holds the cross-process <ledger>.lock via bin\ledger-run.mjs (Node on PATH, 22.6+); no usable node: run unlocked
+where node >nul 2>nul
+if errorlevel 1 goto direct
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
+if errorlevel 1 goto direct
+node --no-warnings --experimental-strip-types "%~dp0ledger-run.mjs" "%~dp0..\core\scripts\ledger.py" "%PF_PY%" %PF_PYARGS% -- %*
+exit /b %ERRORLEVEL%
+:direct
 "%PF_PY%" %PF_PYARGS% -E -s "%~dp0..\core\scripts\ledger.py" %*
 exit /b %ERRORLEVEL%

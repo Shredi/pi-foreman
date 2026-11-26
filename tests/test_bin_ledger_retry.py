@@ -24,6 +24,8 @@ class BinLedgerRetryTest(unittest.TestCase):
             limit = "999999" if fail_runs is None else str(fail_runs)
             fake.write_text(
                 "#!/bin/sh\n"
+                # the lock helper's read-only resolver run (python -c) resolves nothing and is no ledger.py run
+                'case "$*" in *" -c "*) exit 0;; esac\n'
                 f"echo x >> '{counter}'\n"
                 f"n=$(wc -l < '{counter}')\n"
                 f"if [ \"$n\" -le {limit} ]; then echo '{message}' >&2; exit {code}; fi\n"

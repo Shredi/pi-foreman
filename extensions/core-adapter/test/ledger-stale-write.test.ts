@@ -80,10 +80,11 @@ test("the session's own write keeps its stamp; a new ledger write passes; an edi
 
 test("ledger.py in a second process and the upsert together lose nothing", async (t) => {
   const { a, file } = await rig(t);
-  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "core", "scripts", "ledger.py");
+  // ledger.py holds no lock itself (core/ is pinned); the shim does, with the same lock file as the upsert
+  const shim = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "bin", "ledger");
   const adds = new Promise<number>((resolve) => {
-    const code = `import sys,subprocess\nfor i in range(25):\n    r=subprocess.run([sys.executable,${JSON.stringify(script)},'-f',${JSON.stringify(file)},'add','py'+str(i)],capture_output=True,text=True)\n    assert r.returncode==0,r.stderr\n`;
-    spawn("python3", ["-c", code], { stdio: "inherit" }).on("exit", (c) => resolve(c ?? 1));
+    const code = `for i in $(seq 0 24); do sh ${JSON.stringify(shim)} -f ${JSON.stringify(file)} add py$i >/dev/null || exit 1; done`;
+    spawn("sh", ["-c", code], { stdio: "inherit", env: { ...process.env, PI_FOREMAN_PYTHON: "python3" } }).on("exit", (c) => resolve(c ?? 1));
   });
   const tool = a.tool("foreman_ledger")!;
   for (let i = 0; i < 25; i++) await tool.execute(`u${i}`, { action: "upsert", item: "1", text: `item up${i}` }, undefined, undefined, a.ctx);

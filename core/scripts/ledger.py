@@ -28,7 +28,6 @@ import os
 import re
 import stat
 import sys
-import time
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -80,63 +79,6 @@ def resolve(path_arg):
         ".workflow/LEDGER-<topic>.md (writing it binds this session; never "
         "reuse another session's ledger). To continue an existing ledger on "
         "purpose, Edit it once (that binds it); `-f PATH` for one-off access.")
-
-
-LOCK_STALE_S = 10   # a lock older than this is a crashed holder's; shared with adapter/ledgerfile.ts
-LOCK_WAIT_S = 12    # longer than LOCK_STALE_S, so a crashed holder's lock is taken over before the wait ends
-
-
-class LedgerLocked(OSError):
-    pass
-
-
-def _lock_age_s(lock):
-    """(content, age in seconds) of the lock file; content is "<pid> <epoch ms>"."""
-    with open(lock, encoding="utf-8") as f:
-        content = f.read()
-    try:
-        return content, time.time() - int(content.split()[1]) / 1000.0
-    except (IndexError, ValueError):
-        return content, time.time() - os.stat(lock).st_mtime
-
-
-def _take_lock(path):
-    """Take `<ledger>.lock` by exclusive create; wait up to LOCK_WAIT_S. Stale takeover: delete the
-    lock only when its content still equals what was judged stale, then try the create again.
-    Residual race (accepted): two waiters read the same stale content, one deletes and creates,
-    the other then deletes the new lock; needs a crashed holder and two waiters in one instant."""
-    lock = path + ".lock"
-    deadline = time.time() + LOCK_WAIT_S
-    while True:
-        try:
-            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                content, age = _lock_age_s(lock)
-                if age > LOCK_STALE_S and _lock_age_s(lock)[0] == content:
-                    os.unlink(lock)
-                    continue
-            except OSError:
-                continue  # vanished between the create and the read: try again
-            if time.time() >= deadline:
-                raise LedgerLocked(f"{path} is locked by another writer ({lock}); try again")
-            time.sleep(0.02)
-            continue
-        with os.fdopen(fd, "w", encoding="utf-8") as f:  # closed before any delete (Windows)
-            f.write(f"{os.getpid()} {int(time.time() * 1000)}\n")
-        return lock
-
-
-def _release_lock(lock):
-    try:
-        os.unlink(lock)
-    except OSError:
-        pass
-
-
-def _stamp(path):
-    st = os.stat(path)
-    return (st.st_mtime_ns, st.st_size, st.st_ino)
 
 
 def split_eol(line):
@@ -313,22 +255,11 @@ def main(argv=None):
                   "(no multi-line text arguments)", file=sys.stderr)
             return 2
     try:
-        path = resolve(args.file)
-        lock = _take_lock(path)
-        try:
-            for attempt in (1, 2):
-                before = _stamp(path)
-                led = Ledger(path)
-                msg = args.fn(led, args)
-                if not msg:
-                    break
-                if attempt == 1 and _stamp(path) != before:
-                    continue  # a writer outside the lock changed the file: read and change again once
-                led.save()
-                print(msg)
-                break
-        finally:
-            _release_lock(lock)
+        led = Ledger(resolve(args.file))
+        msg = args.fn(led, args)
+        if msg:
+            led.save()
+            print(msg)
     except LedgerError as e:
         print(f"ledger: {e}", file=sys.stderr)
         return 1

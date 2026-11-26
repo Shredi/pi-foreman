@@ -198,6 +198,7 @@ import { taskLedger } from "./ledgerpath.ts";
 import { rewriteLocked, sameStamp, stampOf, type FileStamp } from "./ledgerfile.ts";
 import { citedItems, hintFailTrace, ledgerHint, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
+import { LEDGER_RUN_WAIT_MS, LedgerLockedError, RESOLVE_SNIPPET, takeLedgerLockAsync } from "./ledgerlockfs.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
@@ -7769,8 +7770,34 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
     env.CLAUDE_CODE_SESSION_ID = s.id;
     env.TMPDIR = s.markerDir;
-    const lockFile = file ?? boundLedger(s.markerDir, s.id);
-    const run = () => retryLedgerRun(() => spawner(py, ["-E", "-s", path.join(PKG_ROOT, "core", "scripts", "ledger.py"), ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
+    const coreDir = path.join(PKG_ROOT, "core", "scripts");
+    const script = path.join(coreDir, "ledger.py");
+    // The lock target is the file ledger.py will write: `-f`, else the bound ledger. ledger.py reads $LEDGER before the binding, so
+    // with it set the vendored resolver itself says which file that is (never a second resolver here); none resolves: unlocked.
+    let lockFile = file ?? boundLedger(s.markerDir, s.id);
+    if (!file && env.LEDGER) {
+      const rr = await spawner(py, ["-I", "-c", RESOLVE_SNIPPET, coreDir, ...args], { cwd: s.cwd, env, timeoutMs: 30_000 });
+      lockFile = !rr.error && !rr.timedOut && rr.code === 0 ? rr.stdout.trim() || null : null;
+    }
+    const retried = () => retryLedgerRun(() => spawner(py, ["-E", "-s", script, ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
+    // Around the whole retry loop: the in-process gate first (same-process runs queue), then the `<ledger>.lock` file lock that
+    // shim runs and rewriteLocked also take. Residual races: see ledgerlockfs.ts. A lock held past the wait runs nothing.
+    const run = lockFile
+      ? async () => {
+          let release: () => void;
+          try {
+            release = await takeLedgerLockAsync(path.resolve(s.cwd, lockFile), LEDGER_RUN_WAIT_MS);
+          } catch (err) {
+            if (err instanceof LedgerLockedError) return { code: 1, stdout: "", stderr: err.message, timedOut: false, error: undefined };
+            return retried(); // the lock file cannot be created: ledger.py reports its own failure
+          }
+          try {
+            return await retried();
+          } finally {
+            release();
+          }
+        }
+      : retried;
     const r = await (lockFile ? ledgerGate(lockFile).exclusive(run) : run());
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `ledger: ${r.error.message}` : r.timedOut ? "ledger: timed out" : "");
     return { ok: !r.error && !r.timedOut && r.code === 0, text };
