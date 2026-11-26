@@ -14,6 +14,7 @@ import { isTier } from "./ceremony.ts";
 import type { Tier, TierSource } from "./ceremony.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
+import { earlierOfStored } from "./planreview.ts";
 import { hsEmpty, hsStateOfEntry, type HsState } from "./highstakes.ts";
 import { reviewsOfEntry } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
@@ -48,6 +49,8 @@ export interface PersistedLineage {
   model: string | null;
   rounds: number;
   reviews: number;
+  /** The findings lines of a FAIL (planreview.ts earlierLinesOf); absent for a PASS or an entry from before they were kept. */
+  findings?: string[];
 }
 
 /**
@@ -211,7 +214,8 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
         const rounds = count(l?.rounds);
         const reviews = count(l?.reviews);
         if (l && typeof l.path === "string" && typeof l.hash === "string" && (l.verdict === "pass" || l.verdict === "fail") && (l.model === null || typeof l.model === "string") && rounds !== null && rounds >= 1) {
-          out.lineages.push({ path: l.path, hash: l.hash, verdict: l.verdict, model: l.model as string | null, rounds, reviews: reviews ?? rounds });
+          const earlier = l.verdict === "fail" ? earlierOfStored(l.findings) : undefined;
+          out.lineages.push({ path: l.path, hash: l.hash, verdict: l.verdict, model: l.model as string | null, rounds, reviews: reviews ?? rounds, ...(earlier ? { findings: earlier } : {}) });
         }
       }
     }

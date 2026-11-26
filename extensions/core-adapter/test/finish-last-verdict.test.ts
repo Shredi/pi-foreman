@@ -19,7 +19,7 @@ test("a later PASS on the final tree clears an earlier FAIL: no open reviewer st
   const fail = onReviewVerdicts(initialReviewGate(), verdictsOf(FAIL), 1);
   assert.deepEqual(open(fail), ["reviewer"]);
   const fixed = onRevision(fail);
-  assert.equal(reviewHint(fixed), "(re-review needed: last verdict FAIL)");
+  assert.equal(reviewHint(fixed), "(re-review needed: last verdict FAIL) - run a reviewer in this checkout again");
   const pass = onReviewVerdicts(fixed, verdictsOf(PASS), 2);
   assert.deepEqual(open(pass), []);
   assert.equal(reviewHint(pass), "");
@@ -41,6 +41,6 @@ test("a FAIL after the last PASS still blocks; parallel reviewers on one tree: a
   const pass = onReviewVerdicts(initialReviewGate(), ["pass"], 1);
   const fail = onReviewVerdicts(pass, ["fail"], 2);
   assert.deepEqual(open(fail), ["reviewer"]);
-  assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL)");
+  assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL) - run a reviewer in this checkout again");
   assert.deepEqual(open(onReviewVerdicts(initialReviewGate(), ["pass", "fail"], 1)), ["reviewer"]);
 });

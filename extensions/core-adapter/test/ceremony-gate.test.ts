@@ -95,7 +95,7 @@ test("reviewGate pass: only a current PASS (or APPROVE) satisfies the reviewer s
   assert.deepEqual(open(initialReviewGate()), ["reviewer"]);
   const fail = after("reviewer", FAIL);
   assert.deepEqual(open(fail), ["reviewer"], "FAIL does not satisfy");
-  assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL)");
+  assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL) - run a reviewer in this checkout again");
   const pass = after("reviewer", PASS);
   assert.deepEqual(open(pass), [], "PASS satisfies");
   assert.deepEqual(open(after("reviewer", null, pass)), ["reviewer"], "no verdict clears an earlier PASS");
@@ -112,7 +112,7 @@ test("reviewGate pass: a builder launch or a foreman project edit after the verd
   const revised = onRevision(pass);
   assert.deepEqual(openSteps(counts, req, "pass", revised), ["reviewer"]);
   assert.equal(reopened(revised), "revision");
-  assert.equal(reviewHint(revised), "(re-review needed: revised after the last PASS)");
+  assert.equal(reviewHint(revised), "(re-review needed: revised after the last PASS) - run a reviewer in this checkout again");
   assert.equal(reopened(onRevision(onReviewVerdicts(initialReviewGate(), ["fail"]))), "fail");
   assert.equal(onRevision(initialReviewGate()).revised, false, "no verdict yet: nothing to re-open");
   // A scratchpad edit calls no onRevision, and a non-review run end carries no verdict: the PASS holds.
@@ -131,7 +131,7 @@ test("reviewGate verdict: any verdict counts (4bbe2c3)", () => {
   const fail = onRevision(onReviewVerdicts(initialReviewGate(), ["fail"]));
   assert.deepEqual(openSteps(counts, ["reviewer"], "verdict", fail), []);
   assert.deepEqual(openSteps(counts, ["reviewer"], "verdict", fail), missingSteps(counts, ["reviewer"]));
-  assert.match(finishRefusal("standard", ["reviewer"], reviewHint(fail)), /requires reviewer \(re-review needed: last verdict FAIL\); launch them/);
+  assert.match(finishRefusal("standard", ["reviewer"], reviewHint(fail)), /requires reviewer \(re-review needed: last verdict FAIL\) - run a reviewer in this checkout again; launch them/);
 });
 
 test("dupReview: refuses a reviewer after an unrevised PASS unless it asks for a second opinion", async () => {

@@ -40,7 +40,7 @@ class TestReviewGate(ReplayCase):
         recs += notifies(pi, 3)
         pi.close()
         msgs = gate_messages(recs)
-        self.assertEqual(msgs, ["pi-foreman: finish refused: tier standard requires reviewer (re-review needed: last verdict FAIL); launch them or ask the owner to lower the tier with /ceremony."])
+        self.assertEqual(msgs, ["pi-foreman: finish refused: tier standard requires reviewer (re-review needed: last verdict FAIL) - run a reviewer in this checkout again; launch them or ask the owner to lower the tier with /ceremony."])
         self.assertEqual([r["missing"] for r in events(rig, sid, "finish_refused")], ["reviewer"])
         self.assertEqual(events(rig, sid, "ceremony_incomplete"), [])
         self.assertEqual(rereviews(rig, sid), [("reviewer", "fail")])

@@ -91,7 +91,7 @@ test("5e: the default explorer strongAbove is 200000, other roles 100000", () =>
 test("5f: ladder.maxTurns.<role> (builder 100) wins; childMaxTurns is the fallback; child_turn_limit carries the limit", () => {
   const d = readJson("config/foreman.defaults.json");
   assert.equal(childMaxTurns({ ladder: d.ladder }, undefined, "builder"), 100);
-  assert.equal(childMaxTurns({ ladder: d.ladder }, undefined, "reviewer"), 60);
+  assert.equal(childMaxTurns({ ladder: d.ladder, roles: d.roles }, undefined, "reviewer"), 100);
   assert.equal(childMaxTurns({ ladder: { childMaxTurns: 9 } }, undefined, "builder"), 9);
   assert.equal(childMaxTurns({ ladder: { childMaxTurns: 9, maxTurns: { builder: 7 } } }, undefined, "builder"), 7);
   const l = new ChildLadder({ maxTurns: 2 });

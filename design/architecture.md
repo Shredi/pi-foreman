@@ -104,7 +104,7 @@
 | `foreman` | Picard | Triage, plan, ledger, delegate, integrate. Never trusts a child's request blindly. | Main session | All active tools + `subagent` | on |
 | `explorer` | Dora | Read-only search, briefs | Child, detached | `read, ls, grep, find, bash`, codemode | on |
 | `builder` | Bob | Implements one scoped change | Child, detached | `read, ls, grep, find, bash, edit, write` | off |
-| `reviewer` | Watson | Diff review against ledger items, plan review; loads the shipped `security-review` skill (`roles.reviewer.skills`) for security-relevant diffs | Child, detached | `read, ls, grep, find, bash`, codemode | on |
+| `reviewer` | Watson | Diff review against ledger items, plan review; loads the shipped `security-review` skill (`roles.reviewer.skills`) for security-relevant diffs | Child, detached | `read, ls, grep, find, bash, write` (write only into its scratch and output dirs), codemode | on |
 
 The foreman writes the heavy plan itself and commits after the reviewer PASS; security review is a skill of the one reviewer, not a role.
 
@@ -141,7 +141,7 @@ Two rungs per role: `model` -> `strong`. Triggers, each making the run climb-eli
 rung: (a) context: the child-side hook sees a later call whose input + cacheRead + cacheWrite exceeds the first call's
 context by more than `strongAbove` (`roles.<id>` > `providers.<p>` > `ladder`, default 100000), so the fixed
 prompt baseline does not count, and steers the child once to stop and reply with a handoff report whose first line is `RUNG_UP: context`
-(done / remaining / files touched); (b) turns: past `childMaxTurns` assistant turns (same lookup, default 60) the
+(done / remaining / files touched); (b) turns: past `childMaxTurns` assistant turns (same lookup, default 60; reviewer 100 through `roles.reviewer.childMaxTurns`; one warning at 80 % of a limit of 10 or more, `child_turn_warning`) the
 bottom rung hands off with `RUNG_UP: turns`, the top rung is steered to stop and report (`child_turn_cap`); (c)
 stuck: the report says `STATUS: stuck` or "own checks failed"; (d) the foreman passes `model: "strong"` with a
 `reason` (never traced: it is a tool argument). A `strong` launch with no reason and no trigger is refused

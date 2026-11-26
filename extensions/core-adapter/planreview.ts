@@ -56,11 +56,39 @@ export interface PlanVerdict {
   model: string | null;
   /** The located findings of the review (findings.ts), resolved after the run-end record call. */
   findings: Promise<PanelFinding[]>;
+  /** The lines of a FAIL's findings text (ledgerblock.ts failFindingsText) for the re-review task; absent for a PASS or a restore without them. Persisted with the verdict. */
+  earlier?: string[];
+}
+
+const EARLIER_LINES = 40;
+const EARLIER_LINE_CHARS = 400;
+/** The persisted shape of a FAIL's findings text: its lines, capped (the block itself is cut again at 8 KB). */
+export const earlierLinesOf = (text: string): string[] => text.split("\n").filter((l) => l.trim()).slice(0, EARLIER_LINES).map((l) => l.slice(0, EARLIER_LINE_CHARS));
+/** The same from an untrusted persisted value: strings only, capped; undefined for none. */
+export function earlierOfStored(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const lines = v.filter((x): x is string => typeof x === "string").slice(0, EARLIER_LINES).map((l) => l.slice(0, EARLIER_LINE_CHARS));
+  return lines.length > 0 ? lines : undefined;
 }
 
 /** The primary plan-review results of a run end that carry a verdict. */
 export function planReviewResults(results: readonly ReviewResult[]): (ReviewResult & { verdict: Verdict })[] {
   return results.filter((r): r is ReviewResult & { verdict: Verdict } => r.occasion === "plan-review" && r.primary && r.verdict !== null);
+}
+
+/**
+ * The notice for a plan-review run that ended with no plan carrying a verdict (nothing recorded for any plan), or null when `reviewed` is not empty. Three causes: the verdict
+ * was recorded but no plan file was found for it (`tried` = the paths looked at); the reviewer recorded `incomplete`; no `review_verdict` record exists (the run left none, or did not complete).
+ */
+export function planReviewLostNotice(results: readonly ReviewResult[], tried: readonly string[], reviewedCount: number): string | null {
+  if (reviewedCount > 0) return null;
+  const mine = results.filter((r) => r.occasion === "plan-review" && r.primary);
+  const cause = mine.some((r) => r.verdict !== null)
+    ? `a verdict was recorded, but no plan file was found for it (tried: ${tried.length > 0 ? tried.join(", ") : "no plan path in the task"})`
+    : mine.some((r) => r.incomplete)
+      ? `the reviewer recorded \`incomplete\`${mine.find((r) => r.incomplete)?.reason ? ` (${mine.find((r) => r.incomplete)?.reason})` : ""}`
+      : "no review_verdict record was left (the reviewer made no verdict call, or the run did not complete)";
+  return `pi-foreman: the plan review ended and no plan got a verdict: ${cause}. Relaunch the plan review.`;
 }
 
 /** The plan files among a plan review's files (planReviewFiles); a bare name is taken from the scratch dir. */

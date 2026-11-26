@@ -6,7 +6,7 @@
 //   verdict  known roots take the verdict each; a PASS also clears an existing "". An unknown root: a PASS clears "" only, a FAIL or no verdict hits every entry.
 //   read     `gateOf`: the root's entry, else "" , else nothing yet; an unknown root reads `combined`. The finish gate reads `combined`: every entry must stand.
 import * as path from "node:path";
-import { initialReviewGate, onReviewVerdicts, onRevision, reopened, reviewHint, type ReviewGate } from "./bound.ts";
+import { initialReviewGate, onReviewVerdicts, onRevision, reopened, reviewHint, REREVIEW_WAY, type ReviewGate } from "./bound.ts";
 import type { Verdict } from "./rounds.ts";
 
 export type ReviewGates = Record<string, ReviewGate>;
@@ -47,6 +47,9 @@ export function gatesBuilt(g: ReviewGates, roots: readonly string[] | null, now:
   return Object.fromEntries(Object.entries(g).map(([k, e]) => [k, roots === null || roots.includes(k) ? stamp(e) : e]));
 }
 
+/** An entry `supersededGone` can drop once its checkout is gone: a side checkout (not the session-wide one) with a build time, not standing, and no builder running there. */
+export const droppableOnceGone = (k: string, e: ReviewGate, running: ReadonlySet<string> = new Set()): boolean => k !== SESSION_WIDE && e.builtAt !== undefined && !stands(e) && !running.has(k);
+
 /**
  * The gates the finish gate reads (D165): an open entry whose checkout no longer exists (`exists` false) is dropped when another, existing entry got a PASS
  * after everything that happened in it (`builtAt`, and the FAIL time when it failed). An entry without a time, the session-wide one, a standing one and one in `running` (a builder launched there has not ended) are never dropped.
@@ -58,7 +61,7 @@ export function supersededGone(g: ReviewGates, exists: (dir: string) => boolean,
   const dropped: { dir: string; by: string }[] = [];
   for (const [k, e] of Object.entries(g)) {
     const at = e.builtAt === undefined ? undefined : Math.max(e.builtAt, e.failAt ?? 0);
-    const by = !gone(k) || running.has(k) || stands(e) || at === undefined ? undefined : Object.entries(g).filter(([o, x]) => o !== k && !gone(o) && x.passAt !== undefined && x.passAt > at).sort(([, a], [, b]) => (b.passAt ?? 0) - (a.passAt ?? 0))[0];
+    const by = !gone(k) || !droppableOnceGone(k, e, running) || at === undefined ? undefined : Object.entries(g).filter(([o, x]) => o !== k && !gone(o) && x.passAt !== undefined && x.passAt > at).sort(([, a], [, b]) => (b.passAt ?? 0) - (a.passAt ?? 0))[0];
     if (by) dropped.push({ dir: k, by: by[0] });
     else gates[k] = e;
   }
@@ -118,10 +121,11 @@ const reasonOf = (e: ReviewGate): string => {
 };
 
 /**
- * The refusal hint of the open entries. Exactly today's `reviewHint` when the only open key is the session's own checkout (`own`) or the session-wide one;
- * otherwise each open key with its path (relative to the session cwd when inside it, else the toplevel; "" is "unknown checkout") and its reason.
+ * The refusal hint of the open entries. The text of `reviewHint` when the only open key is the session's own checkout (`own`) or the session-wide one;
+ * otherwise each open key with its path (relative to the session cwd when inside it, else the toplevel; "" is "unknown checkout") and its reason, then the ways out:
+ * a review in each, and for a side checkout `supersededGone` could drop once its worktree is gone (`running` = the checkouts with a builder still running) the removal of that worktree.
  */
-export function openHint(g: ReviewGates, o: { cwd: string; own: string }): string {
+export function openHint(g: ReviewGates, o: { cwd: string; own: string; running?: ReadonlySet<string> }): string {
   const open = openRoots(g);
   if (open.length === 0) return reviewHint(combined(g));
   if (open.length === 1 && (open[0] === SESSION_WIDE || open[0] === o.own)) return reviewHint(g[open[0]]);
@@ -130,7 +134,9 @@ export function openHint(g: ReviewGates, o: { cwd: string; own: string }): strin
     const rel = path.relative(o.cwd, k);
     return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : k;
   };
-  return `(re-review needed: ${open.map((k) => `${name(k)}: ${reasonOf(g[k])}`).join("; ")})`;
+  const droppable = open.filter((k) => k !== o.own && droppableOnceGone(k, g[k], o.running));
+  const remove = droppable.length > 0 ? `; or, when the work in ${droppable.map(name).join(", ")} is no longer needed, remove the worktree: its open entry is then dropped once another checkout has a PASS later in time` : "";
+  return `(re-review needed: ${open.map((k) => `${name(k)}: ${reasonOf(g[k])}`).join("; ")}) - ${REREVIEW_WAY.replace("this checkout", open.length > 1 ? "each of these checkouts" : "that checkout")}${remove}`;
 }
 
 /** A key's entries that read as passed for `roots` (every root's gate stands): a launch there is a repeat. Null roots read `combined`. */
