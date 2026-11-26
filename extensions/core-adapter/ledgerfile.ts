@@ -1,7 +1,7 @@
 // Writers of a ledger file that hold the cross-process `<ledger>.lock` (D181; the lock itself is in ledgerlockfs.ts,
 // shared with the ledger shims' Node helper). The writers here are synchronous (they sleep with Atomics.wait, blocking
-// the event loop for the wait at most), because a holder keeps the lock for milliseconds. On a timeout the writer fails
-// with an error and writes nothing.
+// the event loop for the wait at most), so the wait stays short (LOCK_WAIT_MS). A ledger.py run in another process holds the
+// lock for seconds under load: the writer then fails with LedgerLockedError, writes nothing, and its caller reports the error.
 
 import * as fs from "node:fs";
 import path from "node:path";
@@ -9,7 +9,7 @@ import { fileIdOf } from "./fileid.ts";
 import { renameRetry } from "./hints.ts";
 import { takeLedgerLock } from "./ledgerlockfs.ts";
 
-export { LedgerLockedError, LOCK_STALE_MS, LOCK_WAIT_MS, takeLedgerLock } from "./ledgerlockfs.ts";
+export { LedgerLockedError, LOCK_MAX_HOLD_MS, LOCK_WAIT_MS, takeLedgerLock } from "./ledgerlockfs.ts";
 
 function attemptsOf(err: unknown): number {
   return (err as { attempts?: number }).attempts ?? 0;

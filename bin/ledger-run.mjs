@@ -78,7 +78,7 @@ function main() {
     if (!target) return runLedger(plan.run);
     let release;
     try {
-      release = lockMod.takeLedgerLock(path.resolve(target), lockMod.LEDGER_RUN_WAIT_MS);
+      release = lockMod.takeLedgerLock(path.resolve(target), lockMod.ledgerRunWaitMs());
     } catch (err) {
       if (err?.code === "ELEDGERLOCK") {
         process.stderr.write(`${err.message}\n`);

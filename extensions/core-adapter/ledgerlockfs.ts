@@ -2,23 +2,37 @@
 // the adapter's ledger.py runner (index.ts) and the `ledger` shims' Node helper (bin/ledger-run.mjs). core/scripts/ledger.py
 // itself holds no lock (core/ stays at its pinned bytes); whoever runs it takes the lock around the whole run.
 //
-// The lock is the sidecar `<ledger>.lock`, taken by exclusive create (`wx`), holding "<pid> <epoch ms>". A lock older
-// than LOCK_STALE_MS is a crashed holder's: the waiter re-reads it and deletes it only when the content still equals
-// what it judged stale, then tries the create again. Residual races (accepted):
+// The lock is the sidecar `<ledger>.lock`, taken by exclusive create (`wx`), holding "<pid> <epoch ms> <nonce> <host>".
+// A whole ledger.py run (python start included) takes seconds under load, so age alone never says "crashed". A waiter
+// treats a lock as stale only when
+//  - its holder is gone: same host and `process.kill(pid, 0)` throws ESRCH (EPERM means alive; works on Windows too), or
+//  - it is older than LOCK_MAX_HOLD_MS, a hard ceiling for a holder this check cannot see (another host, a reused pid,
+//    a lock without a readable pid).
+// The ceiling is 120 s: one ledger.py attempt of the runner is cut at 30 s, a retry follows only a Windows access-denied
+// marker (about 1 s of delays in all), so a legitimate hold stays near 35 s. Waits of whole runs (LEDGER_RUN_WAIT_MS) exceed
+// the ceiling, so a waiter outlives even a lock it cannot judge. The stale lock is re-read and deleted only when it still
+// equals what was judged, then the create is tried again. Residual races (accepted):
+//  - pid reuse: a crashed holder's pid taken by another live process keeps its lock until the ceiling;
 //  - two waiters read the same stale content, one deletes and creates, the other then deletes the new lock; it needs a
 //    crashed holder and two waiters in one instant;
-//  - a holder that runs longer than LOCK_STALE_MS (a hung ledger.py) loses its lock to a waiter's takeover;
+//  - a holder running past the ceiling (the shim helper puts no time limit on ledger.py) loses its lock to a takeover;
 //  - a writer that does not take the lock (a plain `python ledger.py`, an editor, a shim run without Node) is not excluded;
 //  - the lock target a shim resolves before it takes the lock can change before the run (another session's Edit rebinds).
-// The sync variant sleeps with Atomics.wait (it blocks the thread for the wait at most; a holder keeps the lock for
-// milliseconds); the async one yields to the event loop. On a timeout both throw LedgerLockedError and the caller runs nothing.
+// The sync variant sleeps with Atomics.wait (it blocks the thread, so its callers keep the short LOCK_WAIT_MS); the async
+// one yields to the event loop. On a timeout both throw LedgerLockedError and the caller runs nothing.
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 
-export const LOCK_STALE_MS = 10_000;
+export const LOCK_MAX_HOLD_MS = 120_000;
 export const LOCK_WAIT_MS = 2_000;
-/** Wait of a whole ledger.py run: longer than a crashed holder's lock (LOCK_STALE_MS) plus a normal run. */
-export const LEDGER_RUN_WAIT_MS = LOCK_STALE_MS + 5_000;
+/** Wait of a whole ledger.py run: longer than the ceiling, so a waiter outlives a lock it cannot judge. */
+export const LEDGER_RUN_WAIT_MS = LOCK_MAX_HOLD_MS + 30_000;
+/** The run wait; PI_FOREMAN_LEDGER_RUN_WAIT_MS (milliseconds) overrides it, so a test need not wait minutes. */
+export function ledgerRunWaitMs(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.PI_FOREMAN_LEDGER_RUN_WAIT_MS);
+  return Number.isFinite(n) && n > 0 ? n : LEDGER_RUN_WAIT_MS;
+}
 
 export class LedgerLockedError extends Error {
   readonly code = "ELEDGERLOCK";
@@ -44,10 +58,28 @@ export const RESOLVE_SNIPPET = [
   "print(p)",
 ].join("\n");
 
-function lockAgeMs(lock: string): { content: string; age: number } {
+const HOST = os.hostname().replace(/\s+/g, "_");
+
+/** Is `pid` a running process? EPERM: it exists, another user's. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+/** The lock's content and whether it is stale (holder gone, or past the ceiling). */
+function judge(lock: string): { content: string; stale: boolean } {
   const content = fs.readFileSync(lock, "utf8");
-  const t = Number(content.split(/\s+/)[1]);
-  return { content, age: Date.now() - (Number.isFinite(t) && t > 0 ? t : fs.statSync(lock).mtimeMs) };
+  const [pidS, timeS, , host] = content.trim().split(/\s+/);
+  const pid = Number(pidS);
+  const t = Number(timeS);
+  const age = Date.now() - (Number.isFinite(t) && t > 0 ? t : fs.statSync(lock).mtimeMs);
+  if (age > LOCK_MAX_HOLD_MS) return { content, stale: true };
+  const sameHost = host === undefined || host === HOST;
+  return { content, stale: sameHost && Number.isInteger(pid) && pid > 0 && !pidAlive(pid) };
 }
 
 /** Delete `lock` only while it still holds what this holder wrote (a taken-over lock belongs to its new holder). */
@@ -66,7 +98,7 @@ function tryTake(lock: string): string | null {
   for (;;) {
     try {
       const fd = fs.openSync(lock, "wx");
-      const mine = `${process.pid} ${Date.now()} ${Math.random().toString(36).slice(2)}\n`;
+      const mine = `${process.pid} ${Date.now()} ${Math.random().toString(36).slice(2)} ${HOST}\n`;
       try {
         fs.writeSync(fd, mine);
       } finally {
@@ -77,8 +109,8 @@ function tryTake(lock: string): string | null {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
     try {
-      const first = lockAgeMs(lock);
-      if (first.age > LOCK_STALE_MS && lockAgeMs(lock).content === first.content) {
+      const first = judge(lock);
+      if (first.stale && fs.readFileSync(lock, "utf8") === first.content) {
         fs.rmSync(lock, { force: true });
         continue;
       }

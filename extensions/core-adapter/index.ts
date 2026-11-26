@@ -198,7 +198,7 @@ import { taskLedger } from "./ledgerpath.ts";
 import { rewriteLocked, sameStamp, stampOf, type FileStamp } from "./ledgerfile.ts";
 import { citedItems, hintFailTrace, ledgerHint, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
-import { LEDGER_RUN_WAIT_MS, LedgerLockedError, RESOLVE_SNIPPET, takeLedgerLockAsync } from "./ledgerlockfs.ts";
+import { ledgerRunWaitMs, LedgerLockedError, RESOLVE_SNIPPET, takeLedgerLockAsync } from "./ledgerlockfs.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
@@ -7793,7 +7793,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ? async () => {
           let release: () => void;
           try {
-            release = await takeLedgerLockAsync(path.resolve(s.cwd, lockFile), LEDGER_RUN_WAIT_MS);
+            release = await takeLedgerLockAsync(path.resolve(s.cwd, lockFile), ledgerRunWaitMs());
           } catch (err) {
             if (err instanceof LedgerLockedError) return { code: 1, stdout: "", stderr: err.message, timedOut: false, error: undefined };
             return retried(); // the lock file cannot be created: ledger.py reports its own failure

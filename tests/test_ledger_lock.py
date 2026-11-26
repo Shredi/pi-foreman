@@ -67,14 +67,14 @@ class LedgerLockTest(unittest.TestCase):
             lock = Path(str(p) + ".lock")
             held = f"{os.getpid()} {int(time.time() * 1000)}\n"
             lock.write_text(held, encoding="utf-8")
-            # a live holder keeps its stamp fresh (a lock older than the stale limit is a crashed holder's)
+            # a live holder (this test's pid); the run wait is shortened so the test does not wait out the real one
             beat = subprocess.Popen([sys.executable, "-c", (
                 "import sys,time,os\n"
                 "while True:\n"
                 f"    open({str(lock)!r},'w').write('%d %d\\n' % (os.getppid(), time.time()*1000))\n"
                 "    time.sleep(1)\n")])
             try:
-                r = subprocess.run(["sh", str(SHIM), "-f", str(p), "add", "never"], env=shim_env(tmp), capture_output=True, text=True, timeout=120)
+                r = subprocess.run(["sh", str(SHIM), "-f", str(p), "add", "never"], env=dict(shim_env(tmp), PI_FOREMAN_LEDGER_RUN_WAIT_MS="3000"), capture_output=True, text=True, timeout=120)
             finally:
                 beat.kill()
                 beat.wait()
