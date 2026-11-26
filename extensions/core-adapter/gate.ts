@@ -243,9 +243,8 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   if (env.roots.role === "reviewer") {
     // a reviewer's file tool writes only the targets a child may write outside the worktree: its scratch and output dirs (real paths: a link in scratch cannot point into the worktree) and its own handoff files; its shell lines are judged as before
     const { roots, platform, cwd } = env;
-    const real = platform === process.platform ? (roots.realpath ?? realDefault) : () => null;
-    const outDir = roots.out ? realSpelling(platform, roots.out, real) : null;
-    const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined || (outDir !== null && under(platform, outDir, realSpelling(platform, abs, real)));
+    // `out` is one of `scratch` (childscratch.ts), so pathDecide covers both with its real-path and `.git` checks
+    const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
       if (dir !== "write") continue;
