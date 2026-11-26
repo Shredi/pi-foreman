@@ -248,7 +248,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
   // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
   const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
   const inside = (root: string): boolean => rootHolds(root, abs, platform, r.realpath, r.worktree, link);
-  const dotGit = (rel: string): boolean => rel.split(/[\\/]/).some((g) => (win ? winAlias(g, ".git") : g === ".git"));
+  const dotGit = (rel: string): boolean => rel.split(/[\\/]/).some((g) => g.toLowerCase() === ".git" || (win && winAlias(g, ".git")));
   // each spelling is compared with the root in its own spelling, so a real ancestor of the root named `.git` does not count; only segments below the root do
   const gitFree = (root: string): boolean => {
     return !dotGit(px(platform).relative(root, abs)) && !dotGit(px(platform).relative(longRoot(root), ra));
