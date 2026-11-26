@@ -57,7 +57,7 @@ test("cache keys differ for ids that collide as numbers", () => {
 });
 
 test("real files: guarded reads still work", () => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "fileid-")));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "fileid-")));
   try {
     const f = path.join(dir, "plan.md");
     fs.writeFileSync(f, "# plan\n");
