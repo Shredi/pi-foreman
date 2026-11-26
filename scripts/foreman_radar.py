@@ -1010,7 +1010,9 @@ def build(data, now):
         key = ho["child"]
         if not key or key in reg_keys:
             continue
-        n = new_node("session", key, key)
+        # the handoff label (the dir name's slug, `<date>-<time>-<label>`) names the node, not the raw intercom id
+        lm = re.match(r"\d{8}-\d{6}-(.+)$", dn)
+        n = new_node("session", key, lm.group(1) if lm else key)
         m = re.match(r"(\d{8})-(\d{6})", dn)
         opened = None
         if m:

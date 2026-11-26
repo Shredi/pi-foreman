@@ -245,7 +245,7 @@ Switch: `providers.*.roles.*.strong` is set.
 | Key | Default | Layer |
 |---|---|---|
 | `roles.<x>.strongAbove` | `explorer`: `200000` | not in project/session (the ladder comes from the user or overlay config) |
-| `roles.<x>.childMaxTurns` | unset | not in project/session (the ladder comes from the user or overlay config) |
+| `roles.<x>.childMaxTurns` | `reviewer`: `100` | not in project/session (the ladder comes from the user or overlay config) |
 | `roles.<x>.strongOnRevision` | unset | tighten-only (only false is accepted) |
 | `providers.<x>.roles.<x>.strong.model` | unset | not in project/session (the strong model is picked in the user or overlay config) |
 | `providers.<x>.roles.<x>.strong.thinking` | unset | not in project/session (the strong model is picked in the user or overlay config) |

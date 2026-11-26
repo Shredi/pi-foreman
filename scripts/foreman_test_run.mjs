@@ -26,12 +26,16 @@
 // <tmpdir>/pf-run-XXXXXX and points the command's TMPDIR/TMP/TEMP (POSIX; PI_FOREMAN_TEST_TMP and FOREMAN_TEST_TMP_ROOT everywhere) at it. The root is
 // removed on every exit (also stop, lock give-up and signals); entries a test left in it are named on stderr (a warning, not a failure). A run that finds
 // FOREMAN_TEST_TMP_ROOT set (nested) reuses that root and removes nothing. The lock and the run records never live in the root.
-// History: every wrapped run appends one JSON line {id, mode, kind (exec|node), detached, command, cwd, tree, enqueued, acquired (null when the lock
-// was never taken), ended, exit} to <lockdir>/test-history/history.jsonl (over 2 MB it is renamed to a unique history-<time>-<pid>.jsonl, the newest two
+// History: every wrapped run appends one JSON line {id, mode, kind (exec|node), detached, command, commandHash, cwd, treeStart, tree, enqueued, acquired (null
+// when the lock was never taken), ended, exit} to <lockdir>/test-history/history.jsonl (over 2 MB it is renamed to a unique history-<time>-<pid>.jsonl, the newest two
 // archives are kept; history errors never change the exit code). `tree` is a sha1 of HEAD, the diff against HEAD and the untracked files (size, mtime),
-// "" outside a git checkout; it lets a later round count repeated runs of one tree (no result reuse is built). `--history [--days N]` (default 7)
-// prints per mode and kind: runs, waited runs (acquired - enqueued > 5 s) with wait median/p90/max, exit 75, exit 124 while queued and while running,
-// exit 130, run duration median/p90.
+// "" outside a git checkout; `treeStart` is the same key taken at enqueue, `commandHash` a sha256 of the full argv (`command` is cut at 119 characters).
+// `--history [--days N]` (default 7) prints per mode and kind: runs, waited runs (acquired - enqueued > 5 s) with wait median/p90/max, exit 75, exit 124
+// while queued and while running, exit 130, run duration median/p90; a `<mode> <kind>: reused N` line follows when reuse lines exist (they stay out of the other figures).
+// Reuse: before it queues a non-targeted run, the wrapper looks in the history and the archives for a run with the same commandHash, real-path cwd, mode and
+// kind, exit 0, ended within FOREMAN_TEST_REUSE_HOURS (default 24), no reusedFrom, and a non-empty treeStart equal to its tree and to the current tree key; on a
+// hit it prints `foreman_test_run: reused run <id> (passed, same code, ended <time>)`, runs nothing, exits 0 and appends a line with `reusedFrom`.
+// FOREMAN_TEST_REUSE=0 always runs, =1 wins over CI; a truthy CI otherwise runs. A detached start checks before it starts the background run (a missing done file is a miss).
 // Detach: env FOREMAN_TEST_DETACH=1 or a leading `--detach` starts the run in the background (stdout and stderr to <lockdir>/test-history/<id>.log) and
 // returns at once with the run id, the log path and the --wait command; a detached run ignores FOREMAN_TEST_TIMEOUT and --timeout (lock rules, FIFO,
 // give-up and the run cap stay). Each detach start removes done files and logs older than 7 days. Every run appends its history line first on exit, then writes
@@ -555,6 +559,7 @@ const runsDirOf = (env) => path.join(path.dirname(lockPath(env)), "test-runs");
 const historyDirOf = (env) => path.join(path.dirname(lockPath(env)), "test-history");
 const RUN_ID = /^[a-z0-9-]+$/;
 const trunc = (t, n = 120) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
+const commandHashOf = (cmd, args) => createHash("sha256").update(JSON.stringify([cmd, ...args])).digest("hex");
 
 /** The run records in `dir` as [{...record}, ...] sorted by start; records of dead pids are removed (with their stop file) and left out. */
 function liveRuns(dir) {
@@ -670,16 +675,55 @@ export function readHistory(dir, days, now = Date.now()) {
 const percentile = (sorted, p) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)] : undefined);
 const secs = (ms) => (ms === undefined ? "-" : `${(ms / 1000).toFixed(1)} s`);
 
-/** The `--history` lines for `entries`, one per mode and kind. */
+/** Whether an earlier passing run may be reused: FOREMAN_TEST_REUSE=0 never, =1 always, else not under a truthy CI. */
+export function reuseEnabled(env = process.env) {
+  if (env.FOREMAN_TEST_REUSE === "0") return false;
+  if (env.FOREMAN_TEST_REUSE === "1") return true;
+  const ci = (env.CI ?? "").toLowerCase();
+  return ci === "" || ci === "0" || ci === "false";
+}
+
+/** The newest history entry of `dir` that a run with `want` {commandHash, cwd, mode, kind, tree} may reuse (see the header comment), or undefined. */
+export function findReusable(dir, want, { hours = 24, now = Date.now() } = {}) {
+  if (!want.tree) return undefined;
+  const cwd = realPath(want.cwd);
+  const hit = readHistory(dir, hours / 24, now).filter(
+    (e) =>
+      e.commandHash === want.commandHash &&
+      e.mode === want.mode &&
+      e.kind === want.kind &&
+      e.exit === 0 &&
+      e.reusedFrom === undefined &&
+      typeof e.cwd === "string" &&
+      realPath(e.cwd) === cwd &&
+      typeof e.id === "string" &&
+      RUN_ID.test(e.id) &&
+      e.treeStart === want.tree &&
+      e.tree === want.tree,
+  );
+  return hit.sort((a, b) => Date.parse(b.ended) - Date.parse(a.ended))[0];
+}
+
+/** The `--history` lines for `entries`, one per mode and kind; reuse lines (reusedFrom) are counted in an extra `reused` line and kept out of the figures. */
 export function historyLines(entries) {
   const groups = new Map();
+  const reused = new Map();
   for (const e of entries) {
     const key = `${e.mode} ${e.kind}`;
+    if (e.reusedFrom !== undefined) {
+      reused.set(key, (reused.get(key) ?? 0) + 1);
+      if (!groups.has(key)) groups.set(key, []);
+      continue;
+    }
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(e);
   }
   const lines = [];
   for (const [key, es] of [...groups].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (!es.length) {
+      lines.push(`${key}: reused ${reused.get(key)}`);
+      continue;
+    }
     const waits = [];
     const runs = [];
     let queued124 = 0;
@@ -699,9 +743,21 @@ export function historyLines(entries) {
     lines.push(
       `${key}: runs ${es.length}; waited ${waits.length} (wait median ${secs(percentile(waits, 50))}, p90 ${secs(percentile(waits, 90))}, max ${secs(waits[waits.length - 1])}); exit 75 ${n(75)}; exit 124 queued ${queued124}, running ${running124}; exit 130 ${n(130)}; run median ${secs(percentile(runs, 50))}, p90 ${secs(percentile(runs, 90))}`,
     );
+    if (reused.get(key)) lines.push(`${key}: reused ${reused.get(key)}`);
   }
   return lines;
 }
+
+/** Prints the reuse line of the run `src`, appends the reuse history line `entry` and returns 0. */
+function reportReuse(historyDir, src, entry) {
+  const log = path.join(historyDir, `${src.id}.log`);
+  process.stdout.write(`foreman_test_run: reused run ${src.id} (passed, same code, ended ${src.ended})\n`);
+  if (fs.existsSync(log)) process.stdout.write(`foreman_test_run: log ${log}\n`);
+  appendHistory(historyDir, { ...entry, ended: new Date().toISOString(), exit: 0, reusedFrom: src.id });
+  return 0;
+}
+
+const reuseHours = (env) => (Number(env.FOREMAN_TEST_REUSE_HOURS) > 0 ? Number(env.FOREMAN_TEST_REUSE_HOURS) : 24);
 
 /** Removes done files and logs older than SWEEP_MS from the history dir `dir`. */
 function sweepRunsDir(dir, now = Date.now()) {
@@ -888,10 +944,36 @@ async function control(argv, env) {
   return undefined;
 }
 
+/** For a non-targeted run of `argv` (leading `--timeout <s>` allowed) with reuse on: {src (the reusable run or undefined), want, kind, command}; undefined when reuse does not apply. */
+function reuseCheck(argv, env) {
+  if (!reuseEnabled(env)) return undefined;
+  const a = argv[0] === "--timeout" ? argv.slice(2) : argv;
+  if (a[0] === "--targeted") return undefined;
+  let cmd;
+  let args;
+  if (a[0] === "--exec") {
+    const rest = a[1] === "--" ? a.slice(2) : a.slice(1);
+    if (!rest.length) return undefined;
+    [cmd, ...args] = rest;
+  } else {
+    cmd = process.execPath;
+    args = nodeTestArgs(a, testConcurrency({ env }));
+  }
+  const kind = a[0] === "--exec" ? "exec" : "node";
+  const want = { commandHash: commandHashOf(cmd, args), cwd: process.cwd(), mode: "suite", kind, tree: treeKey(process.cwd()) };
+  return { src: findReusable(historyDirOf(env), want, { hours: reuseHours(env) }), want, kind, command: trunc(kind === "exec" ? [cmd, ...args].join(" ") : ["node", ...args].join(" ")) };
+}
+
 /** Starts this script again in the background with the same arguments (argv without the detach flag); prints the run id, the log path and the --wait command. */
 function detachRun(argv, env, started) {
   const id = `${started.toString(36)}-${process.pid}`;
   const dir = historyDirOf(env);
+  const reuse = reuseCheck(argv, env);
+  if (reuse?.src && fs.existsSync(path.join(dir, `${reuse.src.id}.done.json`))) {
+    const code = reportReuse(dir, reuse.src, { id, mode: "suite", kind: reuse.kind, detached: true, command: reuse.command, commandHash: reuse.want.commandHash, cwd: process.cwd(), treeStart: reuse.want.tree, tree: reuse.want.tree, enqueued: new Date(started).toISOString(), acquired: null });
+    process.stdout.write(`foreman_test_run: collect with: node scripts/foreman_test_run.mjs --wait ${reuse.src.id}\n`);
+    return code;
+  }
   const logFile = path.join(dir, `${id}.log`);
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -957,6 +1039,17 @@ async function main(rawArgv, env = process.env) {
     cmd = process.execPath;
     args = nodeTestArgs(argv, targeted ? targetedCfg.concurrency : testConcurrency({ env }));
   }
+  // a detached child skips the check: its launcher made it just before
+  const treeStart = treeKey(process.cwd());
+  const commandHash = commandHashOf(cmd, args);
+  const kind = argv[0] === "--exec" ? "exec" : "node";
+  if (!targeted && !detachedRun && reuseEnabled(env)) {
+    const src = findReusable(historyDirOf(env), { commandHash, cwd: process.cwd(), mode: "suite", kind, tree: treeStart }, { hours: reuseHours(env) });
+    if (src) {
+      const shown = trunc(argv[0] === "--exec" ? [cmd, ...args].join(" ") : ["node", ...args].join(" "));
+      return reportReuse(historyDirOf(env), src, { id: `${started.toString(36)}-${process.pid}`, mode: "suite", kind, detached: false, command: shown, commandHash, cwd: process.cwd(), treeStart, tree: treeStart, enqueued: new Date(started).toISOString(), acquired: null });
+    }
+  }
   const id = detachedRun && RUN_ID.test(env.FOREMAN_TEST_RUN_ID ?? "") ? env.FOREMAN_TEST_RUN_ID : `${started.toString(36)}-${process.pid}`;
   // the started command must not see this run's detach settings (a nested wrapper run gets its own id)
   let runEnv = { ...env };
@@ -1019,10 +1112,12 @@ async function main(rawArgv, env = process.env) {
     appendHistory(historyDir, {
       id,
       mode: record.mode,
-      kind: argv[0] === "--exec" ? "exec" : "node",
+      kind,
       detached: detachedRun,
       command: record.command,
+      commandHash,
       cwd: record.cwd,
+      treeStart,
       tree: treeKey(record.cwd),
       enqueued: record.started,
       acquired: acquiredAt === undefined ? null : new Date(acquiredAt).toISOString(),

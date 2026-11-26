@@ -398,7 +398,7 @@ export interface StoredPlan {
   hash: string;
   topic: string;
   approval: { at: string; by: "user" | "rig" } | null;
-  review: { verdict: Verdict; model: string | null; rounds: number } | null;
+  review: { verdict: Verdict; model: string | null; rounds: number; findings?: string[] } | null;
 }
 
 const storeFile = (agentDir: string, hash: string): string => path.join(approvalsDir(agentDir), `${hash}.json`);
@@ -414,7 +414,7 @@ export function readStored(agentDir: string, hash: string): StoredPlan | null {
     const a = v.approval as Record<string, unknown> | null | undefined;
     const r = v.review as Record<string, unknown> | null | undefined;
     const approval = a && typeof a === "object" && typeof a.at === "string" && (a.by === "user" || a.by === "rig") ? { at: a.at, by: a.by as "user" | "rig" } : null;
-    const review = r && typeof r === "object" && (r.verdict === "pass" || r.verdict === "fail") && (r.model === null || typeof r.model === "string") && typeof r.rounds === "number" && Number.isInteger(r.rounds) && r.rounds >= 1 ? { verdict: r.verdict as Verdict, model: r.model as string | null, rounds: r.rounds } : null;
+    const review = r && typeof r === "object" && (r.verdict === "pass" || r.verdict === "fail") && (r.model === null || typeof r.model === "string") && typeof r.rounds === "number" && Number.isInteger(r.rounds) && r.rounds >= 1 ? { verdict: r.verdict as Verdict, model: r.model as string | null, rounds: r.rounds, ...(r.verdict === "fail" && Array.isArray(r.findings) ? { findings: r.findings.filter((x): x is string => typeof x === "string").slice(0, 40).map((x) => x.slice(0, 400)) } : {}) } : null;
     return { hash, topic: v.topic, approval, review };
   } catch {
     return null;

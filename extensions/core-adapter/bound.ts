@@ -304,11 +304,14 @@ export function noChange(steps: StepCounts, foremanEdits: number, porcelain: str
   return steps.builder === 0 && foremanEdits === 0 && (porcelain === "" || sameAsStart);
 }
 
+/** The way out of a re-opened reviewer step: each checkout needs its own review (a PASS or commit elsewhere does not cover it). */
+export const REREVIEW_WAY = "run a reviewer in this checkout again";
+
 /** Refusal hint for a re-opened reviewer step ("" otherwise). */
 export function reviewHint(g: ReviewGate): string {
   const why = reopened(g);
-  if (why === "fail") return "(re-review needed: last verdict FAIL)";
-  if (why === "revision") return g.last === "pass" ? `(re-review needed: revised after the last PASS)${g.passRun ? ` (run ${g.passRun})` : ""}` : "(re-review needed: revised after the last review)";
+  if (why === "fail") return `(re-review needed: last verdict FAIL) - ${REREVIEW_WAY}`;
+  if (why === "revision") return `${g.last === "pass" ? `(re-review needed: revised after the last PASS)${g.passRun ? ` (run ${g.passRun})` : ""}` : "(re-review needed: revised after the last review)"} - ${REREVIEW_WAY}`;
   return "";
 }
 

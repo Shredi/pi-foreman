@@ -47,7 +47,11 @@ stronger model would start from the same context. Raise or lower it per role, pr
 ## Turn limit
 
 `ladder.maxTurns.<role>` is the assistant-turn limit of a role (default `{builder: 100}`); roles without an entry use
-`childMaxTurns` (default 60), which stays the fallback. A child past its limit is steered once; the trace records
+`childMaxTurns` (default 60), which stays the fallback. The reviewer's default is 100, set as `roles.reviewer.childMaxTurns`:
+your own `ladder.maxTurns.reviewer` or `roles.reviewer.childMaxTurns` still wins, but a `ladder.childMaxTurns` or
+`providers.<p>.childMaxTurns` no longer reaches the reviewer. A child with a limit of 10 or more gets one warning at 80 % of
+it (`N of M turns used; finish your work and do your end step within the next K turns`, a steer; the trace records
+`child_turn_warning {role, turns, limit}`); below 10 turns there is none. A child past its limit is steered once; the trace records
 `child_turn_limit {role, turns, limit}` next to `child_turn_cap`.
 
 ## Context cap
