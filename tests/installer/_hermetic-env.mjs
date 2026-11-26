@@ -54,3 +54,27 @@ fs.writeFileSync(path.join(shimDir, "npm"), `#!/bin/sh\nexec "${process.execPath
 fs.writeFileSync(path.join(shimDir, "npm.cmd"), `@"${process.execPath}" "${path.join(shimDir, "npm-shim.cjs")}" %*\r\n`);
 process.env.PATH = `${shimDir}${path.delimiter}${process.env.PATH ?? ""}`;
 process.on("exit", () => fs.rmSync(shimDir, { recursive: true, force: true }));
+
+// A real `herdr` on PATH: setup.mjs would run `herdr integration install pi` (setup/herdr-pi.mjs) on every non-dry run. Each PATH directory that holds one is replaced by a temp directory
+// of symlinks to its other entries, so the developer's Herdr never starts and every other tool still resolves; tests with a fake herdr put their own directory first.
+if (!WIN) {
+  const kept = [];
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    let names;
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      kept.push(dir);
+      continue;
+    }
+    if (!names.includes("herdr")) {
+      kept.push(dir);
+      continue;
+    }
+    const sub = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-no-herdr-")));
+    for (const n of names) if (n !== "herdr") fs.symlinkSync(path.join(dir, n), path.join(sub, n));
+    kept.push(sub);
+    process.on("exit", () => fs.rmSync(sub, { recursive: true, force: true }));
+  }
+  process.env.PATH = kept.join(path.delimiter);
+}
