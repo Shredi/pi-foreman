@@ -17,11 +17,15 @@ jobs:
         include:
           - {os: ubuntu-latest, node: "22"}
           - {os: macos-latest, node: "22"}
-          - {os: windows-latest, node: "22"}
+          # the Windows legs are three shards that run at the same time: shard 1/3 runs the python, conformance, herdr, installer and shim steps,
+          # the adapter tests are split over shards 2/3 and 3/3 with node's --test-shard (deterministic, by file order)
+          - {os: windows-latest, node: "22", shard: "1/3", timeout: 45}
+          - {os: windows-latest, node: "22", shard: "2/3", adapter-shard: "1/2", timeout: 45}
+          - {os: windows-latest, node: "22", shard: "3/3", adapter-shard: "2/2", timeout: 45}
           - {os: ubuntu-latest, node: "26"}
-    name: test (${{ matrix.os }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }})
+    name: test (${{ matrix.os }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }}${{ matrix.shard && format(', {0}', matrix.shard) || '' }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 75
+    timeout-minutes: ${{ matrix.timeout || 75 }}
     steps:
       - name: "Windows: Defender real-time scanning off (CI speed)"
         if: runner.os == 'Windows'
@@ -40,8 +44,10 @@ jobs:
       - name: install bundled packages (pi-subagents, intercom)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: python unit tests
+        if: runner.os != 'Windows' || matrix.shard == '1/3'
         run: python -m unittest discover -s tests -v
       - name: core pin check
+        if: runner.os != 'Windows' || matrix.shard == '1/3'
         run: python scripts/pull_core.py --check
       # one leg is enough: ruff is pinned, so every leg would report the same findings
       - name: python lint (ruff)
@@ -54,6 +60,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.node == '22'
         run: npm run lint:ts
       - name: core conformance (upstream tests at the pinned sha, summary only)
+        if: runner.os != 'Windows' || matrix.shard == '1/3'
         run: |
           python -m pip install -q -r .github/test-requirements.txt
           python scripts/pull_core.py --conformance
@@ -62,18 +69,22 @@ jobs:
         if: runner.os == 'macOS'
         run: npm run test:node
       - name: adapter tests
-        if: runner.os != 'macOS'
+        if: runner.os == 'Linux'
         run: node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test "extensions/core-adapter/test/*.test.ts"
+      - name: adapter tests (one Windows shard)
+        if: runner.os == 'Windows' && matrix.shard != '1/3'
+        run: node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test --test-shard=${{ matrix.adapter-shard }} "extensions/core-adapter/test/*.test.ts"
       - name: herdr-app mod model tests
-        if: runner.os != 'macOS'
+        if: runner.os == 'Linux' || (runner.os == 'Windows' && matrix.shard == '1/3')
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
       - name: installer tests (dry-run, idempotent second run, remove)
+        if: runner.os != 'Windows' || matrix.shard == '1/3'
         run: node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"
       - name: typescript type check (extensions, Pi 1.6.1 types)
         if: runner.os == 'Linux'
         run: npx tsc --noEmit -p tsconfig.json
       - name: ledger shims on Windows (cmd and PowerShell)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.shard == '1/3'
         shell: pwsh
         run: |
           $proj = Join-Path $env:RUNNER_TEMP 'shim-proj'
@@ -313,7 +324,7 @@ jobs:
         run: |
           java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -config PermissionFlow.cfg -workers auto -metadir "$RUNNER_TEMP/tlc-states-permission" PermissionFlow.tla
   ci-ok:
-    # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it).
+    # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it). needs.test is the aggregate of every matrix leg, so a failed, cancelled or skipped Windows shard fails ci-ok too.
     needs: [test, replay, bench-smoke, fresh-install, review-gates-model]
     if: always()
     runs-on: ubuntu-latest

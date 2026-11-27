@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { lineFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
+import { withLookupCache } from "../pathnorm.ts";
 
 const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo", "/s/scr", "/tmp"], protectedBranches: ["release"], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const roles: [string, FloorEnv][] = [["main", env], ["builder", { ...env, child: true, role: "builder" } as FloorEnv], ["reviewer", { ...env, child: true, role: "reviewer" } as FloorEnv]];
@@ -21,7 +22,8 @@ for (const r of fx("destructive-parity.json").rows) if (r.tool === "bash") lines
 /** The fixture lines that parse and that some role refuses with a floor deny. */
 const refused = [...lines].filter((l) => !parseShell(l, { cwd: env.cwd }).some((s) => s.opaque === "parse_error") && roles.some(([, e]) => shape(l, e)?.startsWith("deny/")));
 
-test("every refused fixture line is still refused with a trailing parse error, in main, builder and reviewer", () => {
+// one lookup scope per test: the file system does not change during the test, so a path is looked up once (as one gate call does)
+test("every refused fixture line is still refused with a trailing parse error, in main, builder and reviewer", () => withLookupCache(() => {
   assert.ok(refused.length >= 22, String(refused.length));
   const bad: string[] = [];
   for (const l of refused) for (const [role, e] of roles) {
@@ -31,7 +33,7 @@ test("every refused fixture line is still refused with a trailing parse error, i
     if (want?.startsWith("deny/") && !got?.startsWith("deny/")) bad.push(`${role}: ${JSON.stringify(l)}: ${want} vs ${got}`);
   }
   assert.deepEqual(bad, [], `\n${bad.join("\n")}`);
-});
+}));
 
 const NAMED: [string, string, number][] = [
   ["pwsh Remove-Item", "pwsh -c 'Remove-Item -Recurse -Force ~'", 3],
