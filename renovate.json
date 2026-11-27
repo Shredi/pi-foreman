@@ -6,15 +6,19 @@
   "rangeStrategy": "pin",
   "automerge": false,
   "schedule": ["before 6am on monday"],
+  "prBodyNotes": ["## Changelog\n\n- Dependency update from Renovate; versions and release notes are in the table and sections above."],
   "packageRules": [
+    {
+      "matchPackageNames": ["@earendil-works/*", "@mariozechner/*"],
+      "enabled": false,
+      "description": "Pi itself (@earendil-works/*, legacy @mariozechner/*) is a manual round, not a bot PR. A Pi bump also changes the version and range in packages.lock.json (pi block), docs/install.md, config/features.json, README/NOTICE and the installer fixtures (tests/installer/setup.test.mjs, fake-pi.mjs, sleepy-pi.mjs), which no manager can update together, so Renovate would open an incomplete PR."
+    },
     {
       "groupName": "pi packages",
       "matchPackageNames": [
         "pi-subagents",
         "pi-intercom",
-        "pi-background-tasks",
-        "@mariozechner/*",
-        "@earendil-works/*"
+        "pi-background-tasks"
       ],
       "automerge": false
     },
@@ -32,14 +36,14 @@
       "groupName": "npm devDependencies",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],
-      "matchPackageNames": ["*", "!@earendil-works/*"],
+      "matchPackageNames": ["*"],
       "automerge": false
     }
   ],
   "customManagers": [
     {
       "customType": "regex",
-      "description": "packages.lock.json pins (bump together with package.json; installer test requires equal pins)",
+      "description": "packages.lock.json pins (bump together with package.json; installer test requires equal pins). Matches the bundled packages in the packages array and also the pi block, which the Pi disable rule above keeps off the bot.",
       "managerFilePatterns": ["/(^|/)packages\\.lock\\.json$/"],
       "matchStrings": ["\"name\": \"(?<depName>[^\"]+)\",\\s*\"version\": \"(?<currentValue>[^\"]+)\""],
       "datasourceTemplate": "npm"
