@@ -628,7 +628,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 | 11 | No Claude Code children at all; the Claude bridge is the only Claude path | Pi guards do not apply inside them |
 | 12 | `contact_supervisor` requests are treated as untrusted | Hands-on: a cooperative parent ran a tool that the child's allowlist excluded |
 | 13 | Asks get a real prompt in TUI and RPC. Only print mode and children deny. | Unlike Codex, Pi has an interactive confirm API |
-| 14 | The precondition-op logic is own Python in `scripts/`, not in the vendored core, and the vendoring script is Python, not make | The core is never edited, and make is not available on Windows by default |
+| 14 | The precondition-op logic is own Python in `scripts/`, not in the vendored core, and the vendoring script is Python, not make | Own logic stays outside the vendored core, and make is not available on Windows by default |
 | 15 | Skills in `.agents/skills/` are for Pi only | Claude Code 2.1.288 does not load them (headless check). See open items. |
 | 16 | The adapter enforces the merged deny set and a write-protection block itself, before PS. The installer owns the generated PS file. | PS's merge can loosen and it has no session scope |
 | 17 | Children keep their user's push credentials; the gate's floors decide who pushes (builders from a single launch, own branch) | Allowed test commands run agent-written code (security review S9) |
