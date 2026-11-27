@@ -53,9 +53,13 @@ export const SAMPLE = {
     agent("t8", "sample fleet", "idle"),
     agent("t9", "sample review", "idle"),
     agent("t10", "sample three prs", "idle"),
+    // SAMPLE-FILTER: busy parents of the needs-me filter samples (one with a blocked child session, one with an idle one, one with a ready PR)
+    agent("t11", "sample busy asks", "working"),
+    agent("t12", "sample busy calm", "working"),
+    agent("t13", "sample busy ready pr", "working"),
   ],
   terminals: [
-    ...[303, 305, 306, 308, 309, 310].map((pid, i) => ({ address: ["t3", "t5", "t6", "t8", "t9", "t10"][i], state: "live", foreground: { pid } })),
+    ...[303, 305, 306, 308, 309, 310, 311, 312, 313].map((pid, i) => ({ address: ["t3", "t5", "t6", "t8", "t9", "t10", "t11", "t12", "t13"][i], state: "live", foreground: { pid } })),
     // the live mirror of the ended remote session: its dimmed row stays while this terminal lives
     { address: "t20", state: "live", name: attachName("box1", ENDED), parent: "t8", agent: "pi", status: "done", argv: ["hc", "attach", "box1/t71"] },
   ],
@@ -77,6 +81,19 @@ export const SAMPLE = {
       session("s-lines", "sample three prs", {
         pid: 310, hcTerminal: "t10",
         dots: [113, 114, 115].map((n) => ({ n, state: n === 113 ? "fail" : "ok", label: `#${n}`, src: "pr", url: `https://example.test/acme/widgets/pull/${n}` })),
+      }),
+      // SAMPLE-FILTER: a working parent whose child session asks you, one whose child session is idle, one with a PR ready to merge
+      session("s-busy-asks", "sample busy asks", {
+        pid: 311, hcTerminal: "t11", state: "working", sym: "working",
+        children: [session("s-asks-child", "asks you", { hcTerminal: "t80", state: "ask", sym: "needs-you", parent: "s-busy-asks", asks: [{ q: "Merge it?" }] })],
+      }),
+      session("s-busy-calm", "sample busy calm", {
+        pid: 312, hcTerminal: "t12", state: "working", sym: "working",
+        children: [session("s-calm-child", "idle child", { hcTerminal: "t81", parent: "s-busy-calm" })],
+      }),
+      session("s-busy-ready", "sample busy ready pr", {
+        pid: 313, hcTerminal: "t13", state: "working", sym: "working",
+        dots: [{ n: 117, state: "ok", label: "#117", src: "pr", url: "https://example.test/acme/widgets/pull/117" }],
       }),
       session("s-review", "sample review", {
         pid: 309, hcTerminal: "t9", repo: "acme/gadgets",
@@ -101,6 +118,7 @@ export const SAMPLE = {
       pr(114),
       pr(115, { mergeState: "blocked" }),
       // checks passed, the merge waits on two required checks the tracker names: the still ring and the card's waiting group
+      pr(117), // SAMPLE-FILTER: ready to merge, carried by `sample busy ready pr`
       pr(116, { repo: "acme/tools", mergeState: "blocked", waiting: ["security-scan", "license-check"] }),
     ],
   },

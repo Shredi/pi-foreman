@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prGateText, splitPrs, prCard, prCardHeight, prCardKey, prTooltip, radarKey, PR_LEGEND, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, recsKey, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds,
+  stripRows, stripSummary, slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups, mergeFeeds, blockNeedsYou,
 } from "./model.js";
 import { prsStaleText, PR_STALE_WORDS } from "./model.js";
 import { SAMPLE, SAMPLE_MANY } from "./sample.mjs";
@@ -47,6 +47,7 @@ const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/
 const AGENT_GLYPH = "🤖"; // the mark of an agent row, an emoji like the ⏳ / ⚙ of the status lines
 const CARD = 5; // inset of a session card: 4px margin and its 1px border
 const LINE = 14; // width of one connector cell
+const FILTER_SAMPLES = ["A", "B", "C", "D"]; // SAMPLE-FILTER: the temporary variants of the needs-me filter
 
 // Pi is the only harness: its logo and a leading "π - " in a terminal title say nothing, so sessions carry neither. Only agent
 // rows (subagent runs and agent-marked background tasks) carry an icon; a shell task is the gear line only.
@@ -148,6 +149,12 @@ export default class ForemanAgents extends View {
     // The sample view (docs/development.md): the radar comes from sample.mjs once; nothing is polled and nothing is started.
     this.sample = given.sample === true;
     this.manyPrs = given.manyPrs === true; // with the sample: the 52-PR feed of sample.mjs (SAMPLE_MANY) instead of the legend's
+    // SAMPLE-FILTER: filter state from the app-global shared values; in sample mode the props `needsMe` and `filterSample` override them
+    const savedFilter = guard(() => shared("pi-foreman.filter"), null);
+    this.needsMe = (this.sample && typeof given.needsMe === "boolean" ? given.needsMe : savedFilter?.needsMe) === true;
+    const savedSample = this.sample && FILTER_SAMPLES.includes(given.filterSample) ? given.filterSample : guard(() => shared("pi-foreman.filterSample"), null);
+    this.filterSample = FILTER_SAMPLES.includes(savedSample) ? savedSample : "A";
+    this.busyOpen = false; // SAMPLE-FILTER (C): the "▸ N busy" line is expanded, memory only
     if (this.sample) {
       const doc = parseRadarDoc(JSON.stringify(this.manyPrs ? SAMPLE_MANY.radar : SAMPLE.radar));
       this.radar.set("local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: null, tried: Date.now() });
@@ -197,6 +204,21 @@ export default class ForemanAgents extends View {
     let gone = false;
     for (const [id, at] of this.pressed ?? []) if (Date.now() - at >= PRESS_MS) { this.pressed.delete(id); gone = true; }
     if (gone) cx.notify();
+  }
+
+  // SAMPLE-FILTER: a click sets the filter and stores it app-global; never called from render.
+  setNeedsMe(on, cx) {
+    this.needsMe = on;
+    guard(() => setShared("pi-foreman.filter", { needsMe: on }));
+    cx.notify();
+  }
+
+  // SAMPLE-FILTER: the title bar's pill, the look of the Plan button; `on` fills it.
+  chip(t, id, text, on, click) {
+    return h_flex().id(id).h(22).px(8).items_center().rounded(11).cursor_pointer().text_size(11).text_color(on ? t.foreground : t.muted)
+      .when(on, (el) => el.bg(t.raised))
+      .hover((el) => el.bg(t.hover).text_color(t.foreground))
+      .on_click(click).child(text);
   }
 
   // A shown age that comes from now (a row's time in its status, a plan or note age, the Open PRs header) is a clock: render records the text it
@@ -1011,6 +1033,7 @@ export default class ForemanAgents extends View {
     const recsOf = (a) => this.recs.get(a.address)?.recs ?? [];
     const statusOf = (a) => guard(() => agentStatus(a.status, joined.get(a.address) ?? null, recsOf(a)), a.status);
     const drawnItems = [];
+    const trees = new Map(); // SAMPLE-FILTER: agent address -> {root, items} of its tree
     const withRows = (a) => {
       const f = joined.get(a.address);
       const resolve = (term) => {
@@ -1026,6 +1049,7 @@ export default class ForemanAgents extends View {
       const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets, remoteNodes, endedNodes, recsOf: recsOfNode, remoteOf }), []);
       const { root, items } = guard(() => dropDrawnEndedMirrors(this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys, recsOfNode, remoteOf)), { root: null, items: [] });
       drawnItems.push(...(root ? [root] : []), ...items);
+      trees.set(a.address, { root, items });
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);
       return f ? [block, div().h(4).flex_none()] : [block];
     };
@@ -1036,7 +1060,26 @@ export default class ForemanAgents extends View {
     const drawnRemote = drawnRemoteTargets(drawnItems);
     const kept = candidates.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
     for (const a of kept) if (!blocks.has(a.address)) blocks.set(a.address, withRows(a));
-    const rows = spaceGroups(kept).flatMap((g, i) => [...header(g, i > 0), ...g.members.flatMap((a) => blocks.get(a.address))]);
+    // SAMPLE-FILTER: a block needs you when its status is not busy or something in its tree (`root.children`, else the bare items) is blocked.
+    const variant = this.filterSample;
+    const on = this.needsMe === true;
+    const prReady = (a) => { const r = trees.get(a.address)?.root; return Boolean(r) && this.prGuard(() => this.enrich(r.prs ?? []).some((p) => prDotState(p).mark === "check"), false); };
+    const wantsMe = (a) => { const tr = trees.get(a.address); return blockNeedsYou(statusOf(a), tr ? (tr.root ? tr.root.children : tr.items) : []) || (variant === "B" && prReady(a)); };
+    const needMe = new Set(kept.filter(wantsMe).map((a) => a.address));
+    const busyBlocks = on ? kept.filter((a) => !needMe.has(a.address)) : [];
+    const shrink = on && variant === "D";
+    const inList = (a) => !on || shrink || needMe.has(a.address);
+    const blockOf = (a) => (shrink && !needMe.has(a.address) ? [this.agentLine(t, a, now, statusOf(a))] : blocks.get(a.address));
+    const groups = spaceGroups(kept).map((g) => ({ ...g, members: g.members.filter(inList) })).filter((g) => g.members.length > 0);
+    const rows = groups.flatMap((g, i) => [...header(g, i > 0), ...g.members.flatMap(blockOf)]);
+    const shownCount = kept.filter(inList).length;
+    if (on && shownCount === 0) rows.push(div().px(14).h(22).flex_none().text_size(12).text_color(t.dim).child(variant === "C" ? "Nothing needs you" : `Nothing needs you · ${busyBlocks.length} busy hidden`));
+    if (variant === "C" && busyBlocks.length > 0) {
+      rows.push(h_flex().id("busy-toggle").flex_none().h(22).px(14).items_center().cursor_pointer().text_size(11).text_color(t.dim)
+        .hover((el) => el.text_color(t.foreground))
+        .on_click((_e, cx) => { this.busyOpen = !this.busyOpen; cx.notify(); }).child(`${this.busyOpen ? "▾" : "▸"} ${busyBlocks.length} busy`));
+      if (this.busyOpen) rows.push(...busyBlocks.flatMap((a) => blocks.get(a.address)));
+    }
     // A child node counts as shown only where it is drawn (drawnItems): an ended one with nothing live below leaves the tree, and its PRs stay in Open PRs.
     const orphanGroups = this.prGuard(() => openPrGroups(this.feed, tops, shownSet([...joined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
@@ -1046,9 +1089,20 @@ export default class ForemanAgents extends View {
     rows.push(...this.prGuard(() => this.openPrRows(t, orphanGroups, age, stale), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
+    const filterChip = this.chip(t, "needs-me", on ? "● Needs me" : "○ Needs me", on, (_e, cx) => this.setNeedsMe(!on, cx)); // SAMPLE-FILTER (A, D)
+    const filterTabs = h_flex().flex_none().gap(2).mr(4) // SAMPLE-FILTER (B)
+      .child(this.chip(t, "tab-all", `All ${kept.length}`, !on, (_e, cx) => this.setNeedsMe(false, cx)))
+      .child(this.chip(t, "tab-needs-me", `Needs me ${needMe.size}`, on, (_e, cx) => this.setNeedsMe(true, cx)));
+    const sampleChip = this.chip(t, "filter-sample", `Sample ${variant}`, false, (_e, cx) => { // SAMPLE-FILTER: cycles A→B→C→D
+      this.filterSample = FILTER_SAMPLES[(FILTER_SAMPLES.indexOf(variant) + 1) % FILTER_SAMPLES.length];
+      guard(() => setShared("pi-foreman.filterSample", this.filterSample));
+      cx.notify();
+    });
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
       .child(div().text_size(12).font_semibold().text_color(t.dim).child("Agents"))
       .child(div().flex_1())
+      .child(sampleChip)
+      .child(variant === "B" ? filterTabs : variant === "C" ? div() : filterChip)
       .child(this.prGuard(() => this.legend(t), div()))
       .child(h_flex().id("plan-open").h(22).px(8).items_center().rounded(11).cursor_pointer().text_size(11).text_color(t.muted)
         .hover((el) => el.bg(t.hover).text_color(t.foreground))
@@ -1056,8 +1110,10 @@ export default class ForemanAgents extends View {
     const empty = div().px(14).pb(4).text_size(12).text_color(t.dim).child("No agent status yet.");
     const scroller = v_flex().id("foreman-list").flex_1().min_h(0).px(6).gap(1)
       .overflow_y_scrollbar().mode("always").children(rows);
-    const footer = h_flex().flex_none().items_center().h(26).px(14).text_size(10.5).text_color(t.dim)
-      .child(`${list.length} agents · ${needs} need you`);
+    const hiddenNote = on && busyBlocks.length > 0 && variant === "A" ? ` · ${busyBlocks.length} busy hidden` : on && busyBlocks.length > 0 && variant === "D" ? ` · ${busyBlocks.length} busy shrunk` : ""; // SAMPLE-FILTER
+    const footer = h_flex().id("agents-footer").flex_none().items_center().h(26).px(14).text_size(10.5).text_color(t.dim)
+      .when(variant === "C", (el) => el.cursor_pointer().hover((x) => x.text_color(t.foreground)).on_click((_e, cx) => this.setNeedsMe(!on, cx))) // SAMPLE-FILTER (C): the footer is the toggle
+      .child(`${list.length} agents · ${needs} need you${hiddenNote}${variant === "C" && on ? " · needs me" : ""}`);
 
     // A hot chip this render did not draw is no longer hot: its card is not built any more.
     if (this.hotCard !== null && !this.seenChips.has(this.hotCard)) this.hotCard = null;
