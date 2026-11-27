@@ -2,6 +2,7 @@
 // of a profile, CRLF, the execution-policy line, and `foreman setup` with PI_FOREMAN_PLATFORM=win32 over a temp home. Every case runs on every OS; no
 // real profile is touched, no PowerShell is started (PI_FOREMAN_HOME is set, the editions and policy come from the test seams). Also pins that the
 // POSIX blocks are byte-identical to the render of before this change.
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";

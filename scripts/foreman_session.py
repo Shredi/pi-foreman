@@ -1205,6 +1205,19 @@ def run_npm_ci(path):
         return 124
 
 
+def linked_node_modules(path):
+    """The target of `<path>/node_modules` when it is a link or junction, or resolves outside `path`; else None."""
+    import foreman_worktree_setup as setup
+    nm = os.path.join(str(path), "node_modules")
+    if not os.path.lexists(nm):
+        return None
+    real = os.path.realpath(nm)
+    if setup.is_link(nm):
+        return real
+    root = os.path.realpath(str(path))
+    return real if os.path.commonpath([root, real]) != root else None
+
+
 def has_lockfile(path):
     import foreman_worktree_setup as setup
     return any(os.path.isfile(os.path.join(str(path), n)) for n in setup.LOCKFILES)
@@ -1217,7 +1230,10 @@ def create_worktree(plan):
     if code != 0:
         raise Refused("git worktree add failed for %s" % plan["path"])
     install = "none"
-    if has_lockfile(plan["path"]):
+    linked = linked_node_modules(plan["path"]) if has_lockfile(plan["path"]) else None
+    if linked:
+        install = "skipped (node_modules is a link to %s)" % linked
+    elif has_lockfile(plan["path"]):
         rc = run_npm_ci(plan["path"])
         install = "npm ci" if rc == 0 else "failed:%d" % rc
     elif os.path.isfile(os.path.join(plan["path"], "package.json")):

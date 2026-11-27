@@ -1,3 +1,4 @@
+import "./_hermetic-env.mjs";
 import "./_sandbox-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";

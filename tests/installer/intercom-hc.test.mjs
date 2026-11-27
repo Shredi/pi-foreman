@@ -1,4 +1,5 @@
 // setup.mjs --intercom-hc / --machine-name: crossMachine.transport "hc" in the pi-intercom config.
+import "./_hermetic-env.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

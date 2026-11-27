@@ -659,6 +659,29 @@ export function npmCiReason(root) {
   }
 }
 
+/**
+ * The target of `<root>/node_modules` when it is a symlink or junction, or resolves outside `root`; else null (also when absent).
+ * `npm ci` through such a link empties the target, which belongs to another checkout.
+ */
+export function linkedNodeModules(root) {
+  const nm = path.join(root, "node_modules");
+  let link = false;
+  try {
+    link = fs.lstatSync(nm).isSymbolicLink();
+  } catch {
+    return null;
+  }
+  let real;
+  try {
+    real = fs.realpathSync(nm);
+  } catch {
+    return link ? nm : null;
+  }
+  if (link) return real;
+  const rel = path.relative(fs.realpathSync(root), real);
+  return rel.startsWith("..") || path.isAbsolute(rel) ? real : null;
+}
+
 /** True for npm 11.9.0 up to (not including) 11.13.0: `allow-git=root` there refuses the project's own git dependencies (EALLOWGIT). False for anything else, also unparsable input. */
 export function npmAllowGitBroken(version) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? "").trim());
@@ -1160,6 +1183,12 @@ async function main(argv) {
   const ciReason = opts.remove || !fs.existsSync(path.join(ROOT, ".git")) ? null : npmCiReason(ROOT);
   if (ciReason) {
     say(`  package-lock.json: node_modules ${ciReason === "missing" ? "missing" : "older than the lock"}, ${dry ? "would run" : "running"} npm ci in ${ROOT}`);
+    const linked = linkedNodeModules(ROOT);
+    if (linked) {
+      const why = `${path.join(ROOT, "node_modules")} is a link to ${linked}; npm ci would empty that target. Remove the link (rm or unlink, not rm -r), then run \`foreman setup\` again.`;
+      if (!dry) throw new Fatal(why);
+      say(`  would stop: ${why}`);
+    }
     const npmVer = spawnSync(WIN ? "npm.cmd" : "npm", ["--version"], { cwd: ROOT, encoding: "utf8", shell: WIN, windowsHide: true });
     const npmVersion = !npmVer.error && npmVer.status === 0 ? String(npmVer.stdout).trim() : "";
     if (npmAllowGitBroken(npmVersion)) {
@@ -1167,7 +1196,7 @@ async function main(argv) {
       if (!dry) throw new Fatal(why);
       say(`  would stop: ${why}`);
     }
-    if (!dry) {
+    if (!dry && !linked) {
       const r = spawnSync(WIN ? "npm.cmd" : "npm", ["ci"], { cwd: ROOT, stdio: "inherit", shell: WIN, windowsHide: true });
       if (r.error || r.status !== 0) throw new Fatal(`npm ci failed${r.error ? `: ${r.error.message}` : ` (exit ${r.status})`}. Fix it and run \`foreman setup\` again.`);
     }
