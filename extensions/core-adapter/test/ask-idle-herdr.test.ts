@@ -9,7 +9,7 @@ async function rig(t: Parameters<typeof r11Rig>[0]) {
   const sent: Sent[] = [];
   const bus = {
     on: () => () => undefined,
-    emit: (ch: string, d: unknown) => void (ch === "herdr:blocked" && sent.push(d as Sent)),
+    emit: (ch: string, d: unknown) => { if (ch === "herdr:blocked") sent.push(d as Sent); },
   };
   // the rig clears HERDR_ENV before it builds pi; the getter runs while pi is built, just before the adapter installs the shim
   const piExtra = {

@@ -147,7 +147,7 @@ test("disabled, or nothing to search: no calls and no file", async () => {
 test("the refresher ticks on a timer, skips a non-gh host and stops cleanly", async () => {
   const dir = mkTestTmp("r78o-");
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
-  const fake = { set: (fn: () => void, ms: number) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h: unknown) => void (typeof h === "number" && timers[h] && (timers[h].live = false)) };
+  const fake = { set: (fn: () => void, ms: number) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h: unknown) => { if (typeof h === "number" && timers[h]) timers[h].live = false; } };
   let calls = 0;
   let host = false;
   const rf = new OpenPrsRefresher({ agentDir: dir, config: () => on, ghHost: () => host, gh: async () => (calls++, answer(node(1))), timers: fake });

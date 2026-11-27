@@ -33,10 +33,10 @@ test("real session: the request declares the launch fields on subagent, and a ca
   const savedEnv = envKeys.map((k) => process.env[k]);
   process.env.HOME = process.env.USERPROFILE = fakeHome;
   process.env.PI_CODING_AGENT_DIR = agentDir;
-  t.after(() => envKeys.forEach((k, i) => void (savedEnv[i] === undefined ? delete process.env[k] : (process.env[k] = savedEnv[i]))));
+  t.after(() => envKeys.forEach((k, i) => { if (savedEnv[i] === undefined) delete process.env[k]; else (process.env[k] = savedEnv[i]); }));
   const savedChild = process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_SUBAGENT_CHILD;
-  t.after(() => void (savedChild === undefined ? delete process.env.PI_SUBAGENT_CHILD : (process.env.PI_SUBAGENT_CHILD = savedChild)));
+  t.after(() => { if (savedChild === undefined) delete process.env.PI_SUBAGENT_CHILD; else (process.env.PI_SUBAGENT_CHILD = savedChild); });
 
   const core = createFauxCore({ provider: "fake", models: [{ id: "m1", reasoning: false }] });
   const requests: { tools: { name: string; parameters: Json }[] }[] = [];
@@ -56,7 +56,7 @@ test("real session: the request declares the launch fields on subagent, and a ca
 
   const seen: { input: Json }[] = [];
   const first = (pi: { on: (e: string, h: (ev: { toolName: string; input: Json }) => unknown) => void }): void => {
-    pi.on("tool_call", (ev) => void (ev.toolName === "subagent" && seen.push({ input: structuredClone(ev.input) })));
+    pi.on("tool_call", (ev) => { if (ev.toolName === "subagent") seen.push({ input: structuredClone(ev.input) }); });
   };
   const subagents = (await import(pathToFileURL(path.join(SUBAGENTS_PKG, "index.js")).href)) as { default: (pi: unknown) => void };
   const settingsManager = SettingsManager.inMemory ? SettingsManager.inMemory({}) : SettingsManager.create(cwd, agentDir);

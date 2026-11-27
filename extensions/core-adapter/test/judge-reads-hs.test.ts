@@ -82,7 +82,7 @@ test("a 5000-entry folder lists at most 200 names and resolves few entries", () 
   fs.mkdirSync(big);
   for (let i = 0; i < 5000; i++) fs.writeFileSync(path.join(big, `f${String(i).padStart(4, "0")}`), "");
   let hooked = 0;
-  readHooks.afterStat = () => void hooked++;
+  readHooks.afterStat = () => { hooked++; };
   try {
     const { block } = one("big");
     const names = block.body.split("\n").filter((l) => /^f\d{4}$/.test(l));

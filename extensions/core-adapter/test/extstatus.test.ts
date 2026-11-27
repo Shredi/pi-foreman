@@ -25,7 +25,7 @@ function tree() {
 function harness(over: Partial<ExtStatusDeps> & { reply?: Partial<StatusRunResult> | (() => Partial<StatusRunResult>) } = {}) {
   const t = tree();
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
-  const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => void (typeof h === "number" && timers[h] && (timers[h].live = false)) };
+  const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => { if (typeof h === "number" && timers[h]) timers[h].live = false; } };
   const runs: { program: string; args: string[]; o: StatusRunOptions }[] = [];
   const traces: Record<string, unknown>[] = [];
   let changed = 0;
@@ -47,7 +47,7 @@ function harness(over: Partial<ExtStatusDeps> & { reply?: Partial<StatusRunResul
     },
     timers: fake,
     trace: (r) => void traces.push(r),
-    changed: () => void changed++,
+    changed: () => { changed++; },
     ...over,
   });
   const fire = async () => {

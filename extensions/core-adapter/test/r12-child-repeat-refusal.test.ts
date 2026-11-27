@@ -71,7 +71,7 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }) {
     model: { provider: "fake", id: "builder" },
     mode: "json",
     hasUI: false,
-    abort: () => void aborts++,
+    abort: () => { aborts++; },
     isProjectTrusted: () => false,
     isIdle: () => true,
     modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },

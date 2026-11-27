@@ -38,7 +38,7 @@ function flowRig(fin: SelfFinish | (() => Promise<SelfFinish>)) {
     notify: (t) => void log.push(`notify:${t}`),
     trace: (r) => void log.push(`trace:${strRaw(r.decision)}`),
     markCause: () => undefined,
-    writeStub: (f, t) => void (files.set(f, t), log.push("stub")),
+    writeStub: (f, t) => { files.set(f, t); log.push("stub"); },
     exists: (f) => files.has(f),
     setTimer: () => () => undefined,
     markClosed: () => void log.push("markClosed"),
@@ -127,7 +127,7 @@ test("spawnDetached: detached, no stdio, unref'd, outside the worktree", () => {
   const seen: { cmd: string; args: string[]; opts: Record<string, unknown>; unref: number } = { cmd: "", args: [], opts: {}, unref: 0 };
   const fake = ((cmd: string, args: string[], opts: Record<string, unknown>) => {
     Object.assign(seen, { cmd, args, opts });
-    return { on: () => undefined, unref: () => void seen.unref++ };
+    return { on: () => undefined, unref: () => { seen.unref++; } };
   }) as unknown as typeof spawn;
   spawnDetached("py", ["a", "b"], "/h", fake);
   assert.equal(seen.cmd, "py");

@@ -168,7 +168,7 @@ test("the idle warm equals the last real request after every stage of a scripted
   // ---- the session, as Pi runs it ------------------------------------------------------------------------------------------
   const say = async (msg: Msg) => {
     let m = msg;
-    await each("message_end", { message: m }, (res) => void (res.message && (m = res.message as Msg)));
+    await each("message_end", { message: m }, (res) => { if (res.message) m = res.message as Msg; });
     session.push(m);
   };
   const usage = { input: 100_000, output: 10, cacheRead: 0, cacheWrite: 0 };
@@ -271,7 +271,7 @@ test("the idle warm equals the last real request after every stage of a scripted
       options: { sessionId: r.sessionId, reasoning: THINKING, cacheRetention: retention(undefined), ...PI_ADDED },
     };
     // the provider hooks rewrite the real request only (the warm never passes them): the payload and the headers
-    await each("before_provider_request", { payload: req }, (res) => void (req = res as never));
+    await each("before_provider_request", { payload: req }, (res) => { req = res as never; });
     const headers: Json = {};
     for (const h of handlers("before_provider_headers")) {
       ran.add("before_provider_headers");

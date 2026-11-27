@@ -150,7 +150,7 @@ test("blocked merge state holds the ready line; it is sent when the state clears
 
 test("PR watch end to end: policy check alone, then the full list pending, then pass; reported once, on the last snapshot", async () => {
   const timers: { fn: () => void; live: boolean }[] = [];
-  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   let read: { snap: WatchSnapshot; okAt: number } = { snap: snap({ runs: [run("pr-policy", "passed")], required: REQ }), okAt: 1 };
   let clock = 0;
   const sent: string[] = [];

@@ -33,7 +33,7 @@ function rig(over: Partial<IdleModelDeps> = {}, opts: { cold?: boolean } = {}) {
     coldAt: () => (st.cold ? 0 : Infinity),
     persist: (e) => entries.push(e),
     trace: (r) => traces.push(r),
-    glyph: (g) => void (st.glyph = g),
+    glyph: (g) => { st.glyph = g; },
     ...over,
   };
   return { im: new IdleModel(deps), st, traces, entries, switched };
@@ -197,8 +197,6 @@ test("glyph: warming, cold, downshifted; a running turn hides cold; nothing for 
 });
 
 test("foremanBaseModel feeds the review rule and the rank checks while downshifted", async () => {
-  const { applyReviewModelRule } = await import("../reviewerclimb.ts");
-  void applyReviewModelRule; // signature is exercised by the adapter; here the helper's value is what matters
   const r = rig();
   assert.equal(r.im.baseModel(r.st.cur), "p/big");
   await r.im.beforeTurn("child");

@@ -14,7 +14,7 @@ const NO_RECORD = (head: string) => `head ${head.slice(0, 7)} not reviewed (no r
 
 function harness(passes: string[], opts: { gate?: boolean } = {}) {
   const timers: { fn: () => void; live: boolean }[] = [];
-  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   let read: StoreRead = { kind: "down" };
   const sent: string[] = [];
   const w = new PrWatches({

@@ -62,10 +62,9 @@ test("a partial read leaves the stamp as it is", async (t) => {
 });
 
 test("no read since the restart: the write is refused", async (t) => {
-  const { a, file, w } = await rig(t);
+  const { file, w } = await rig(t);
   const b = await w.adapter("resume");
   assert.equal((await call(b, "write", { path: file, content: "x\n" }))?.block, true);
-  void a;
 });
 
 test("the session's own write keeps its stamp; a new ledger write passes; an edit after an outside change passes", async (t) => {

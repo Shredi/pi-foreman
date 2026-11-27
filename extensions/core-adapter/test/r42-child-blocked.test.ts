@@ -236,7 +236,7 @@ test("start/stop: one unref'd timer at 60 s, stop cancels it", () => {
   const r = rig();
   const calls: number[] = [];
   let cancelled = 0;
-  const cb = new ChildBlocked({ agentDir: r.agentDir, sessionId: "s", opener: () => "x", seconds: () => 600, send: () => undefined, timer: (_fn, ms) => { calls.push(ms); return () => void cancelled++; } });
+  const cb = new ChildBlocked({ agentDir: r.agentDir, sessionId: "s", opener: () => "x", seconds: () => 600, send: () => undefined, timer: (_fn, ms) => { calls.push(ms); return () => { cancelled++; }; } });
   cb.start();
   cb.start();
   assert.deepEqual(calls, [60_000]);

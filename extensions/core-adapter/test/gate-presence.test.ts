@@ -9,16 +9,16 @@ import { Presence } from "../presence.ts";
 function fakeTimers() {
   const fns: (() => void)[] = [];
   let cleared = 0;
-  const timers: WaitTimers = { set: (fn) => (fns.push(fn), fns.length), clear: () => void cleared++ };
+  const timers: WaitTimers = { set: (fn) => (fns.push(fn), fns.length), clear: () => { cleared++; } };
   return { timers, tick: () => fns.forEach((f) => f()), started: () => fns.length, cleared: () => cleared };
 }
-const presence = (state: { away: boolean }, refreshed = { n: 0 }): PresenceLike => ({ refresh: async () => void refreshed.n++, away: () => state.away });
+const presence = (state: { away: boolean }, refreshed = { n: 0 }): PresenceLike => ({ refresh: async () => { refreshed.n++; }, away: () => state.away });
 const settle = () => new Promise((r) => setTimeout(r, 5));
 
 test("away before the dialog: denied at once, the dialog is never opened", async () => {
   let opened = 0;
   const n = { n: 0 };
-  const r = await withPresence(presence({ away: true }, n), async () => void opened++);
+  const r = await withPresence(presence({ away: true }, n), async () => { opened++; });
   assert.deepEqual(r, { away: true, during: false });
   assert.equal(opened, 0);
   assert.equal(n.n, 1, "refresh runs first");

@@ -44,7 +44,7 @@ function rig(o: Opts = {}) {
   const traces: Record<string, unknown>[] = [];
   const runs: { program: string; args: string[] }[] = [];
   const timers: { fn: () => void; live: boolean }[] = [];
-  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (typeof h === "number" && timers[h] && (timers[h].live = false)) };
+  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => { if (typeof h === "number" && timers[h]) timers[h].live = false; } };
   const reply = { fn: o.reply ?? ((): Partial<StatusRunResult> => ({ stdout: "[]" })) };
   const mk = (over: Partial<StripDeps> = {}): StripSampler =>
     new StripSampler({
@@ -71,7 +71,7 @@ function rig(o: Opts = {}) {
     });
   const read = (): StripDoc => JSON.parse(fs.readFileSync(stripPath(agentDir), "utf8")) as StripDoc;
   const exists = (): boolean => fs.existsSync(stripPath(agentDir));
-  const advance = (ms: number): void => void (clock.now += ms);
+  const advance = (ms: number): void => { clock.now += ms; };
   return { root, agentDir, ws, bin, tool, clock, cfg, snap, traces, runs, timers, reply, mk, read, exists, advance, done: () => rmTestTmp(root) };
 }
 const strip = (c: unknown): unknown => ({ sidebar: { strip: c } });
@@ -389,13 +389,12 @@ test("forecast samples: spaced by period/200, a changed reset clears them, a ste
   const r = rig();
   t.after(r.done);
   const s = r.mk();
-  const hook = new ClaudeUsageHook(() => 0);
+  new ClaudeUsageHook(() => 0);
   let reset = Math.round((r.clock.now + 6 * 24 * HOUR_MS) / 1000);
   const put = (used: number, rs = reset): void => {
     fs.mkdirSync(path.dirname(stripClaudePath(r.agentDir)), { recursive: true });
     fs.writeFileSync(stripClaudePath(r.agentDir), JSON.stringify({ windows: { "7d": { used, resetsAt: rs, at: 1 } } }));
   };
-  void hook;
   put(0.1);
   s.tick();
   r.advance(10_000);

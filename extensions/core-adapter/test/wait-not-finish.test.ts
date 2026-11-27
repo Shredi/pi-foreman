@@ -24,8 +24,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
 }
 
 test("no pending source: the stop guard holds as before and no skip is traced", async (t) => {
-  const { a, settle, skips, types } = await rig(t);
-  void a;
+  const { settle, skips, types } = await rig(t);
   const r = await settle();
   assert.equal(r?.continue, true);
   assert.deepEqual(types(r), ["pi-foreman-stop-gate"]);

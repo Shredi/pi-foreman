@@ -332,7 +332,7 @@ test("the Herdr channel drops an own ask at agent_end and a later evaluation doe
   t.after(() => rmTestTmp(dir));
   const sent: { active: boolean; label?: string }[] = [];
   const handlers = new Map<string, () => Promise<unknown>>();
-  const events = { on: () => () => undefined, emit: (ch: string, d: unknown) => void (ch === "herdr:blocked" && sent.push(d as { active: boolean; label?: string })) };
+  const events = { on: () => () => undefined, emit: (ch: string, d: unknown) => { if (ch === "herdr:blocked") sent.push(d as { active: boolean; label?: string }); } };
   const pi = { events, on: (n: string, h: () => Promise<unknown>) => void handlers.set(n, h) };
   const tracker = installBlockedShim(pi as never, { env: { HERDR_ENV: "1" }, agentDir: dir });
   const handoff = path.join(dir, "handoff");

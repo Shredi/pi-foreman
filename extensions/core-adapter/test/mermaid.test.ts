@@ -136,7 +136,7 @@ test("a render past the timeout is cut off, traced, and the next fence still ren
 
 test("a missing module is reported once and stops the batch; nothing is written", async () => {
   let missing = 0;
-  const engine = createEngine({ useWorker: false, load: async () => null, onMissing: () => void missing++ });
+  const engine = createEngine({ useWorker: false, load: async () => null, onMissing: () => { missing++; } });
   const m = memIo();
   assert.deepEqual(await renderSidecars(engine, [fence("graph TD\nA-->B"), fence("graph TD\nC-->D")], m.io), []);
   await assert.rejects(engine.render("graph TD\nA-->B", "dark"), MermaidMissing);

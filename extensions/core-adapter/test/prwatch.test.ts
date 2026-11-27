@@ -139,7 +139,7 @@ test("watchIntervalMs floors prWatchSeconds at 30 s", () => {
 
 function harness(poll: (key: PrKey, seen: { updatedAt: string }) => Promise<WatchPoll>, opts: { child?: boolean; onMerged?: (i: unknown) => void } = {}) {
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
-  const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   let clock = 0;
   const sent: { msg: ReturnType<typeof prMessage>; idle: boolean }[] = [];
   const traces: Record<string, unknown>[] = [];
@@ -164,7 +164,7 @@ function harness(poll: (key: PrKey, seen: { updatedAt: string }) => Promise<Watc
     }
     await new Promise((r) => setImmediate(r));
   };
-  return { w, sent, traces, fire, timers, setIdle: (v: boolean) => void (idle = v) };
+  return { w, sent, traces, fire, timers, setIdle: (v: boolean) => { idle = v; } };
 }
 
 test("pr_watch: a message on a delta stays armed; triggerTurn when idle, followUp when busy", async () => {
