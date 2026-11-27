@@ -1215,7 +1215,10 @@ def linked_node_modules(path):
     if setup.is_link(nm):
         return real
     root = os.path.realpath(str(path))
-    return real if os.path.commonpath([root, real]) != root else None
+    try:
+        return real if os.path.commonpath([root, real]) != root else None
+    except ValueError:  # different drives on Windows: outside
+        return real
 
 
 def has_lockfile(path):

@@ -1196,7 +1196,7 @@ async function main(argv) {
       if (!dry) throw new Fatal(why);
       say(`  would stop: ${why}`);
     }
-    if (!dry && !linked) {
+    if (!dry) {
       const r = spawnSync(WIN ? "npm.cmd" : "npm", ["ci"], { cwd: ROOT, stdio: "inherit", shell: WIN, windowsHide: true });
       if (r.error || r.status !== 0) throw new Fatal(`npm ci failed${r.error ? `: ${r.error.message}` : ` (exit ${r.status})`}. Fix it and run \`foreman setup\` again.`);
     }

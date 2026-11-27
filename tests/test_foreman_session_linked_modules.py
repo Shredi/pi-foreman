@@ -10,8 +10,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _isolation  # noqa: E402,F401
-import foreman_session as fsn  # noqa: E402
+import _isolation  # noqa: F401
+import foreman_session as fsn
 
 
 class LinkedNodeModulesTest(unittest.TestCase):
@@ -44,6 +44,13 @@ class LinkedNodeModulesTest(unittest.TestCase):
         info, npm = self.create()
         npm.assert_called_once()
         self.assertEqual(info["install"], "npm ci")
+
+    def test_commonpath_value_error_counts_as_outside(self):
+        os.makedirs(os.path.join(self.wt, "node_modules"))
+        with mock.patch.object(fsn.os.path, "commonpath", side_effect=ValueError("different drives")):
+            info, npm = self.create()
+        npm.assert_not_called()
+        self.assertEqual(info["install"], "skipped (node_modules is a link to %s)" % os.path.join(self.wt, "node_modules"))
 
     def test_helper_none_without_node_modules(self):
         self.assertIsNone(fsn.linked_node_modules(self.wt))

@@ -37,7 +37,7 @@ test("linkedNodeModules: a dir symlink returns its target", { skip: process.plat
   assert.equal(linkedNodeModules(root), outside);
 });
 
-test("linkedNodeModules: a junction returns its target", { skip: process.platform !== "win32" && "junctions exist on win32 only" }, () => {
+test("linkedNodeModules: a junction returns its target (a plain dir symlink off win32)", () => {
   const base = temp();
   const outside = path.join(base, "outside");
   fs.mkdirSync(outside);
