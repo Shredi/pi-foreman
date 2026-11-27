@@ -83,14 +83,22 @@ test("the natural size: the viewBox for an SVG, the data-URI viewBox for an img 
   assert.match(SCRIPT, /if\(!s&&g\.naturalWidth&&g\.naturalHeight\)return \[g\.naturalWidth,g\.naturalHeight\];/);
   // a percentage width is not a pixel size; an unknown size keeps the button
   assert.match(SCRIPT, /function px\(v\)\{var n=parseFloat\(v\);return n>0&&!\/%\$\/\.test\(v\)\?n:0;\}/);
-  assert.match(SCRIPT, /var w=px\(g\.getAttribute\('width'\)\|\|g\.style\.width\),h=px\(g\.getAttribute\('height'\)\|\|g\.style\.height\);return w&&h\?\[w,h\]:null;\}/);
+  assert.match(SCRIPT, /return w&&h\?\[w,h\]:null;\}/);
+  // an SVG's pixel width and height come first, as fit() reads them: a viewBox is the size only when one of them is missing or a percentage
+  assert.match(SCRIPT, /w=px\(g\.getAttribute\('width'\)\|\|g\.style\.width\),h=px\(g\.getAttribute\('height'\)\|\|g\.style\.height\);if\(s&&w&&h\)return \[w,h\];if\(v&&v\.width&&v\.height\)/);
 });
 
 test("a figure centred or right-aligned by its parent keeps that alignment through a block wrapper", () => {
   // a block wrapper does not inherit text-align: the parent's computed alignment becomes a margin on the wrapper
-  assert.match(SCRIPT, /var pa=getComputedStyle\(p\)\.textAlign;if\(\(pc\|\|bl\)&&\/center\$\/\.test\(pa\)\)w\.classList\.add\('pfz-c'\);/);
-  assert.match(SCRIPT, /else if\(\(pc\|\|bl\)&&\/\^\(right\|end\)\$\/\.test\(pa\)\)w\.classList\.add\('pfz-r'\);/);
+  assert.match(SCRIPT, /var pa=getComputedStyle\(p\)\.textAlign,inl=\/\^inline\/\.test\(cs\.display\);if\(inl&&\(pc\|\|bl\)&&\/center\$\/\.test\(pa\)\)w\.classList\.add\('pfz-c'\);/);
+  assert.match(SCRIPT, /else if\(inl&&\(pc\|\|bl\)&&\/\^\(right\|end\)\$\/\.test\(pa\)\)w\.classList\.add\('pfz-r'\);/);
   assert.match(STYLE, /\.pfz-w\.pfz-r\{margin-left:auto\}/);
+});
+
+test("text-align moves only an inline figure: the alignment is read from the figure's own display, so a block figure stays where it is", () => {
+  // text-align never moves a display:block figure; the figure's computed display (t) gates the wrapper class
+  assert.match(SCRIPT, /cs=getComputedStyle\(t\)/);
+  assert.match(SCRIPT, /inl=\/\^inline\/\.test\(cs\.display\)/);
 });
 
 test("the dashed hover outline skips the Enlarge button's own icon", () => {
