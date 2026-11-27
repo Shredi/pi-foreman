@@ -78,3 +78,19 @@ test("the watch reports a tracker error once per new text", async () => {
   await tick();
   assert.equal(sent.length, 3, "after the error cleared, the same text is news again");
 });
+
+test("two watches: one failing, one waiting; the error is noticed once, not on every tick", async () => {
+  const fns: (() => void)[] = [];
+  const timers: Timers = { set: (fn) => (fns.push(fn), fns.length), clear: () => {} };
+  const sent: string[] = [];
+  const K2: PrKey = { host: "github.com", repo: "acme/app", n: 6 };
+  const storeEntry = (k: PrKey): StoreRead => (k.n === K.n ? { kind: "error", error: "rate limit" } : { kind: "waiting" });
+  const watches = new PrWatches({ storeEntry, send: (m) => void sent.push(m.content), idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers });
+  watches.startPending(K);
+  watches.startPending(K2);
+  for (let i = 0; i < 10; i++) {
+    fns.shift()?.();
+    await flush();
+  }
+  assert.equal(sent.filter((s) => /last poll failed: rate limit/.test(s)).length, 1);
+});

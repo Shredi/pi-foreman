@@ -1115,12 +1115,12 @@ def open_in_herdr(binary, label, cwd, workspace_label, command, focus):
 
 START_CONFIRM_SECONDS = 120.0
 START_CONFIRM_POLL = 1.0
-START_CONFIRM_GONE_POLLS = 2  # consecutive polls with only the shell in the foreground: Pi was never there or has exited
+START_CONFIRM_GONE_POLLS = 2  # consecutive polls with only the shell in the foreground after Pi was seen there: Pi has exited
 # Pi's own fatal-start output (pi-coding-agent dist/main.js): a red line on stderr, then exit code 1. `Error: <message>` for a bad option
 # or a start-up diagnostic (parseArgs diagnostics :538, --fork/--session-id conflicts :279,:292, session and cwd errors :300-:321,:507,
 # :616), `Session already exists with id '<id>'` (:332), `No session found matching '<arg>'` (:343,:363) and, after a failed extension
 # load, `Hint: Start without extensions using "pi -ne".` (:51,:826). The pane text carries no colour codes.
-PI_START_FAILURE = re.compile(r"^(Error: \S|Session already exists with id '|No session found matching '|Hint: Start without extensions)", re.M)
+PI_START_FAILURE = re.compile(r"^(Error: \S|Session already exists with id '|No session found matching '|Hint: Start without extensions|Stored session working directory does not exist:)", re.M)
 
 
 def find_key(data, key):
@@ -1174,7 +1174,7 @@ def shell_only(binary, pane):
 def confirm_start(binary, pane, adir, child, handoff):
     """After `pane run`: poll until the child shows itself (live.json or a live state file with its intercom id). Returns None when it
     did, or when herdr cannot be asked three times in a row; ("failed", reason, pane tail) at once when the pane's foreground is the
-    shell again or the pane shows Pi's own start-failure output (PI_START_FAILURE); ("unconfirmed", reason, pane tail) after
+    shell again after Pi was seen in the foreground, or the pane shows Pi's own start-failure output (PI_START_FAILURE); ("unconfirmed", reason, pane tail) after
     PI_FOREMAN_START_CONFIRM_SECONDS (default 120, 0 = no check). PI_FOREMAN_START_CONFIRM_POLL sets the poll interval (seconds)."""
     try:
         seconds = float(os.environ.get("PI_FOREMAN_START_CONFIRM_SECONDS") or START_CONFIRM_SECONDS)
@@ -1185,6 +1185,7 @@ def confirm_start(binary, pane, adir, child, handoff):
         return None
     deadline = time.monotonic() + seconds
     gone = errors = 0
+    seen = False
     while True:
         if pi_reported_live(adir, child, handoff):
             return None
@@ -1194,14 +1195,15 @@ def confirm_start(binary, pane, adir, child, handoff):
         except HerdrError:
             only_shell = None
             errors += 1
-        gone = gone + 1 if only_shell else 0
+        seen = seen or only_shell is False
+        gone = gone + 1 if only_shell and seen else 0
         text = pane_tail(binary, pane)
         if PI_START_FAILURE.search(text):
             return "failed", "Pi printed its start-failure output", text
         if gone >= START_CONFIRM_GONE_POLLS:
             if pi_reported_live(adir, child, handoff):
                 return None
-            return "failed", "the Pi process is gone (only the shell runs in the pane)", text
+            return "failed", "the Pi process is gone (it ran, now only the shell runs in the pane)", text
         if errors >= 3 and not text:
             return None
         if time.monotonic() >= deadline:

@@ -16,10 +16,10 @@ FAKE = base.FAKE.replace('else:\n    out = {"result": {}}', r'''elif key == "pan
     counter = os.environ["FAKE_HERDR_LOG"] + ".n"
     n = (int(open(counter).read()) if os.path.exists(counter) else 0) + 1
     open(counter, "w").write(str(n))
-    if mode == "live" and n >= 2:
+    if (mode == "live" and n >= 2) or (mode == "slow" and n >= 7):
         for d in os.listdir(os.environ["FAKE_HANDOFFS"]):
             open(os.path.join(os.environ["FAKE_HANDOFFS"], d, "live.json"), "w").write(json.dumps({"intercomId": "fm-x", "piSessionId": "s"}))
-    shell_only = mode == "exit" and n >= 2
+    shell_only = (mode == "exit" and n >= 2) or (mode == "slow" and n <= 4)
     out = {"result": {"process_info": {"shell_pid": 100, "foreground_process_group_id": 200, "foreground_processes": [{"pid": 100 if shell_only else 200}]}}}
 elif key == "pane read":
     out = {"result": {"read": {"text": os.environ.get("FAKE_PANE_TEXT", ""), "source": "recent"}}}
@@ -46,6 +46,18 @@ class HerdrConfirmTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(self.registry()[0]["status"], "open")
         self.assertGreaterEqual(len(self.process_info_calls()), 2)
+
+    def test_slow_shell_start_is_not_a_failure(self):
+        # shell only for four polls, then Pi, then live.json
+        code, out, err = self.run_main(*self.open_args(), FAKE_MODE="slow")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.registry()[0]["status"], "open")
+        self.assertGreaterEqual(len(self.process_info_calls()), 7)
+
+    def test_stored_cwd_missing_line_fails_at_once(self):
+        code, out, err = self.run_main(*self.open_args(), FAKE_PANE_TEXT="Stored session working directory does not exist: /x\n")
+        self.assertEqual(code, 2)
+        self.assertIn("Pi printed its start-failure output", err)
 
     def test_process_gone_fails_at_once_with_the_pane_text(self):
         code, out, err = self.run_main(*self.open_args(), FAKE_MODE="exit", FAKE_PANE_TEXT="zsh: command not found: pi\n$ ")

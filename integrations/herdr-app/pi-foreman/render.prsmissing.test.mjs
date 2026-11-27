@@ -94,11 +94,13 @@ test("a missing binary followed by a timeout still notifies once for the timeout
   assert.match(world.notices[1].body, /was stopped/);
 });
 
-test("the radar still shows its own state when foreman is missing: no notice from the radar read either", async () => {
+test("the radar still shows its own state when foreman is missing: the radar read adds no notice to the poll's one", async () => {
   reset();
   world.execFn = notFound;
   const { m, tasks, cx } = boot();
   for (const t of tasks.splice(0)) await t(cx);
   assert.equal(m.radar.get("local").ok, false);
   assert.doesNotThrow(() => m.render(cx));
+  assert.equal(world.notices.length, 1);
+  assert.match(world.notices[0].body, /foreman was not found on this computer.*PATH/);
 });

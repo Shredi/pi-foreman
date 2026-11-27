@@ -38,5 +38,5 @@ if errorlevel 1 goto direct
 node --no-warnings --experimental-strip-types "%~dp0ledger-run.mjs" "%~dp0..\core\scripts\ledger.py" "%PF_PY%" %PF_PYARGS% -- %*
 exit /b %ERRORLEVEL%
 :direct
-"%PF_PY%" %PF_PYARGS% -E -s "%~dp0..\core\scripts\ledger.py" %*
+"%PF_PY%" %PF_PYARGS% -X utf8 -E -s "%~dp0..\core\scripts\ledger.py" %*
 exit /b %ERRORLEVEL%
