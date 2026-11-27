@@ -1113,6 +1113,104 @@ def open_in_herdr(binary, label, cwd, workspace_label, command, focus):
     return {"workspace": ws, "tab": tab, "pane": pane}
 
 
+START_CONFIRM_SECONDS = 120.0
+START_CONFIRM_POLL = 1.0
+START_CONFIRM_GONE_POLLS = 2  # consecutive polls with only the shell in the foreground: Pi was never there or has exited
+# Pi's own fatal-start output (pi-coding-agent dist/main.js): a red line on stderr, then exit code 1. `Error: <message>` for a bad option
+# or a start-up diagnostic (parseArgs diagnostics :538, --fork/--session-id conflicts :279,:292, session and cwd errors :300-:321,:507,
+# :616), `Session already exists with id '<id>'` (:332), `No session found matching '<arg>'` (:343,:363) and, after a failed extension
+# load, `Hint: Start without extensions using "pi -ne".` (:51,:826). The pane text carries no colour codes.
+PI_START_FAILURE = re.compile(r"^(Error: \S|Session already exists with id '|No session found matching '|Hint: Start without extensions)", re.M)
+
+
+def find_key(data, key):
+    """The first value of `key` anywhere in the nested dicts of a herdr reply (its nesting under `result` is not pinned), else None."""
+    if isinstance(data, dict):
+        if key in data:
+            return data[key]
+        for v in data.values():
+            found = find_key(v, key)
+            if found is not None:
+                return found
+    return None
+
+
+def pi_reported_live(adir, child, handoff):
+    """True when the child showed itself: `<handoff>/live.json` holds an intercom id, or a live state file of this child does."""
+    try:
+        d = json.loads((Path(handoff) / "live.json").read_text("utf-8"))
+        if isinstance(d, dict) and isinstance(d.get("intercomId"), str) and d["intercomId"]:
+            return True
+    except (OSError, ValueError):
+        pass
+    name = Path(str(handoff)).name
+    for d in read_live_files(adir):
+        if isinstance(d.get("intercomId"), str) and d["intercomId"] and (
+                d["intercomId"] == child or Path(str(d.get("handoff") or "")).name == name):
+            return True
+    return False
+
+
+def pane_tail(binary, pane):
+    """The last START_CHECK_LINES lines `herdr pane read` shows ("" when it cannot say)."""
+    try:
+        text = find_key(herdr(binary, ["pane", "read", pane, "--source", "recent", "--lines", str(START_CHECK_LINES)]), "text")
+    except HerdrError:
+        return ""
+    return "\n".join(text.rstrip().splitlines()[-START_CHECK_LINES:]) if isinstance(text, str) else ""
+
+
+def shell_only(binary, pane):
+    """True when `herdr pane process-info` shows nothing but the shell in the pane's foreground, False when another process runs there,
+    None when it does not say; HerdrError when herdr cannot be asked."""
+    info = find_key(herdr(binary, ["pane", "process-info", "--pane", pane]), "process_info")
+    procs = info.get("foreground_processes") if isinstance(info, dict) else None
+    if not isinstance(procs, list):
+        return None
+    shell = info.get("shell_pid")
+    return not any(isinstance(x, dict) and x.get("pid") != shell for x in procs)
+
+
+def confirm_start(binary, pane, adir, child, handoff):
+    """After `pane run`: poll until the child shows itself (live.json or a live state file with its intercom id). Returns None when it
+    did, or when herdr cannot be asked three times in a row; ("failed", reason, pane tail) at once when the pane's foreground is the
+    shell again or the pane shows Pi's own start-failure output (PI_START_FAILURE); ("unconfirmed", reason, pane tail) after
+    PI_FOREMAN_START_CONFIRM_SECONDS (default 120, 0 = no check). PI_FOREMAN_START_CONFIRM_POLL sets the poll interval (seconds)."""
+    try:
+        seconds = float(os.environ.get("PI_FOREMAN_START_CONFIRM_SECONDS") or START_CONFIRM_SECONDS)
+        poll = float(os.environ.get("PI_FOREMAN_START_CONFIRM_POLL") or START_CONFIRM_POLL)
+    except ValueError:
+        return None
+    if not math.isfinite(seconds) or seconds <= 0 or not math.isfinite(poll) or poll <= 0:
+        return None
+    deadline = time.monotonic() + seconds
+    gone = errors = 0
+    while True:
+        if pi_reported_live(adir, child, handoff):
+            return None
+        try:
+            only_shell = shell_only(binary, pane)
+            errors = 0
+        except HerdrError:
+            only_shell = None
+            errors += 1
+        gone = gone + 1 if only_shell else 0
+        text = pane_tail(binary, pane)
+        if PI_START_FAILURE.search(text):
+            return "failed", "Pi printed its start-failure output", text
+        if gone >= START_CONFIRM_GONE_POLLS:
+            if pi_reported_live(adir, child, handoff):
+                return None
+            return "failed", "the Pi process is gone (only the shell runs in the pane)", text
+        if errors >= 3 and not text:
+            return None
+        if time.monotonic() >= deadline:
+            if pi_reported_live(adir, child, handoff):
+                return None
+            return "unconfirmed", "start not confirmed after %d s (no live.json, no intercom id)" % int(seconds), text
+        time.sleep(poll)
+
+
 DEFAULT_BRANCH_PREFIX = "round"
 WORKTREE_MARK = "session worktree: "
 GIT_TIMEOUT = 120
@@ -1361,6 +1459,7 @@ def open_session(p, remote=None):
         if foreman_trust.grant(adir, cwd):
             entry["trusted"] = os.path.realpath(str(cwd))
     code = 0
+    reported = None
     if backend == "hc":
         try:
             made = open_in_hc(binary, hc_name(child), cwd, child_argv, outlive, space, labels, bool(remote))
@@ -1385,6 +1484,16 @@ def open_session(p, remote=None):
             if group_tag_on(adir):
                 report_group_tag(binary, entry["pane"], "%s › %s" % (parent_slug, slug))
             say("opened in Herdr: workspace %s, tab %s, pane %s" % (entry["workspace"], entry["tab"], entry["pane"]))
+            verdict = confirm_start(binary, entry["pane"], adir, child, handoff)
+            if verdict:
+                kind, why, tail = verdict
+                if kind == "failed":
+                    entry["status"] = "failed"
+                    warn("session %s did not start: %s%s" % (label, why, "\n" + tail if tail else ""))
+                else:
+                    reported = "start not confirmed"  # the pane stays registered: Pi may still come up
+                    warn("session %s: %s%s" % (label, why, "\n" + tail if tail else ""))
+                code = 2
         except HerdrError as e:
             entry["status"] = "failed"
             warn(str(e))
@@ -1397,7 +1506,7 @@ def open_session(p, remote=None):
         reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
         write_registry(adir, reg)
     herdr_ids = {k: entry[k] for k in ("workspace", "tab", "pane")} if "pane" in entry else None
-    return code, dict(info, status=entry["status"], launch=launch, herdr=herdr_ids, hc=entry.get("hc"))
+    return code, dict(info, status=reported or entry["status"], launch=launch, herdr=herdr_ids, hc=entry.get("hc"))
 
 
 # ---------------------------------------------------------------- remote sessions: the remote side

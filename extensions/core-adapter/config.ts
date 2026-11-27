@@ -84,7 +84,7 @@ export interface LoadInput {
 }
 
 export function configCliArgs(input: LoadInput): string[] {
-  const args = ["-E", "-s", path.join(input.pkgRoot, "scripts", "foreman_config.py"), "merged", "--json"];
+  const args = ["-X", "utf8", "-E", "-s", path.join(input.pkgRoot, "scripts", "foreman_config.py"), "merged", "--json"];
   if (input.provider) args.push("--provider", input.provider);
   args.push("--agent-dir", input.agentDir, "--project-dir", input.projectDir);
   if (input.trusted) args.push("--trusted-project");
@@ -134,7 +134,7 @@ export async function loadMergedConfig(input: LoadInput): Promise<MergedConfig> 
 /** `generate-subagents --json` -> `{subagents: {...}}`, or null. */
 export async function generateSubagents(input: { python: string | null; pkgRoot: string; agentDir: string; projectDir: string; trusted: boolean; spawner: Spawner; env?: Record<string, string> }): Promise<Json | null> {
   if (!input.python) return null;
-  const args = ["-E", "-s", path.join(input.pkgRoot, "scripts", "foreman_config.py"), "generate-subagents", "--json", "--agent-dir", input.agentDir, "--project-dir", input.projectDir];
+  const args = ["-X", "utf8", "-E", "-s", path.join(input.pkgRoot, "scripts", "foreman_config.py"), "generate-subagents", "--json", "--agent-dir", input.agentDir, "--project-dir", input.projectDir];
   if (input.trusted) args.push("--trusted-project");
   const r = await input.spawner(input.python, args, { timeoutMs: CONFIG_TIMEOUT_MS, env: input.env, cwd: input.projectDir });
   if (r.error || r.timedOut || r.code !== 0) return null;

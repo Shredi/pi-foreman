@@ -1129,6 +1129,8 @@ export class PrWatches {
   private trackerDown = false;
   /** The one notice of the current tools.prGithubHosts error was sent. */
   private hostsNoticed = false;
+  /** The tracker error text the last notice carried: one notice per new error. */
+  private errorNoticed = "";
   /** host/repo/label of ready labels the repository lacks and could not get (pr_label answered `label_missing`): label handling is off for them, with one notice. */
   private labelMissing = new Set<string>();
   private deps: PrWatchesDeps;
@@ -1477,6 +1479,7 @@ export class PrWatches {
       return this.arm(w);
     }
     this.trackerDown = false;
+    if (r.kind !== "error") this.errorNoticed = "";
     const hosts = this.deps.githubHosts?.();
     if (!hosts || !("error" in hosts)) this.hostsNoticed = false;
     else if (r.kind === "error") {
@@ -1500,6 +1503,11 @@ export class PrWatches {
     }
     if (r.kind === "error") {
       this.setStatus(w, `${r.gone ? "not found" : "the tracker's last poll failed"}: ${oneLine(r.error)}`);
+      if (!r.gone && this.errorNoticed !== r.error) {
+        this.errorNoticed = r.error;
+        this.deps.send(noticeMessage(null, `watch: the tracker's last poll failed: ${oneLine(r.error)} (the watch stays armed)`, "tracker_error"), this.idle());
+        this.deps.trace({ event: "pr_watch", outcome: "tracker_error" });
+      }
       return this.arm(w);
     }
     if (w.seenAt !== null && r.okAt <= w.seenAt) {

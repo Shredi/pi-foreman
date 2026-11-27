@@ -223,7 +223,7 @@ test("pr_watch: a tracker 'not found' keeps it armed and says so in the status (
   assert.match(h.w.list()[0].event, /^not found: /);
 });
 
-test("pr_watch: tracker errors keep it armed at the usual interval, with a status and no message, and it never ends", async () => {
+test("pr_watch: tracker errors keep it armed at the usual interval, with a status and one notice per new error, and it never ends", async () => {
   let fail = true;
   const h = harness(async () => (fail ? { error: "host down" } : { snap: snap({ runs: [run("a", "passed")] }) }));
   h.w.start(K, snap({ runs: [run("a", "passed")] }));
@@ -231,12 +231,12 @@ test("pr_watch: tracker errors keep it armed at the usual interval, with a statu
     await h.fire();
     assert.equal([...h.timers].reverse().find((t) => t.live)!.ms, 5000);
   }
-  assert.equal(h.sent.length, 0);
+  assert.equal(h.sent.length, 1, "one notice for the error text, not one per tick");
   assert.equal(h.w.has(K), true);
   assert.match(h.w.list()[0].event, /^the tracker's last poll failed: host down$/);
   fail = false;
   await h.fire();
-  assert.equal(h.sent.length, 0);
+  assert.equal(h.sent.length, 1);
   assert.doesNotMatch(h.w.list()[0].event, /failed/);
 });
 

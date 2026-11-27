@@ -380,7 +380,7 @@ export function resolveSetupPython(agentDir) {
       rejected.push(`${label}: Windows Store alias stub`);
       continue;
     }
-    const r = spawnSync(c.command, [...c.args, "-E", "-c", PROBE_CODE], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+    const r = spawnSync(c.command, [...c.args, "-X", "utf8", "-E", "-c", PROBE_CODE], { encoding: "utf8", timeout: 10_000, windowsHide: true });
     if (r.error || r.status !== 0) {
       rejected.push(`${label}: ${r.error ? r.error.message : `exit ${r.status}`}`);
       continue;

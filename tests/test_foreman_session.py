@@ -61,7 +61,7 @@ class SessionTest(unittest.TestCase):
             sh.chmod(0o755)
         self.log = self.tmp / "herdr.log"
         self.env = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""), "FAKE_HERDR_LOG": str(self.log),
-                    "HERDR_PANE_ID": "w1:p1", "PI_CODING_AGENT_DIR": str(self.agent)}
+                    "HERDR_PANE_ID": "w1:p1", "PI_CODING_AGENT_DIR": str(self.agent), "PI_FOREMAN_START_CONFIRM_SECONDS": "0"}
         for k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN", "HERDR_BIN", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR", "FAKE_HERDR_FAIL", "FAKE_HERDR_WORKSPACES"):
             self.env[k] = ""
         for k in os.environ:  # the opener's add-on variables reach the pane command; tests set them explicitly
