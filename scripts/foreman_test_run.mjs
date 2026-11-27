@@ -12,7 +12,11 @@
 // Every run prints one stderr line with its run id and keeps a record <lockdir>/test-runs/<id>.json (removed on exit). `--stop <id>` writes
 // <id>.stop, which the run polls (waiting or running): a queued run leaves the queue, a running run's tree is stopped and the lock released;
 // the stopped run exits 130. A SIGINT, SIGTERM or SIGHUP to the wrapper itself ends it the same way: waiting, the ticket is dropped; running,
-// the whole child tree is stopped (SIGTERM, after 5 s SIGKILL), the lock is released and it exits 128+signal. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
+// the whole child tree is stopped (SIGTERM, after 5 s SIGKILL), the lock is released and it exits 128+signal.
+// Orphan check: a caller that is aborted (a tool timeout, a SIGKILL) can die without signalling the wrapper. The wrapper records process.ppid at start and checks it on the
+// wait poll (250 ms) and the stop poll (200 ms): POSIX, the ppid changed (reparented to 1 or a subreaper); Windows, the start parent pid is no longer alive. Then it stops
+// like `--stop` (waiting: ticket dropped; running: tree stopped, lock released), prints `foreman_test_run: run <id> caller gone ...` and exits 125. The detached worker
+// (FOREMAN_TEST_DETACHED, orphaned by design) is exempt. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
 // The holder touches the lock file every 5 s (heartbeat); a lock is stale when its pid is dead or the heartbeat is older than 60 s (a lock without an id, written by the old wrapper, instead when `started` is older than the max minutes). A live
 // holder is never taken over: it caps its own run at FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) and exits 124.
 // `--targeted <node args and globs/files...>` is a node-mode run that takes one of FOREMAN_TEST_TARGETED_SLOTS (default 2) machine-wide
@@ -64,6 +68,7 @@ const PROC_WATCH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..",
 
 const OPTIONS_WITH_VALUE = new Set(["--import", "--require", "-r", "--loader", "--env-file"]);
 const POLL_MS = 250;
+const ORPHAN_EXIT = 125;
 const TICKET_STALE_MS = 30_000;
 const HEARTBEAT_MS = 5000;
 const HEARTBEAT_STALE_MS = 60_000;
@@ -1138,6 +1143,9 @@ async function main(rawArgv, env = process.env) {
       } catch {}
     }
   });
+  const parentPid = process.ppid;
+  const orphaned = () => !detachedRun && (process.platform === "win32" ? !pidAlive(parentPid) : process.ppid !== parentPid);
+  const orphanLine = `foreman_test_run: run ${id} caller gone (parent pid ${parentPid} ended); stopped the run\n`;
   const stopRequested = () => fs.existsSync(stopFile);
   const stoppedLine = `foreman_test_run: run ${id} stopped on request\n`;
   process.stderr.write(`foreman_test_run: run ${id} (pid ${process.pid}, cwd ${process.cwd()}); stop it with: node scripts/foreman_test_run.mjs --stop ${id}\n`);
@@ -1157,13 +1165,17 @@ async function main(rawArgv, env = process.env) {
         maxWaitMs: waitMin * 60_000,
         deadlineAt: limitMs === undefined ? undefined : started + limitMs,
         onHolder: (h) => (holder = h),
-        shouldStop: stopRequested,
+        shouldStop: () => stopRequested() || orphaned(),
         legacyMaxMs: maxMinutes * 60_000,
         id,
         command: record.command,
       });
     } catch (e) {
       if (e instanceof LockStopped) {
+        if (!stopRequested() && orphaned()) {
+          process.stderr.write(orphanLine);
+          return ORPHAN_EXIT;
+        }
         process.stderr.write(stoppedLine);
         return 130;
       }
@@ -1182,7 +1194,7 @@ async function main(rawArgv, env = process.env) {
   record.state = "running";
   writeRecord();
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(runRoot ?? os.tmpdir(), "pf-spawn-count-"));
-  let signalExit; // 128+signo of the signal that stopped the run
+  let signalExit; // 128+signo of the signal that stopped the run, or ORPHAN_EXIT
   const code = await new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
     const forward = (sig) => () => {
@@ -1203,6 +1215,10 @@ async function main(rawArgv, env = process.env) {
     };
     const stopPoll = setInterval(() => {
       if (stopRequested()) stopRun("stop", stoppedLine);
+      else if (orphaned()) {
+        signalExit = ORPHAN_EXIT;
+        stopRun("orphan", orphanLine);
+      }
     }, STOP_POLL_MS);
     const done = async (code) => {
       clearTimeout(timer);
@@ -1211,7 +1227,7 @@ async function main(rawArgv, env = process.env) {
       if (killing) await killing;
       for (const [s, h] of handlers) process.off(s, h);
       release();
-      resolve(reason === "signal" ? signalExit : reason === "stop" ? 130 : reason ? 124 : code);
+      resolve(reason === "signal" || reason === "orphan" ? signalExit : reason === "stop" ? 130 : reason ? 124 : code);
     };
     if (limitMs !== undefined) {
       timer = setTimeout(() => stopRun("limit", limitLine()), Math.max(0, limitMs - (Date.now() - started)));

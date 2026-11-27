@@ -1234,3 +1234,91 @@ test("SIGHUP to a queued wrapper drops its ticket and does not block a later cal
 test("nodeTestArgs forwards --test-shard to node, before --test", () => {
   assert.deepEqual(nodeTestArgs(["--import", "./h.mjs", "--test-shard=2/3", "a/*.ts", "b/*.ts"], 2), ["--import", "./h.mjs", "--test-shard=2/3", "--test", "--test-concurrency=2", "a/*.ts", "b/*.ts"]);
 });
+
+// --- a caller that dies without signalling the wrapper (orphaned to ppid 1) ---
+
+/** Starts the wrapper behind an intermediate `sh` (`"$@" & wait`); killing the sh orphans the wrapper. `wrapperPid()` reads the pid from the wrapper's id line. */
+function launchBehindSh(dir, args) {
+  const child = spawn("sh", ["-c", '"$@" & wait', "sh", process.execPath, SCRIPT, ...args], { cwd: dir, env: env(dir), stdio: ["ignore", "pipe", "pipe"] });
+  const h = { child, err: "", wrapperPid: () => Number(/foreman_test_run: run \S+ \(pid (\d+),/.exec(h.err)?.[1]) || undefined, id: () => /foreman_test_run: run (\S+) \(pid/.exec(h.err)?.[1] };
+  child.stderr.on("data", (d) => (h.err += d));
+  child.stdout.on("data", () => {});
+  return h;
+}
+/** Like `gone`, with a longer bound (a stubborn tree is killed after the 5 s grace). */
+const goneWithin = async (pid, ms) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+};
+const killQuiet = (pid, sig = "SIGKILL") => {
+  try {
+    process.kill(pid, sig);
+  } catch {}
+};
+
+test("a queued wrapper whose caller was SIGKILLed leaves the queue and a later caller gets the lock", POSIX_ONLY, async () => {
+  const dir = tmp();
+  let h;
+  try {
+    const holder = launch(dir, dir, execArgs(`setTimeout(() => process.exit(0), 4000)`));
+    await waitFor(() => holder.id() && recordOf(dir, holder.id())?.state === "running");
+    h = launchBehindSh(dir, execArgs(touchMarker(dir)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    await waitFor(() => recordOf(dir, h.id())?.state === "waiting" && tickets(dir).length === 1);
+    h.child.kill("SIGKILL");
+    assert.ok(await gone(wpid), "the orphaned wrapper exited");
+    assert.deepEqual(tickets(dir), []);
+    assert.equal(recordOf(dir, h.id()), undefined);
+    assert.ok(!fs.existsSync(marker(dir)), "the orphan ran nothing");
+    assert.match(h.err, /caller gone/);
+    const later = launch(dir, dir, execArgs(touchMarker(dir)));
+    assert.equal(await holder.done, 0);
+    assert.equal(await later.done, 0);
+    assert.ok(fs.existsSync(marker(dir)), "the later caller ran");
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a running wrapper whose caller was SIGKILLed stops its tree, releases the lock and exits", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  let h;
+  try {
+    h = launchBehindSh(dir, execArgs(stubbornTree(pidFile)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    h.child.kill("SIGKILL");
+    assert.ok(await goneWithin(wpid, 20_000), "the orphaned wrapper exited");
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.ok(!fs.existsSync(lockFile(dir)));
+    assert.match(h.err, /caller gone/);
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    if (fs.existsSync(pidFile)) killQuiet(Number(fs.readFileSync(pidFile, "utf8")));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a detached run is orphaned by design and still completes after its caller exited", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const e = env(dir);
+  const launched = await spawnExec({ ...e, FOREMAN_TEST_DETACH: "1" }, `setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker(dir))}, "x"); }, 1500)`);
+  assert.equal(launched.code, 0, launched.err);
+  const id = /run ([a-z0-9-]+) detached/.exec(launched.out)[1];
+  const w = await finish(spawn(process.execPath, [SCRIPT, "--wait", id, "--max", "30"], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  assert.equal(w.code, 0, w.out + w.err);
+  assert.ok(fs.existsSync(marker(dir)), "the command ran to the end");
+});
