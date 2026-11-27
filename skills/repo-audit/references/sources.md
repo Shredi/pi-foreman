@@ -142,6 +142,16 @@ gh run list --status completed --limit 200 --json conclusion,createdAt --jq '{wi
 
 Add `--workflow <file>` to count one workflow. Reruns of a failed run count as failures here; say so in the report. Report the `window` the command prints (first and last `createdAt` of the runs counted).
 
+### CI runs before the review request
+
+Count the runs the round started on its branch or change before it asked for review, and how many failed. Use the host's CI. These commands are examples; replace the placeholders with the host's own values:
+
+- GitHub: `gh run list --status completed --limit 200 --json event,headBranch,conclusion,headSha`; keep the runs with `event` `workflow_dispatch` on a branch that is not the default one.
+- Zuul: `GET <zuul>/api/tenant/<tenant>/builds?project=<p>&change=<n>`, or `?branch=<b>` for a run started on a branch; read the fields `result`, `ref` and `uuid`.
+- GitLab: `glab ci list`, then keep the pipelines of the branch that a person started by hand.
+
+When the host has no CLI or API for this, the PR-body list (the dense part of the review request, per `instructions/foreman.md`) is the source. Report the window of the runs counted and the source of each number.
+
 ## Agent-harness notes
 
 Any repository where agents write changes may keep these stores. They are generic in kind; the names vary.
@@ -193,6 +203,7 @@ The repository may already produce these. Report each one with its window and it
 | Revert share | git history | `git log --since=<date> --grep='^Revert' --format='%h %s'`, divided by merged changes in the same window | Counts undone changes only; a bug fixed in a later change is missing from it. A `^Revert` match inside a body line is not a revert: check the subject |
 | Follow-up fix share per merged change | git history | the two methods in "Git history" above | Name the method and the window length; a share near 100% is weak |
 | CI failure share | CI runs | the `gh run list` command in "CI outcome" above | Reruns count as failures |
+| CI runs before the review request, and their failure share | CI runs, or the PR-body list | the commands in "CI runs before the review request" above | Runs started on the default branch are not counted; host logs expire, so the PR-body list stays the record |
 | Review rounds per change | review threads, or the harness's store | the `reviews` command in "Review threads" above, or the adapter's store | A host count of zero is not meaningful when reviews happen elsewhere |
 
 Where the product has a user-facing measure, such as the timing of a key interaction from the repository's own test or benchmark output, add it next to these numbers. A count of changes says how fast the work moves; a user-facing measure says whether the product got better.
