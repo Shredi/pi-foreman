@@ -16,7 +16,7 @@ const OPAQUE_PIN: Record<string, [string, string, string]> = {
   "function body": ["refused (structure)", "refused (structure)", "refused (structure)"], // guard gaps, item 4: the body is walked at the call, as the line it stands for
   exec: ["refused (structure)", "refused (structure)", "refused (structure)"],
   "! negation": ["refused (structure)", "refused (structure)", "refused (structure)"],
-  coproc: [NOT, NOT, NOT],
+  coproc: ["refused (structure)", "refused (structure)", "refused (structure)"], // was NOT x3: the coproc body is now walked, so the verdict is a refusal like the plain line
   "substitution in an assignment value": ["refused (structure)", "refused (both)", "refused (both)"],
   "substitution in a redirect target": ["refused (structure)", "refused (both)", "refused (both)"],
   "[[ $( ) ]]": ["refused (structure)", "refused (both)", "refused (both)"], // guard gaps, item 1: the substitution in a test is walked

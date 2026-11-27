@@ -1,5 +1,6 @@
 // Screen snapshots: each screen is drawn from setup/fixtures/preview.json through the frame-capture terminal
 // and compared to tests/installer/screens/<name>-<cols>x<rows>.snap.txt (UPDATE_SNAPSHOTS=1 rewrites them).
+import "./_hermetic-env.mjs";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";

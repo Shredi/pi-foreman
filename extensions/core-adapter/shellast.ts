@@ -117,6 +117,8 @@ export interface ShellParseOptions {
   platform?: string;
   /** A function body the caller reads again for itself (the text of a body, which its own segment already carries): a call of a function the text defines is not walked, so the text reads as it did before the walk existed. */
   noCalls?: boolean;
+  /** The parser, for a test that needs a node kind `unbash` does not emit; defaults to `unbash`'s `parse`. */
+  parse?: (src: string) => Script;
 }
 
 export const MAX_DEPTH = 4;
@@ -190,6 +192,8 @@ interface Run {
   unsafe?: Set<number>;
   /** A look-behind walk (`lookBehind`): no look-behind of its own starts inside it. */
   behind?: boolean;
+  /** The script depth at which the look-behind walk started: a string run inside it (`sh -c '...'`) is deeper, its words are no operand of the unknown program and look behind again. */
+  behindAt?: number;
   /** The look-behind walk starts a program the line names (`npx`, `find -exec`), not an operand of an unknown one: a relative program word is judged in it too. */
   behindRuns?: boolean;
   /** The folder flow of the walk, in walk order (see `Flow`). Set for the line's own walk; a trial copy of the run gets a copy of it. */
@@ -444,7 +448,8 @@ function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undef
     });
     for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
   };
-  push(node);
+  // the root itself too: a header part that is a bare `$(...)` is the expansion, not a parent of one
+  stack.push(node);
   while (stack.length) {
     const c = stack.pop()!;
     const x = c as any;
@@ -692,14 +697,24 @@ function walkNode(n: any, sc: Scope): string | null {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
       withBodies(sc, nodeBodies(n, sc.src ?? ""));
-      // the substitutions inside a `[[ ]]` test and a select's word list and body run: they are real segments next to the opaque one (which still keeps any allow off the line)
-      if (n.type === "TestCommand") {
+      // a node kind this walk does not know is unread: judge-first, never an allow (`analyse` marks the same for a unit of such a kind)
+      if (!(n.type in names)) markUnknown(sc);
+      // the substitutions inside a `[[ ]]` test, a `(( ))` command or a `for ((;;))` header run: they are real segments next to the opaque one (which still keeps any allow off the line)
+      if (n.type === "TestCommand" || n.type === "ArithmeticCommand" || n.type === "ArithmeticFor" || !(n.type in names)) {
         const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
-        scriptsIn(n, acc);
+        // the header of `for ((;;))` only: its body is walked below
+        for (const part of n.type === "ArithmeticFor" ? [n.initialize, n.test, n.update].filter(Boolean) : [n]) scriptsIn(part, acc);
         walkSubs(acc.subs, sc);
-      } else if (n.type === "Select") {
+      }
+      // a loop body runs like any other, in this shell: its commands are segments the floors read and its `cd` carries on (a select's body is read as a loop of its own)
+      if (n.type === "Select") {
         walkWords(n.wordlist, sc);
-        walkLists([n.body], { ...sc, inSelect: true });
+        return walkLists([n.body], { ...sc, inSelect: true });
+      } else if (n.type === "ArithmeticFor") {
+        return walkLists([n.body], { ...sc, inSelect: true });
+      } else if (n.type === "Coproc") {
+        // the body (a command or a group, named or not) runs in the background in a shell of its own
+        isolated(sc.run, () => walkNode(n.body, { ...sc, inSelect: true }));
       }
       return sc.cwd;
     }
@@ -1313,8 +1328,10 @@ const BEHIND_BUDGET = 1000;
  * (no look-behind inside it), and hang on the segment just emitted as `behind`. Nothing here adds a segment to the line's own list.
  */
 function lookBehind(name: string, rest: W[], c: Cmd, cwd: string | null): void {
-  // inside a trial only `npx` (it starts the program it is given) looks behind again: the program of `npx sh -c 'find . -exec ...'` is not an operand of an unknown one
-  if ((c.sc.run.behind && name !== "npx") || (modelled(name) && name !== "npx")) return;
+  // inside a trial only `npx` (it starts the program it is given) looks behind again, and so does any program in a string the trial runs (`npx sh -c 'caffeinate git push'`): the program of
+  // `npx sh -c 'find . -exec ...'` is not an operand of an unknown one. The words of one trial are already all walked as starts, so the same depth does not look again.
+  const nested = c.sc.run.behind && c.sc.depth > (c.sc.run.behindAt ?? 0);
+  if ((c.sc.run.behind && !nested && name !== "npx") || (modelled(name) && name !== "npx")) return;
   attachBehind(rest, rest.flatMap((a, k) => (a.value !== null && !a.value.startsWith("-") ? [k] : [])), c, cwd, name === "npx");
 }
 
@@ -1348,7 +1365,7 @@ function attachBehind(rest: W[], starts: number[], c: Cmd, cwd: string | null, r
   }
   budget.starts += starts.length;
   const behind = starts.map((k) => {
-    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, ...(runs ? { behindRuns: true } : {}), ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
+    const trial: Run = { ...sc.run, out: [], strings: [], behind: true, behindAt: sc.depth, ...(runs ? { behindRuns: true } : {}), ...(sc.run.flow ? { flow: { ...sc.run.flow } } : {}) };
     run(rest.slice(k), { ...c, sc: { ...sc, run: trial } }, cwd);
     return { text: rest.slice(k).map((a) => a.value ?? a.text).join(" "), segments: trial.out };
   });
@@ -1681,7 +1698,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   let script: Script | undefined;
   let overflow = false;
   try {
-    script = parse(command);
+    script = (opts.parse ?? parse)(command);
   } catch (e) {
     script = undefined;
     overflow = e instanceof RangeError;

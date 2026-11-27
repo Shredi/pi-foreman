@@ -628,9 +628,10 @@ export const MATRIX_PAYLOADS: readonly Payload[] = [...HARMLESS, ...DANGEROUS];
  * It is the before/after record for the role differences; the main session's shell-write guard in index.ts (shellWriteBlock) and the judge-first dialog or refusal are
  * outside the gate layer, so `write-outside` reads silent for main here.
  */
+// arith row: a `for ((;;))` body and a `(( ))` substitution are walked now, so the delete payloads inside them are blocked like the plain line (were judged as an opaque unit).
 export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
   main: {
-    cmdsub: "sssbbbbsjj", backtick: "sssbbbbsjj", dbracket: "sssbbbbsjj", arith: "jjjjbajjjj", select: "sssbbbbsjj", for: "sssbbbbsjj",
+    cmdsub: "sssbbbbsjj", backtick: "sssbbbbsjj", dbracket: "sssbbbbsjj", arith: "jjjbbbbjjj", select: "sssbbbbsjj", for: "sssbbbbsjj",
     case: "sssbbbbsjj", "if-cond": "sssbbbbsjj", "while-cond": "sssbbbbsjj", herestring: "sssbbbbsjj", heredoc: "sssbbbbsjj", procsub: "sssbbbbsjj",
     "dot-procsub": "jjjjbajjja", "source-procsub": "jjjjbajjja", "source-stdin": "jjjjbajjja", eval: "sssbbbbsjj", "sh-c": "sssbbbbsjj",
     "bash-c": "sssbbbbsjj", busybox: "sssbbbbsja", toybox: "sssbbbbsja", "xargs-sh": "sssbbbbsja", "xargs-I": "jjjjbajjja", "find-exec": "sssjbjjsjj",
@@ -642,7 +643,7 @@ export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
     "rebound-scratch": "j", plain: "sssbbbbsjj",
   },
   builder: {
-    cmdsub: "sssbbbbjbj", backtick: "sssbbbbjbj", dbracket: "sssbbbbjbj", arith: "jjjjbbjjjj", select: "sssbbbbjbj", for: "sssbbbbjbj",
+    cmdsub: "sssbbbbjbj", backtick: "sssbbbbjbj", dbracket: "sssbbbbjbj", arith: "jjjbbbbjbj", select: "sssbbbbjbj", for: "sssbbbbjbj",
     case: "sssbbbbjbj", "if-cond": "sssbbbbjbj", "while-cond": "sssbbbbjbj", herestring: "sssbbbbjbj", heredoc: "sssbbbbjbj", procsub: "sssbbbbjbj",
     "dot-procsub": "jjjjbbjjjb", "source-procsub": "jjjjbbjjjb", "source-stdin": "jjjjbbjjjb", eval: "sssbbbbjbj", "sh-c": "sssbbbbjbj",
     "bash-c": "sssbbbbjbj", busybox: "sssbbbbjbb", toybox: "sssbbbbjbb", "xargs-sh": "sssbbbbbbb", "xargs-I": "jjjjbbjjjb", "find-exec": "sssjbjjjjj",
@@ -654,7 +655,7 @@ export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
     "rebound-scratch": "j", plain: "sssbbbbjbj",
   },
   reviewer: {
-    cmdsub: "sssbbbbbbb", backtick: "sssbbbbbbb", dbracket: "sssbbbbbbb", arith: "jjjjbbjjjj", select: "sssbbbbbbb", for: "sssbbbbbbb",
+    cmdsub: "sssbbbbbbb", backtick: "sssbbbbbbb", dbracket: "sssbbbbbbb", arith: "jjjbbbbbbb", select: "sssbbbbbbb", for: "sssbbbbbbb",
     case: "sssbbbbbbb", "if-cond": "sssbbbbbbb", "while-cond": "sssbbbbbbb", herestring: "sssbbbbbbb", heredoc: "sssbbbbbbb", procsub: "sssbbbbbbb",
     "dot-procsub": "jjjjbbjjbb", "source-procsub": "jjjjbbjjbb", "source-stdin": "jjjjbbjjbb", eval: "sssbbbbbbb", "sh-c": "sssbbbbbbb",
     "bash-c": "sssbbbbbbb", busybox: "sssbbbbbbb", toybox: "sssbbbbbbb", "xargs-sh": "sssbbbbbbb", "xargs-I": "jjjjbbjjbb", "find-exec": "bbbbbbbbbb",

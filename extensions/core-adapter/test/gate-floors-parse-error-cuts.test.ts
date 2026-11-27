@@ -8,6 +8,7 @@ import { lineFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
+import { withLookupCache } from "../pathnorm.ts";
 
 const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo", "/s/scr", "/tmp"], protectedBranches: ["release"], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const roles: [string, FloorEnv][] = [["main", env], ["builder", { ...env, child: true, role: "builder" } as FloorEnv], ["reviewer", { ...env, child: true, role: "reviewer" } as FloorEnv]];
@@ -92,7 +93,8 @@ for (const r of fx("shellast-pin.json").rows) if (r.tool === "bash") lines.add(S
 for (const r of fx("destructive-parity.json").rows) if (r.tool === "bash") lines.add(String(r.line));
 const floored = [...lines].filter((l) => !parseShell(l, { cwd: env.cwd }).some((s) => s.opaque === "parse_error") && roles.some(([, e]) => rank(shape(l, e)) >= 2));
 
-test("every floored corpus line followed by a nested-error here-document is never milder than the line alone", () => {
+// one lookup scope per test: the file system does not change during the test, so a path is looked up once (as one gate call does)
+test("every floored corpus line followed by a nested-error here-document is never milder than the line alone", () => withLookupCache(() => {
   assert.ok(floored.length >= 22, String(floored.length));
   const bad: string[] = [];
   for (const l of floored) for (const [role, e] of roles) {
@@ -101,11 +103,11 @@ test("every floored corpus line followed by a nested-error here-document is neve
     if (rank(shape(w, e)) < want) bad.push(`${role}: ${JSON.stringify(w)}: ${shape(w, e)} vs ${shape(l, e)}`);
   }
   assert.deepEqual(bad, [], `\n${bad.join("\n")}`);
-});
+}));
 
 // the line as the body of `bash <<E` is judged by the floors that read a here-document body, which may be milder than the line alone (it is no line the shell runs
 // as such); the trailing parse error must not weaken that result
-test("every floored corpus line as the body of a here-document fed to bash is never milder with a trailing parse error than without", () => {
+test("every floored corpus line as the body of a here-document fed to bash is never milder with a trailing parse error than without", () => withLookupCache(() => {
   const bad: string[] = [];
   for (const l of floored) for (const [role, e] of roles) {
     const base = `bash <<E\n${l}\nE`;
@@ -113,4 +115,4 @@ test("every floored corpus line as the body of a here-document fed to bash is ne
     for (const tail of HD_TAILS) if (rank(shape(base + tail, e)) < want) bad.push(`${role}: ${JSON.stringify(base + tail)}: ${shape(base + tail, e)} vs ${shape(base, e)}`);
   }
   assert.deepEqual(bad, [], `\n${bad.join("\n")}`);
-});
+}));

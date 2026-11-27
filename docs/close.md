@@ -27,7 +27,8 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   `worktreeSetupHook` (Linux and macOS, only when unset; see [install](install.md)). pi-subagents symlinks the main
   checkout's `node_modules` into each managed worktree before the hook runs; for a repository with a lockfile the hook
   replaces that link with a plain copy (or runs `npm ci` when the main checkout has none), so a builder's `npm ci`
-  never rewrites the main checkout. The hook is global for the user: it runs for every pi-subagents worktree and is a
+  does not rewrite the main checkout. That holds once the hook has replaced the link; `foreman setup` and
+  `foreman session open --worktree` refuse to run `npm ci` through a linked `node_modules`. The hook is global for the user: it runs for every pi-subagents worktree and is a
   no-op without the symlink and lockfile. `/foreman doctor` warns about a symlinked `node_modules` in any live worktree.
 - Notice channels: the same file (`<agent dir>/extensions/subagent/config.json`) also gets `control.notifyChannels: ["event"]` from `foreman setup` on every platform, other keys kept (`foreman setup --remove` deletes only that key). Without it pi-subagents delivers a child's attention notice twice for an async run (the native notice and a pi-intercom message); `/foreman doctor` warns when the key is not `["event"]`. A foreground run would get no attention notice with this setting; the harness starts every child in the background, so none arises.
 - Scratch: `<state>/scratch/<session>/` (an implicit private entry, no recording needed) and topic dirs

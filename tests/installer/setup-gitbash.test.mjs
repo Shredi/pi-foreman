@@ -1,5 +1,6 @@
 // Windows: setup writes Pi's `shellPath` to Git Bash when unset, keeps a set value, and fails (after the other steps) when Git Bash is missing.
 // Everything runs in a temp agent dir; the platform is faked with PI_FOREMAN_GITBASH_PLATFORM and Git Bash is placed under a temp ProgramFiles.
+import "./_hermetic-env.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
