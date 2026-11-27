@@ -255,10 +255,10 @@ const LONG_LINES: Record<string, (n: number) => string> = {
 const LONG_BASE: Record<string, string[]> = {
   "arith sum": ["bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a"],
   "arith deep parentheses": ["bbfe1c835d898e7a", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
-  "arith many substitutions": ["bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a"],
+  "arith many substitutions": ["9fd88d460742c819", "e8ecb20099b657d8", "44ad0f8be6349c59", "71b5962aa5b205b9", "aa4f7a1ced743c17"],
   "arith after and": ["f16bbcd3169ce99a", "f16bbcd3169ce99a", "f16bbcd3169ce99a", "f16bbcd3169ce99a", "f16bbcd3169ce99a"],
-  "arith for header": ["77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf"],
-  "arith for header substitutions": ["77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf"],
+  "arith for header": ["694c065447e8bf12", "694c065447e8bf12", "694c065447e8bf12", "694c065447e8bf12", "694c065447e8bf12"],
+  "arith for header substitutions": ["cb07b301d75e9534", "a38b4c5c5696e836", "9deb0a60800df6b8", "41a393bdb05775b2", "193d82fc8da45a3d"],
   "arith expansion": ["52ad3aaa98549eb9", "805d07a863f4836c", "ff1f3787637724ad", "903cd8a59e694e9b", "464233e4ae0ed696"],
   "test and chain": ["5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c"],
   "test deep parentheses": ["5f98d0f8f202c64c", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
