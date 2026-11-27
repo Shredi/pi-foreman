@@ -1,4 +1,5 @@
 // tools.prGithubHosts in `foreman setup`: the --github-hosts flag, the host step of both pickers, and the one rule (hostsToWrite) that decides the write.
+import "./_hermetic-env.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

@@ -145,6 +145,11 @@ class SizingPromptTest(unittest.TestCase):
             new_body = "The PR body opens with a plain `## Summary` for the owner (owner text: what changes and why), with one small `mermaid` diagram when the change has a flow or a before-and-after; then comes the `## Changelog` section (one to three user-facing bullets), then the dense part. You draft it in the scratch dir at every tier."
             self.assertIn(old_body, want)
             want = want.replace(old_body, new_body)
+            # ci-before-pr-record: the pre-review CI list follows the PR-body rule
+            old_ci = "PRs never edit CHANGELOG.md."
+            new_ci = old_ci + " When the round started CI runs on its branch or change before it asked for review (a PR, a merge request, a review change), the dense part of the body lists every such run: its run or build id (or URL), commit and result, and for each failure one line on what failed and which fix followed; a rerun or recheck of the same commit is its own entry. A child's result.md carries the same list. A round may run CI before the review request or rely on the review's own CI, its choice; either way every failed run is on record."
+            self.assertIn(old_ci, want)
+            want = want.replace(old_ci, new_ci)
             # launch fields: a numbered item beyond the failed ones is reviewed against the whole change
             old_items = "a review did not cover, and only after you have checked the evidence on disk."
             new_items = old_items + " A numbered item in `items` outside the current failed items is reviewed against the whole change."
