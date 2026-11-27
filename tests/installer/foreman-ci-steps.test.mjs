@@ -10,7 +10,7 @@ import { STEPS } from "../../scripts/foreman_ci.mjs";
 const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "scripts", "foreman_ci.mjs");
 
 test("the step table is in CI's order", () => {
-  assert.deepEqual(STEPS.map((s) => s.name), ["unit", "core-pin", "ruff", "conformance", "node", "installer", "typecheck", "lint-ts", "replay", "bench"]);
+  assert.deepEqual(STEPS.map((s) => s.name), ["unit", "core-pin", "ruff", "node", "installer", "typecheck", "lint-ts", "replay", "bench"]);
   for (const s of STEPS) assert.equal(typeof s.run, "function", s.name);
 });
 

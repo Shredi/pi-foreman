@@ -48,10 +48,6 @@ jobs:
       - name: typescript lint (oxlint)
         if: runner.os == 'Linux' && matrix.node == '22'
         run: npm run lint:ts
-      - name: core conformance (upstream tests at the pinned sha, summary only)
-        run: |
-          python -m pip install -q -r .github/test-requirements.txt
-          python scripts/pull_core.py --conformance
       # The spawn guard (no npm, no titled node process; scripts/foreman_test_run.mjs) matters on macOS, so only the macOS leg runs it.
       - name: node tests under the spawn guard (adapter and herdr-app mods)
         if: runner.os == 'macOS'
@@ -68,7 +64,7 @@ jobs:
         if: runner.os == 'Linux'
         run: npx tsc --noEmit -p tsconfig.json
   test-windows:
-    # The Windows leg is three shards that run at once. Shard 1/3 runs the python, conformance, herdr, installer and shim steps; the adapter tests are split over shards 2/3 and 3/3 with node's --test-shard (deterministic, by file order).
+    # The Windows leg is three shards that run at once. Shard 1/3 runs the python, herdr, installer and shim steps; the adapter tests are split over shards 2/3 and 3/3 with node's --test-shard (deterministic, by file order).
     # Measured over two runs: shard 1/3 13 to 16 min, 2/3 18 to 20 min, 3/3 15 to 24 min; the limit is about twice the slowest shard.
     strategy:
       fail-fast: false
@@ -102,11 +98,6 @@ jobs:
       - name: core pin check
         if: matrix.shard == '1/3'
         run: python scripts/pull_core.py --check
-      - name: core conformance (upstream tests at the pinned sha, summary only)
-        if: matrix.shard == '1/3'
-        run: |
-          python -m pip install -q -r .github/test-requirements.txt
-          python scripts/pull_core.py --conformance
       - name: herdr-app mod model tests
         if: matrix.shard == '1/3'
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"

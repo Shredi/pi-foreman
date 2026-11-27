@@ -68,10 +68,10 @@ test("the helper's argv: the run and the resolve command keep the shim's python,
   const script = path.join("C:", "pf", "core", "scripts", "ledger.py");
   const plan = buildLedgerRun([script, "py", "-3", "--", "-f", "L.md", "add", "x y"], "SNIP");
   assert.ok(plan);
-  assert.deepEqual(plan.run, { cmd: "py", args: ["-3", "-E", "-s", script, "-f", "L.md", "add", "x y"] });
+  assert.deepEqual(plan.run, { cmd: "py", args: ["-3", "-X", "utf8", "-E", "-s", script, "-f", "L.md", "add", "x y"] });
   assert.deepEqual(plan.resolve, { cmd: "py", args: ["-3", "-I", "-c", "SNIP", path.dirname(script), "-f", "L.md", "add", "x y"] });
   assert.equal(buildLedgerRun(["only-script"], ""), null);
-  assert.deepEqual(buildLedgerRun([script, "python", "--"], "")?.run.args, ["-E", "-s", script]);
+  assert.deepEqual(buildLedgerRun([script, "python", "--"], "")?.run.args, ["-X", "utf8", "-E", "-s", script]);
 });
 
 test("a release leaves a lock that a takeover gave to another holder", async () => {

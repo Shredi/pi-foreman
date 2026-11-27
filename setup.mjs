@@ -616,7 +616,7 @@ function resolvePython(agentDir) {
 }
 
 function runConfigCli(py, args, cwd, script = "foreman_config.py") {
-  const r = spawnSync(py.executable, ["-E", "-s", path.join(ROOT, "scripts", script), ...args], { encoding: "utf8", timeout: 30_000, cwd, windowsHide: true });
+  const r = spawnSync(py.executable, ["-X", "utf8", "-E", "-s", path.join(ROOT, "scripts", script), ...args], { encoding: "utf8", timeout: 30_000, cwd, windowsHide: true });
   if (r.error) throw new Fatal(`Could not run foreman_config.py: ${r.error.message}`);
   let data = null;
   try {

@@ -78,8 +78,8 @@ test("session: open passes the opener id and absolute paths to the script", asyn
   const r = await runSessionCommand(d, "open demo b.md --model p/m --dry-run");
   assert.equal(r.ok, true);
   const a = d.spawned[0];
-  assert.deepEqual(a.slice(0, 3), ["-E", "-s", path.join("/pkg", "scripts", "foreman_session.py")]);
-  assert.deepEqual(a.slice(3), ["--agent-dir", d.agentDir, "open", "demo", path.join(root, "b.md"), "--cwd", root, "--parent-id", "sess-1", "--model", "p/m", "--dry-run"]);
+  assert.deepEqual(a.slice(0, 5), ["-X", "utf8", "-E", "-s", path.join("/pkg", "scripts", "foreman_session.py")]);
+  assert.deepEqual(a.slice(5), ["--agent-dir", d.agentDir, "open", "demo", path.join(root, "b.md"), "--cwd", root, "--parent-id", "sess-1", "--model", "p/m", "--dry-run"]);
 });
 
 test("session: brief and close resolve registry targets and send the contract texts", async () => {

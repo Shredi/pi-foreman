@@ -20,7 +20,7 @@ export function buildLedgerRun(argv, snippet = "") {
   const args = argv.slice(sep + 1);
   if (!script || !py) return null;
   return {
-    run: { cmd: py, args: [...pre, "-E", "-s", script, ...args] },
+    run: { cmd: py, args: [...pre, "-X", "utf8", "-E", "-s", script, ...args] },
     resolve: { cmd: py, args: [...pre, "-I", "-c", snippet, path.dirname(script), ...args] },
   };
 }

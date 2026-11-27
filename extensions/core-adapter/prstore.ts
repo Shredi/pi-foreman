@@ -97,6 +97,8 @@ export interface StateDoc {
   baselines?: Record<string, BaselineEntry>;
   /** When the poll removed the lines without a `host` from the tracked list (once, with more than one host configured); absent: not done. */
   hostlessDroppedAt?: number;
+  /** Why the tracked step could not run (no Python, hosts config, a throw); set by the poll, absent after a run that got through. */
+  error?: string;
 }
 /** A PR source's comments for one PR, kept only for the head they were taken on. */
 export interface SourceComments {
@@ -275,6 +277,7 @@ export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn
   if ("error" in hosts) return { kind: "error", error: hosts.error };
   const state = readCached(trackedStateFile(agentDir));
   if (!isObj(state) || state.v !== 1 || state.off === true || !finite(state.trackedAt) || now - state.trackedAt > SERVE_FRESH_MS || !isObj(state.prs)) return { kind: "down" };
+  if (typeof state.error === "string" && state.error) return { kind: "error", error: one(state.error) };
   if (!isTrackedKey(key, hosts.hosts)) return { kind: "error", error: `only ${hosts.hosts.join(", ")} PRs are tracked` };
   const k = storeKey(key.repo, key.n, key.host);
   const e = state.prs[k];

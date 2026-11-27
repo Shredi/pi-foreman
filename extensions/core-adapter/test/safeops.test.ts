@@ -48,7 +48,7 @@ test("safeops: a run sends the request to safe_ops.py and traces `ran`", async (
   const r = await h.call("foreman_move", { src: "a", dst: "b" });
   assert.equal(r.isError, undefined);
   assert.match(r.content[0].text, /^foreman_move: done\. action=git_mv src=a dst=b/);
-  assert.deepEqual(h.calls[0].args, ["-E", "-s", SCRIPT]);
+  assert.deepEqual(h.calls[0].args, ["-X", "utf8", "-E", "-s", SCRIPT]);
   assert.deepEqual(JSON.parse(h.calls[0].input!), { op: "move", args: { src: "a", dst: "b" }, cwd: "/ws", config: { copyMaxBytes: 7 } });
   assert.deepEqual(h.traces, [{ event: "safe_op", toolFamily: "move", decision: "ran" }]);
 });

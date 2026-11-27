@@ -128,7 +128,7 @@ const openPrInfo = (g) => {
 const optionError = (e) => e instanceof TypeError || /timeout must|unknown (option|field|key)|invalid option|unexpected (option|field)/i.test(String(e?.message ?? e));
 const why = (e) => String(e?.message ?? e ?? "").slice(0, 200);
 // No foreman on this machine: Herdr 0.1.14's texts for a program that does not start (mods.rs `cannot run`, the core's `cannot start ... program not found`).
-// A setup state, not a failed poll: the radar shows its own hint, so the PR poll stays silent.
+// A setup state that still stops every PR report: the poll posts one notice that names the machine and the fix (`foreman` prop or PATH).
 const missingBinary = (e) => /cannot (start|run) [^:]+: (program not found|No such file or directory)/.test(String(e?.message ?? e ?? ""));
 const isObjLike = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -420,12 +420,16 @@ export default class ForemanAgents extends View {
             this.execT(radarBinary(this.foremanProp, machine), ["prs", "poll", "--json"], { on: machine }, T_PRS),
             cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "", watchdog: true })),
           ]);
+          this.failed?.delete(`${key}:bin`);
           if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
           else if (typeof r?.code === "number" && r.code !== 0) this.fail(key, "Foreman PR poll failed", openFailure({ ...r, stderr: String(r.stderr || r.stdout || "") }));
           else this.failed?.delete(key);
         } catch (e) {
-          if (missingBinary(e)) this.failed?.delete(key);
-          else this.fail(key, "Foreman PR poll failed", e);
+          if (missingBinary(e)) this.fail(`${key}:bin`, "Foreman PR poll cannot start", `foreman was not found on ${machine ?? "this computer"}: PR watches get no reports. Put foreman on PATH or set the foreman prop for this machine.`);
+          else {
+            this.failed?.delete(`${key}:bin`);
+            this.fail(key, "Foreman PR poll failed", e);
+          }
         }
         this.prsRan.set(key, Date.now());
         this.busy.delete(key);

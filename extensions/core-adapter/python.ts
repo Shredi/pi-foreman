@@ -151,7 +151,7 @@ export async function resolvePython(input: CandidateInput & { spawner: Spawner; 
       rejected.push(`${label}: ${found} is ${WORKSPACE_WHY}`);
       continue;
     }
-    const r = await input.spawner(c.command, [...c.args, "-E", "-c", PROBE_CODE], { timeoutMs: PROBE_TIMEOUT_MS, env: input.env });
+    const r = await input.spawner(c.command, [...c.args, "-X", "utf8", "-E", "-c", PROBE_CODE], { timeoutMs: PROBE_TIMEOUT_MS, env: input.env });
     if (r.error || r.timedOut || r.code !== 0) {
       const why = r.error ? r.error.message : r.timedOut ? "timed out" : `exit ${r.code}`;
       rejected.push(`${label}: ${why}`);
