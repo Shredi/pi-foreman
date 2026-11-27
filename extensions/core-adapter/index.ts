@@ -7530,7 +7530,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return refuse(c.error + fix, "invalid");
       }
       // a note that would take an item line over the limit is refused here, while the reviewer can still shorten it
-      const bound = boundLedger(s.markerDir, s.id);
+      // the reviewer child's own marker names no ledger: the parent's does
+      const bound = boundLedger(s.markerDir, b.foremanSession ?? s.usage.line.foremanSession);
       let boundText: string | null = null;
       try {
         boundText = bound ? fs.readFileSync(bound, "utf8") : null;

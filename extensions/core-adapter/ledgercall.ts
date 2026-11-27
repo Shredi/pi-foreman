@@ -356,7 +356,6 @@ export function findItemByText(file: string, text: string): string | null {
   return h ? h.m[2] : null;
 }
 
-/** Replace the text after `N. ` of item `id` ("V" or digits), keeping the state marker. */
 /** An item's full line (text plus notes) holds at most this many characters. */
 export const ITEM_LINE_MAX = 1000;
 
@@ -372,6 +371,7 @@ export function itemLineLength(file: string, id: string): number | null {
   return itemLines(file).lines[mine[0].i].replace(/\r?\n$/, "").length;
 }
 
+/** Replace the text after `N. ` of item `id` ("V" or digits), keeping the state marker. */
 export function rewriteItemText(file: string, id: string, text: string): { error: string } | { file: string; changed: boolean } {
   const { lines, hits } = itemLines(file);
   const mine = hits.filter(({ m }) => m[2] === id);

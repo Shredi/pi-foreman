@@ -7,7 +7,9 @@ import { PR_TOOLS } from "../gitpack.ts";
 
 test("the shared host parameter says: outside a checkout name only repo; host only from tools.prGithubHosts", () => {
   for (const name of ["pr_status", "pr_checks", "pr_comments"]) {
-    const host = (PR_TOOLS.find((t) => t.name === name)?.parameters.properties as Record<string, { description: string }>).host.description;
+    const tool = PR_TOOLS.find((t) => t.name === name);
+    assert.ok(tool, name);
+    const host = (tool.parameters.properties as Record<string, { description: string }>).host.description;
     assert.match(host, /Outside a checkout name only `repo`/);
     assert.match(host, /tools\.prGithubHosts/);
   }

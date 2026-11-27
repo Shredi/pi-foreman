@@ -236,7 +236,6 @@ export function writeFactsFile(cwd: string, facts: readonly DiffFact[]): string 
 const GIT_TIMEOUT_MS = 8000;
 const MAX_DIFF = 12 * 1024 * 1024;
 
-/** `git <args>` in `cwd`: stdout, or null on any error. */
 /** A reviewer launch's `diffBase`: the full sha of a commit that is an ancestor of (or equal to) HEAD in `dir`, else the reason it is not. */
 export async function resolveDiffBase(dir: string, ref: unknown): Promise<{ sha: string } | { error: string }> {
   if (typeof ref !== "string" || !ref.trim() || ref.startsWith("-")) return { error: "diffBase is a commit (sha, branch or tag), one line" };
@@ -246,6 +245,7 @@ export async function resolveDiffBase(dir: string, ref: unknown): Promise<{ sha:
   return { sha };
 }
 
+/** `git <args>` in `cwd`: stdout, or null on any error. */
 export function git(cwd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     execFile("git", ["-c", "core.quotepath=off", ...args], { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: MAX_DIFF, windowsHide: true, encoding: "utf8" }, (err, stdout) => resolve(err ? null : String(stdout)));
