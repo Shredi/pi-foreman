@@ -19,7 +19,7 @@ The gate's classifier is a separate path: one cheap model call (the judge) answe
 One mechanism serves every review: the same launch path, climb rung, model rule, extractor and records. The occasion
 is taken from the launch field `occasion` of the reviewer entry; a marker at the head of the task text works as a backup (see below).
 
-The optional reviewer launch field `diffBase` names the commit the review diff is taken against (a sha, branch or tag), for a change that sits on top of earlier commits. It must be an ancestor of HEAD in the launch's checkout; otherwise the launch is refused (`diff_base_invalid`) with the reason. Without it the base is the recorded builder base or the merge-base.
+The optional reviewer launch field `diffBase` names the commit the review diff is taken against (a sha, branch or tag), for a change that sits on top of earlier commits. It must be an ancestor of HEAD in the launch's checkout; otherwise the launch is refused (`diff_base_invalid`) with the reason. A `[high-stakes]` or `[pre-pr]` review covers the whole change from the merge-base, so `diffBase` there is refused (`diff_base_whole_change`). Without it the base is the recorded builder base or the merge-base.
 
 | Occasion | Field value and marker | Reviews | Counts for items and gates |
 |---|---|---|---|

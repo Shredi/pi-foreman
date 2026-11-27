@@ -665,6 +665,11 @@ class PackageFilesTest(unittest.TestCase):
         new_order = 'Review is the last step before the PR: commit exactly the reviewed files, push, then open the PR; a commit that adds or changes anything after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR.'
         self.assertIn(old_order, want)
         want = want.replace(old_order, new_order)
+        # D224: the item-line limit is folded into the ledger line (no new line)
+        old_lim = "One line per requirement: `- [ ] N. item`. The last item"
+        new_lim = "One line per requirement: `- [ ] N. item`. A full line (text plus notes) holds at most 1000 characters; the tools and the write guard refuse a longer one, so keep evidence in a file and link it. The last item"
+        self.assertIn(old_lim, want)
+        want = want.replace(old_lim, new_lim)
         want = review_loop_rewrite(want)
         self.assertEqual(render_prompt(text, knobs), want)
 

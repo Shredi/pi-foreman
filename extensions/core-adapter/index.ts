@@ -5338,6 +5338,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // `diffBase` of a reviewer launch: an ancestor of HEAD, else the launch is refused with the reason; it pins the entry's diff base
         for (const [e, raw] of takenDiffBases) {
           if (typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
+          // a high-stakes or pre-pr review covers the whole change from the merge-base: a narrower base would contradict its task line
+          if (hsEntries.has(e) || occasions.get(e) === "pre-pr") {
+            s.trace?.emit({ event: "launch_refused", reason: "diff_base_whole_change", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: "pi-foreman: launch refused [diff_base_whole_change]: a [high-stakes] or [pre-pr] review covers the whole change, so `diffBase` is not allowed. Fix: leave diffBase out." };
+          }
           const dir = path.resolve(ctx.cwd, typeof e.cwd === "string" && e.cwd ? e.cwd : typeof input.cwd === "string" && input.cwd ? input.cwd : ".");
           const r = await resolveDiffBase(dir, raw);
           if ("error" in r) {
@@ -6009,7 +6014,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // and in their own chain, not behind the PASS snapshots (git) of the earlier runs; reviewSync still waits for them
     if (byFile.size > 0) {
       s.markSync = s.markSync.then(() => Promise.all([...byFile].map(async ([file, items]) => {
-        const r = await markPassItems(items, file, async (n) => (await runLedger(s, n === "V" ? ["mark", n, MARK_NOTE, "--verifier"] : ["mark", n, MARK_NOTE], file)).ok, async (n, t) => {
+        const r = await markPassItems(items, file, async (n) => {
+          const mr = await runLedger(s, n === "V" ? ["mark", n, MARK_NOTE, "--verifier"] : ["mark", n, MARK_NOTE], file);
+          if (mr.ok || !mr.text.includes("over the limit of")) return mr.ok;
+          // the harness note would take the item line over the limit: the mark goes through without it
+          s.trace?.emit({ event: "ledger_note_skipped", run: runId.slice(0, 8), item: n, reason: "item line limit" });
+          return (await runLedger(s, n === "V" ? ["mark", n, "--verifier"] : ["mark", n], file)).ok;
+        }, async (n, t) => {
           const nr = await runLedger(s, ["note", n, `reviewer: ${t}`], file);
           if (!nr.ok) s.trace?.emit({ event: "ledger_note_skipped", run: runId.slice(0, 8), item: n, reason: nr.text.slice(0, 120) });
           return nr.ok;
