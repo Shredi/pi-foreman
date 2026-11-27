@@ -1142,7 +1142,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         notice: (text) => s.prCtx?.ui.notify(text, "info"),
         milestone: (kind, n) => s.show?.milestone(kind, `PR #${n} ${kind === "pr_opened" ? "opened" : kind === "pr_ready" ? "is ready to merge" : "was merged"}`),
         rememberMerged: () => !!process.env[HANDOFF_DIR_ENV]?.trim(),
-        persist: (watches, merged) => pi.appendEntry(PRWATCH_ENTRY, { v: 2, piSessionId: s.id, watches, ...(merged.length ? { merged } : {}) }),
+        persist: (watches, merged, mergedOwn) => pi.appendEntry(PRWATCH_ENTRY, { v: 2, piSessionId: s.id, watches, ...(merged.length ? { merged } : {}), ...(mergedOwn.length ? { mergedOwn } : {}) }),
         send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
         idle: () => s.prCtx?.isIdle() ?? true,
         trace: (r) => s.trace?.emit(r),
@@ -7254,7 +7254,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, reviewRounds: () => closeLines(s.agentDir, s.usage.line.foremanSession), config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), mergedPr: () => (process.env[HANDOFF_DIR_ENV]?.trim() ? s.prWatches.mergedPrs().at(-1)?.n ?? null : null), selfFinish: async (c, req) => {
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, reviewRounds: () => closeLines(s.agentDir, s.usage.line.foremanSession), config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), mergedPr: () => (process.env[HANDOFF_DIR_ENV]?.trim() ? s.prWatches.mergedPrs().at(-1)?.n ?? null : null), mergedOwn: (n) => s.prWatches.mergedOwn(n), selfFinish: async (c, req) => {
         const handoff = process.env[HANDOFF_DIR_ENV]?.trim() ?? "";
         const py = pyPath(s);
         const script = path.join(PKG_ROOT, "scripts", "foreman_close.py");

@@ -401,7 +401,7 @@ class GhRepoOpsTest(PrCase):
         self.assertEqual(pair(argv, "-R"), "ghe.example.com/acme/lib")
         self.assertIn("number,url,title,state", pair(argv, "--json"))
         self.ok(self.pr("pr_status", number=7, repo="acme/lib"))
-        self.assertEqual(pair(argv_of(self.calls()[1]), "-R"), "acme/lib")
+        self.assertEqual(pair(argv_of(self.calls()[2]), "-R"), "acme/lib")  # [1] is the review-thread query of the first status
 
     def test_repo_host_author_validation_refuses_before_the_host(self):
         for args in ({"repo": "-x/y"}, {"repo": "a/.."}, {"repo": "./b"}, {"repo": "one"}, {"repo": 5}, {"host": "x.example.com"}, {"repo": "a/b", "host": "-h"}, {"repo": "a/b", "host": "bad host"}):

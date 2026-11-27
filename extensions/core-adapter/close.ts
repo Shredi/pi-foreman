@@ -230,6 +230,8 @@ export interface CloseDeps {
   selfFinish?: (req: CloseRequest) => Promise<SelfFinish>;
   /** A child foreman session: the number of the watched PR it saw merged (the watch's merged event or a pre-close status), else null. A close from any source then runs the self-finish for it. */
   mergedPr?: () => number | null;
+  /** Whether the merged PR `n` was opened by this session or watched by its number; only the refused-cleanup reply names the PR then. Absent: not own. */
+  mergedOwn?: (n: number) => boolean;
   /** Append `text` to the result file. */
   appendResult?: (file: string, text: string) => void;
   /** The review-round lines of this session's reviews (reviewrounds.ts closeLines), appended to the result after the `## Close` section. May throw; never fails the close. */
@@ -602,7 +604,7 @@ export class CloseFlow {
       if (req.replyTo && tail) {
         // a close from the parent after the merge: the reason is its own reply, before the `foreman:closed` line (that line is parsed)
         try {
-          await this.d.reply(req.replyTo, `PR #${selfReq.pr.n} merged, closing${tail}`.replace(/[\r\n]+/g, " "));
+          await this.d.reply(req.replyTo, `${this.d.mergedOwn?.(selfReq.pr.n) ? `PR #${selfReq.pr.n} merged, closing` : "closing"}${tail}`.replace(/[\r\n]+/g, " "));
         } catch {
           // best effort, as the ack
         }
@@ -682,6 +684,8 @@ export interface CloseSession {
   selfFinish?: (ctx: ExtensionContext, req: CloseRequest) => Promise<SelfFinish>;
   /** The number of the watched PR this child session saw merged, else null (see CloseDeps.mergedPr). */
   mergedPr?: () => number | null;
+  /** Whether the merged PR `n` is the session's own (see CloseDeps.mergedOwn). */
+  mergedOwn?: (n: number) => boolean;
   /** The review-round lines of the session's reviews, for the result (see CloseDeps.reviewRounds). */
   reviewRounds?: () => string[];
 }
@@ -763,6 +767,7 @@ export function registerClose(
       refreshWatched: s.refreshWatched,
       selfFinish: s.selfFinish ? (req) => s.selfFinish!(holder.ctx, req) : undefined,
       mergedPr: s.mergedPr,
+      mergedOwn: s.mergedOwn,
       reviewRounds: s.reviewRounds,
       appendResult: (file, text) => fs.appendFileSync(file, text, "utf8"),
       pushNotice: s.pushNotice ? () => s.pushNotice!(holder.ctx) : undefined,

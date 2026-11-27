@@ -42,7 +42,7 @@ class GithubHostsTest(PrCase):
         self.ok(self.prh("pr_status", [GHE, "github.com"], number=7, repo="o/r"))
         self.assertEqual(pair(argv_of(self.calls()[0]), "-R"), GHE + "/o/r")
         self.ok(self.prh("pr_checks", [GHE.upper()], number=7, repo="o/r"))
-        self.assertEqual(pair(argv_of(self.calls()[1]), "-R"), GHE + "/o/r")
+        self.assertEqual(pair(argv_of(self.calls()[2]), "-R"), GHE + "/o/r")  # [1] is the review-thread query of the status
 
     def test_find_with_a_repo_gets_the_host_and_an_explicit_host_wins(self):
         self.scn({"gh pr list": {"stdout": "[]"}})
@@ -55,9 +55,10 @@ class GithubHostsTest(PrCase):
         self.scn({"gh pr view 7": {"stdout": j(GH_STATUS)}})
         for n, hosts in enumerate((None, ["github.com"], ["GitHub.com"], [], ["-bad"], ["a..b"], "ghe", ["x"] * 21 + ["ghe.example.test"], [5])):
             self.ok(self.prh("pr_status", hosts, number=7, repo="o/r"))
-            self.assertEqual(pair(argv_of(self.calls()[n]), "-R"), "o/r", hosts)
+            self.assertEqual(pair(argv_of(self.calls()[2 * n]), "-R"), "o/r", hosts)
         self.ok(self.prh("pr_status", [GHE], number=7))
-        self.assertNotIn("-R", argv_of(self.calls()[-1]))
+        view = [a for a in map(argv_of, self.calls()) if a[:3] == ["gh", "pr", "view"]][-1]
+        self.assertNotIn("-R", view)
 
     def test_comments_without_a_repo_and_without_a_remote_use_the_first_listed_host(self):
         self.comments_scn()

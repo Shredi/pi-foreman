@@ -66,7 +66,7 @@ function flowRig(o: { merged?: boolean; refuse?: boolean }) {
     exists: () => true,
     setTimer: () => () => undefined,
     watchedPrs: () => [],
-    ...(o.merged ? { mergedPr: () => 7, selfFinish: async () => ({ lines: o.refuse ? ["cleanup: not started (worktree_dirty)"] : [] }) } : {}),
+    ...(o.merged ? { mergedPr: () => 7, mergedOwn: () => true, selfFinish: async () => ({ lines: o.refuse ? ["cleanup: not started (worktree_dirty)"] : [] }) } : {}),
   };
   const ctx = { isIdle: () => true, shutdown: () => undefined };
   return { b, flow: new CloseFlow(deps), ctx, sends };

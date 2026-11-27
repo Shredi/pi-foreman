@@ -185,6 +185,7 @@ function rig(w: World, o: RigOpts = {}) {
     watchedPrs: () => watches.numbers(),
     refreshWatched: () => watches.refresh(),
     mergedPr: () => watches.mergedPrs().at(-1)?.n ?? null,
+    mergedOwn: (n) => watches.mergedOwn(n),
     appendResult: (f, t) => {
       files.set(f, (files.get(f) ?? "") + t);
       if (o.disk) fs.appendFileSync(f, t);
@@ -367,7 +368,7 @@ test("a refused self-finish reaches the requester as its own reply before the fo
   try {
     fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
     const r = rig(w, { report: { ready: false, removed: 0, handover: [], closeLine: "CLOSE: open" } });
-    r.watches.start(K, snap());
+    r.watches.start(K, snap(), null, false, true);
     await r.close(parentClose(w));
     const out = replies(r.log);
     assert.equal(out.length, 2, out.join("\n"));
@@ -473,7 +474,7 @@ for (const [name, mutate, o, reason] of refused) {
       const staleTip = w.tip;
       mutate(w);
       const r = rig(w, { ...o, headSha: staleTip });
-      r.watches.start(K, snap());
+      r.watches.start(K, snap(), null, false, true);
       await r.close(parentClose(w));
       assert.equal(r.spawned.length, 0);
       assertStays(w);

@@ -95,6 +95,19 @@ export interface SourceStatus {
   error?: string;
   at: number;
 }
+/** The open review threads of a PR (WatchSnapshot.threads). */
+export interface OpenThreads {
+  open: number;
+  more?: true;
+  lines: string[];
+}
+/** The open-threads fact of a host answer (`open` above zero), or undefined. Host text is cut short. */
+export function threadsOf(v: unknown): OpenThreads | undefined {
+  const t = v as Record<string, unknown> | null;
+  if (!t || typeof t !== "object" || typeof t.open !== "number" || !Number.isInteger(t.open) || t.open < 1) return undefined;
+  const lines = (Array.isArray(t.lines) ? t.lines : []).filter((l): l is string => typeof l === "string").slice(0, 5).map((l) => l.replace(/\s+/g, " ").trim().slice(0, 160));
+  return { open: Math.min(t.open, 100_000), ...(t.more === true ? { more: true as const } : {}), lines };
+}
 export type Mergeable = "mergeable" | "conflicting" | "unknown";
 /** The host's review decision of a PR; only the ready label's target reads it. */
 export type ReviewDecision = "approved" | "changes_requested" | "review_required";
@@ -133,6 +146,8 @@ export interface WatchSnapshot {
   rulesKey?: string;
   /** The host's review decision; absent: the host gave none (or an older stored entry). */
   reviewDecision?: ReviewDecision;
+  /** The open review threads (not resolved): the count (of the first page; `more`: there are further pages, so "at least"), and the first line of the first few. Absent: none open, or the host did not say. */
+  threads?: OpenThreads;
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
   comments?: CommentEntry[];
 }
@@ -211,6 +226,8 @@ export interface WatchState {
   gateCi?: string;
   /** Child sessions: the head the gate-failed line was reported for; absent: none. */
   gateReportHead?: string;
+  /** The open review threads last reported (`<count>:<lines>`); absent: none open when last seen. */
+  threadKey?: string;
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
 }
@@ -374,6 +391,8 @@ export interface ExpectInput {
   upgrade: boolean;
   /** The names the newest merged pull requests into the base ran; null: unknown (asked and failed, or never asked). */
   baseline: { names: string[] } | null;
+  /** The current phase rules: true while a name is still an expected check (the frozen set is filtered by it on every poll); absent: all are. */
+  expected?: (name: string) => boolean;
 }
 
 /**
@@ -397,7 +416,7 @@ export function expectStep(prev: ExpectState | undefined, i: ExpectInput, now: n
   else if (i.cut) missing = [];
   else {
     unknown = st.names === undefined;
-    missing = (st.names ?? st.prev).filter((n) => !gating.some((r) => isCheck(r, n)));
+    missing = (st.names ?? st.prev).filter((n) => !gating.some((r) => isCheck(r, n)) && (i.expected?.(n) ?? true));
   }
   missing = missing.slice(0, MAX_EXPECT);
   if (!unknown && missing.length === 0) return { state: st };
@@ -463,6 +482,8 @@ export interface Delta {
   /** Fresh failed gate checks (data lines `- gate failed <name> <url>`); child session: `gateReport` adds the line for the parent. */
   gateFailed?: { name: string; url: string; source?: string }[];
   gateReport?: true;
+  /** The open review threads, reported once per change of the set (data lines `- open thread <first line>`). */
+  threads?: OpenThreads;
   /** The ready line of a gated repository whose merge state is blocked (data line: the gate or the reviews are still to come). */
   blocked?: true;
   draftReady?: boolean;
@@ -655,14 +676,16 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   // with the rule input the line also needs the review facts (`ok`); a withheld line leaves the latch unset, so it is sent once the rule holds
   // a gated repository: the host blocks the merge until the gate and the reviews are in, so `blocked` does not hold the line back there
   const notReadyState = (state: string | undefined): boolean => NOT_READY.has(state ?? "") && !(snap.gated && state === "blocked");
-  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !notReadyState(snap.mergeState) && st.readyHead !== snap.head && (!rule || rule.ok)) {
+  // an open review thread holds the ready lines (the latch stays unset: the line follows once the threads are resolved)
+  const threadsOpen = snap.threads !== undefined;
+  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !threadsOpen && !notReadyState(snap.mergeState) && st.readyHead !== snap.head && (!rule || rule.ok)) {
     st.readyHead = snap.head;
     d.ready = true;
     if (snap.gated && snap.mergeState === "blocked") d.blocked = true;
     events.push("ready to merge");
   }
   // no checks confirmed on the non-draft PR (the rule input only): its own ready line, once per head
-  if (rule?.ok && child && gating.length === 0 && !snap.gated && st.noCi >= 2 && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
+  if (rule?.ok && child && gating.length === 0 && !snap.gated && !threadsOpen && st.noCi >= 2 && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
     st.readyHead = snap.head;
     d.readyNoChecks = true;
     events.push("ready to merge, no checks");
@@ -678,6 +701,17 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     st.draftHead = snap.head;
     d.draftReady = true;
     events.push("green, still a draft");
+  }
+
+  // open review threads: a new or changed set is reported once (under the `review` wake kind); resolved: the latch clears, so a thread opened later is news again
+  const threadKey = snap.threads ? `${snap.threads.open}${snap.threads.more ? "+" : ""}:${snap.threads.lines.join("|")}` : "";
+  if (threadKey !== (st.threadKey ?? "")) {
+    if (threadKey) st.threadKey = threadKey;
+    else delete st.threadKey;
+    if (snap.threads && wakeOf("review", "github")) {
+      events.push("open review threads");
+      d.threads = snap.threads;
+    }
   }
 
   // not a wake kind: a head past the last PASS is always news (a silent event is never replayed, so the state is set either way)
@@ -703,6 +737,10 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   for (const m of (d.unreported ?? []).slice(0, 10)) lines.push(`- not reported ${oneLine(m, 120)}`);
   for (const m of (d.waiting ?? []).slice(0, 10)) lines.push(`- waiting ${oneLine(m, 120)}`);
   if (d.unreadable) lines.push("- expected checks unreadable");
+  if (d.threads) {
+    lines.push(`- ${d.threads.more ? "at least " : ""}${d.threads.open} open review thread${d.threads.open === 1 ? "" : "s"} (the ready line waits until they are resolved)`);
+    for (const l of d.threads.lines.slice(0, 5)) lines.push(`- open thread: ${oneLine(l, 160)}`);
+  }
   for (const c of d.newComments) lines.push(`- ${c.source ? `[${oneLine(c.source, 40)}] ` : ""}${c.kind} ${oneLine(c.author, 60)}${c.state ? ` (${oneLine(c.state, 40)})` : ""}${c.path ? ` ${oneLine(c.path, 120)}${c.line !== undefined ? `:${c.line}` : ""}` : ""}: ${oneLine(c.body)}`);
   let more = d.moreComments + Math.max(0, d.failed.length - 10) + Math.max(0, (d.gateFailed?.length ?? 0) - 10) + Math.max(0, d.missing.length - 10) + Math.max(0, (d.unreported?.length ?? 0) - 10) + Math.max(0, (d.waiting?.length ?? 0) - 10);
   let content = "";
@@ -755,7 +793,8 @@ function fromBatch(p: Record<string, unknown>): Omit<WatchSnapshot, "comments"> 
   const required = Array.isArray(p.required) ? (p.required as unknown[]).filter((n): n is string => typeof n === "string") : p.required === null ? null : undefined;
   const mergeState = text(p.mergeState);
   const reviewDecision = reviewDecisionOf(p.reviewDecision);
-  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(p.cut === true ? { cut: true as const } : {}), ...(mergeState ? { mergeState } : {}), ...(reviewDecision ? { reviewDecision } : {}) };
+  const threads = threadsOf(p.threads);
+  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(p.cut === true ? { cut: true as const } : {}), ...(mergeState ? { mergeState } : {}), ...(reviewDecision ? { reviewDecision } : {}), ...(threads ? { threads } : {}) };
 }
 
 /**
@@ -829,7 +868,8 @@ async function pollOne(run: RunOp, key: PrKey, seen: { updatedAt: string }): Pro
     runs = runs.filter((r, i) => runs.findIndex((x) => x.id === r.id) === i);
   }
   const reviewDecision = reviewDecisionOf(st.result.reviewDecision);
-  const base: Omit<WatchSnapshot, "comments"> = { state, mergeable: mergeableOf(st.result.mergeable), head: text(st.result.headSha), base: text(st.result.baseRef), updatedAt: text(st.result.updatedAt), runs, ...(reviewDecision ? { reviewDecision } : {}) };
+  const threads = threadsOf(st.result.openThreads);
+  const base: Omit<WatchSnapshot, "comments"> = { state, mergeable: mergeableOf(st.result.mergeable), head: text(st.result.headSha), base: text(st.result.baseRef), updatedAt: text(st.result.updatedAt), runs, ...(reviewDecision ? { reviewDecision } : {}), ...(threads ? { threads } : {}) };
   return withComments(run, key, base, seen);
 }
 
@@ -873,6 +913,8 @@ export interface WatchRecord {
   holdDraft?: boolean;
   /** pr_create opened this PR in this session: the watch keeps the `## Reviews` line of the PR body current (prbody.ts), whether or not it handles the draft state. Absent: pr_watch, pr_follow. */
   opened?: boolean;
+  /** The session opened this PR (pr_create) or watched it by an explicit number (pr_watch with `number`): the close reply may name its merge. Absent: a bare pr_watch (an older record with `opened` counts as own). */
+  own?: boolean;
   /** The (head, run id) pair of the review line last written into the body (by pr_create or by the watch); absent: none. */
   bodyMark?: { head: string; run: string };
 }
@@ -882,8 +924,10 @@ export interface WatchEntry {
   watches: WatchRecord[];
   /** The watched PRs this session saw merged (absent: none). */
   merged?: PrKey[];
+  /** The subset of `merged` the session opened or watched by number (absent: none; an older entry counts as not own). */
+  mergedOwn?: PrKey[];
 }
-export type WatchRestore = { status: "none" } | { status: "other_session" } | { status: "malformed" } | { status: "ok"; watches: WatchRecord[]; bad: number; merged?: PrKey[] };
+export type WatchRestore = { status: "none" } | { status: "other_session" } | { status: "malformed" } | { status: "ok"; watches: WatchRecord[]; bad: number; merged?: PrKey[]; mergedOwn?: PrKey[] };
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((c) => typeof c === "string");
@@ -911,7 +955,7 @@ function parseState(v: unknown): WatchState | null {
   const lb = s.label as Record<string, unknown> | null | undefined;
   const label = lb && typeof lb === "object" && typeof lb.name === "string" && lb.name && typeof lb.own === "boolean" && typeof lb.onHead === "string" && typeof lb.selfOff === "string" ? { label: { name: lb.name, own: lb.own, onHead: lb.onHead, selfOff: lb.selfOff } } : {};
   const overdue = { ...(typeof s.overdueHead === "string" && s.overdueHead ? { overdueHead: s.overdueHead } : {}), ...(typeof s.overdueDraft === "boolean" && typeof s.overdueHead === "string" && s.overdueHead ? { overdueDraft: s.overdueDraft } : {}) };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...label, ...overdue, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, ...(typeof s.waitingHead === "string" && s.waitingHead ? { waitingHead: s.waitingHead } : {}), ...(typeof s.waitingReportHead === "string" && s.waitingReportHead ? { waitingReportHead: s.waitingReportHead } : {}), ...(typeof s.gateCi === "string" && s.gateCi ? { gateCi: s.gateCi } : {}), ...(typeof s.gateReportHead === "string" && s.gateReportHead ? { gateReportHead: s.gateReportHead } : {}), last: s.last };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...label, ...overdue, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, ...(typeof s.waitingHead === "string" && s.waitingHead ? { waitingHead: s.waitingHead } : {}), ...(typeof s.waitingReportHead === "string" && s.waitingReportHead ? { waitingReportHead: s.waitingReportHead } : {}), ...(typeof s.gateCi === "string" && s.gateCi ? { gateCi: s.gateCi } : {}), ...(typeof s.gateReportHead === "string" && s.gateReportHead ? { gateReportHead: s.gateReportHead } : {}), ...(typeof s.threadKey === "string" && s.threadKey ? { threadKey: s.threadKey.slice(0, 1000) } : {}), last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */
@@ -923,7 +967,7 @@ export function parseWatchRecord(v: unknown): WatchRecord | null {
     const state = parseState(r.state);
     const bm = r.bodyMark as Record<string, unknown> | null | undefined;
     const bodyMark = bm && typeof bm === "object" && typeof bm.head === "string" && bm.head && typeof bm.run === "string" ? { bodyMark: { head: bm.head, run: bm.run } } : {};
-    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}), ...(r.holdDraft === true ? { holdDraft: true } : {}), ...(r.opened === true ? { opened: true } : {}), ...bodyMark } : null;
+    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}), ...(r.holdDraft === true ? { holdDraft: true } : {}), ...(r.opened === true ? { opened: true } : {}), ...(r.own === true ? { own: true } : {}), ...bodyMark } : null;
   }
   if (!finite(r.n) || !Number.isInteger(r.n) || r.n < 1 || !strings(r.commentIds)) return null;
   const state: WatchState = { head: "", failedIds: [], ci: "", mergeable: "", commentIds: r.commentIds, updatedAt: "", noCi: 0, noCiHead: "", readyHead: "", last: "watching" };
@@ -947,7 +991,8 @@ export function latestWatches(entries: unknown[], piSessionId: string): WatchRes
       else bad += 1;
     }
     const merged = (Array.isArray(d.merged) ? d.merged : []).flatMap((k) => parseKey(k) ?? []);
-    return { status: "ok", watches, bad, ...(merged.length ? { merged } : {}) };
+    const mergedOwn = (Array.isArray(d.mergedOwn) ? d.mergedOwn : []).flatMap((k) => parseKey(k) ?? []);
+    return { status: "ok", watches, bad, ...(merged.length ? { merged } : {}), ...(mergedOwn.length ? { mergedOwn } : {}) };
   }
   return { status: "none" };
 }
@@ -994,7 +1039,7 @@ export interface PrWatchesDeps {
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set, a watch's state or the merged PRs changed: write the session entry. */
-  persist?(watches: WatchRecord[], merged: PrKey[]): void;
+  persist?(watches: WatchRecord[], merged: PrKey[], mergedOwn: PrKey[]): void;
   /** Whether a merged watched PR is remembered (`mergedPrs`) and persisted; default true. Only a child foreman session needs it. */
   rememberMerged?(): boolean;
   send(msg: ReturnType<typeof prMessage>, idle: boolean): void;
@@ -1045,6 +1090,8 @@ interface Watch {
   holdDraft?: boolean;
   /** pr_create opened this PR in this session: the watch keeps the body's reviews line current (WatchRecord.opened). */
   opened: boolean;
+  /** The session opened this PR or watched it by number (WatchRecord.own). */
+  own: boolean;
   /** The pair of the review line last written into the body (WatchRecord.bodyMark). */
   bodyMark?: { head: string; run: string };
   /** A body call is on its way. */
@@ -1076,6 +1123,8 @@ export class PrWatches {
   private reserved: PrKey[] = [];
   /** Watched PRs this session saw merged, oldest first (kept after the watch ended; persisted with the watches). */
   private merged: PrKey[] = [];
+  /** The merged PRs the session opened or watched by number (a subset of `merged`). */
+  private mergedOwnKeys: PrKey[] = [];
   /** The one "no PR tracker running" notice of the current outage was sent. */
   private trackerDown = false;
   /** The one notice of the current tools.prGithubHosts error was sent. */
@@ -1121,14 +1170,14 @@ export class PrWatches {
   }
 
   /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
-  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false, bodyMark?: { head: string; run: string }, holdDraft = false): void {
+  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false, bodyMark?: { head: string; run: string }, holdDraft = false, named = false): void {
     const state = baselineOf(snap);
     const passed = this.passedSet();
     // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
     // (a head with no record is left for a tick to report, so the message is not swallowed here; the watch holds the stored data of `okAt`, so a tick on that
     // same data only re-arms and the message comes with the first tick that brings newer stored data)
     if (passed) reviewStep(state, snap.head, passed, false);
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}), ...(holdDraft ? { holdDraft: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}), ...(holdDraft ? { holdDraft: true } : {}), ...(created ? { opened: true } : {}), ...(created || named ? { own: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
     w.seenAt = okAt;
     this.arm(w);
     this.persist();
@@ -1148,9 +1197,9 @@ export class PrWatches {
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false, bodyMark?: { head: string; run: string }, holdDraft = false): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false, bodyMark?: { head: string; run: string }, holdDraft = false, named = false): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}), ...(holdDraft ? { holdDraft: true } : {}), ...(created ? { opened: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}), ...(holdDraft ? { holdDraft: true } : {}), ...(created ? { opened: true } : {}), ...(created || named ? { own: true } : {}), ...(created && bodyMark ? { bodyMark } : {}) });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
@@ -1198,9 +1247,10 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, ...(r.holdDraft === true ? { holdDraft: true } : {}), opened: r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, ...(r.holdDraft === true ? { holdDraft: true } : {}), opened: r.opened === true, own: r.own === true || r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.merged = this.merged.filter((k) => !samePr(k, r.key));
+    this.mergedOwnKeys = this.mergedOwnKeys.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
     return w;
   }
@@ -1212,7 +1262,7 @@ export class PrWatches {
 
   /** The active watches as session-entry records. */
   records(): WatchRecord[] {
-    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}), ...(w.holdDraft ? { holdDraft: true } : {}), ...(w.opened ? { opened: true } : {}), ...(w.bodyMark ? { bodyMark: w.bodyMark } : {}) }));
+    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}), ...(w.holdDraft ? { holdDraft: true } : {}), ...(w.opened ? { opened: true } : {}), ...(w.own ? { own: true } : {}), ...(w.bodyMark ? { bodyMark: w.bodyMark } : {}) }));
   }
 
   /** The watched PRs this session saw merged (the watch's merged event, or a pre-close fresh status), oldest first. */
@@ -1220,14 +1270,21 @@ export class PrWatches {
     return [...this.merged];
   }
 
-  private remember(key: PrKey): void {
+  /** Whether the merged PR number `n` was opened by this session or watched by number (false: a bare pr_watch, an older entry, or not remembered). */
+  mergedOwn(n: number): boolean {
+    return this.mergedOwnKeys.some((k) => k.n === n);
+  }
+
+  private remember(key: PrKey, own = false): void {
     if (this.deps.rememberMerged && !this.deps.rememberMerged()) return;
     this.merged = [...this.merged.filter((k) => !samePr(k, key)), key];
+    this.mergedOwnKeys = this.mergedOwnKeys.filter((k) => !samePr(k, key));
+    if (own) this.mergedOwnKeys.push(key);
   }
 
   private persist(): void {
     try {
-      this.deps.persist?.(this.records(), this.mergedPrs());
+      this.deps.persist?.(this.records(), this.mergedPrs(), [...this.mergedOwnKeys]);
     } catch {
       // the session file is not writable now: the next change tries again
     }
@@ -1255,7 +1312,7 @@ export class PrWatches {
       w.ended = true;
       this.timers.clear(w.poller);
       this.remove(w);
-      if (state === "merged") this.remember(w.key);
+      if (state === "merged") this.remember(w.key, w.own);
       this.persist();
       this.deps.changed?.();
       this.deps.trace({ event: "pr_watch", outcome: state });
@@ -1308,7 +1365,7 @@ export class PrWatches {
     if (r.status === "malformed") lost.push([null, "the stored watch state is unreadable; start the watch again with pr_watch"]);
     else {
       for (let i = 0; i < r.bad; i++) lost.push([null, "a stored watch is unreadable; start the watch again with pr_watch"]);
-      for (const k of r.merged ?? []) this.remember(k);
+      for (const k of r.merged ?? []) this.remember(k, (r.mergedOwn ?? []).some((o) => samePr(o, k)));
       const hosts = this.deps.githubHosts?.() ?? DEFAULT_HOSTS;
       for (const x of r.watches) {
         // the tracker serves the listed hosts only: an older record (another host, or a number-only key) could never end.
@@ -1620,7 +1677,7 @@ export class PrWatches {
     if (!facts) return null;
     // a snap written under other rules than the live ones (or before the tracker saw them) is not used: no label until the tracker has polled the PR again
     if ((snap.rulesKey ?? "") !== rulesKeyOf(rules, w.key.repo)) return null;
-    return labelTarget({ facts, checks: checksOf(w.state, snap, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
+    return labelTarget({ facts, checks: checksOf(w.state, snap, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}), ...(snap.threads ? { threadsOpen: true } : {}) });
   }
 
   /**
@@ -1777,7 +1834,7 @@ export class PrWatches {
     w.ended = true;
     this.timers.clear(w.poller);
     this.remove(w);
-    if (d.final === "merged") this.remember(w.key);
+    if (d.final === "merged") this.remember(w.key, w.own);
     this.persist();
     this.deps.changed?.();
     if (d.final === "merged") {

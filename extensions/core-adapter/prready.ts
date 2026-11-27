@@ -52,6 +52,8 @@ export interface LabelInput {
   draft: boolean;
   /** The host's review decision (`approved`, `changes_requested`, `review_required`); absent: the host gave none, no effect. */
   reviewDecision?: string;
+  /** Open review threads on the PR; absent or false: none (or unknown). An open thread keeps the label off. */
+  threadsOpen?: boolean;
 }
 
 /**
@@ -63,7 +65,7 @@ export function labelTarget(i: LabelInput): boolean | null {
   if (i.facts !== "ok" || i.draft || i.mergeState === "draft" || i.checks === "red") return false;
   if (i.mergeable === "conflicting" || i.mergeState === "dirty" || i.reviewDecision === "changes_requested") return false;
   if (i.checks === "running" || i.mergeable !== "mergeable" || i.mergeState === "unknown" || i.mergeState === "behind") return null;
-  return true;
+  return i.threadsOpen !== true;
 }
 
 /**
