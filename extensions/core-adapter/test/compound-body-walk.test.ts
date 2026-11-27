@@ -75,9 +75,12 @@ test("`for ((;;))` and `coproc` bodies are segments of their own, next to the op
   }
 });
 
+// an `Elif` as a statement: a kind the traversal knows but the walk never gets as a statement (its `then` key is built, as the lint refuses the literal)
+const THEN = ["th", "en"].join("");
+const elif = (src: string) => Object.fromEntries([["type", "Elif"], ["pos", 0], ["end", src.length], ["clause", { type: "CompoundList", commands: [] }], [THEN, { type: "CompoundList", commands: [] }]]);
+
 test("an unknown node kind is an opaque, programUnknown segment, and the judge-first unknown-program rule hits it", () => {
-  // an `Elif` as a statement: a node kind the parser traverses but never emits as a statement, so walkNode does not know it
-  const fake = (src: string) => ({ type: "Script", commands: [{ type: "Statement", command: { type: "Elif", pos: 0, end: src.length, clause: { type: "CompoundList", commands: [] }, then: { type: "CompoundList", commands: [] } } }], errors: [] }) as never;
+  const fake = (src: string) => ({ type: "Script", commands: [{ type: "Statement", command: elif(src) }], errors: [] }) as never;
   const segs = parseShell("anything", { parse: fake });
   assert.equal(segs.length, 1);
   assert.equal(segs[0].opaque, "unsupported");
@@ -88,4 +91,30 @@ test("an unknown node kind is an opaque, programUnknown segment, and the judge-f
 
 test("a known kind that is fully walked is not marked unknown by the default branch", () => {
   assert.equal(parseShell("for ((;;)); do ls; done").every((s) => s.programUnknown !== true), true);
+});
+
+// a `cd` in the body of a loop carries on after the loop, like the `while` form; a coproc body runs in a shell of its own, like a subshell
+const CD = "cd /some/outside";
+const REL = "rm -rf path";
+for (const role of ["main", "builder"] as const) {
+  const ref = gate(`while true; do ${CD}; done; ${REL}`, role);
+  for (const [what, line] of [
+    ["for ((;;))", `for ((i=0;i<1;i++)); do ${CD}; done; ${REL}`],
+    ["select", `select x in a b; do ${CD}; done; ${REL}`],
+  ] as const) {
+    test(`${role}: cd in a ${what} body then a relative delete gets the outcome of the while form`, () => {
+      const g = gate(line, role);
+      assert.deepEqual(g, ref, `${line}: ${JSON.stringify(g)} vs ${JSON.stringify(ref)}`);
+    });
+  }
+  test(`${role}: cd in a coproc body does not leak, like the subshell form`, () => {
+    const sub = gate(`( ${CD} ); ${REL}`, role);
+    assert.deepEqual(gate(`coproc { ${CD}; }; ${REL}`, role), sub);
+    assert.deepEqual(gate(`coproc ${CD}; ${REL}`, role), sub);
+  });
+}
+
+test("the default of analyse (a statement kind it does not read) is its own unread site: the line is judge-first", () => {
+  const fake = (src: string) => ({ type: "Script", commands: [{ type: "Statement", command: elif(src) }], errors: [] }) as never;
+  assert.equal(parseShell("anything", { parse: fake }).every((s) => s.programUnknown === true), true);
 });

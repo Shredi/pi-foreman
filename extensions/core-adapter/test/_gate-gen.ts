@@ -628,6 +628,7 @@ export const MATRIX_PAYLOADS: readonly Payload[] = [...HARMLESS, ...DANGEROUS];
  * It is the before/after record for the role differences; the main session's shell-write guard in index.ts (shellWriteBlock) and the judge-first dialog or refusal are
  * outside the gate layer, so `write-outside` reads silent for main here.
  */
+// arith row: a `for ((;;))` body and a `(( ))` substitution are walked now, so the delete payloads inside them are blocked like the plain line (were judged as an opaque unit).
 export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
   main: {
     cmdsub: "sssbbbbssj", backtick: "sssbbbbssj", dbracket: "sssbbbbssj", arith: "jjjbbbbjjj", select: "sssbbbbssj", for: "sssbbbbssj",

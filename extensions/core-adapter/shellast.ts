@@ -703,12 +703,12 @@ function walkNode(n: any, sc: Scope): string | null {
         for (const part of n.type === "ArithmeticFor" ? [n.initialize, n.test, n.update].filter(Boolean) : [n]) scriptsIn(part, acc);
         walkSubs(acc.subs, sc);
       }
-      // a loop body runs like any other: its commands are segments the floors read (a select's body is read as a loop of its own)
+      // a loop body runs like any other, in this shell: its commands are segments the floors read and its `cd` carries on (a select's body is read as a loop of its own)
       if (n.type === "Select") {
         walkWords(n.wordlist, sc);
-        walkLists([n.body], { ...sc, inSelect: true });
+        return walkLists([n.body], { ...sc, inSelect: true });
       } else if (n.type === "ArithmeticFor") {
-        walkLists([n.body], { ...sc, inSelect: true });
+        return walkLists([n.body], { ...sc, inSelect: true });
       } else if (n.type === "Coproc") {
         // the body (a command or a group, named or not) runs in the background in a shell of its own
         isolated(sc.run, () => walkNode(n.body, { ...sc, inSelect: true }));
@@ -1838,7 +1838,7 @@ interface Binding {
 interface BoundSite {
   unit: number;
   seq: number;
-  kind: "any" | "arith" | "name";
+  kind: "any" | "arith" | "name" | "unread";
   fires: () => boolean;
 }
 
@@ -2381,7 +2381,7 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
     nodes.forEach((u, k) => {
       unit = k;
       // a kind of statement the walk does not read: a site that fires, so the unit is `programUnknown` (judge-first)
-      if (!READ_KINDS.has((u as any).type)) site("arith", () => true);
+      if (!READ_KINDS.has((u as any).type)) site("unread", () => true);
       visit(u, 0);
     });
     if (late.some((f) => f()) || [...expanded].some((n) => assigned.has(n))) out.any = true;
