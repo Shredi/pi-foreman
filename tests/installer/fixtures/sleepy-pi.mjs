@@ -4,5 +4,5 @@ import * as fs from "node:fs";
 
 if (process.env.FAKE_PI_LOG) fs.appendFileSync(process.env.FAKE_PI_LOG, `${JSON.stringify({ args: process.argv.slice(2) })}\n`);
 setTimeout(() => {
-  console.log("1.6.0");
+  console.log("1.7.0");
 }, Number(process.env.FAKE_PI_SLEEP_MS || 5000));
