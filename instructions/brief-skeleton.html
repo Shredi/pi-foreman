@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brief title</title>
+<style>:root{color-scheme:light dark;--fg:#1b1f24;--bg:#eef1f5;--card:#fff;--mute:#5c6673;--line:#d7dde5;--soft:#f3f5f8;--link:#1f6feb;--accent:#1f6feb;--note:#2563eb;--note-b:#eff5ff;--tip:#15803d;--tip-b:#ecfaf1;--imp:#7c3aed;--imp-b:#f5f0ff;--warn:#b45309;--warn-b:#fff7e8;--caut:#c2262d;--caut-b:#fff0f0}
+@media (prefers-color-scheme:dark){:root{--fg:#e8ebef;--bg:#0f1216;--card:#181c22;--mute:#97a1ad;--line:#2b313a;--soft:#20252d;--link:#79b0ff;--accent:#4c8dff;--note:#6ea8fe;--note-b:#16233a;--tip:#4ade80;--tip-b:#132a1d;--imp:#b794f6;--imp-b:#241a3a;--warn:#f0b354;--warn-b:#2e2312;--caut:#f87171;--caut-b:#331718}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:52rem;margin:0 auto;padding:2rem 1.5rem 4rem}body.plan main{max-width:74rem}
+h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.6em 0 .6em}h1{font-size:1.9rem;margin-top:.3em}h2{font-size:1.35rem}h3{font-size:1.1rem}
+.kicker{color:var(--mute);margin:0 0 1.5rem;font-size:.9rem}a{color:var(--link)}
+pre{background:var(--soft);padding:1rem;overflow:auto;border-radius:8px}code{background:var(--soft);padding:.08em .32em;border-radius:4px;font:.86em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}pre code{padding:0;background:none}
+table{border-collapse:collapse;display:block;overflow:auto;margin:1rem 0}th,td{border:1px solid var(--line);padding:.45em .8em;vertical-align:top}th{background:var(--soft);text-align:left}
+blockquote{margin:1em 0;padding:0 1em;color:var(--mute);border-left:3px solid var(--line)}hr{border:0;border-top:1px solid var(--line)}
+.callout{margin:1rem 0;padding:.8rem 1rem;border-radius:10px;border:1px solid var(--c);border-left-width:5px;background:var(--cb);color:var(--fg)}
+.callout>:first-child{margin-top:0}.callout>:last-child{margin-bottom:0}.callout ul,.callout ol{padding-left:1.1rem;margin:.3rem 0}.callout li{margin:.2rem 0}
+.callout>p:first-child>strong:first-child{color:var(--c)}
+.callout-note{--c:var(--note);--cb:var(--note-b)}.callout-tip{--c:var(--tip);--cb:var(--tip-b)}.callout-important{--c:var(--imp);--cb:var(--imp-b)}.callout-warning{--c:var(--warn);--cb:var(--warn-b)}.callout-caution{--c:var(--caut);--cb:var(--caut-b)}
+section.owner{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:1.25rem;align-items:start;margin:1rem 0}.o-main:only-child{grid-column:1/-1}
+@media (max-width:860px){section.owner{grid-template-columns:1fr}}
+.o-main{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0 1.5rem 1rem;overflow:hidden}
+.o-main>h2{margin:0 -1.5rem 0;padding:.5rem 1.5rem;font-size:.75rem;text-transform:uppercase;letter-spacing:.1em;color:#fff;background:var(--accent)}
+p.goal{margin:0 -1.5rem 1rem;padding:1rem 1.5rem 1.2rem;background:var(--accent);color:#fff;font-size:1.3rem;line-height:1.4;font-weight:500}p.goal strong{color:#fff}
+ol.path{padding-left:2.4rem}ol.path>li{padding:.5rem 0 .5rem .3rem;border-bottom:1px dashed var(--line)}ol.path>li:last-child{border-bottom:0}ol.path>li::marker{color:var(--accent);font-weight:800;font-size:1.25em}
+.o-side .callout{margin:0 0 1rem;background:var(--card);border-width:0 0 0 5px;box-shadow:0 1px 3px #0000001a}
+details.fold{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:.8rem 1.3rem;margin:.6rem 0}details.fold>summary{cursor:pointer}
+details.fold>summary>h2{display:inline;margin:0;padding:0;font-size:1.1rem}details.fold[open]>summary{margin-bottom:.6rem}details.fold[open]{max-width:56rem}
+nav.index{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:1.5rem 0 .5rem}nav.index span{color:var(--mute);font-size:.85rem;margin-right:.3rem}
+nav.index a{font-size:.85rem;text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:.1rem .65rem;color:var(--fg)}nav.index a:hover{border-color:var(--link)}
+section.questions{border:2px solid var(--imp);border-radius:12px;padding:.2rem 1.2rem;margin:1.5rem 0;background:var(--imp-b)}section.questions>h2{margin-top:.8rem;color:var(--imp)}
+picture{display:block;margin:1em 0;overflow:auto}img{max-width:100%;height:auto}</style>
+</head>
+<body class="plan">
+<main>
+<h1>Brief title</h1>
+
+<!-- The Summary section comes first: the owner reads it cold in the open dialog and decides from it. Layout: a goal paragraph, the steps as a numbered list, a diagram where a flow or a before/after exists, then the boxes at the end, one blockquote each, each with a bold label. One fact per sentence, no paths or ids. data-alert is one of note, tip, important, warning, caution: warning = heads-up, note = decided for you, tip = decided by you, important = open question for the owner, caution = serious risk. -->
+<section class="owner">
+<div class="o-main">
+<h2>Summary</h2>
+<p class="goal"><strong>Goal:</strong> one sentence on what the new session does and why.</p>
+<ol class="path">
+<li>The first step, short.</li>
+<li>The next step, short.</li>
+</ol>
+<!-- Optional diagram: the harness draws it. -->
+<pre class="mermaid">
+flowchart LR
+  A[Start] --> B[Change] --> C[Check]
+</pre>
+</div>
+<div class="o-side">
+<blockquote class="callout callout-warning" data-alert="warning">
+<p><strong>Heads-up</strong></p>
+<ul>
+<li>What could surprise the owner.</li>
+</ul>
+</blockquote>
+<blockquote class="callout callout-note" data-alert="note">
+<p><strong>Decided for you</strong></p>
+<ul>
+<li>A choice you made that the owner may want to change.</li>
+</ul>
+</blockquote>
+</div>
+</section>
+
+<!-- The new session reads a text copy of this page, so every part below is plain text for it: no content that only shows in the browser. Do not add a report-back section; the harness appends one. -->
+<h2>Task</h2>
+<p>What the new session does, in order. Name the ledger items or the acceptance criteria it covers.</p>
+
+<h2>Artifacts</h2>
+<ul>
+<li>Files, plans and notes the session needs, as links or paths. Name them; do not restate their content.</li>
+</ul>
+
+<h2>Constraints</h2>
+<ul>
+<li>What the session must not touch or decide, and the limits it works inside.</li>
+</ul>
+
+<h2>Suggested skills</h2>
+<ul>
+<li>Skills the session loads first, one line each with the reason.</li>
+</ul>
+</main>
+</body>
+</html>

@@ -3220,7 +3220,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (instructionsCache === undefined) {
       try {
-        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", () => path.join(PKG_ROOT, "instructions", "plan-skeleton.html")); // fixed per installation: the same bytes every turn
+        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", () => path.join(PKG_ROOT, "instructions", "plan-skeleton.html")).replaceAll("{{briefSkeleton}}", () => path.join(PKG_ROOT, "instructions", "brief-skeleton.html")); // fixed per installation: the same bytes every turn
       } catch {
         instructionsCache = null;
       }
