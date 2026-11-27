@@ -69,7 +69,7 @@ jobs:
         run: npx tsc --noEmit -p tsconfig.json
   test-windows:
     # The Windows leg is three shards that run at once. Shard 1/3 runs the python, conformance, herdr, installer and shim steps; the adapter tests are split over shards 2/3 and 3/3 with node's --test-shard (deterministic, by file order).
-    # Measured: shard 1/3 16.5 min, 2/3 19 min, 3/3 22.5 min; the limit is about twice the slowest shard.
+    # Measured over two runs: shard 1/3 13 to 16 min, 2/3 18 to 20 min, 3/3 15 to 24 min; the limit is about twice the slowest shard.
     strategy:
       fail-fast: false
       matrix:
