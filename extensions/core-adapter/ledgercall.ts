@@ -306,6 +306,10 @@ export function planLedgerInit(params: Record<string, unknown>): { topic: string
     if (typeof t !== "string" || !t.trim() || /[\r\n\x0b\x0c\x1c\x1d\x1e\x85\p{Zl}\p{Zp}]/u.test(t)) return { error: `${LEDGER_TOOL}: each text is a non-empty single line.` };
     texts.push(t.trim());
   }
+  for (const [i, t] of texts.entries()) {
+    const line = `- [ ] ${i + 1}. ${t}`;
+    if (line.length > ITEM_LINE_MAX) return { error: itemLineRefusal(String(i + 1), line.length) };
+  }
   return { topic, texts };
 }
 
