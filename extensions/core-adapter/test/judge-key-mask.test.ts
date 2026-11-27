@@ -30,7 +30,7 @@ test("ordinary code passes: a 25-char camelCase name, `key=lambda`, `token = get
     "import { aVeryLongModuleIdentifierName } from './x';",
     "password = os.environ['PASSWORD']",
     "auth = None",
-    "author = Marc",
+    "author = Alice",
   ];
   const body = shown("code.txt", `${lines.join("\n")}\n`);
   for (const l of lines) assert.ok(body.includes(l), `${l}\n${body}`);
