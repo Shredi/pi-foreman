@@ -8,7 +8,8 @@ import { r11Rig } from "./_r11rig.ts";
 
 async function setup(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}) {
   const rig = await r11Rig(t, ceremony);
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-d193-")));
+  // native: the long spelling the gate resolves to
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-d193-")));
   const prev = process.env.PI_FOREMAN_HANDOFF_DIR;
   process.env.PI_FOREMAN_HANDOFF_DIR = dir;
   t.after(() => {
@@ -19,7 +20,9 @@ async function setup(t: { after(fn: () => void | Promise<void>): void }, ceremon
   fs.mkdirSync(path.join(rig.project, ".workflow", "scratch"), { recursive: true });
   const src = path.join(rig.project, ".workflow", "scratch", "plan-x.md");
   fs.writeFileSync(src, "plan\n");
-  return { rig, dir, src };
+  // the command line is shell text: forward slashes, a backslash would be eaten
+  const sh = (p: string): string => p.replaceAll("\\", "/");
+  return { rig, dir: sh(dir), src: sh(src) };
 }
 
 test("a refused copy into the handoff dir names the allowed handoff file names, not the edit-mode text", async (t) => {

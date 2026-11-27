@@ -157,7 +157,7 @@ test("D189a: an owner edit under .workflow/ after a PASS keeps the standing PASS
   await marked(w);
   await tick(300);
   const cwd = markCwd(w);
-  assert.equal(fs.realpathSync(cwd), fs.realpathSync(w.project), "the PASS stands in the session's own checkout");
+  assert.equal(fs.realpathSync.native(cwd), fs.realpathSync.native(w.project), "the PASS stands in the session's own checkout");
   const notes = path.join(cwd, ".workflow", "owner-notes.md");
   fs.mkdirSync(path.dirname(notes), { recursive: true });
   fs.writeFileSync(notes, "first\n");

@@ -24,7 +24,7 @@ const call = async (a: Rig, toolName: string, input: Record<string, unknown>, ou
 
 async function rig(t: Parameters<typeof setup>[0]) {
   const s = await setup(t);
-  const file = path.join(s.w.project, ".workflow", "LEDGER-x.md");
+  const file = path.join(fs.realpathSync.native(s.w.project), ".workflow", "LEDGER-x.md");
   const state = path.join(path.dirname(s.w.project), "agent", "pi-foreman", "state");
   assert.equal(boundLedger(state, s.a.ctx.sessionManager.getSessionId()), file, "the ledger is bound");
   return { ...s, file };
@@ -84,7 +84,7 @@ test("ledger.py in a second process and the upsert together lose nothing", async
   const shim = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "bin", "ledger");
   const adds = new Promise<number>((resolve) => {
     const code = `for i in $(seq 0 24); do sh ${JSON.stringify(shim)} -f ${JSON.stringify(file)} add py$i >/dev/null || exit 1; done`;
-    spawn("sh", ["-c", code], { stdio: "inherit", env: { ...process.env, PI_FOREMAN_PYTHON: "python3" } }).on("exit", (c) => resolve(c ?? 1));
+    spawn("sh", ["-c", code], { stdio: "inherit", env: { ...process.env, PI_FOREMAN_PYTHON: process.platform === "win32" ? "python" : "python3" } }).on("exit", (c) => resolve(c ?? 1));
   });
   const tool = a.tool("foreman_ledger")!;
   for (let i = 0; i < 25; i++) await tool.execute(`u${i}`, { action: "upsert", item: "1", text: `item up${i}` }, undefined, undefined, a.ctx);

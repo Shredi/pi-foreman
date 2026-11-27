@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { LEDGER_RUN_WAIT_MS, LOCK_MAX_HOLD_MS } from "../ledgerlockfs.ts";
 import { setup } from "./_hsrig.ts";
+import { posixOnly } from "./_platform.ts";
 const { buildLedgerRun } = (await import("../../../bin/ledger-run.mjs")) as {
   buildLedgerRun: (argv: string[], snippet?: string) => { run: { cmd: string; args: string[] }; resolve: { cmd: string; args: string[] } } | null;
 };
@@ -90,7 +91,7 @@ test("a release leaves a lock that a takeover gave to another holder", async () 
   }
 });
 
-test("the shim helper says so on stderr when ledger.py runs without the lock (lock file cannot be created)", async () => {
+test("the shim helper says so on stderr when ledger.py runs without the lock (lock file cannot be created)", { skip: posixOnly }, async () => {
   const os = await import("node:os");
   const { spawnSync } = await import("node:child_process");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llun-"));

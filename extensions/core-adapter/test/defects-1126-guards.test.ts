@@ -11,7 +11,7 @@ import { opaqueTextFloors } from "../floors.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { posixOnly } from "./_platform.ts";
 
-const base = fs.realpathSync(mkTestTmp("pf-d1126-"));
+const base = fs.realpathSync.native(mkTestTmp("pf-d1126-"));
 const wt = path.join(base, "wt");
 const scratch = path.join(base, "wt", ".workflow", "scratch", "t1");
 const out = path.join(base, "out");

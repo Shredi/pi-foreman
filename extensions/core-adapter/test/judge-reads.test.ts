@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { MAX_READ_BUDGET, judgeReadScope, readHooks, readLogPaths, readPaths, readsUnchanged, resolveReadable } from "../judgereads.ts";
 import type { JudgeReadScope } from "../judgereads.ts";
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-")));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-")));
 const home = path.join(tmp, "home");
 const agent = path.join(home, ".pi", "agent");
 const wt = path.join(home, "proj");
