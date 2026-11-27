@@ -11,8 +11,15 @@ import { rmTestTmp } from "./_tmpbase.ts";
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-doctor-lnm-")));
 process.on("exit", () => rmTestTmp(tmp));
 
+// git for Windows rejects `\\.\nul` as a config file, so win32 gets an empty file inside this test's tmp dir (as _submodules.ts emptyConfig does)
+const emptyConfig = (): string => {
+  if (process.platform !== "win32") return os.devNull;
+  const f = path.join(tmp, "empty-gitconfig");
+  if (!fs.existsSync(f)) fs.writeFileSync(f, "");
+  return f;
+};
 const git = (cwd: string, ...args: string[]): void => {
-  execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", ...args], { cwd, stdio: "ignore", env: { ...process.env, GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: "1" } });
+  execFileSync("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", ...args], { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_CONFIG_GLOBAL: emptyConfig(), GIT_CONFIG_NOSYSTEM: "1" } });
 };
 const link = (target: string, at: string): void => fs.symlinkSync(target, at, process.platform === "win32" ? "junction" : "dir");
 
