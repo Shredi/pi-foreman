@@ -21,7 +21,8 @@ jobs:
           - {os: ubuntu-latest, node: "26"}
     name: test (${{ matrix.os }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 75
+    # temporary: Windows gets 120 minutes until its tests are split into shards (round windows-ci-shards)
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 120 || 75 }}
     steps:
       - name: "Windows: Defender real-time scanning off (CI speed)"
         if: runner.os == 'Windows'
