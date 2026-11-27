@@ -37,12 +37,12 @@ test("the Enlarge button: a real button with aria-label and title Enlarge, added
   assert.match(SCRIPT, /function enl\(\)\{document\.querySelectorAll\('img,svg'\)/);
   assert.match(SCRIPT, /b\.type='button';b\.className='pfz-enl';b\.title='Enlarge';b\.setAttribute\('aria-label','Enlarge'\)/);
   assert.match(SCRIPT, /w\.appendChild\(b\)/);
-  // the wrapper takes the figure's place in the flow; a picture is a block wrapper (its margins stay inside it)
-  assert.match(SCRIPT, /w\.className='pfz-w'\+\(t\.tagName==='PICTURE'\?' pfz-b':''\);p\.insertBefore\(w,t\);w\.appendChild\(t\)/);
+  // the wrapper takes the figure's place in the flow: a percentage-width or no-width SVG gets the pfz-p block (its cap is copied to the wrapper)
+  assert.match(SCRIPT, /w\.className='pfz-w'\+\(pc\?' pfz-p':bl\?' pfz-b':''\)\+\(mg\?' pfz-c':''\);if\(pc\)w\.style\.setProperty\('--pfz-w',g\.style\.getPropertyValue\('--pfz-w'\)\);p\.insertBefore\(w,t\);w\.appendChild\(t\)/);
 });
 
 test("the Enlarge button opens the same overlay as a click on the figure", () => {
-  assert.match(SCRIPT, /b\.addEventListener\('click',function\(\)\{open\(g\);\}\)/);
+  assert.match(SCRIPT, /b\.addEventListener\('click',function\(\)\{open\(g,b\);\}\)/);
 });
 
 test("no button for a figure inside a link or a button, inside the overlay, or inside an SVG", () => {
@@ -56,9 +56,28 @@ test("the button is low on screen normally, full on hover and keyboard focus, an
   assert.match(STYLE, /@media \(hover:none\)\{\.pfz-enl\{opacity:\.9\}\}/);
 });
 
-test("the wrapper keeps the figure in place: relative, inline-block (block for a picture), capped at its box", () => {
+test("the wrapper keeps the figure in place: relative, inline-block only for an inline figure, block otherwise, capped at its box", () => {
   assert.match(STYLE, /\.pfz-w\{position:relative;display:inline-block;max-width:100%;vertical-align:top\}/);
-  assert.match(STYLE, /\.pfz-w\.pfz-b\{display:block\}/);
+  // a block figure gets a shrink-wrapped block: its box is the figure's, so the button sits on its corner
+  assert.match(STYLE, /\.pfz-w\.pfz-b\{display:block;width:fit-content\}/);
+  // a percentage-width SVG (mermaid) sizes to the box; a shrink-wrap would fall back to 300 px
+  assert.match(STYLE, /\.pfz-w\.pfz-p\{display:block;width:min\(100%,var\(--pfz-w,100%\)\)\}/);
+  // a centred block figure keeps its centring through the wrapper
+  assert.match(STYLE, /\.pfz-w\.pfz-c\{margin-left:auto;margin-right:auto\}/);
+});
+
+test("the Enlarge button's focus goes back to it when an overlay it opened closes", () => {
+  assert.match(SCRIPT, /function open\(src,btn\)\{back=btn\|\|null;/);
+  assert.match(SCRIPT, /var f=back;back=null;if\(f&&f\.isConnected\)f\.focus\(\);/);
+  assert.match(SCRIPT, /b\.addEventListener\('click',function\(\)\{open\(g,b\);\}\)/);
+});
+
+test("no Enlarge button for a figure rendered under 48 px in either dimension", () => {
+  assert.match(SCRIPT, /var r=g\.getBoundingClientRect\(\);if\(r\.width&&r\.height&&\(r\.width<48\|\|r\.height<48\)\)return;/);
+});
+
+test("the dashed hover outline skips the Enlarge button's own icon", () => {
+  assert.match(STYLE, /:is\(img,svg\):not\(a \*\):not\(\.pfz-ov \*\):not\(\.pfz-enl \*\):hover\{/);
 });
 
 test("the added style and script stay ASCII, with no request and no remote URL", () => {
