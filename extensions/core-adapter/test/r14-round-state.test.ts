@@ -189,7 +189,8 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   /** Starts a case from `copy`: the instances of the case before are shut down, the files replaced, the env set again. */
   async function reset(copy: string) {
     await settle();
-    for (const name of fs.readdirSync(root)) fs.rmSync(path.join(root, name), { recursive: true, force: true });
+    // Windows: rmdir can hit EBUSY for a moment after the instances above shut down; node retries it with maxRetries/retryDelay
+    for (const name of fs.readdirSync(root)) fs.rmSync(path.join(root, name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     fs.cpSync(copy, root, { recursive: true, preserveTimestamps: true });
     entries.splice(0, entries.length, ...(JSON.parse(snapEntries) as unknown[]));
     applyEnv();

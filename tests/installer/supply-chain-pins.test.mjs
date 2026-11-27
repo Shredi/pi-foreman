@@ -96,12 +96,9 @@ test("every job under `jobs:` has a job-level positive integer timeout-minutes",
     }
     assert.ok(jobs.length > 0, `${f}: no jobs under jobs:`);
     for (const job of jobs) {
-      const timeout = job.lines.map((l) => l.match(/^ {4}timeout-minutes:\s*(.+?)\s*$/)).find(Boolean);
+      const timeout = job.lines.map((l) => l.match(/^ {4}timeout-minutes:\s*(\S+)\s*$/)).find(Boolean);
       assert.ok(timeout, `${f}: job ${job.name} has no job-level timeout-minutes`);
-      // temporary (round windows-ci-shards): the test job takes an OS-keyed expression; both branches must still be positive integers
-      const keyed = timeout[1].match(/^\$\{\{ matrix\.os == 'windows-latest' && (\S+) \|\| (\S+) \}\}$/);
-      const values = keyed ? [keyed[1], keyed[2]] : [timeout[1]];
-      for (const v of values) assert.match(v, /^[1-9]\d*$/, `${f}: job ${job.name} timeout-minutes must be a positive integer, got ${timeout[1]}`);
+      assert.match(timeout[1], /^[1-9]\d*$/, `${f}: job ${job.name} timeout-minutes must be a positive integer, got ${timeout[1]}`);
     }
   }
 });
