@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { markerPath } from "../marker.ts";
+import { ensureSessionMarker, markerPath } from "../marker.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { r11Rig } from "./_r11rig.ts";
 
@@ -24,8 +24,9 @@ async function call(t: Parameters<typeof r11Rig>[0], note: string): Promise<{ te
   const ledger = path.join(dir, "LEDGER-d224.md");
   fs.writeFileSync(ledger, `# LEDGER d224\n\n- [ ] 1. ${"t".repeat(900)}\n- [ ] V. fresh-eyes verification passed\n`);
   const stateDir = path.join(r.agentDir, "pi-foreman", "state");
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(markerPath(stateDir, r.sessionId), JSON.stringify({ session_id: r.sessionId, started: Date.now(), ledger }));
+  ensureSessionMarker(stateDir, "parent-session", 1);
+  const file = markerPath(stateDir, "parent-session");
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ledger }));
   const res = await tools.get("review_verdict")!.execute("id", { verdict: "pass", items: [{ id: 1, result: "open", note }] }, undefined, undefined, r.ctx);
   return { text: res.content.map((c) => c.text).join("\n"), isError: res.isError };
 }

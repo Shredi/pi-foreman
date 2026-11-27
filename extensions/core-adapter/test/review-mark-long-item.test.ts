@@ -29,7 +29,8 @@ test("a reviewer PASS closes a 990-character item: the mark goes through without
   await a.started(l.id, input, "long-run-1");
   assert.ok(a.record("long-run-1", { verdict: "pass", items: [{ id: 1, result: "pass" }] }));
   a.end({ runId: "long-run-1", agent: "reviewer", status: "completed", success: true, results: [{ agent: "reviewer", status: "completed", success: true, output: "see the record" }] });
-  await settle(1500);
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline && !/- \[x\] 1\./.test(fs.readFileSync(ledger, "utf8"))) await settle(100);
   const text = fs.readFileSync(ledger, "utf8");
   assert.match(text, /- \[x\] 1\. L+\n/, text);
   assert.ok(!text.includes("verified by reviewer PASS"), "the note was left out");
