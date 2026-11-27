@@ -1,6 +1,7 @@
 // D34: with a custom agent dir `foreman setup` writes the resume block (it used to print a hand-add line). The block bakes the dir in as the fallback of the
 // note lookup and hands it to pane-resume for that one call only. The default agent dir renders the block of before. Temp homes only: PI_FOREMAN_HOME or
 // HOME/USERPROFILE point at a temp dir, so no real startup file is touched. The rendered blocks run in real shells in resume-hook-custom-dir-shells.test.mjs.
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

@@ -1,4 +1,5 @@
 // Every relative module setup.mjs imports statically ships in the npm package (a packed install must not lack bridgelogin.mjs, profiles.mjs or a later one).
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";

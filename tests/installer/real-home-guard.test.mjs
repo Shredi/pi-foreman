@@ -1,5 +1,6 @@
 // The real-home guard (setup/real-home.mjs): under the Node test runner (NODE_TEST_CONTEXT) setup refuses the real default places.
 // Unit tests inject a temp dir as the real home. Spawn tests run setup with --dry-run (writes nothing) or with temp HOME dirs only.
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

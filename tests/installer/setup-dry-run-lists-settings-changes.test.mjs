@@ -1,4 +1,5 @@
 // D104: the dry run names each settings.json write the real run makes (the remote `setup --dry-run` of `foreman machine setup --dry-run` prints it).
+import "./_hermetic-env.mjs";
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

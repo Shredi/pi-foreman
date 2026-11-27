@@ -1,4 +1,5 @@
 // D105: a real (non-dry) setup run from a minimal checkout, holding only what setup.mjs imports statically, prints the restart line of an older live session.
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
