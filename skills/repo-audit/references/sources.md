@@ -150,7 +150,7 @@ Count the runs the round started on its branch or change before it asked for rev
 - Zuul: `GET <zuul>/api/tenant/<tenant>/builds?project=<p>&change=<n>`, or `?branch=<b>` for a run started on a branch; read the fields `result`, `ref` and `uuid`.
 - GitLab: `glab ci list`, then keep the pipelines of the branch that a person started by hand.
 
-When the host has no CLI or API for this, the PR-body list (the dense part of the review request, per `instructions/foreman.md`) is the source. Report the window of the runs counted and the source of each number.
+When the host has no CLI or API for this, the PR-body list (the list of pre-review runs in the review request's body, where the repository's workflow keeps one) is the source. Report the window of the runs counted and the source of each number.
 
 ## Agent-harness notes
 
