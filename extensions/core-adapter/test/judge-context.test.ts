@@ -100,6 +100,8 @@ test("the task line cut: 10 000 characters become the first 160 on one line; the
   const long = Array.from({ length: 10000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join("");
   const text = judgeRequestText({ ...CALL, launchTask: long }, "0123456789abcdef");
   assert.ok(text.includes(long.slice(0, 160)) && !text.includes(long.slice(0, 4001)), "the task line is 160 characters, the brief block at most 4000");
+  const fenced = text.split("BEGIN DATA TASK 0123456789abcdef\n")[1].split("\nEND DATA TASK")[0];
+  assert.equal(fenced, long.slice(0, 160), "the task line inside the TASK fence is exactly 160 characters");
   assert.equal(cutTask(long), `${long.slice(0, 2500)}\n[… 6000 chars cut …]\n${long.slice(-1500)}`, "the protected check keeps its longer cut");
   assert.equal(cutTask("x".repeat(4000)), "x".repeat(4000));
 });

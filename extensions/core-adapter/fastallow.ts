@@ -90,7 +90,7 @@ function psFileSystemPath(p: string): boolean {
 
 /**
  * Skip-only: `powershell|pwsh [.exe] -NoProfile [-NonInteractive] -Command <line>` where the line is one of `Get-Volume`, `Get-PSDrive [-PSProvider FileSystem]` or
- * `Get-ChildItem` with `-Recurse -File -Directory -Force` and one path (`-Path <p>` or positional): a drive path or a relative path of the FileSystem provider that
+ * `Get-ChildItem` with `-Recurse -File -Directory -Force` and one path without `*`, `?` or `[` (`-Path <p>` or positional): a drive path or a relative path of the FileSystem provider that
  * `secret` does not name. Without `-NoProfile` PowerShell runs the user's profile script, so it is required. Anything else is no skip-only form (the judge looks).
  * Reads no cmdlet knowledge from the line beyond this table; the segment must be the whole foreign-shell unit (no wrapper, redirect or here-document).
  */
@@ -112,7 +112,7 @@ export function psSkipOnlyOk(seg: ShellSegment, secret: (path: string) => boolea
   const seen = new Set<string>();
   let target: string | null = null;
   const take = (p: string): boolean => {
-    if (target !== null || !psFileSystemPath(p) || secret(p) || secret(p.replace(/\\/g, "/"))) return false;
+    if (target !== null || /[*?[]/.test(p) || !psFileSystemPath(p) || secret(p) || secret(p.replace(/\\/g, "/"))) return false;
     target = p;
     return true;
   };

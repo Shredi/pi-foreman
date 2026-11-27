@@ -45,3 +45,10 @@ test("a secret path is no skip-only target", () => {
   for (const p of ["C:/Users/me/.ssh", "C:/Users/me/.aws/credentials", ".ssh", "C:\\\\Users\\\\me\\\\.ssh"]) assert.ok(!allowed(`powershell -NoProfile -Command Get-ChildItem ${p}`), p);
   assert.ok(!allowed("powershell -NoProfile -Command Get-ChildItem -Path C:/Users/me/.gnupg -Recurse"));
 });
+
+test("a wildcard in the path value is no skip-only target", () => {
+  for (const p of ["~/.ss?", "C:/Users/me/.ss*", "C:/Users/me/.s[s]h", "*"]) {
+    assert.ok(!allowed(`powershell -NoProfile -Command Get-ChildItem ${p}`), p);
+    assert.ok(!allowed(`powershell -NoProfile -Command Get-ChildItem -Path ${p}`), `-Path ${p}`);
+  }
+});
