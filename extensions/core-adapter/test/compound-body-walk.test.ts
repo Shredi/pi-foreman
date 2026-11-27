@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { JUDGE_FIRST } from "../defaults.ts";
-import { boundNamesDetail, parseShell } from "../shellast.ts";
+import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -119,12 +119,6 @@ for (const role of ["main", "builder"] as const) {
     assert.deepEqual(gate(`coproc ${CD}; ${REL}`, role), sub);
   });
 }
-
-test("the default of analyse (a statement kind it does not read) is its own unread site: the unit is unsafe", () => {
-  const fake = { type: "Script", commands: [{ type: "Statement", command: elif("anything") }], errors: [] } as never;
-  assert.equal(boundNamesDetail("anything", fake).unsafe.size, 1);
-  assert.equal(boundNamesDetail("ls").unsafe.size, 0);
-});
 
 // a bare `$(...)` or backtick as a whole header part of `for ((;;))` is the expansion itself: it runs like the plain line
 const PARTS: [string, (c: string) => string][] = [

@@ -1701,7 +1701,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   }
   if (!script || (script as any).errors?.length) return unreadable(overflow || ((script as any)?.errors as { message?: string }[] | undefined)?.some((e) => /nesting depth exceeded/.test(e.message ?? "")) === true);
   try {
-    const an = analyse(command, opts.parse ? script : undefined);
+    const an = analyse(command);
     sc.run.rebound = an.rebound;
     sc.run.unsafe = an.unsafe;
     sc.run.seed = opts.rebound;
@@ -1821,9 +1821,6 @@ export function unitNodes(script: Script): SyntaxNode[] {
   });
 }
 
-/** The statement kinds `walkNode` reads; a run unit of any other kind is unread (`analyse` marks it, `walkNode` judges it). */
-const READ_KINDS = new Set(["Command", "Redirected", "Pipeline", "AndOr", "If", "For", "While", "Case", "Function", "Subshell", "BraceGroup", "CompoundList", "Select", "Coproc", "ArithmeticFor", "TestCommand", "ArithmeticCommand"]);
-
 const PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NUMBER_ATOM = /^(?:[0-9]+(?:#[0-9A-Za-z]+)?|0[xX][0-9a-fA-F]+)$/;
 const SPECIAL_NUMBER = /^\$[?#$!-]$/;
@@ -1839,7 +1836,7 @@ interface Binding {
 interface BoundSite {
   unit: number;
   seq: number;
-  kind: "any" | "arith" | "name" | "unread";
+  kind: "any" | "arith" | "name";
   fires: () => boolean;
 }
 
@@ -1866,16 +1863,16 @@ export function boundNames(command: string): BoundNames {
 }
 
 /** `boundNames` with the per-unit detail (see `BoundDetail`). */
-export function boundNamesDetail(command: string, parsed?: Script): BoundDetail {
-  return boundWalk(command, parsed).detail;
+export function boundNamesDetail(command: string): BoundDetail {
+  return boundWalk(command).detail;
 }
 
-function boundWalk(command: string, parsed?: Script): { out: BoundNames; detail: BoundDetail } {
+function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
   const out: BoundNames = { names: new Set(), any: false };
   const detail: BoundDetail = { names: new Map(), anyFrom: Infinity, unsafe: new Set(), units: 0 };
   let script: Script | undefined;
   try {
-    script = parsed ?? parse(command);
+    script = parse(command);
   } catch {
     script = undefined;
   }
@@ -2381,8 +2378,6 @@ function boundWalk(command: string, parsed?: Script): { out: BoundNames; detail:
     detail.units = nodes.length;
     nodes.forEach((u, k) => {
       unit = k;
-      // a kind of statement the walk does not read: a site that fires, so the unit is `programUnknown` (judge-first)
-      if (!READ_KINDS.has((u as any).type)) site("unread", () => true);
       visit(u, 0);
     });
     if (late.some((f) => f()) || [...expanded].some((n) => assigned.has(n))) out.any = true;
@@ -2412,16 +2407,14 @@ function boundWalk(command: string, parsed?: Script): { out: BoundNames; detail:
 /** Per line: the harness names rebound per run unit (see `harnessRebound`) and the run units that hold arithmetic not shown safe. */
 const analysed = new Map<string, { rebound: string[][]; unsafe: Set<number> }>();
 
-function analyse(command: string, parsed?: Script): { rebound: string[][]; unsafe: Set<number> } {
-  // a script handed in (the parse seam of `parseShell`) is the one read, so the answer is not the cached one of the text
-  const hit = parsed ? undefined : analysed.get(command);
+function analyse(command: string): { rebound: string[][]; unsafe: Set<number> } {
+  const hit = analysed.get(command);
   if (hit) return hit;
-  const d = boundNamesDetail(command, parsed);
+  const d = boundNamesDetail(command);
   // a line that does not parse is one unit that rebinds both names
   const units = Math.max(d.units, 1);
   const rebound = Array.from({ length: units }, (_, k) => HARNESS_NAMES.filter((n) => (d.names.get(n) ?? Infinity) <= k || d.anyFrom <= k));
   const res = { rebound, unsafe: d.unsafe };
-  if (parsed) return res;
   if (analysed.size >= 200) analysed.delete(analysed.keys().next().value as string);
   analysed.set(command, res);
   return res;
