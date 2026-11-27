@@ -30,6 +30,19 @@ if [ -n "${PI_FOREMAN_STATE_DIR:-}" ]; then
     TMPDIR="$PI_FOREMAN_STATE_DIR"
     export TMPDIR
 fi
+# Every run holds the cross-process `<ledger>.lock` (bin/ledger-run.mjs, one lock implementation with the adapter). The Node is
+# the one on PATH, else the one of the last Pi session (nodepath.ts record, as bin/foreman); none, or older than 22.6 -> run
+# ledger.py unlocked as before, no new failure.
+if ! command -v node >/dev/null 2>&1; then
+    nrec="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/node-path"
+    if [ -f "$nrec" ]; then
+        ndir=$(dirname -- "$(sed -n '1p' "$nrec" 2>/dev/null)")
+        if [ -f "$ndir/node" ] && [ -x "$ndir/node" ]; then PATH="$ndir:$PATH"; export PATH; fi
+    fi
+fi
+if [ -f "$here/ledger-run.mjs" ] && command -v node >/dev/null 2>&1 && node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)' 2>/dev/null; then
+    exec node --no-warnings --experimental-strip-types "$here/ledger-run.mjs" "$script" "$py" -- "$@"
+fi
 # On Windows a scanner can hold the file ledger.py just renamed: os.replace fails with access denied, so rerun on that marker.
 runs=0
 for delay in 0.01 0.02 0.04 0.08 0.16 0.2 0.2 0.2 0.2 0; do

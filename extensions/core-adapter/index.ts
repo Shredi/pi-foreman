@@ -16,7 +16,7 @@ import { childHandoffDirs, isSelfHost, openedHandoffDirs, literalOwnedDirs, npmR
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, sessionScratchRoot, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
-import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
+import { baseFloorEnv, unreadableWriteText, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
@@ -38,7 +38,7 @@ import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { CHILD_ASK_TIMEOUT_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
-import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
+import { HANDOFF_CHILD_NAMES, PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
@@ -46,7 +46,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { ReviewMemory } from "./reviewmemory.ts";
-import { combined, gateOf, gatesBuilt, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, supersededGone, type ReviewGates } from "./reviewgates.ts";
+import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, goneDropped, vAccepts, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -195,8 +195,10 @@ import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf, earlierFindingsBlock, failFindingsText, reReviewLine } from "./ledgerblock.ts";
 import { taskLedger } from "./ledgerpath.ts";
-import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
+import { rewriteLocked, sameStamp, stampOf, type FileStamp } from "./ledgerfile.ts";
+import { citedItems, hintFailTrace, ledgerHint, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
+import { ledgerRunWaitMs, LedgerLockedError, RESOLVE_SNIPPET, takeLedgerLockAsync } from "./ledgerlockfs.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
@@ -317,6 +319,8 @@ function writeHint(ledgerPath: string | null, cited: readonly string[], text: st
 }
 
 /** Holds taken by foreman bash calls that run `ledger`, by tool call id: released at tool_execution_end or session shutdown. */
+/** D181: stamp of a ledger taken at the tool_call of a full read, by tool call id. */
+const readStamps = new Map<string, FileStamp>();
 const ledgerHolds = new Map<string, { gate: LedgerGate; key: string; sid: string }>();
 
 function releaseLedgerHold(toolCallId: string): void {
@@ -528,6 +532,8 @@ interface Session {
   unresolvedDirs: Set<string>;
   /** Subject changes to the bound ledger (added or rewritten items, a write or edit of the file); the ledger part of the repeat-review signal (persisted). */
   ledgerRev: number;
+  /** The stamp of each ledger file as this session last read it in full or wrote it itself (memory only): a host `write` over the bound ledger is refused when the file's stamp differs (D181). */
+  ledgerStamps: Map<string, FileStamp>;
   /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
   hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
@@ -1254,6 +1260,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       checkoutMemo: new Map(),
       unresolvedDirs: new Set(),
       ledgerRev: 0,
+      ledgerStamps: new Map(),
       hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
@@ -1445,8 +1452,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!file) return;
     ledgerGate(file).defer(() => {
       try {
-        const next = withVItem(fs.readFileSync(file, "utf8"));
-        if (next !== null) fs.writeFileSync(file, next, "utf8");
+        rewriteLocked(file, (text) => ({ next: withVItem(text), value: null }));
       } catch {
         // an unreadable or unwritable ledger is reported by the next ledger call
       }
@@ -1572,30 +1578,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Work happened in `roots` (null: unknown): their gate entries go stale; a builder raises the builder count of each (an unknown root: of every counted one). */
   function reviseGates(s: Session, roots: readonly string[] | null, builder: boolean): void {
     if (roots === null) {
-      s.reviewGates = gatesRevise(s.reviewGates, null, Date.now());
+      s.reviewGates = gatesRevise(s.reviewGates, null);
       if (builder) for (const k of Object.keys(s.builderRunsByRoot)) s.builderRunsByRoot[k]++;
       return;
     }
     for (const r of roots) {
-      s.reviewGates = gatesRevise(s.reviewGates, r, Date.now());
+      s.reviewGates = gatesRevise(s.reviewGates, r);
       if (builder) s.builderRunsByRoot[r] = (s.builderRunsByRoot[r] ?? 0) + 1;
     }
   }
 
-  /** The checkouts with a builder launched and not ended (a null root list = every checkout). */
-  function runningRoots(s: Session): Set<string> {
-    const running = new Set<string>();
-    for (const roots of s.runningBuilders.values()) for (const r of roots ?? Object.keys(s.reviewGates)) running.add(r);
-    return running;
-  }
-
-  /** The gates the finish readers see (D165): a deleted checkout superseded by a later PASS elsewhere is left out (`supersededGone`); `ctx` gives each dropped checkout one visible line. */
+  /** The gates the finish readers see (D189b): an entry whose checkout no longer exists is left out (`goneDropped`); `ctx` gives each dropped checkout one visible line. */
   function liveGates(s: Session, ctx?: ExtensionContext): ReviewGates {
-    const { gates, dropped } = supersededGone(s.reviewGates, fs.existsSync, runningRoots(s));
+    const { gates, dropped } = goneDropped(s.reviewGates, fs.existsSync);
     for (const d of dropped) {
-      if (!ctx || s.droppedGone.has(d.dir)) continue;
-      s.droppedGone.add(d.dir);
-      ctx.ui.notify(`pi-foreman: ${d.dir}: deleted, superseded by the PASS in ${d.by || "the session"}`, "info");
+      if (!ctx || s.droppedGone.has(d)) continue;
+      s.droppedGone.add(d);
+      ctx.ui.notify(`pi-foreman: ${d}: deleted, dropped from the finish check`, "info");
     }
     return gates;
   }
@@ -3687,9 +3686,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.live?.touch();
           // D27: a builder run that ends (any outcome) is work of the prompt it ends in, also when it was launched before that prompt
           if ((s.launchedRoles.get(runId) ?? []).includes("builder")) s.work.builders++;
-          // D165: the build time of its checkouts is the run end (the launch stamped an earlier one); a running builder no longer shields them
           if (s.runningBuilders.has(runId)) {
-            s.reviewGates = gatesBuilt(s.reviewGates, s.runningBuilders.get(runId) ?? null, Date.now());
             s.runningBuilders.delete(runId);
             persistCeremonyState(s);
           }
@@ -4304,7 +4301,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // a child's write the gate cannot read (and no other judge-first label on the line): the refusal names the way out
       const labels = out.dangers ?? [danger.name];
       if (gs.isChild && labels.includes("danger-write-outside") && labels.every((n) => n === "danger-write-outside" || n === "danger-unknown-write-target")) {
-        return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true), judged.cause === "model" ? "write-outside" : null);
+        return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true, roots), judged.cause === "model" ? "write-outside" : null);
       }
       return refused(`judge:${danger.name}`, "classifier", judgeRefusalText(judged.cause, judged.reason), count);
     } catch (e) {
@@ -4347,11 +4344,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function judgeRefusalText(cause: string, judgeReason: string): string {
     const why = cause === "model" ? "the permission judge refused it" : cause === "timeout" ? "the permission judge did not answer in time" : cause === "invalid_verdict" ? "the permission judge's answer could not be read" : cause === "no_model" ? "no permission judge model is configured" : "the permission judge failed";
     return `pi-foreman: refused: ${why}${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. Rewrite the call (split it, use a tool, use paths the gate can read) or report it to the foreman.`;
-  }
-  /** The refusal of a child's write whose target the gate cannot read when the judge did not clear it: the cause, the judge's reason and the way out. */
-  function unreadableWriteText(judgeReason: string, mayWriteWorktree: boolean): string {
-    const dirs = mayWriteWorktree ? "`$FOREMAN_SCRATCH`, `$FOREMAN_OUT` or your worktree" : "`$FOREMAN_SCRATCH` or `$FOREMAN_OUT`";
-    return `pi-foreman: denied (danger-write-outside): this write goes to a target the gate cannot read (a variable, a substitution, \`~\` or a changed directory), and the permission judge did not clear it${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. Write to a path the gate can read, such as a literal path in ${dirs}, or report this line to the foreman.`;
   }
   /**
    * The dialog step of the gate (r79 items 5, 7). A child asks its parent through ask.md; a headless session denies at once; the owner pane opens
@@ -4572,6 +4564,35 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
+      }
+    }
+    // D181: the stamp of a ledger is taken before a full read runs (a change during the read leaves the stamp older, so a later write is refused).
+    if (event.toolName === "read") {
+      const rs = sessionFor(ctx);
+      const inp = (event.input ?? {}) as Record<string, unknown>;
+      if (rs && !rs.isChild && typeof inp.path === "string" && inp.offset === undefined && inp.limit === undefined) {
+        const file = resolveToolPath(inp.path, ctx.cwd, os.homedir());
+        const bound = boundLedger(rs.markerDir, rs.id);
+        const st = file && (isLedgerTarget(file) || isBoundLedgerPath(file, bound ?? "")) ? stampOf(file) : null;
+        if (st) readStamps.set(event.toolCallId, st);
+      }
+    }
+    // D181: a host `write` over the bound ledger replaces the whole file from the model's copy; it is refused when the file is not as this session last read or wrote it.
+    if (event.toolName === "write") {
+      const ws = sessionFor(ctx);
+      const given = (event.input as Record<string, unknown> | undefined)?.path;
+      const bound = ws && !ws.isChild ? boundLedger(ws.markerDir, ws.id) : null;
+      const target = bound && typeof given === "string" ? resolveToolPath(given, ctx.cwd, os.homedir()) : null;
+      if (ws && bound && isBoundLedgerPath(target, bound)) {
+        const now = stampOf(bound);
+        if (now !== null) {
+          let known: FileStamp | undefined;
+          for (const [k, v] of ws.ledgerStamps) if (isBoundLedgerPath(k, bound)) known = v;
+          if (!sameStamp(now, known ?? null)) {
+            ws.trace?.emit({ event: "guard", guard: "ledger_stale_write", toolFamily: "write", decision: "blocked", reason: known ? "changed_on_disk" : "not_read" });
+            return { block: true as const, reason: "pi-foreman: the ledger changed on disk since this session last read or wrote it (another session or a harness note), or this session has not read it yet; read it again, then write. An edit keeps other changes." };
+          }
+        }
       }
     }
     // A newer ruling (ruling-*.md, steer-*.md) in the handoff dir is read before any child launch: the launch waits, the ruling text is the reason.
@@ -4980,7 +5001,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
         else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
-        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
+        const dup = dupOn && !gotFindings ? dupReview(standsFor(s.reviewGates, dupRoots) && vAccepts(liveGates(s)) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input, occasions) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
@@ -5894,6 +5915,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.touchUps.delete(runId);
     if (touchUp !== undefined) s.reviewSync = s.reviewSync.then(async () => {
       const g = s.reviewGates[touchUp];
+      // another builder still running in this checkout (unknown checkouts count) may have written code: its own end decides
+      const others = [...s.runningBuilders].filter(([, r]) => r === null || r.includes(touchUp));
+      if (others.length > 0) {
+        const next = others.find(([, r]) => r !== null);
+        if (g?.last === "pass" && g.revised && next) s.touchUps.set(next[0], touchUp); // the last of them to end decides
+        return;
+      }
       if (g?.last === "pass" && g.revised && (await commentOnlyNow(s, touchUp))) {
         s.reviewGates = { ...s.reviewGates, [touchUp]: { ...g, revised: false } };
         persistCeremonyState(s);
@@ -6284,6 +6312,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
       // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is not traced and adds no plan-phase text (a shell refusal never changes the tier)
       const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
+      if (v.handoffOnly) return { block: true, reason: `${reason} pi-foreman: the handoff dir${ownHandoff ? ` ${ownHandoff}` : ""} takes only ${HANDOFF_CHILD_NAMES.filter((n) => !n.startsWith(".")).join(", ")}, ask-<n>.md and anything below work/; other names there belong to the parent.` };
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -6457,6 +6486,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const real = toolWriteRuling(path.resolve(ctx.cwd, given));
         if (real !== null) {
           selfRulingsFor(owner).mark(real);
+        }
+      }
+    }
+    // D181: remember the stamp of a ledger this session read in full (taken before the read ran) or wrote itself; harness writes never update it.
+    if (owner && !owner.isChild) {
+      const readStamp = readStamps.get(event.toolCallId);
+      readStamps.delete(event.toolCallId);
+      const given = (event.input as Record<string, unknown>).path;
+      if (!event.isError && typeof given === "string") {
+        const file = resolveToolPath(given, ctx.cwd, os.homedir());
+        const bound = boundLedger(owner.markerDir, owner.id);
+        if (file && (event.toolName === "write" || event.toolName === "edit") && (isLedgerTarget(file) || isBoundLedgerPath(file, bound ?? ""))) {
+          const st = stampOf(file);
+          if (st) owner.ledgerStamps.set(file, st);
+        } else if (file && event.toolName === "read" && readStamp && (event.details as { truncation?: unknown } | undefined)?.truncation === undefined) {
+          owner.ledgerStamps.set(file, readStamp);
         }
       }
     }
@@ -6928,7 +6973,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const escalated = await trivialFinishCheck(s, ctx);
     const gateMode = reviewGateMode(get(s.config.config, "ceremony.reviewGate"));
     // A parent ruling never satisfies the gate (R6 lane 4c, ruling 3); after a FAIL the refusal names it.
-    const gates = liveGates(s, ctx); // a deleted checkout superseded by a later PASS elsewhere is not read (D165)
+    const gates = liveGates(s, ctx); // a deleted checkout is not read (D189b)
     const gate = combined(gates); // every checkout with work or a review must have a standing PASS
     const missing: string[] = openSteps(s.steps, requiredOf(s, s.ceremony.tier), gateMode, gate);
     // A rejected plan blocks the heavy finish until a new approval or the user lowers the tier (/ceremony).
@@ -6978,7 +7023,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       savePause(s);
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
       return {
-        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s), running: runningRoots(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
+        entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) })) + " Relaunch the builder for the revision; it climbs to its strong rung.", display: true }],
         continue: true,
       };
     }
@@ -6995,7 +7040,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     savePause(s);
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s), running: runningRoots(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(gates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
   }
@@ -7600,34 +7645,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ok = false;
           }
           else {
-            const r = rewriteItemText(content, item, u.text);
-            if ("error" in r) {
-              out.push(r.error);
-              ok = false;
-            }
-            else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
-            else {
-              const tmp = path.join(path.dirname(file), `.ledger-${process.pid}-${Date.now()}.tmp`);
-              try {
-                fs.writeFileSync(tmp, r.file, "utf8");
-                try {
-                  fs.chmodSync(tmp, fs.statSync(file).mode & 0o7777);
-                } catch {
-                  // keep the default mode
-                }
-                const rr = renameRetry(tmp, file);
-                if (rr.error) throw rr.error;
+            try {
+              // Read, change and replace inside the cross-process ledger lock (ledgerfile.ts), so a ledger.py in another process lands first.
+              const r = rewriteLocked(file, (text) => {
+                const x = rewriteItemText(text, item, u.text);
+                return { next: "error" in x || !x.changed ? null : x.file, value: x };
+              });
+              if ("error" in r) {
+                out.push(r.error);
+                ok = false;
+              } else if (!r.changed) out.push(`upsert ${u.item}: unchanged (no-op)`);
+              else {
                 out.push(`upserted ${u.item}`);
                 bumpLedgerRev(s);
-              } catch (err) {
-                try {
-                  fs.rmSync(tmp, { force: true });
-                } catch {
-                  // best effort
-                }
-                out.push(`ledger: ${(err as Error).message}`);
-                ok = false;
               }
+            } catch (err) {
+              out.push(`ledger: ${(err as Error).message}`);
+              ok = false;
             }
           }
           };
@@ -7743,8 +7777,36 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
     env.CLAUDE_CODE_SESSION_ID = s.id;
     env.TMPDIR = s.markerDir;
-    const lockFile = file ?? boundLedger(s.markerDir, s.id);
-    const run = () => retryLedgerRun(() => spawner(py, ["-E", "-s", path.join(PKG_ROOT, "core", "scripts", "ledger.py"), ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
+    const coreDir = path.join(PKG_ROOT, "core", "scripts");
+    const script = path.join(coreDir, "ledger.py");
+    // The lock target is the file ledger.py will write: `-f`, else the bound ledger. ledger.py reads $LEDGER before the binding, so
+    // with it set the vendored resolver itself says which file that is (never a second resolver here); none resolves: unlocked.
+    let lockFile = file ?? boundLedger(s.markerDir, s.id);
+    if (!file && env.LEDGER) {
+      const rr = await spawner(py, ["-I", "-c", RESOLVE_SNIPPET, coreDir, ...args], { cwd: s.cwd, env, timeoutMs: 30_000 });
+      lockFile = !rr.error && !rr.timedOut && rr.code === 0 ? rr.stdout.trim() || null : null;
+    }
+    const retried = () => retryLedgerRun(() => spawner(py, ["-E", "-s", script, ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
+    // Around the whole retry loop: the in-process gate first (same-process runs queue), then the `<ledger>.lock` file lock that
+    // shim runs and rewriteLocked also take. Residual races: see ledgerlockfs.ts. A lock held past the wait runs nothing.
+    const run = lockFile
+      ? async () => {
+          let release: () => void;
+          try {
+            release = await takeLedgerLockAsync(path.resolve(s.cwd, lockFile), ledgerRunWaitMs());
+          } catch (err) {
+            if (err instanceof LedgerLockedError) return { code: 1, stdout: "", stderr: err.message, timedOut: false, error: undefined };
+            // the lock file cannot be created: ledger.py reports its own failure; one line says the run was unlocked
+            const r = await retried();
+            return { ...r, stderr: [`ledger: running without the ledger lock (${(err as Error).message})`, r.stderr].filter(Boolean).join("\n") };
+          }
+          try {
+            return await retried();
+          } finally {
+            release();
+          }
+        }
+      : retried;
     const r = await (lockFile ? ledgerGate(lockFile).exclusive(run) : run());
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `ledger: ${r.error.message}` : r.timedOut ? "ledger: timed out" : "");
     return { ok: !r.error && !r.timedOut && r.code === 0, text };

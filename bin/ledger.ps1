@@ -22,7 +22,18 @@ $oldTmp = $env:TMPDIR
 try {
     $env:CLAUDE_CODE_SESSION_ID = $env:PI_SESSION_ID
     if ($env:PI_FOREMAN_STATE_DIR) { $env:TMPDIR = $env:PI_FOREMAN_STATE_DIR }
-    & $py @pre -E -s $script @args
+    # the run holds the cross-process <ledger>.lock via bin\ledger-run.mjs (Node on PATH, 22.6+); no usable node: run unlocked
+    $node = Get-Command node -ErrorAction SilentlyContinue
+    $nodeOk = $false
+    if ($node) {
+        & $node.Source -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" 2>$null
+        $nodeOk = ($LASTEXITCODE -eq 0)
+    }
+    if ($nodeOk) {
+        & $node.Source --no-warnings --experimental-strip-types (Join-Path $PSScriptRoot 'ledger-run.mjs') $script $py @pre '--' @args
+    } else {
+        & $py @pre -E -s $script @args
+    }
     $code = $LASTEXITCODE
 } finally {
     $env:CLAUDE_CODE_SESSION_ID = $oldSid

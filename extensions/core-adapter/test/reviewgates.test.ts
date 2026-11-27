@@ -85,13 +85,13 @@ test("openRoots and openHint: today's text for the session's own checkout or the
   assert.equal(openHint(g, own), "(re-review needed: revised after the last PASS) (run rp) - run a reviewer in this checkout again");
   assert.equal(openHint({ "": gatesVerdict({}, null, ["fail"], 1)[""] }, own), "(re-review needed: last verdict FAIL) - run a reviewer in this checkout again");
   const two = gatesRevise({ "/w/main": passed(), "/w/main/wt": passed() }, "/w/main/wt");
-  assert.equal(openHint(two, own), "(re-review needed: wt: revised after the last PASS) - run a reviewer in that checkout again");
+  assert.equal(openHint(two, own), "(re-review needed: wt: revised after the last PASS) - run a reviewer in that checkout again; or, when the work in wt is no longer needed, remove the worktree: its open entry is then dropped");
   const built = gatesRevise({ "/w/main": passed() }, "/w/other");
-  assert.equal(openHint(built, own), "(re-review needed: /w/other: built, no review yet) - run a reviewer in that checkout again");
+  assert.equal(openHint(built, own), "(re-review needed: /w/other: built, no review yet) - run a reviewer in that checkout again; or, when the work in /w/other is no longer needed, remove the worktree: its open entry is then dropped");
   const several = gatesVerdict(gatesRevise({ "/w/main": passed() }, "/w/main"), ["/w/x"], ["fail"], 1);
-  assert.equal(openHint(several, own), "(re-review needed: /w/main: revised after the last PASS; /w/x: last verdict FAIL) - run a reviewer in each of these checkouts again");
+  assert.equal(openHint(several, own), "(re-review needed: /w/main: revised after the last PASS; /w/x: last verdict FAIL) - run a reviewer in each of these checkouts again; or, when the work in /w/x is no longer needed, remove the worktree: its open entry is then dropped");
   assert.equal(openHint(gatesRevise({ "": passed() }, null), own).includes("unknown"), false, "the session-wide entry alone: today's text");
-  assert.equal(openHint({ "": onRevision(passed()), "/w/x": initialReviewGate(), "/w/y": { last: null, revised: true } }, own), "(re-review needed: unknown checkout: revised after the last PASS; /w/x: no review yet; /w/y: built, no review yet) - run a reviewer in each of these checkouts again");
+  assert.equal(openHint({ "": onRevision(passed()), "/w/x": initialReviewGate(), "/w/y": { last: null, revised: true } }, own), "(re-review needed: unknown checkout: revised after the last PASS; /w/x: no review yet; /w/y: built, no review yet) - run a reviewer in each of these checkouts again; or, when the work in /w/x, /w/y is no longer needed, remove the worktree: its open entry is then dropped");
   assert.equal(openHint({ "/w/main": passed() }, own), "", "nothing open: no hint");
 });
 

@@ -215,13 +215,13 @@ test("a ~/ path is the home folder: the hint for a long agent-dir .jsonl and a l
   assert.match(p2.block.body, /^lines 401-/);
 });
 
-test("~ expansion widens nothing: auth.json stays withheld, a file in the home folder stays outside, ~user and $VAR are not expanded", () => {
+test("~ expansion widens nothing: auth.json stays withheld, a file in the home folder is read (flipped), ~user and $VAR are not expanded", () => {
   put(path.join(agent, "sessions", "auth.json"), '{"a":1}\n');
   put(path.join(tmp, "home", "outside.txt"), "o\n");
   assert.equal(one("~/.pi/agent/sessions/auth.json").rec.outcome, "withheld");
   assert.equal(one("~/.pi/agent/auth.json").rec.outcome, "outside");
-  assert.equal(one("~/outside.txt").rec.outcome, "outside");
-  assert.equal(one("~").rec.outcome, "outside");
+  assert.equal(one("~/outside.txt").rec.outcome, "ok");
+  assert.equal(one("~").rec.outcome, "dir");
   assert.equal(one("~root/x").rec.outcome, "not-found");
   assert.equal(one("$HOME/x").rec.outcome, "not-found");
 });
@@ -310,8 +310,8 @@ test("a run.sh#L1-9 that is a link to an outside file or to agent-dir extensions
   const outsideFile = put(path.join(tmp, "outside-lit", "evil.sh"), "echo EVIL\n");
   fs.symlinkSync(outsideFile, path.join(base, "run.sh#L1-9"));
   const a = one("litlink/run.sh#L1-9");
-  assert.equal(a.rec.outcome, "outside");
-  assert.ok(!a.block.body.includes("plain"));
+  assert.equal(a.rec.outcome, "ok", "flipped: the link target outside the project roots is readable, as the link");
+  assert.ok(a.block.body.includes("EVIL") && !a.block.body.includes("plain"));
   const ext = put(path.join(agent, "extensions", "x.ts"), "secret ext\n");
   fs.symlinkSync(ext, path.join(base, "run2.sh#L1-9"));
   put(path.join(base, "run2.sh"), "plain 2\n");

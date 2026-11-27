@@ -1,17 +1,18 @@
 // Exhaustive walk for the review gates (skill: .agents/skills/verifying-review-gates). EVERY order of the events build / builder launch / builder end / PASS / FAIL (per checkout),
 // checkout deleted, mark V, tier rise (trivial -> standard), dialog answer and session restart, up to a stated depth over two checkouts (no random sample), drives the real pure entry
-// points (gatesRevise, gatesBuilt, gatesVerdict, supersededGone, combined, planLedgerCall, withVItem and, through a temp agent dir, ChildBlocked) and a model written from the events
+// points (gatesRevise, gatesVerdict, goneDropped, vAccepts, standsFor, combined, planLedgerCall, withVItem and, through a temp agent dir, ChildBlocked) and a model written from the events
 // alone is the oracle. After every step:
 //   A. the finish verdict (combined of the gates that are not dropped) is a PASS iff every kept checkout stands (a PASS with no work since), and one exists;
-//      a gone checkout is dropped iff it is open and another existing checkout got a PASS after its last work (a builder launch or end) and last FAIL, and no builder launched there is still running (D165)
+//      a gone checkout is dropped exactly when its directory no longer exists, whatever its state (D189b)
 //   B. `mark V` is accepted iff a counted PASS exists in a kept checkout and no kept checkout's last review failed (later revisions do not reopen V); the mark event closes the V line when it is accepted
+//   E. a reviewer launch in an existing checkout is refused as a repeat iff that checkout stands and `mark V` is accepted; so while `mark V` is refused no launch is (D203, never both refused)
 //   D. the ledger holds one V line once the tier rose above trivial and none before (D164: withVItem appends once, also after V was closed), and a closed V stays closed
 //   C. (dialog episodes of childblocked.ts) the ended-episode words say "answered" only with an answer at or after the episode start, and a restart wins over any answer (D159); the walk
 //      checks them after every answer or restart event, with and without an answer older than the episode, and a second test sweeps every order of up to 3 of them on their own.
 // Env: FOREMAN_REVIEW_GEN_DEPTH (default 5): the walk depth; a larger value is the opt-in sweep (about 17x the cases per step).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { combined, gatesBuilt, gatesRevise, gatesVerdict, supersededGone, type ReviewGates } from "../reviewgates.ts";
+import { combined, gatesRevise, gatesVerdict, goneDropped, standsFor, vAccepts, type ReviewGates } from "../reviewgates.ts";
 import { planLedgerCall, withVItem } from "../ledgercall.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -34,15 +35,16 @@ export interface Scenario { stale: boolean; events: readonly ("answer" | "restar
 /** The entry points under test; the self-test hands in broken ones. */
 export interface Impl {
   revise: typeof gatesRevise;
-  built: typeof gatesBuilt;
   verdict: typeof gatesVerdict;
-  drop: typeof supersededGone;
+  drop: typeof goneDropped;
+  /** The reviewer-launch repeat refusal in the checkout `key` (index.ts: stands there and `mark V` would be accepted over the live gates). */
+  launchRefused: (gates: ReviewGates, key: string, exists: (dir: string) => boolean) => boolean;
   mark: (gate: ReturnType<typeof combined>) => boolean;
   withV: typeof withVItem;
   words: (s: Scenario) => Words;
 }
 
-interface M { last: "pass" | "fail" | null; revised: boolean; hasPass: boolean; builtAt?: number; passAt?: number; failAt?: number }
+interface M { last: "pass" | "fail" | null; revised: boolean; hasPass: boolean }
 /** The walk state: the real code's values (gates, ledger text) beside the model's (what the events alone say they must be). */
 interface S {
   gates: ReviewGates;
@@ -74,9 +76,7 @@ export function step(s: S, ev: Ev, impl: Impl, words: Map<string, [Words, Words]
   else if (ev.op === "end") {
     if (running.get(key)) { // an end needs a launch
       running.set(key, running.get(key)! - 1);
-      gates = impl.built(gates, [key], now);
-      const m = model.get(key);
-      if (m) model.set(key, { ...m, builtAt: now }); // a builder ends also in a deleted checkout
+      // a builder end changes no gate (D189b: no build time is kept any more)
     }
   } else if (ev.op === "tier") {
     tierUp = true;
@@ -90,27 +90,23 @@ export function step(s: S, ev: Ev, impl: Impl, words: Map<string, [Words, Words]
     // nothing builds or is reviewed in a deleted checkout
   } else if (ev.op === "build" || ev.op === "launch") {
     if (ev.op === "launch") running.set(key, (running.get(key) ?? 0) + 1);
-    gates = impl.revise(gates, key, now);
+    gates = impl.revise(gates, key);
     const m = model.get(key) ?? { last: null, revised: false, hasPass: false };
-    model.set(key, { ...m, revised: true, builtAt: now });
+    model.set(key, { ...m, revised: true });
   } else {
     gates = impl.verdict(gates, [key], [ev.op], now, `run${now}`);
     const m = model.get(key) ?? { last: null, revised: false, hasPass: false };
-    model.set(key, ev.op === "pass" ? { ...m, last: "pass", revised: false, hasPass: true, passAt: now } : { ...m, last: "fail", revised: false, failAt: now });
+    model.set(key, ev.op === "pass" ? { ...m, last: "pass", revised: false, hasPass: true } : { ...m, last: "fail", revised: false });
   }
   // expected: which entries are dropped, and the finish verdict and V over the rest
   const stands = (m: M): boolean => m.last === "pass" && !m.revised;
-  const dropped = new Set<string>();
-  for (const [k, m] of model) {
-    const at = m.builtAt === undefined ? undefined : Math.max(m.builtAt, m.failAt ?? 0);
-    if (!gone.has(k) || stands(m) || at === undefined || (running.get(k) ?? 0) > 0) continue;
-    if ([...model].some(([o, x]) => o !== k && !gone.has(o) && x.passAt !== undefined && x.passAt > at)) dropped.add(k);
-  }
+  const dropped = new Set([...model.keys()].filter((k) => gone.has(k)));
   const kept = [...model].filter(([k]) => !dropped.has(k)).map(([, m]) => m);
   const wantFinish = kept.length > 0 && kept.every(stands);
   const wantV = kept.some((m) => m.hasPass) && !kept.some((m) => m.last === "fail");
-  const r = impl.drop(gates, (d) => !gone.has(d), new Set([...running].filter(([, n]) => n > 0).map(([k]) => k)));
-  const got = new Set(r.dropped.map((d) => d.dir));
+  const exists = (d: string): boolean => !gone.has(d);
+  const r = impl.drop(gates, exists);
+  const got = new Set(r.dropped);
   const c = combined(r.gates);
   const accepted = impl.mark(c);
   const gotFinish = c.last === "pass" && !c.revised;
@@ -126,6 +122,12 @@ export function step(s: S, ev: Ev, impl: Impl, words: Map<string, [Words, Words]
   if (got.size !== dropped.size || [...dropped].some((d) => !got.has(d))) return fail(`dropped [${[...got].join(",")}], want [${[...dropped].join(",")}]`);
   if (gotFinish !== wantFinish) return fail(`finish verdict ${gotFinish ? "pass" : "open"}, want ${wantFinish ? "pass" : "open"}`);
   if (accepted !== wantV) return fail(`mark V ${wantV ? "refused" : "accepted"}, want ${wantV ? "accepted" : "refused"}`);
+  for (const [k, m] of model) {
+    if (gone.has(k)) continue;
+    const refused = impl.launchRefused(gates, k, exists);
+    if (refused !== (stands(m) && wantV)) return fail(`review launch in ${k} ${refused ? "refused" : "allowed"}, want ${stands(m) && wantV ? "refused" : "allowed"}`);
+    if (refused && !accepted) return fail(`mark V and a review launch in ${k} are both refused`);
+  }
   const vLines = (ledger.match(/^- \[.\] V\./gm) ?? []).length;
   if (vLines !== (tierUp ? 1 : 0)) return fail(`${vLines} V lines in the ledger, want ${tierUp ? 1 : 0}`);
   if (vClosed !== /^- \[x\] V\./m.test(ledger)) return fail(`V ${vClosed ? "closed" : "open"} by the model, the ledger says otherwise`);
@@ -196,9 +198,9 @@ export function walk(impl: Impl, depth: number, onStep: (seen: Seen) => void = (
 /** The entry points as the product has them. */
 export const REAL: Impl = {
   revise: gatesRevise,
-  built: gatesBuilt,
   verdict: gatesVerdict,
-  drop: supersededGone,
+  drop: goneDropped,
+  launchRefused: (gates, key, exists) => standsFor(gates, [key]) && vAccepts(goneDropped(gates, exists).gates),
   mark: (gate) => !("error" in planLedgerCall({ action: "mark", items: ["V"] }, { gate })),
   withV: withVItem,
   words: (s) => realWords(s),
@@ -228,15 +230,14 @@ test("self-check: the walk reaches each outcome (a dropped checkout, a finish pa
   assert.ok(Object.values(total).every(Boolean), JSON.stringify(total));
 });
 
-test("self-test: broken rules are each reported with a shrunk case: a drop that ignores the PASS time, one that never drops, a V rule that reads only the last verdict, a build time not stamped at the builder end, a drop that ignores a running builder, a V line appended on every tier rise, the old dialog words", () => {
-  const ignoresTime: Impl = { ...REAL, drop: (g, exists, running) => supersededGone(Object.fromEntries(Object.entries(g).map(([k, e]) => [k, { ...e, passAt: Number.MAX_SAFE_INTEGER }])), exists, running) };
+test("self-test: broken rules are each reported with a shrunk case: a drop that never drops, a drop that keeps a failed entry, a V rule that reads only the last verdict, a launch refusal that ignores V (the old rule), a V line appended on every tier rise, the old dialog words", () => {
   const neverDrops: Impl = { ...REAL, drop: (g) => ({ gates: g, dropped: [] }) };
+  const keepsFailed: Impl = { ...REAL, drop: (g, exists) => { const r = goneDropped(g, exists); return { gates: { ...r.gates, ...Object.fromEntries(r.dropped.filter((d) => g[d].last === "fail").map((d) => [d, g[d]])) }, dropped: r.dropped.filter((d) => g[d].last !== "fail") }; } };
   const lastOnly: Impl = { ...REAL, mark: (gate) => gate.last === "pass" };
-  const noEndStamp: Impl = { ...REAL, built: (g) => g }; // the unfixed code: the build time is only the launch time
-  const noRunning: Impl = { ...REAL, drop: (g, exists) => supersededGone(g, exists) }; // a running builder shields nothing
+  const launchIgnoresV: Impl = { ...REAL, launchRefused: (g, key) => standsFor(g, [key]) }; // the old rule: both can be refused at once
   const vTwice: Impl = { ...REAL, withV: (file) => `${file}- [ ] V. fresh-eyes verification passed\n` }; // no check for an existing V line
   const oldWords: Impl = { ...REAL, words: (sc) => (sc.stale || sc.events.includes("answer") ? "answered" : sc.events.includes("restart") ? "restart" : "none") };
-  for (const broken of [ignoresTime, neverDrops, lastOnly, noEndStamp, noRunning, vTwice, oldWords]) {
+  for (const broken of [neverDrops, keepsFailed, lastOnly, launchIgnoresV, vTwice, oldWords]) {
     const found = walk(broken, 4).failures;
     assert.ok(found.length > 0 && /rerun: node scripts\/foreman_test_run/.test(found[0]));
     assert.ok(found[0].split("\n")[0].split(": ")[0].split("; ").length <= 5, found[0]);

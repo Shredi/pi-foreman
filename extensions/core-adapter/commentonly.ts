@@ -409,8 +409,8 @@ export async function treeChangedSince(cwd: string, tree: string): Promise<boole
 
 /**
  * Files changed between the snapshot and the current working tree when every change is
- * comment-only (`.workflow/` ignored: ledger, notes, scratch); null when any change is code, when
- * nothing changed (no touch-up to withdraw: the revision stands as before), or the check could not run.
+ * comment-only (the checkout root's `.workflow/` ignored: ledger, notes, scratch); the empty list when the diff is readable and holds
+ * no other file (a `.workflow/`-only change or no change at all: no revision, D189a); null when any change is code or the check could not run.
  */
 export async function commentOnlySince(snap: TreeSnap): Promise<string[] | null> {
   const now = await worktreeTree(snap.cwd);
@@ -433,5 +433,5 @@ export async function commentOnlySince(snap: TreeSnap): Promise<string[] | null>
     if (before === null || after === null || before.length > MAX_BLOB || after.length > MAX_BLOB) return null;
     if (!isCommentOnlyChange(file, before, after)) return null;
   }
-  return files.length ? files : null;
+  return files;
 }
