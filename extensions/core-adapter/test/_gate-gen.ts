@@ -630,16 +630,16 @@ export const MATRIX_PAYLOADS: readonly Payload[] = [...HARMLESS, ...DANGEROUS];
  */
 export const ROLE_MATRIX: Record<MatrixRole, Record<string, string>> = {
   main: {
-    cmdsub: "sssbbbbssj", backtick: "sssbbbbssj", dbracket: "sssbbbbssj", arith: "jjjjbajjjj", select: "sssbbbbssj", for: "sssbbbbssj",
-    case: "sssbbbbssj", "if-cond": "sssbbbbssj", "while-cond": "sssbbbbssj", herestring: "sssbbbbssj", heredoc: "sssbbbbssj", procsub: "sssbbbbssj",
-    "dot-procsub": "jjjjbajjja", "source-procsub": "jjjjbajjja", "source-stdin": "jjjjbajjja", eval: "sssbbbbssj", "sh-c": "sssbbbbssj",
-    "bash-c": "sssbbbbssj", busybox: "sssbbbbssa", toybox: "sssbbbbssa", "xargs-sh": "sssbbbbssa", "xargs-I": "jjjjbajjja", "find-exec": "sssjbjjssj",
-    npx: "sssjjjjssj", trap: "sssbbbbssa", compgen: "sssbbbbssj", readarray: "sssbbbbssj", "trace-prompt": "jjjjbajjja", basefunc: "jjjjbajjja",
-    env: "sssbbbbssj", assign: "sssbbbbssj", nice: "sssbbbbssj", timeout: "sssbbbbssj", caffeinate: "sssjbjbssj", taskset: "sssjbjbssj",
-    strace: "sssjbjbssj", function: "sssbbbbssj", rebind: "sssbbbbssj", alias: "jjjbbbbjjj", "alias-shopt": "jjjbbbbjjj", indirect: "jjjjjjjjjj",
-    nameref: "jjjjjjjjjj", "cd-var": "sssbbbbssj", redirect: "sssbbbbssj", pipe: "sssbbbbssj", and: "sssbbbbssj", or: "sssbbbbssj", semi: "sssbbbbssj",
-    bg: "sssbbbbssj", negate: "sssbbbbssj", subshell: "sssbbbbssj", brace: "sssbbbbssj", "rebound-cd": "j", "rebound-pushd": "j",
-    "rebound-scratch": "j", plain: "sssbbbbssj",
+    cmdsub: "sssbbbbsjj", backtick: "sssbbbbsjj", dbracket: "sssbbbbsjj", arith: "jjjjbajjjj", select: "sssbbbbsjj", for: "sssbbbbsjj",
+    case: "sssbbbbsjj", "if-cond": "sssbbbbsjj", "while-cond": "sssbbbbsjj", herestring: "sssbbbbsjj", heredoc: "sssbbbbsjj", procsub: "sssbbbbsjj",
+    "dot-procsub": "jjjjbajjja", "source-procsub": "jjjjbajjja", "source-stdin": "jjjjbajjja", eval: "sssbbbbsjj", "sh-c": "sssbbbbsjj",
+    "bash-c": "sssbbbbsjj", busybox: "sssbbbbsja", toybox: "sssbbbbsja", "xargs-sh": "sssbbbbsja", "xargs-I": "jjjjbajjja", "find-exec": "sssjbjjsjj",
+    npx: "sssjjjjsjj", trap: "sssbbbbsja", compgen: "sssbbbbsjj", readarray: "sssbbbbsjj", "trace-prompt": "jjjjbajjja", basefunc: "jjjjbajjja",
+    env: "sssbbbbsjj", assign: "sssbbbbsjj", nice: "sssbbbbsjj", timeout: "sssbbbbsjj", caffeinate: "sssjbjbsjj", taskset: "sssjbjbsjj",
+    strace: "sssjbjbsjj", function: "sssbbbbsjj", rebind: "sssbbbbsjj", alias: "jjjbbbbjjj", "alias-shopt": "jjjbbbbjjj", indirect: "jjjjjjjjjj",
+    nameref: "jjjjjjjjjj", "cd-var": "sssbbbbsjj", redirect: "sssbbbbsjj", pipe: "sssbbbbsjj", and: "sssbbbbsjj", or: "sssbbbbsjj", semi: "sssbbbbsjj",
+    bg: "sssbbbbsjj", negate: "sssbbbbsjj", subshell: "sssbbbbsjj", brace: "sssbbbbsjj", "rebound-cd": "j", "rebound-pushd": "j",
+    "rebound-scratch": "j", plain: "sssbbbbsjj",
   },
   builder: {
     cmdsub: "sssbbbbjbj", backtick: "sssbbbbjbj", dbracket: "sssbbbbjbj", arith: "jjjjbbjjjj", select: "sssbbbbjbj", for: "sssbbbbjbj",
@@ -683,7 +683,7 @@ export const ROLE_DIFFERENCES: readonly RoleDifference[] = [
   { command: "echo x > $D/f", classes: { main: "silent", builder: "judge", reviewer: "block" }, why: "the same three causes as `~/.bashrc`" },
   { command: "echo x > $F", classes: { main: "judge", builder: "judge", reviewer: "block" }, why: "main: the general write-target label danger-unknown-write-target; builder: that label and danger-write-outside; reviewer: floor child-readonly-write" },
   { command: "echo x > /elsewhere/f", classes: { main: "silent", builder: "block", reviewer: "block" }, why: "a resolved write outside the child's folders is the floor child-write-outside; the main session may write there as far as the gate goes" },
-  { command: "git -C /opt/other stash push", classes: { main: "silent", builder: "block", reviewer: "block" }, why: "floor child-write-outside (git in another folder), a child only" },
+  { command: "git -C /opt/other stash push", classes: { main: "judge", builder: "block", reviewer: "block" }, why: "floor child-write-outside (git in another folder), a child only; main: a git -C folder outside the read roots goes to the judge (D222)" },
   { command: "git rebase -x 'git push' main", classes: { main: "judge", builder: "judge", reviewer: "block" }, why: "main and builder: judged; the reviewer: blocked by a child floor" },
   { command: "git push -u origin my-branch", classes: { main: "silent", builder: "silent", reviewer: "block" }, why: "only the main session and a builder from a single launch push (floor git-push-child)" },
 ];
@@ -695,7 +695,7 @@ export const ROLE_DIFFERENCES: readonly RoleDifference[] = [
 export const LEFT_OUT: readonly string[] = [
   "the main (owner) session in properties A and B: it has its own roots and mode step; it is only pinned in ROLE_MATRIX, at the gate layer",
   "constructs that are not in CONSTRUCTS, payloads that are not in DANGEROUS",
-  "chains are composed only with the /opt form of git-outside; the ~/other form (gap git-outside-tilde, builder) is a plain line in PLAIN_GAPS and no wrapper is tried around it",
+  "chains are composed only with the /opt form of git-outside; the ~/other form (gap git-outside-tilde, closed; PLAIN_GAPS is empty) is a plain line and no wrapper is tried around it",
   "every payload of a shape that has a KNOWN_GAPS mark without payload names (a blind spot until the gap closes)",
   "wait -p (it stores a process number and carries no command text) and the two friction notes of the #347 follow-up list (about too strict verdicts)",
   "PowerShell and tools other than bash; Windows",
