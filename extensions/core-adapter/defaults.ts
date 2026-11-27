@@ -272,6 +272,14 @@ function ownGitRoot(c: DefaultCtx, cwd: string): boolean {
   return [c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree));
 }
 
+/** `cwd` lies in an `additionalDirectories` root or the state dir and in none of the session's own places (worktree, own round worktree, owned root, scratch, install root). */
+function foreignReadRoot(c: DefaultCtx, cwd: string): boolean {
+  const r = c.roots;
+  const holds = (d: string): boolean => rootHolds(d, cwd, c.platform, r.realpath, r.worktree);
+  if (![...(r.readDirs ?? []), ...(r.state ? [r.state] : [])].some(holds)) return false;
+  return !([r.worktree, ...r.scratch, ...r.owned, ...r.install].some(holds) || c.facts.isOwnWorktree?.(cwd));
+}
+
 function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec: EffectCtx, chain: Segment): string | null {
   const sub = argv[0];
   const rest = argv.slice(1);
@@ -297,7 +305,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
   if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
   // the same for a `cd` into a read-only root (`additionalDirectories`, an owned read root, the state dir): a git write there is no default
-  if (!GIT_READ_ONLY_SUBS.has(sub) && gitDirReadable(c.roots, cwd, c.platform) && !ownGitRoot(c, cwd)) return null;
+  if (!GIT_READ_ONLY_SUBS.has(sub) && foreignReadRoot(c, cwd)) return null;
   switch (sub) {
     case "branch":
       if (branchDeleteMerged(rest, cwd, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts })) return "default-git-branch-merged";

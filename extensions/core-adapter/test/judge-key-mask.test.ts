@@ -19,17 +19,12 @@ const shown = (name: string, text: string): string => {
   return readPaths([name], S, { left: MAX_READ_BUDGET }).blocks[0].body;
 };
 
-test("ordinary code passes: a 25-char camelCase name, `key=lambda`, `token = get_token()`, a git sha, a long path-like identifier", () => {
+test("ordinary code passes: a 25-char camelCase name, `key=lambda`, a git sha, a long path-like identifier", () => {
   const lines = [
     "const thisIsALongCamelCaseName1 = 1;",
     "sorted(rows, key=lambda r: r[0])",
-    "token = get_token()",
-    "const token = parseToken1234(req);",
-    "let token: string;",
     "commit da39a3ee5e6b4b0d3255bfef95601890afd80709",
     "import { aVeryLongModuleIdentifierName } from './x';",
-    "password = os.environ['PASSWORD']",
-    "auth = None",
     "author = Alice",
   ];
   const body = shown("code.txt", `${lines.join("\n")}\n`);

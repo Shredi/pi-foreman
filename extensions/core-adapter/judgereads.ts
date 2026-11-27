@@ -333,15 +333,14 @@ export function sameFileState(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
 const KEY_TOKEN = /\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{6,}|\bnpm_[A-Za-z0-9]{36}\b|\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b|\bAIza[A-Za-z0-9_-]{6,}/g;
 /** `sk-` keys: no lookahead (linear); a dashed all-lowercase body shorter than 20 word chars before the first dash is a CSS class and stays visible. */
 const KEY_SK = /\bsk-[A-Za-z0-9_-]{20,}/g;
-/** A private-key block runs from its BEGIN line to the matching END line; between them only base64 lines, blank lines and `Header: value` lines may stand, so code is never swallowed. */
-const KEY_PEM = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[A-Za-z0-9+/=]*\r?\n(?:[ \t]*(?:[A-Za-z0-9+/=]+|[A-Za-z][\w-]*:[^\n]*)?\r?\n)*?[ \t]*)?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
+/** A private-key marker; `maskKeys` pairs it with the next END marker by index search (no backtracking, so linear). */
+const KEY_PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
+const KEY_PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
 /** A BEGIN marker with no matching END: only the marker and the key text on its own line are hidden. */
-const KEY_PEM_OPEN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=]*/g;
-/** Anchored on `://` (not on the scheme word), so a long run of scheme characters costs linear time. */
-const KEY_URL_PASS = /(:\/\/[^\s:@/'"]+:)[^\s@/'"]+(?=@)/g;
-const KEY_BEARER = /\b(Authorization\s*[:=]\s*["']?(?:Bearer|Basic|Token)\s+)[^\s"',;]+|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi;
-/** Unquoted values that are code, not a secret: a type name or a literal keyword. */
-const KEY_CODE_WORD = /^(?:none|null|nil|undefined|true|false|string|str|number|int|bool|boolean|any|bytes|unknown|void)$/i;
+const KEY_PEM_OPEN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=]*/y;
+/** The password of URL userinfo; anchored on `://` (linear), an empty user `://:pass@` included. */
+const KEY_URL_PASS = /(:\/\/[^\s:@/'"]*:)[^\s@/'"]+(?=@)/g;
+const KEY_BEARER = /\b(Authorization\s*[:=]\s*["']?(?:Bearer|Basic|Token)\s+)([^\s"',;]+)|\bBearer\s+([A-Za-z0-9._~+/=-]{16,})/gi;
 const KEY_NAME = /password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|(?:^|[_-])auth(?:$|[_-])/i;
 const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^\n]*?\\"|\\'[^\n]*?\\'|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|'[^'\n]*'|[^\s'",;]+)/g;
 
@@ -351,22 +350,41 @@ const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^
  */
 export function maskKeys(text: string): string {
   const R = "[redacted]";
-  return text
-    .replace(KEY_PEM, (m) => R + m.replace(/[^\n]/g, "").replace(/\r/g, ""))
-    .replace(KEY_PEM_OPEN, R)
+  return maskPem(text, R)
     .replace(KEY_URL_PASS, `$1${R}`)
-    .replace(KEY_BEARER, (_m, pre?: string) => `${pre ?? "Bearer "}${R}`)
+    // a value that starts a command substitution stays visible whole, never partly masked
+    .replace(KEY_BEARER, (m: string, pre?: string, val?: string) => (val !== undefined && /^(?:\$\(|\$\{|`)/.test(val) ? m : `${pre ?? "Bearer "}${R}`))
     .replace(KEY_TOKEN, R)
     .replace(KEY_SK, (m) => (!m.includes("-", 3) || /[\dA-Z]/.test(m.slice(3)) || /^sk-\w{20}/.test(m) ? R : m))
-    .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => {
-      if (!KEY_NAME.test(name)) return m;
-      const quoted = /^\\?["']/.test(value);
-      if (quoted) {
-        const inner = value.replace(/^\\?["']|\\?["']$/g, "");
-        return inner.length > 0 && !/\$\(|`|\$\{/.test(inner) ? `${name}${sep}${R}` : m;
-      }
-      return /[()$[]/.test(value) || KEY_CODE_WORD.test(value) ? m : `${name}${sep}${R}`;
-    });
+    // the value of a secret-named key is masked whole, quoted or not
+    .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => (KEY_NAME.test(name) && value.replace(/^\\?["']|\\?["']$/g, "").length > 0 ? `${name}${sep}${R}` : m));
+}
+
+/** PEM private-key blocks: BEGIN..END is hidden (newlines kept); a BEGIN with no END hides only its own marker and key text. One pass, each marker searched once. */
+function maskPem(text: string, R: string): string {
+  KEY_PEM_BEGIN.lastIndex = 0;
+  let out = "";
+  let at = 0;
+  let noEnd = false;
+  for (let b = KEY_PEM_BEGIN.exec(text); b; b = KEY_PEM_BEGIN.exec(text)) {
+    if (b.index < at) continue;
+    let end = -1;
+    if (!noEnd) {
+      KEY_PEM_END.lastIndex = b.index + b[0].length;
+      const e = KEY_PEM_END.exec(text);
+      if (e) end = e.index + e[0].length;
+      else noEnd = true;
+    }
+    if (end < 0) {
+      KEY_PEM_OPEN.lastIndex = b.index;
+      const open = KEY_PEM_OPEN.exec(text);
+      end = b.index + (open ? open[0].length : b[0].length);
+      out += text.slice(at, b.index) + R;
+    } else out += text.slice(at, b.index) + R + text.slice(b.index, end).replace(/[^\n]/g, "");
+    at = end;
+    KEY_PEM_BEGIN.lastIndex = end;
+  }
+  return at === 0 ? text : out + text.slice(at);
 }
 
 function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
