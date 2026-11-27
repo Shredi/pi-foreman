@@ -701,7 +701,8 @@ const gitProgOpt = (words: string[], long: string, short?: string): boolean => g
 function gitOtherDir(s: ShellSegment, env: DangerEnv): boolean {
   let named = false;
   for (let i = 0; i < s.argv.length && s.argv[i].startsWith("-"); i += gitGlobalWidth(s.argv, i)) named ||= s.argv[i] === "-C";
-  return named && (s.cwd === null || !gitDirReadable(env.roots, s.cwd, env.platform));
+  // the session's own worktrees stay plain, as for the push default
+  return named && (s.cwd === null || !(env.facts?.isOwnWorktree?.(s.cwd) || gitDirReadable(env.roots, s.cwd, env.platform)));
 }
 
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {

@@ -55,10 +55,11 @@ const letters = (role: GateRole, mode: Mode, payloads: readonly { text: string }
 // Dangerous classes: pinned per role (plain lines), then through every construct
 
 /** The class of each DANGEROUS payload as a plain line, per role and mode (payload order: rm-outside, curl-sh, git-push, cred-read, write-outside, git-outside, rebase-push; s silent, j judge, a ask, b block).
- * The main session's `write-outside` and `git-outside` are silent in `allow`: its shell-write guard (index.ts) decides before the gate and it may write outside as far as the gate goes; `judge` looks at them. */
+ * The main session's `write-outside` is silent in `allow`: its shell-write guard (index.ts) decides before the gate and it may write outside as far as the gate goes; `judge` looks at them. */
 const PLAIN_DANGEROUS: Record<GateRole, Record<Mode, string>> = {
-  main: { allow: "bbbbssj", judge: "bbbbjjj" },
-  headless: { allow: "bbbbssj", judge: "bbbbjjj" },
+  // D222: git-outside (`git -C <outside>`) is judged in allow mode for main too, no longer silent
+  main: { allow: "bbbbsjj", judge: "bbbbjjj" },
+  headless: { allow: "bbbbsjj", judge: "bbbbjjj" },
   builder: { allow: "bbbbjbj", judge: "bbbbjbj" },
   explorer: { allow: "bbbbbbb", judge: "bbbbbbb" },
   reviewer: { allow: "bbbbbbb", judge: "bbbbbbb" },
@@ -69,9 +70,9 @@ test("dangerous payloads as plain lines: the class is pinned per role and mode",
 });
 
 /** Allow mode: the payloads that run silent for the main session (gate layer) and no other cell. */
-const MAIN_SILENT = new Set(["write-outside", "git-outside"]);
+const MAIN_SILENT = new Set(["write-outside"]);
 
-test("property A in both modes: a dangerous payload is never silent through any construct, any role (allow: only the main session's two guarded-elsewhere payloads)", { skip: posixOnly }, () => {
+test("property A in both modes: a dangerous payload is never silent through any construct, any role (allow: only the main session's guarded-elsewhere write-outside)", { skip: posixOnly }, () => {
   const bad: string[] = [];
   for (const role of GATE_ROLES) {
     for (const mode of MODES) {
