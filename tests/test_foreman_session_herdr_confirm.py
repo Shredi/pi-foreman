@@ -2,14 +2,12 @@
 `pane read` per FAKE_MODE; live.json is written by the fake the way the child's adapter would."""
 from __future__ import annotations
 
-import json
-import os
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import test_foreman_session as base  # noqa: E402
+import test_foreman_session as base
 
 FAKE = base.FAKE.replace('else:\n    out = {"result": {}}', r'''elif key == "pane process-info":
     mode = os.environ.get("FAKE_MODE", "")
