@@ -1,5 +1,5 @@
 // The bundled @juicesharp/rpiv-ask-user-question passes `blocked` to ctx.ui.custom, so Pi reports the session as blocked
-// on a question while the dialog is open (inline and overlay). Fails against the npm 2.15.0 package, which passes none.
+// on a question while the dialog is open (inline and overlay). The behaviour comes from 2.16.0 and later; 2.15.0 passes none.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createJiti } from "jiti";

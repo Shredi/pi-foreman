@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { askAnswered } from "../askhooks.ts";
 import { ownerAnswered } from "../idlemodel.ts";
 
-const FIX = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "ask-user-question-2.15.0.json"), "utf8"));
+const FIX = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "ask-user-question-2.16.0.json"), "utf8"));
 
 test("no UI: not an answer, not an owner answer, no ask.md pointer", () => {
   const r = FIX.noUi;
