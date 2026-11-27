@@ -446,7 +446,8 @@ function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undef
     });
     for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
   };
-  push(node);
+  // the root itself too: a header part that is a bare `$(...)` is the expansion, not a parent of one
+  stack.push(node);
   while (stack.length) {
     const c = stack.pop()!;
     const x = c as any;
@@ -1700,7 +1701,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   }
   if (!script || (script as any).errors?.length) return unreadable(overflow || ((script as any)?.errors as { message?: string }[] | undefined)?.some((e) => /nesting depth exceeded/.test(e.message ?? "")) === true);
   try {
-    const an = analyse(command);
+    const an = analyse(command, opts.parse ? script : undefined);
     sc.run.rebound = an.rebound;
     sc.run.unsafe = an.unsafe;
     sc.run.seed = opts.rebound;
@@ -1865,16 +1866,16 @@ export function boundNames(command: string): BoundNames {
 }
 
 /** `boundNames` with the per-unit detail (see `BoundDetail`). */
-export function boundNamesDetail(command: string): BoundDetail {
-  return boundWalk(command).detail;
+export function boundNamesDetail(command: string, parsed?: Script): BoundDetail {
+  return boundWalk(command, parsed).detail;
 }
 
-function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
+function boundWalk(command: string, parsed?: Script): { out: BoundNames; detail: BoundDetail } {
   const out: BoundNames = { names: new Set(), any: false };
   const detail: BoundDetail = { names: new Map(), anyFrom: Infinity, unsafe: new Set(), units: 0 };
   let script: Script | undefined;
   try {
-    script = parse(command);
+    script = parsed ?? parse(command);
   } catch {
     script = undefined;
   }
@@ -2411,14 +2412,16 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
 /** Per line: the harness names rebound per run unit (see `harnessRebound`) and the run units that hold arithmetic not shown safe. */
 const analysed = new Map<string, { rebound: string[][]; unsafe: Set<number> }>();
 
-function analyse(command: string): { rebound: string[][]; unsafe: Set<number> } {
-  const hit = analysed.get(command);
+function analyse(command: string, parsed?: Script): { rebound: string[][]; unsafe: Set<number> } {
+  // a script handed in (the parse seam of `parseShell`) is the one read, so the answer is not the cached one of the text
+  const hit = parsed ? undefined : analysed.get(command);
   if (hit) return hit;
-  const d = boundNamesDetail(command);
+  const d = boundNamesDetail(command, parsed);
   // a line that does not parse is one unit that rebinds both names
   const units = Math.max(d.units, 1);
   const rebound = Array.from({ length: units }, (_, k) => HARNESS_NAMES.filter((n) => (d.names.get(n) ?? Infinity) <= k || d.anyFrom <= k));
   const res = { rebound, unsafe: d.unsafe };
+  if (parsed) return res;
   if (analysed.size >= 200) analysed.delete(analysed.keys().next().value as string);
   analysed.set(command, res);
   return res;

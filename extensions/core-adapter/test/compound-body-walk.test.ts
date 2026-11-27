@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { JUDGE_FIRST } from "../defaults.ts";
-import { parseShell } from "../shellast.ts";
+import { boundNamesDetail, parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -75,9 +75,15 @@ test("`for ((;;))` and `coproc` bodies are segments of their own, next to the op
   }
 });
 
-// an `Elif` as a statement: a kind the traversal knows but the walk never gets as a statement (its `then` key is built, as the lint refuses the literal)
-const THEN = ["th", "en"].join("");
-const elif = (src: string) => Object.fromEntries([["type", "Elif"], ["pos", 0], ["end", src.length], ["clause", { type: "CompoundList", commands: [] }], [THEN, { type: "CompoundList", commands: [] }]]);
+// an `Elif` as a statement: a kind the traversal knows but the walk never gets as a statement
+const elif = (src: string) => ({
+  type: "Elif",
+  pos: 0,
+  end: src.length,
+  clause: { type: "CompoundList", commands: [] },
+  // eslint-disable-next-line unicorn/no-thenable -- `then` is the real field name of an Elif node of the parser
+  then: { type: "CompoundList", commands: [] },
+});
 
 test("an unknown node kind is an opaque, programUnknown segment, and the judge-first unknown-program rule hits it", () => {
   const fake = (src: string) => ({ type: "Script", commands: [{ type: "Statement", command: elif(src) }], errors: [] }) as never;
@@ -114,7 +120,30 @@ for (const role of ["main", "builder"] as const) {
   });
 }
 
-test("the default of analyse (a statement kind it does not read) is its own unread site: the line is judge-first", () => {
-  const fake = (src: string) => ({ type: "Script", commands: [{ type: "Statement", command: elif(src) }], errors: [] }) as never;
-  assert.equal(parseShell("anything", { parse: fake }).every((s) => s.programUnknown === true), true);
+test("the default of analyse (a statement kind it does not read) is its own unread site: the unit is unsafe", () => {
+  const fake = { type: "Script", commands: [{ type: "Statement", command: elif("anything") }], errors: [] } as never;
+  assert.equal(boundNamesDetail("anything", fake).unsafe.size, 1);
+  assert.equal(boundNamesDetail("ls").unsafe.size, 0);
 });
+
+// a bare `$(...)` or backtick as a whole header part of `for ((;;))` is the expansion itself: it runs like the plain line
+const PARTS: [string, (c: string) => string][] = [
+  ["init", (c) => `for (($(${c});;)); do :; done`],
+  ["test", (c) => `for ((;$(${c});)); do :; done`],
+  ["update", (c) => `for ((;;$(${c}))); do :; done`],
+  ["init backtick", (c) => `for ((\`${c}\`;;)); do :; done`],
+  ["test backtick", (c) => `for ((;\`${c}\`;)); do :; done`],
+  ["update backtick", (c) => `for ((;;\`${c}\`)); do :; done`],
+];
+for (const role of ["main", "builder"] as const) {
+  for (const [what, line] of [["delete outside", DEL], ["git push origin main", "git push origin main"], ["secret read", READ]] as const) {
+    const plain = gate(line, role);
+    for (const [part, wrap] of PARTS) {
+      test(`${role}: ${what} as a bare substitution in the ${part} header part gets the outcome of the plain line`, () => {
+        const g = gate(wrap(line), role);
+        assert.equal(g.blocked, plain.blocked, `${wrap(line)}: ${JSON.stringify(g)} vs ${JSON.stringify(plain)}`);
+        assert.equal(g.danger, plain.danger, wrap(line));
+      });
+    }
+  }
+}

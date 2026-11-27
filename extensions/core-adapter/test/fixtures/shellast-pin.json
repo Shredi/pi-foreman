@@ -941,7 +941,7 @@
 {"command":"time bash -c 'git reset --hard'","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"dadfe6cfae3061403342569e5446cd0df4a33f136eaf69c296db7f72be81831c"},
 {"command":"for (( i=0; i<$(git clean -f); i++ )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"46b80b24fd55b5466c79a43cbdc99e9e6f65ef62b0720fdd520e2d5a68b3ff60"},
 {"command":"for (( i=$(git stash clear); i<3; i++ )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"4d1b3c8cccfce878a82ee03c3c9f31528b160cd42cf00bff2733723fbc3a1951"},
-{"command":"for (( ; $(git branch -D x); )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"694c065447e8bf122d35b93a8120d981ae77a0fd91b5547e850d613a52b7fb51"},
+{"command":"for (( ; $(git branch -D x); )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"3206c6ee52c826e5f25faba515237c6b32a1038c7648dc8d3c151ead211db201"},
 {"command":"for (( i=0; i<`git clean -f`; i++ )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"d670053016d7f97a067338bfd77e4d2f596d934e70d2e463a16cabcffde83dcc"},
 {"command":"for (( i=0; i<$(git status --short | wc -l); i++ )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"5b555bb9891798b564a81e7cffe8957a0f3de5e7dc54b873dc4b7b972e6e3b4e"},
 {"command":"for (( i=0; i<$(git rev-list --count HEAD); i++ )); do :; done","tool":"bash","fixture":"plain","main":["allow",""],"child":["allow",""],"digest":"b4d3747d1f1021705abea34763264cd74b05a58944f397118f0a79ad6be30641"},
