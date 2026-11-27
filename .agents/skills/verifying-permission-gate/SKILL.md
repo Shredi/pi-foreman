@@ -104,3 +104,7 @@ Reverted and green again: yes, `git checkout -- extensions/core-adapter/shellast
 2. Rerun the default command, then a sweep (`npm run test:gate-sweep -- --seeds 20`); fix marks and pins the change moved, naming why.
 3. Move "Last confirmed at" forward to the new main-branch commit (`git merge-base HEAD origin/main`), only after steps 1 and 2.
 4. Adding a case: a construct is one `wrap(...)` or `fixed(...)` line in `CONSTRUCTS` (set `Needs` so the quoting test can run it, and `bashy`/`posix`/`oneLine`/`multi` when its text needs them) plus its `TWIN_PINS` letters; a payload is a line in `DANGEROUS` or `HARMLESS`. Extend the self-tests at the end of `gate-generator.test.ts` when the checker itself changes.
+
+## Note: read-only gh
+
+Read-only `gh` commands (`gh pr view|list|checks`, `gh run view|list`, `gh api` GET) are covered by `ghDefault` (`default-gh-read`, `defaults.ts`), not by this generator; `extensions/core-adapter/test/defects-1126-cache-gh.test.ts` pins them and pins that `-X POST`, `-f` and `gh pr merge` are not reads.

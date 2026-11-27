@@ -4,7 +4,7 @@
 // add and note keep counting items as before. Pure text logic here; index.ts reads and writes the
 // file and keeps the session's recent hints for the compaction digest (retrodigest.ts).
 import * as fs from "node:fs";
-import * as path from "node:path";
+import { LedgerLockedError, rewriteLocked } from "./ledgerfile.ts";
 
 export const HINT_MAX = 3;
 /** Maximum characters of `> YYYY-MM-DD <text>` (the indent is not counted). */
@@ -169,37 +169,23 @@ export function renameRetry(from: string, to: string, rename: (a: string, b: str
  */
 export function writeHint(ledgerPath: string | null, cited: readonly string[], text: string, log?: HintLog, opts: HintWriteOpts = {}): string[] {
   if (!ledgerPath) return [];
-  let file: string;
-  try {
-    file = fs.readFileSync(ledgerPath, "utf8");
-  } catch {
-    return [];
-  }
   const hint = hintText((opts.now ?? new Date()).toISOString().slice(0, 10), text);
-  const r = addHints(file, hintTargets(cited, file), hint);
-  if (!r.added.length) return [];
-  const tmp = path.join(path.dirname(ledgerPath), `.ledger-hint-${process.pid}-${Date.now()}.tmp`);
-  const fail = (err: unknown, attempts: number): string[] => {
-    try {
-      fs.rmSync(tmp, { force: true });
-    } catch {
-      // best effort
-    }
-    opts.onFail?.({ code: (err as NodeJS.ErrnoException).code ?? "UNKNOWN", attempts });
-    return [];
-  };
   try {
-    fs.writeFileSync(tmp, r.file, "utf8");
+    // Read, change and replace inside the ledger's cross-process lock (ledgerfile.ts); a vanished or unreadable ledger is skipped.
+    const added = rewriteLocked(
+      ledgerPath,
+      (file) => {
+        const r = addHints(file, hintTargets(cited, file), hint);
+        return { next: r.added.length ? r.file : null, value: r.added };
+      },
+      opts.rename,
+    );
+    for (const id of added) log?.push(id, hint);
+    return added;
   } catch (err) {
-    return fail(err, 0);
+    // A lock timeout or a failed write is reported; anything else (no ledger, unreadable) is skipped.
+    const e = err as NodeJS.ErrnoException & { attempts?: number; phase?: string };
+    if (err instanceof LedgerLockedError || e.phase === "write") opts.onFail?.({ code: e.code ?? "UNKNOWN", attempts: e.attempts ?? 0 });
+    return [];
   }
-  try {
-    fs.chmodSync(tmp, fs.statSync(ledgerPath).mode & 0o7777);
-  } catch {
-    // keep the default mode
-  }
-  const res = renameRetry(tmp, ledgerPath, opts.rename);
-  if (res.error) return fail(res.error, res.attempts);
-  for (const id of r.added) log?.push(id, hint);
-  return r.added;
 }
