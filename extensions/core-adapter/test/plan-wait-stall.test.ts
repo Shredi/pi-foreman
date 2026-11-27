@@ -19,7 +19,7 @@ const HEAVY_ASK = "waits for: its own plan review and the owner's approval at it
 
 function state(dir: string, s: { tier?: string; review?: "pass" | "fail" | null; built?: boolean; decided?: boolean }): void {
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, ROUND_STATE_FILE), JSON.stringify({ handoffDir: dir, plan: null, planReview: null, reviewPassed: s.review === "pass", round: { built: s.built === true, reviewOpen: false }, ...(s.tier ? { tier: s.tier } : {}), ...(s.decided ? { planOpen: false } : {}) }));
+  fs.writeFileSync(path.join(dir, ROUND_STATE_FILE), JSON.stringify({ handoffDir: dir, planPhase: true, plan: null, planReview: null, reviewPassed: s.review === "pass", round: { built: s.built === true, reviewOpen: false }, ...(s.tier ? { tier: s.tier } : {}), ...(s.decided ? { planOpen: false } : {}) }));
 }
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "plan-wait-")));
