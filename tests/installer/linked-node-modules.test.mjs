@@ -82,7 +82,7 @@ for (const dry of [false, true]) {
     else fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\necho "$@" >> "${calls}"\nexit 0\n`, { mode: 0o755 });
     const r = spawnSync(process.execPath, [path.join(checkout, "setup.mjs"), "--develop", "--agent-dir", agentDir, ...(dry ? ["--dry-run"] : [])], {
       cwd: base, encoding: "utf8",
-      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, PI_CODING_AGENT_DIR: agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: `${base}-pi.jsonl` },
+      env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, PI_CODING_AGENT_DIR: agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: path.join(base, "pi.jsonl") },
     });
     const out = `${r.stdout}${r.stderr}`;
     assert.match(out, dry ? /would stop: .*is a link to/ : /is a link to .*npm ci would empty that target/, out);
