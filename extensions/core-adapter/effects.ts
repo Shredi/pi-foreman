@@ -10,7 +10,7 @@
 //   unknown     everything else, and anything the chain splitter (shellchain.ts) refuses
 // Every path argument of a read or a write must resolve inside the worktree (git top level of the
 // cwd), a live $FOREMAN_SCRATCH dir of the asking role, or /tmp (POSIX), and for reads also a
-// safety.permissions.readRoots dir: no `~`, no `..`, no drive-relative `C:x`, and the realpath of
+// read root (pathrules.ts readRootsOfGate): no `~`, no `..`, no drive-relative `C:x`, and the realpath of
 // the nearest existing ancestor must stay inside (no symlink out). Writes must lie strictly below
 // such a place and never under `.git`. A chain takes the class of its worst segment; `cd <dir>`
 // moves the cwd the later segments resolve against; a path under an earlier segment's write
@@ -45,8 +45,10 @@ export interface EffectCtx {
   noTmp?: boolean;
   /** The asking session is a child (a `mkdir [-p] <root>` of its own write root counts as inside). */
   child?: boolean;
-  /** safety.permissions.readRoots as real absolute dirs (readRootsOf): extra places for reads only. */
+  /** The read roots (pathrules.ts readRootsOfGate; the 4th `effectCtx` parameter goes through `readRootsOf`): extra places for reads only. */
   readRoots?: string[];
+  /** Parts of the read roots (and of `readAny`) a read never opens (the page server's secrets, `stateReadExcept`). */
+  readExclude?: string[];
   platform?: string;
   /** Injectable for tests: realpath of an existing path, lstat existence, a file below root. */
   realpath?: (p: string) => string | null;
@@ -118,7 +120,7 @@ export function holdsHome(platform: string, r: string, h: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel));
 }
 
-/** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped, and so are a filesystem root (`/`, `C:\`, a UNC share root) and the home dir or any dir that contains it (raw and realpath). */
+/** The extra read roots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped, and so are a filesystem root (`/`, `C:\`, a UNC share root) and the home dir or any dir that contains it (raw and realpath). */
 export function readRootsOf(roots: unknown, platform: string = process.platform, real: (p: string) => string | null = realDefault, home: string = os.homedir()): string[] {
   if (!Array.isArray(roots)) return [];
   const x = platform === "win32" ? path.win32 : path.posix;
@@ -202,10 +204,21 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   return containedIn(c, cwd, word, write, only, link, false);
 }
 
+/** The absolute word lies in a part of the read roots that stays closed (`readExclude`), in its lexical or real spelling. */
+function readExcluded(c: EffectCtx, abs: string): boolean {
+  if (!c.readExclude?.length) return false;
+  const alt = realSpelling(c, abs);
+  return c.readExclude.some((e) => within(c, e, abs, false) || (alt !== null && within(c, e, alt, false)));
+}
+
 function containedIn(c: EffectCtx, cwd: string | null, word: string, write: boolean, only: string[] | undefined, link: boolean, rootSelf: boolean): boolean {
-  if (!write && c.readAny && !only && cwd !== null && word && !word.startsWith("~") && !/[=:]~/.test(word)) return true;
+  if (!write && c.readAny && !only && cwd !== null && word && !word.startsWith("~") && !/[=:]~/.test(word)) {
+    const abs = resolveWord(c, cwd, word);
+    if (!abs || !readExcluded(c, abs)) return true;
+  }
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
+  if (!write && readExcluded(c, abs)) return false;
   const x = px(c);
   const alt = realSpelling(c, abs);
   const real = c.realpath ?? realDefault;
@@ -465,7 +478,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   const writes = (prog === "cp" ? ops.slice(-1) : ops).filter((o) => !SCREEN_SINKS.has(o));
   // rm and mv never reach into the shared /tmp (`rm -rf /tmp/...` stays reviewed)
   const where = prog === "rm" || prog === "mv" ? [...(c.root ? [c.root] : []), ...(c.scratch ?? [])] : undefined;
-  // mv into an existing dir: every moved name was judged above, so the dir itself needs no check of its own
+  // mv or cp into an existing dir: every moved or copied name was judged above (`dest/<name>`), so the dir itself needs no check of its own
   let movedIntoDir = false;
   if (prog === "cp" || prog === "mv") {
     // the path really written: the destination itself, or `dest/<basename of src>` in an existing dir,
@@ -481,10 +494,10 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
         // an mv destination may be a child-written handoff name (`where` skips the handoff exemption of `contained`); the source rule stays
         if (!(contained(c, cwd, t, true, where) || (prog === "mv" && handoffTarget(c, cwd, t))) || isLink(t)) return "write-out";
       }
-      movedIntoDir = prog === "mv";
+      movedIntoDir = true;
     }
   }
-  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => containedIn(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o), prog === "mkdir" && !!c.child) || (prog === "mv" && i === writes.length - 1 && (movedIntoDir || handoffTarget(c, cwd, o)))) ? "write-in" : "write-out";
+  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => containedIn(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o), prog === "mkdir" && !!c.child) || ((prog === "mv" || prog === "cp") && i === writes.length - 1 && movedIntoDir) || (prog === "mv" && i === writes.length - 1 && handoffTarget(c, cwd, o))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);

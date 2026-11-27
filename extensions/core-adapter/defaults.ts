@@ -11,7 +11,7 @@ import type { EffectCtx } from "./effects.ts";
 import { BRACE_LIMIT, lineFloors, ownStdinText, braceVariants, gitGlobalWidth, gitOptSpellings, injection, nestedSegments as nestedSegmentsOf, remoteCommand, unknownTargetDelete } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
-import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
+import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, readRootsOfGate, realSpelling, resolveWord, rootHolds, stateReadExcept, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
 import { carryFacts, type ShellSegment } from "./shellast.ts";
@@ -113,7 +113,8 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
     const real = r.realpath ?? realDefault;
     ec.handoffWrite = (abs, ra) => childHandoffWrite(root, abs, ra, c.platform, real);
   }
-  ec.readRoots = [...(r.child ? [] : r.tmp), ...r.install, ...r.roundFlow, ...r.handoffs, ...(r.child ? [] : (r.workFolders ?? []).map((f) => f.path))];
+  ec.readRoots = readRootsOfGate(r);
+  if (!r.child && r.state) ec.readExclude = [stateReadExcept(c.platform, r.state)];
   return ec;
 }
 

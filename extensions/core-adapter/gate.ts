@@ -6,8 +6,9 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { JUDGE_FIRST, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
-import { readGlobSegment } from "./fastallow.ts";
+import { psSkipOnlyOk, readGlobSegment } from "./fastallow.ts";
 import { psWords } from "./pswords.ts";
+import * as path from "node:path";
 import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, parsedPrefixes, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, strongerHit, type FloorEnv, type FloorHit } from "./floors.ts";
@@ -537,6 +538,8 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
         const pubs = pubKeyReadWords([s], env, bn.any ? new Set(["HOME", "USERPROFILE"]) : bn.names);
         if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
         // a plain glob of a read program is no opaque unit (fastallow.ts readGlobSegment)
+        // `powershell -NoProfile -Command Get-Volume` and the few listed forms only read (fastallow.ts psSkipOnlyOk): checked before the opaque guard, like the glob
+        if (opaque && psSkipOnlyOk(s, (p) => secretPath(p, env, true) !== null || (!/^[A-Za-z]:/.test(p) && secretPath(path.resolve(cwd, p.replace(/\\/g, "/")), env, true) !== null))) return "default-skip";
         const r = opaque && !readGlobSegment(s) ? null : segmentDefault(s, cmd, dctx, ec);
         if (r !== null) return r;
         if (opaque) return null;

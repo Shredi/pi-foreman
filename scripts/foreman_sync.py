@@ -82,7 +82,7 @@ OK_STATUSES = ("clean", "committed", "pushed", "dry-run")
 
 # the key-file name globs are shared with the gate's secret-path floor (config/secret-paths.json); the inline list is the fail-closed fallback
 SECRET_PATHS_FILE = os.path.join(HERE, "..", "config", "secret-paths.json")
-SECRET_GLOBS_INLINE = ["*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.kdbx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*"]
+SECRET_GLOBS_INLINE = ["*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.kdbx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", "rclone.conf", ".boto", ".s3cfg", "cookies.sqlite"]
 
 
 def load_secret_globs(path=SECRET_PATHS_FILE):

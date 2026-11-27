@@ -32,6 +32,8 @@ export interface ReadRoot {
   label: string;
   real: string;
   lex: string;
+  /** A trusted install root (Pi, npm, the pi-foreman package): it wins over the agent dir when it lies inside it. */
+  install?: boolean;
 }
 
 export interface JudgeReadScope {
@@ -93,7 +95,7 @@ const realOf = (p: string): string | undefined => {
  * The read scope of one judge call; undefined when `gate.judgeReads` is false. A project root that does not exist is dropped. Every other absolute path lies
  * in the root of its own filesystem (drive or share), so the exclusions alone decide what is shown.
  */
-export function judgeReadScope(a: { cwd: string; worktree: string; out?: string; scratch?: string; agentDir: string; home?: string; platform?: string; config: Json | undefined }): JudgeReadScope | undefined {
+export function judgeReadScope(a: { cwd: string; worktree: string; out?: string; scratch?: string; agentDir: string; home?: string; platform?: string; config: Json | undefined; readRoots?: string[]; install?: string[] }): JudgeReadScope | undefined {
   if (get(a.config, "gate.judgeReads") === false) return undefined;
   const platform = a.platform ?? process.platform;
   const roots: ReadRoot[] = [];
@@ -103,6 +105,19 @@ export function judgeReadScope(a: { cwd: string; worktree: string; out?: string;
     if (!real) continue;
     if (roots.some((r) => fold(platform, r.real) === fold(platform, real))) continue;
     roots.push({ label, real, lex: path.resolve(p) });
+  }
+  // the session's read roots (pathrules.ts readRootsOfGate) and its install roots, as labelled roots like the worktree
+  for (const [label, list, install] of [["<root>", a.readRoots ?? [], false], ["<install>", a.install ?? [], true]] as const) {
+    for (const p of list) {
+      const real = realOf(p);
+      if (!real) continue;
+      const dup = roots.findIndex((r) => fold(platform, r.real) === fold(platform, real));
+      if (dup >= 0) {
+        if (install) roots[dup].install = true;
+        continue;
+      }
+      roots.push({ label, real, lex: path.resolve(p), ...(install ? { install: true } : {}) });
+    }
   }
   const agentReal = realOf(a.agentDir);
   return {
@@ -134,7 +149,8 @@ interface Place {
 /** Where a real path lies: the agent dir first, else the most specific project root, else the root of its filesystem (drive or share on Windows); null only for a path without a root. */
 function placeOf(real: string, scope: JudgeReadScope): Place | null {
   const pf = scope.platform;
-  if (scope.agent && inside(pf, real, scope.agent.real)) return { label: "<agent>", rel: segs(pf, scope.agent.real, real), agent: true };
+  const installRoot = scope.roots.some((r) => r.install && inside(pf, real, r.real));
+  if (scope.agent && !installRoot && inside(pf, real, scope.agent.real)) return { label: "<agent>", rel: segs(pf, scope.agent.real, real), agent: true };
   let best: ReadRoot | undefined;
   for (const r of scope.roots) if (inside(pf, real, r.real) && (!best || r.real.length > best.real.length)) best = r;
   if (best) return { label: best.label, rel: segs(pf, best.real, real), agent: false };

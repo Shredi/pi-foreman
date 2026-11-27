@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { MAX_DEPTH, parseErrorCuts, carryFacts, blankComments, blankHeredocBodies, parseShell, shellReadsStdin, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
-import { FIND_BAD, GIT_READ, READ_CLASS, READ_PROGS, RUNNERS, gitReadWrites } from "./effects.ts";
+import { FIND_BAD, GIT_READ, READ_CLASS, READ_PROGS, RUNNERS, WRITE_FLAGS, gitReadWrites } from "./effects.ts";
 import { nonPathArgs } from "./patternargs.ts";
 import { SSH_ARG } from "./protected.ts";
 import { protectedMatch } from "./protectedmatch.ts";
@@ -664,7 +664,7 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
     soft.hit = soft.hit ? absorb(soft.hit, h) : h;
   };
   keep(inj);
-  const pw = protectedWrite(seg, prog, env, line);
+  const pw = protectedWrite(seg, prog, env, line, keep);
   if (pw) return pw;
   if (PRIVILEGE.has(prog)) return hit("privilege", `\`${prog}\` escalates privileges. Run the command as the current user; ask the user when root is needed.`);
   const bd = builtinDeny([prog, ...seg.argv].join(" "), env, false);
@@ -968,10 +968,10 @@ function publishFloor(prog: string, a: string[]): string | null {
   return null;
 }
 
-const SECRET_DIRS = /(^|\/)(\.ssh|\.gnupg|\.aws|\.azure|\.config\/gcloud|\.config\/gh|\.kube\/config|\.docker\/config\.json|\.git-credentials|\.netrc|_netrc|\.npmrc|\.pypirc)(\/|$)/i;
+const SECRET_DIRS = /(^|\/)(\.ssh|\.gnupg|\.aws|\.azure|\.config\/gcloud|\.config\/gh|\.kube\/config|\.docker\/config\.json|\.git-credentials|\.netrc|_netrc|\.npmrc|\.pypirc|\.password-store|\.anthropic|\.m2\/settings\.xml|Library\/Keychains|\.local\/share\/keyrings|Microsoft\/Credentials|Microsoft\/Protect|Library\/Cookies)(\/|$)/i;
 /** The key-file name globs (`config/secret-paths.json`, also read by scripts/foreman_sync.py); unreadable: the inline list, which fails closed. */
 export const SECRET_PATHS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "config", "secret-paths.json");
-const SECRET_GLOBS_INLINE = ["*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.kdbx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*"];
+const SECRET_GLOBS_INLINE = ["*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.kdbx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", "rclone.conf", ".boto", ".s3cfg", "cookies.sqlite"];
 function loadSecretGlobs(): string[] {
   try {
     const v = JSON.parse(fs.readFileSync(SECRET_PATHS_FILE, "utf8")) as unknown;
@@ -985,9 +985,9 @@ export const SECRET_GLOBS: readonly string[] = loadSecretGlobs();
 const SECRET_FILE = new RegExp(`(^|/)(${SECRET_GLOBS.map((g) => g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})$`, "i");
 
 /** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here. */
-const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|\.claude\/\.credentials\.json|credentials(\.[^/]*)?)(\/|$)/i;
+const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|\.claude\/\.credentials\.json|credentials(\.[^/]*)?|(?:User Data|Application Support|\.config)\/(?:[^/]+\/){1,3}(?:Network\/)?Cookies(?:-journal)?)(\/|$)/i;
 /** Every literal name `SECRET_DIRS`, `SECRET_EXTRA`, `.git/config` and the auth file compare a segment with (the win32 8.3 short-name fold reads a short name as one of these). */
-const SECRET_NAMES = [".ssh", ".gnupg", ".aws", ".azure", ".config", "gcloud", "gh", "hub", "glab-cli", ".kube", "config", ".docker", "config.json", ".git-credentials", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git", "auth.json", ".claude", ".credentials.json", "credentials", ".pi", "agent", "extensions", "pi-permission-system"];
+const SECRET_NAMES = [".ssh", ".gnupg", ".aws", ".azure", ".config", "gcloud", "gh", "hub", "glab-cli", ".kube", "config", ".docker", "config.json", ".git-credentials", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git", "auth.json", ".claude", ".credentials.json", "credentials", ".pi", "agent", "extensions", "pi-permission-system", ".password-store", ".anthropic", ".m2", "settings.xml", "Library", "Keychains", ".local", "share", "keyrings", "Microsoft", "Credentials", "Protect", "Cookies", "User Data", "Application Support", "Network"];
 const ENV_FILE = /(^|\/)([^/]*\.env|\.env\.[^/]+)$/i;
 /** A bare (separator-free) word is a secret only when it is a dotenv name itself, so `process.env` or `app.env` as an argument is not judged. `.envrc` is not a secret. */
 const ENV_BARE = /^\.env(\.[^/]+)?$/i;
@@ -2337,8 +2337,15 @@ const hasKey = (line: ShellSegment[]): boolean => {
   return k;
 };
 
-/** Floor: a shell write to a permissions file or harness state file, or to a foreman config file in a line that carries a floored key. */
-function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
+/** A program the write knowledge names: the verbs of `WRITE_FLAGS` (`tee` and `cp` included), `sed` (here only with `-i`) and `rsync`. The words it is given may be written. */
+const knownWriter = (prog: string): boolean => Object.hasOwn(WRITE_FLAGS, prog) || prog === "sed" || prog === "rsync";
+
+/**
+ * Floor: a shell write to a permissions file or harness state file, or to a foreman config file in a line that carries a floored key. A Pi session file
+ * (`.jsonl`) named as an argument of a program that is no known writer (`node s.mjs <session.jsonl>`) is no write the line shows: `hold` keeps it as a
+ * judge hit and the walk goes on over the other words (a deny found there wins). A known writer, a redirect and every other entry keep the deny.
+ */
+function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: ShellSegment[], hold?: (h: FloorHit) => void): FloorHit | null {
   const cwd = seg.cwd ?? env.cwd;
   const entries = protectedEntries(env);
   const keys = hasKey(line);
@@ -2356,7 +2363,14 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
   const src = copySourceWords(seg, prog);
   for (const w of seg.argv) {
     if (src.has(w)) continue;
-    if (protectedWord(w, cwd, env, entries)) return protHit(`\`${prog}\` writes`, w);
+    const entry = protectedWord(w, cwd, env, entries);
+    if (entry !== null) {
+      if (hold && !knownWriter(prog) && entries.find((e) => e.p === entry)?.ext !== undefined) {
+        hold(judgeHit("policy-file", `\`${prog}\` is given the Pi session file '${w.slice(0, 120)}'; the gate cannot tell whether it reads or writes it. Session files are written only by Pi itself.`, w));
+        continue;
+      }
+      return protHit(`\`${prog}\` writes`, w);
+    }
     if (configWord(w)) return configHit(`\`${prog}\` writes`, w);
   }
   return null;

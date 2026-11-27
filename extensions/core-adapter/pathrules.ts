@@ -20,9 +20,11 @@ export interface GateRoots {
   scratchBase?: string;
   /** More scratch bases kept out of the defaults (the temp base next to a worktree-side `scratchBase`): older lanes lie there. */
   scratchBases?: string[];
-  /** Owned roots (agent dir state, handoffs, sibling worktrees); `*` stands for one path segment. Reads only. */
+  /** Owned roots (agent dir state, handoffs, sibling worktrees, `additionalDirectories`); `*` stands for one path segment. Reads only; a child reads none of them but `readDirs`. */
   owned: string[];
-  /** The Pi install root, the global npm root and the bundled package roots (reads only). */
+  /** The user's `additionalDirectories` (permconfig.ts, real dirs): read roots of main and child sessions alike, never written. */
+  readDirs?: string[];
+  /** The Pi install root, the global npm root, the pi-foreman package root and the bundled package roots (reads only). */
   install: string[];
   /** The registered round-parent `.workflow` dirs of this session (reads only). */
   roundFlow: string[];
@@ -60,8 +62,23 @@ export interface GateRoots {
   workFolders?: { path: string; mode: "auto" | "read" }[];
   /** The pi-foreman package root; `install` holds only the roots below it. A work folder never relaxes writes under it. */
   pkgRoot?: string;
+  /** The harness state dir (`<agentDir>/pi-foreman/state`), main session only: reads below it are allowed except `pages/roots` (`stateReadExcept`). A child keeps `selfmod-state-read`. */
+  state?: string;
   /** Injectable for tests: realpath of an existing path, null when it does not exist. */
   realpath?: (p: string) => string | null;
+}
+
+/** The part of the harness state dir no default read opens: the page server's link secrets (docs/pages.md). */
+export const stateReadExcept = (platform: string, state: string): string => px(platform).join(state, "pages", "roots");
+
+/**
+ * The one read-roots list of a session (docs/permissions.md "Read roots"): the worktree, scratch and out dirs, the install roots, the round flow, handoffs and
+ * `additionalDirectories` (`readDirs`); the main session also has the owned roots, the temp dirs, its work folders and the harness state dir. It feeds
+ * the effect context (`effectCtxOf`), the path rules (`classOf`) and the judge read scope (`judgeReadScope`). `state` is cut by `stateReadExcept`.
+ */
+export function readRootsOfGate(r: GateRoots): string[] {
+  const all = [r.worktree, ...r.scratch, ...(r.out ? [r.out] : []), ...r.install, ...r.roundFlow, ...r.handoffs, ...(r.readDirs ?? []), ...(r.child ? [] : [...r.owned, ...r.tmp, ...(r.workFolders ?? []).map((f) => f.path), ...(r.state ? [r.state] : [])])];
+  return [...new Set(all.filter((d) => !!d && !d.includes("*")))];
 }
 
 export type PathVerdict = { allow: true; rule: string } | undefined;
@@ -270,12 +287,17 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
     // never a ruling or brief into a dir where this session is the child, even when an opened root lists it too
     if (!r.child && HANDOFF_NOTE.test(base) && !inChildDir(r, platform, abs, ra, real) && (r.openedHandoffs ?? []).some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h))) return "handoff-ruling";
   }
-  if (r.child) return null;
   // other sessions' scratch dirs are never a default, also not as part of an owned root (the worktree root holds `.foreman/scratch`)
   const inScratchBase = [r.scratchBase, ...(r.scratchBases ?? [])].some((b) => !!b && inside(b));
+  // a child reads only the user's `additionalDirectories`
+  if (r.child) return dir === "read" && !inScratchBase && (r.readDirs ?? []).some(inside) ? "owned" : null;
   if (r.tmpAccess && r.tmp.some(inside) && !inScratchBase) return "tmp";
-  if (dir === "read" && !inScratchBase && r.owned.some(inside)) return "owned";
+  if (dir === "read" && !inScratchBase && [...r.owned, ...(r.readDirs ?? [])].some(inside)) return "owned";
   if (dir === "read" && !inScratchBase && (r.workFolders ?? []).some((f) => inside(f.path))) return "owned";
+  if (dir === "read" && r.state && inside(r.state)) {
+    const cut = stateReadExcept(platform, r.state);
+    if (!inside(cut) && !under(platform, cut, ra, r.worktree)) return "state";
+  }
   return null;
 }
 
