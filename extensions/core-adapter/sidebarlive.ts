@@ -352,7 +352,7 @@ export function installSidebarLive(pi: Pick<ExtensionAPI, "on">, opts: { env?: E
       sessionId: cfg.sessionId,
       agentDir: cfg.agentDir,
       symbols: typeof cfg.symbols === "string" ? cfg.symbols : undefined,
-      push: (args, done) => execQuiet(python, ["-E", "-s", script, ...args], 10_000, done),
+      push: (args, done) => execQuiet(python, ["-X", "utf8", "-E", "-s", script, ...args], 10_000, done),
       report: (tokens) => reportMetadata(socketPath(env), { pane_id: env.HERDR_PANE_ID!.trim(), source: SIDEBAR_SOURCE, tokens, ttl_ms: TTL_MS }),
       spinner: cfg.spinner !== false,
       frames: symbolSet(cfg.symbols).spinner,

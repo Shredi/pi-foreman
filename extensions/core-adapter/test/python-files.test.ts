@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// The Python rule (AGENTS.md): a new `.py` file is allowed only as a test, bench task data or vendored core.
+// The Python rule (AGENTS.md): a new `.py` file is allowed only as a test, bench task data or the own legacy core.
 // Existing non-test Python is listed in python-files.txt; the list shrinks as modules are ported to TypeScript.
 const root = path.join(import.meta.dirname, "..", "..", "..");
 const frozenPath = path.join(import.meta.dirname, "python-files.txt");
@@ -60,7 +60,7 @@ test("python rule: a planted non-test helper fails and its path is named", () =>
   assert.match(problems[0], /needs an entry in extensions\/core-adapter\/test\/python-files\.txt/);
 });
 
-test("python rule: a planted test file and a vendored core file pass without a list entry", () => {
+test("python rule: a planted test file and a core file pass without a list entry", () => {
   const tracked = ["scripts/a.py", "tests/test_new.py", "tests/replay/test_x.py", "core/scripts/x.py", "bench/tasks/t/run.py", "bench/review-samples/s.py"];
   assert.deepEqual(checkPythonFiles(tracked, ["scripts/a.py"]), []);
 });

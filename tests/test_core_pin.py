@@ -6,15 +6,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "core"
 
 
-def pinned_sha():
-    """The pinned sha comes from core/VERSION, so a repin needs no test edit."""
-    for line in (CORE / "VERSION").read_text(encoding="utf-8").splitlines():
-        if line.startswith("sha: "):
-            return line[len("sha: "):].strip()
-    return ""
-
-
-GENERATED = ("VERSION", "MANIFEST")
+GENERATED = ("MANIFEST",)
 IGNORED_PARTS = ("__pycache__", ".pytest_cache")
 
 
@@ -42,19 +34,6 @@ class CorePinTest(unittest.TestCase):
         self.assertEqual(
             [r for r in want if want[r] != have[r]], [], "changed files"
         )
-
-    def test_version_names_pinned_sha(self):
-        text = (CORE / "VERSION").read_text(encoding="utf-8")
-        sha = pinned_sha()
-        self.assertRegex(sha, r"^[0-9a-f]{40}$")
-        self.assertIn("sha: " + sha, text.splitlines())
-
-    def test_conformance_failure_names_only(self):
-        import sys
-        sys.path.insert(0, str(ROOT / "scripts"))
-        import pull_core
-        lines = ["FAILED tests/a.py::test_x - AssertionError: boom", "FAILED tests/b.py::T::test_y", "1 failed in 0.1s"]
-        self.assertEqual(pull_core.failed_names(lines), ["tests/a.py::test_x", "tests/b.py::T::test_y"])
 
 
 if __name__ == "__main__":

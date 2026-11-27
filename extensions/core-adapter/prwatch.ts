@@ -1078,6 +1078,8 @@ interface Watch {
   ended: boolean;
   started: number;
   cwd: string;
+  /** The tracker error text the last notice of this watch carried ("" when none): one notice per new error text and watch. */
+  errorNoticed: string;
   /** The `okAt` of the stored data the watch last settled; null until the first one (a restored or new watch). */
   seenAt: number | null;
   /** When the watch last asked `retrack` (ms; null = never). */
@@ -1247,7 +1249,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, ...(r.holdDraft === true ? { holdDraft: true } : {}), opened: r.opened === true, own: r.own === true || r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, errorNoticed: "", seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, ...(r.holdDraft === true ? { holdDraft: true } : {}), opened: r.opened === true, own: r.own === true || r.opened === true, ...(r.bodyMark ? { bodyMark: r.bodyMark } : {}), drafting: false, labeling: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.merged = this.merged.filter((k) => !samePr(k, r.key));
     this.mergedOwnKeys = this.mergedOwnKeys.filter((k) => !samePr(k, r.key));
@@ -1477,6 +1479,7 @@ export class PrWatches {
       return this.arm(w);
     }
     this.trackerDown = false;
+    w.errorNoticed = r.kind === "error" ? w.errorNoticed : "";
     const hosts = this.deps.githubHosts?.();
     if (!hosts || !("error" in hosts)) this.hostsNoticed = false;
     else if (r.kind === "error") {
@@ -1500,6 +1503,11 @@ export class PrWatches {
     }
     if (r.kind === "error") {
       this.setStatus(w, `${r.gone ? "not found" : "the tracker's last poll failed"}: ${oneLine(r.error)}`);
+      if (!r.gone && w.errorNoticed !== r.error) {
+        w.errorNoticed = r.error;
+        this.deps.send(noticeMessage(null, `watch: the tracker's last poll failed: ${oneLine(r.error)} (the watch stays armed)`, "tracker_error"), this.idle());
+        this.deps.trace({ event: "pr_watch", outcome: "tracker_error" });
+      }
       return this.arm(w);
     }
     if (w.seenAt !== null && r.okAt <= w.seenAt) {

@@ -252,7 +252,8 @@ def build_parser():
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(errors="replace")  # cp1252 consoles on Windows
+            # cp1252 consoles on Windows (python -E drops PYTHONUTF8): the callers decode UTF-8
+            stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)

@@ -65,7 +65,7 @@ function mergedConfig(agentDir) {
   } catch (err) {
     fail(err.message, 1);
   }
-  const r = spawnSync(py.executable, ["-E", "-s", path.join(ROOT, "scripts", "foreman_config.py"), "merged", "--json", "--agent-dir", agentDir], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  const r = spawnSync(py.executable, ["-X", "utf8", "-E", "-s", path.join(ROOT, "scripts", "foreman_config.py"), "merged", "--json", "--agent-dir", agentDir], { encoding: "utf8", timeout: 30_000, windowsHide: true });
   let data = null;
   try {
     data = JSON.parse(r.stdout);

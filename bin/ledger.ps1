@@ -32,7 +32,7 @@ try {
     if ($nodeOk) {
         & $node.Source --no-warnings --experimental-strip-types (Join-Path $PSScriptRoot 'ledger-run.mjs') $script $py @pre '--' @args
     } else {
-        & $py @pre -E -s $script @args
+        & $py @pre -X utf8 -E -s $script @args
     }
     $code = $LASTEXITCODE
 } finally {

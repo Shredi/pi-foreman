@@ -116,7 +116,7 @@ function readState(agentDir: string): StateDoc | null {
   const baselines: Record<string, BaselineEntry> = {};
   if (isObj(j.baselines))
     for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at, ...learnOf(b.learn) };
-  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(finite(j.hostlessDroppedAt) ? { hostlessDroppedAt: j.hostlessDroppedAt } : {}) };
+  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(typeof j.error === "string" && j.error ? { error: j.error } : {}), ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}), ...(finite(j.hostlessDroppedAt) ? { hostlessDroppedAt: j.hostlessDroppedAt } : {}) };
 }
 
 /** `{learn}` of a baseline answer when it is well formed (`ran` a string list of at most MAX_LEARN names, `merged` a whole number of at least 1); else `{}` (the base is not learnable). */
@@ -168,6 +168,19 @@ function setOff(agentDir: string, now: number, off: boolean): void {
   }
 }
 
+/** The tracked step could not run: store the error text (the file is never absent, the store reads "error" and not "down"). Earlier entries stay; a run that gets through writes the file without it. */
+function setStepError(agentDir: string, now: number, error: string): void {
+  try {
+    withStateLock(agentDir, now, () => {
+      const st = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
+      const next: StateDoc = { v: 1, trackedAt: now, prs: st.prs, error: error.replace(/\s+/g, " ").slice(0, 300), ...(st.baselines ? { baselines: st.baselines } : {}), ...(st.hostlessDroppedAt !== undefined ? { hostlessDroppedAt: st.hostlessDroppedAt } : {}) };
+      writeAtomic(trackedStateFile(agentDir), next);
+    });
+  } catch {
+    // busy or unwritable: the next run retries
+  }
+}
+
 const hostOkOf = (config: Json): boolean => {
   const h = get(config, "tools.prHost") ?? "auto";
   return h === "auto" || h === "gh";
@@ -196,6 +209,7 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
     if (oc.hideError) res.error ??= oc.hideError;
     const phases = parsePhases(get(config.config, "tools.prPhases"));
     if (phases.errors.length > 0) res.error ??= phases.errors[0];
+    let stepError: string | undefined = "error" in hosts ? hosts.error : !py.ok ? res.error : undefined;
     if (!("error" in hosts) && py.ok) {
       try {
         const ps = parsePrSources(get(config.config, "tools.prSources"));
@@ -206,8 +220,10 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
         await trackedStep(deps, py.info.executable, res, hosts.hosts, sx);
       } catch (err) {
         res.error = msg(err);
+        stepError = res.error;
       }
     }
+    if (stepError) setStepError(deps.agentDir, deps.now(), stepError);
     try {
       const refreshed = await deps.refresh(oc, hosts, phases.rules);
       res.searched = refreshed === "refreshed";
@@ -232,7 +248,7 @@ async function trackedStep(deps: PollDeps, python: string, res: PollResult, host
   const listed = readTracked(agentDir);
   if (listed.kind !== "bad") {
     const newest = listed.kind === "ok" ? Math.max(0, ...listed.lines.map((l) => usableLine(l)?.addedAt ?? 0)) : 0;
-    if (pre && start - pre.trackedAt <= DUE_MS && newest <= pre.trackedAt) {
+    if (pre && !pre.error && start - pre.trackedAt <= DUE_MS && newest <= pre.trackedAt) {
       res.skipped = "not_due";
       return;
     }

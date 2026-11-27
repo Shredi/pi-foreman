@@ -2,13 +2,13 @@
 
 > Covers the repo layout, test commands, the replay rig, CI, Windows notes and how the docs are kept current.
 > Read it when you change pi-foreman itself.
-> It must run on Linux, macOS and Windows. Python is stdlib only (3.13+) and runs the existing scripts; new harness code is TypeScript, and a new `.py` file is allowed only as a test, bench task data or vendored `core/` (the rule is in [AGENTS.md](../AGENTS.md), `extensions/core-adapter/test/python-files.test.ts` enforces it).
+> It must run on Linux, macOS and Windows. Python is stdlib only (3.13+) and runs the existing scripts; new harness code is TypeScript, and a new `.py` file is allowed only as a test, bench task data or the own legacy `core/` (the rule is in [AGENTS.md](../AGENTS.md), `extensions/core-adapter/test/python-files.test.ts` enforces it).
 
 ## Layout
 
 - `extensions/` Pi extensions (TypeScript): `core-adapter/`
 - `agents/` role definitions; `instructions/` foreman and reviewer prompts
-- `core/` vendored Python core; `scripts/` own Python (config, guards, retro, sync, bench, update-check); `foreman findings list|dismiss|export` and `foreman retro models` read
+- `core/` own legacy Python core (hand-edited; `python3 scripts/pull_core.py --write-manifest` re-hashes `core/MANIFEST`, `--check` verifies it); `scripts/` own Python (config, guards, retro, sync, bench, update-check); `foreman findings list|dismiss|export` and `foreman retro models` read
   the reviewer findings store (`scripts/foreman_findings.py`)
 - `config/` defaults, schema, `symbols.json` glyph sets, opt-in `presets/`
 - `integrations/herdr/pi-foreman-sidebar/` Herdr plugin (Python daemon, manifest, rows snippet)
@@ -17,7 +17,7 @@
 - `setup.mjs` setup script (`foreman setup`); `packages.lock.json` pinned Pi and packages
 - Runtime dependencies (`package.json`, exact pins mirrored in `packages.lock.json`): pi-subagents, pi-intercom, `unbash` (the gate's shell parser), and `@inquirer/prompts` (the arrow-key setup picker, imported lazily by `setup.mjs`). `@earendil-works/pi-tui` is a Pi-provided peer (`"*"`), not a dependency, because Pi warns about host packages under `dependencies`; a checkout has it as a devDependency for `setup --preview` and the installer tests, so a package install without dev dependencies has no `--preview`
 
-Python rule: a new `.py` file is allowed only as a test (`tests/**/test_*.py`), bench task data or vendored `core/` ([AGENTS.md](../AGENTS.md); `extensions/core-adapter/test/python-files.test.ts` checks it against the frozen list `python-files.txt`). New harness code is TypeScript.
+Python rule: a new `.py` file is allowed only as a test (`tests/**/test_*.py`), bench task data or the own legacy `core/` ([AGENTS.md](../AGENTS.md); `extensions/core-adapter/test/python-files.test.ts` checks it against the frozen list `python-files.txt`). New harness code is TypeScript.
 
 Running from a checkout instead of the installed package: [install](install.md#developing).
 

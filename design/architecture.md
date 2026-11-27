@@ -31,7 +31,7 @@
 
 | Layer | Form | Pins | Owns |
 |---|---|---|---|
-| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (vendored), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.6.x, its third-party packages (§13), core tag | Mechanisms, neutral roles, default policy |
+| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (own legacy Python), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.6.x, its third-party packages (§13), core tag | Mechanisms, neutral roles, default policy |
 | L2 private overlay | A user's own Pi package plus `foreman.json` in the Pi agent dir | `pi-foreman@x.y.z` exactly | Model maps, extra roles, MCP servers, repository list, personal preferences |
 | L3 organisation overlay | Organisation-owned Pi package declaring `pi.foreman.config` in its `package.json` | `pi-foreman@x.y.z` exactly | Provider gateways (via `registerProvider`), internal tools and skills, default policy for its users |
 
@@ -356,7 +356,7 @@ A claude-bridge turn loads the host's Claude Code setup (settings, hooks, plugin
 
 ## 6. Ledger, gates and proportional ceremony
 
-The ledger, spawn gate, write gate and stop gate come from the vendored core (§7). The foreman triages every task once, records the tier in the ledger header, and escalates automatically on new signals. It never de-escalates automatically. The user can override the tier with `/ceremony <tier>`.
+The ledger, spawn gate, write gate and stop gate come from the core (§7). The foreman triages every task once, records the tier in the ledger header, and escalates automatically on new signals. It never de-escalates automatically. The user can override the tier with `/ceremony <tier>`.
 
 | Tier | Signals (configurable `ceremony.heavySignals`) | Ledger | Plan review | Children |
 |---|---|---|---|---|
@@ -419,9 +419,9 @@ The retro once proposed permission-map entries (`retro.proposalMinReviews`); the
 
 ## 7. Core and TypeScript adapter
 
-- **Vendoring.**
-  - `core/` holds selected paths of `Shredi/fable5-opus5-orchestrator` extracted from the GitHub tarball at a pinned full commit SHA (a core tag once one exists). `core/VERSION` records the pin and `core/MANIFEST` the SHA-256 of every vendored file. `scripts/pull_core.py` updates both (Python rather than make, so it runs on Windows). No `git subtree`: no foreign history in this repo.
-  - `core/` is maintained here; every edit updates `core/MANIFEST`, which a test pins; the legacy upstream is no longer compared.
+- **Own legacy core.**
+  - `core/` is pi-foreman's own legacy Python, derived from `Shredi/fable5-opus5-orchestrator` (credited in `NOTICE`) and no longer vendored: it is changed by hand, gets only important fixes and moves to TypeScript later. No pin, no upstream comparison.
+  - `core/MANIFEST` holds the SHA-256 of every file; `scripts/pull_core.py --write-manifest` re-hashes it after an edit and `--check` (CI, `tests/test_core_pin.py`) verifies it. Python rather than make, so it runs on Windows.
   - Two harnesses share the core: the Claude Code orchestrator plugin, where it originates, and pi-foreman.
 - **Adapter** (`extensions/core-adapter/`, TypeScript). It mirrors the adapter pattern of the orchestrator's earlier Codex port: `normalise` → tool-name map → `runGuard` → output translation.
 

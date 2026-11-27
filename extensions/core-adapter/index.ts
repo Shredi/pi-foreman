@@ -1,4 +1,4 @@
-// pi-foreman core adapter: wires the vendored Python core into Pi (design §§5-7, 9).
+// pi-foreman core adapter: wires the Python core into Pi (design §§5-7, 9).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -7300,7 +7300,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const py = pyPath(s);
         const script = path.join(PKG_ROOT, "scripts", "foreman_close.py");
         if (!handoff || !py || !req.pr) return { lines: ["cleanup: not started (no handoff dir or no usable Python)"] };
-        return selfFinish({ cwd: s.cwd, handoff, sessionId: s.id, stateDir: path.join(s.agentDir, "pi-foreman", "state"), trusted: safeTrusted(c), pid: process.pid, status: (n) => prRun(s, s.cwd, "pr_status", { number: n }), sinceMs: Date.now() - process.uptime() * 1000, git: async (args, dir) => (await git(dir ?? s.cwd, args))?.trim() ?? null, closeScript: async (args) => (await runScript(s, "foreman_close.py", args, 120_000)).text, spawnCleanup: (args) => spawnDetached(py, ["-E", "-s", script, ...args], handoff) }, req.pr.n);
+        return selfFinish({ cwd: s.cwd, handoff, sessionId: s.id, stateDir: path.join(s.agentDir, "pi-foreman", "state"), trusted: safeTrusted(c), pid: process.pid, status: (n) => prRun(s, s.cwd, "pr_status", { number: n }), sinceMs: Date.now() - process.uptime() * 1000, git: async (args, dir) => (await git(dir ?? s.cwd, args))?.trim() ?? null, closeScript: async (args) => (await runScript(s, "foreman_close.py", args, 120_000)).text, spawnCleanup: (args) => spawnDetached(py, ["-X", "utf8", "-E", "-s", script, ...args], handoff) }, req.pr.n);
       }, pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: (file, pending) => void markOwnClosed(s.agentDir, process.env, path.resolve(s.cwd, file), pending), remoteReply: (kind, arg) => remoteReplier({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, env: process.env })(kind, arg), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
     },
   });
@@ -7837,13 +7837,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const coreDir = path.join(PKG_ROOT, "core", "scripts");
     const script = path.join(coreDir, "ledger.py");
     // The lock target is the file ledger.py will write: `-f`, else the bound ledger. ledger.py reads $LEDGER before the binding, so
-    // with it set the vendored resolver itself says which file that is (never a second resolver here); none resolves: unlocked.
+    // with it set the core resolver itself says which file that is (never a second resolver here); none resolves: unlocked.
     let lockFile = file ?? boundLedger(s.markerDir, s.id);
     if (!file && env.LEDGER) {
       const rr = await spawner(py, ["-I", "-c", RESOLVE_SNIPPET, coreDir, ...args], { cwd: s.cwd, env, timeoutMs: 30_000 });
       lockFile = !rr.error && !rr.timedOut && rr.code === 0 ? rr.stdout.trim() || null : null;
     }
-    const retried = () => retryLedgerRun(() => spawner(py, ["-E", "-s", script, ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
+    const retried = () => retryLedgerRun(() => spawner(py, ["-X", "utf8", "-E", "-s", script, ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
     // Around the whole retry loop: the in-process gate first (same-process runs queue), then the `<ledger>.lock` file lock that
     // shim runs and rewriteLocked also take. Residual races: see ledgerlockfs.ts. A lock held past the wait runs nothing.
     const run = lockFile
@@ -8206,7 +8206,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   async function runScript(s: Session, script: string, args: string[], timeoutMs = 60_000, input?: string, signal?: AbortSignal): Promise<{ text: string; ok: boolean }> {
     const py = pyPath(s);
     if (!py) return { text: `${script}: no usable Python (run /foreman doctor).`, ok: false };
-    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd, input, signal });
+    const r = await spawner(py, ["-X", "utf8", "-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd, input, signal });
     const text = (r.stdout.trim() || r.stderr.trim() || `${script} produced no output.`);
     return { text, ok: !r.error && !r.timedOut && r.code === 0 };
   }
@@ -8554,7 +8554,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
 
     if (fs.existsSync(path.join(CORE_DIR, "scripts", "ledger_guard_write.py"))) ok(`core scripts at ${CORE_DIR}`);
-    else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ is vendored with the package).");
+    else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ ships with the package).");
     const unbundled = missingBundled(PKG_ROOT);
     if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm ci in a checkout), then restart.");
     else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
