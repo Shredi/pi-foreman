@@ -5,7 +5,7 @@
 // The lock is the sidecar `<ledger>.lock`, taken by exclusive create (`wx`), holding "<pid> <epoch ms> <nonce> <host>".
 // A whole ledger.py run (python start included) takes seconds under load, so age alone never says "crashed". A waiter
 // treats a lock as stale only when
-//  - its holder is gone: same host and `process.kill(pid, 0)` throws ESRCH (EPERM means alive; works on Windows too), or
+//  - its holder is gone: same host (hostname and platform) and `process.kill(pid, 0)` throws ESRCH (EPERM means alive; works on Windows too), or
 //  - it is older than LOCK_MAX_HOLD_MS, a hard ceiling for a holder this check cannot see (another host, a reused pid,
 //    a lock without a readable pid).
 // The ceiling is 120 s: one ledger.py attempt of the runner is cut at 30 s, a retry follows only a Windows access-denied
@@ -58,7 +58,8 @@ export const RESOLVE_SNIPPET = [
   "print(p)",
 ].join("\n");
 
-const HOST = os.hostname().replace(/\s+/g, "_");
+// Windows and WSL share a hostname but not pids, so the platform is part of the host: a lock of the other side is foreign.
+const HOST = `${os.hostname().replace(/\s+/g, "_")}/${process.platform}`;
 
 /** Is `pid` a running process? EPERM: it exists, another user's. */
 function pidAlive(pid: number): boolean {
@@ -93,6 +94,16 @@ function releaseOwn(lock: string, mine: string): () => void {
   };
 }
 
+/** Is something (a link, even a dangling one) at `p`? A dangling link reads as ENOENT but is no vanished lock. */
+function isLink(p: string): boolean {
+  try {
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** One attempt: the content this holder wrote when taken; null when a live holder has it. Takes over a stale lock. */
 function tryTake(lock: string): string | null {
   for (;;) {
@@ -114,8 +125,10 @@ function tryTake(lock: string): string | null {
         fs.rmSync(lock, { force: true });
         continue;
       }
-    } catch {
-      continue; // vanished between the create and the read: try again
+    } catch (err) {
+      // vanished between the create and the read: try again at once; any other failure (a folder, a dangling link, an
+      // unreadable file at the lock path) takes the caller's sleep and deadline
+      if ((err as NodeJS.ErrnoException).code === "ENOENT" && !isLink(lock)) continue;
     }
     return null;
   }

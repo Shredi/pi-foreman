@@ -342,7 +342,7 @@ foreman to add one line per pass to the PR body, `High-stakes review: <verdict> 
   checkout the harness cannot resolve reads the session-wide entry.
 - Two passes per checkout: work from a second worktree is reviewed on its own count, so the cost grows with the number of worktrees. Work added to a checkout after its pass is not reviewed again.
 - A high-stakes launch needs a normal PASS in its own checkout first (a pass in another checkout is not enough).
-- A PASS in one checkout survives work in another: if B's work changes code that A's PR depends on, A ships without a new review (the finish still asks for B's own review). A checkout that got work and was deleted before its review keeps blocking the finish (after two refusals it ends with a notice) and the ledger V mark.
+- A PASS in one checkout survives work in another: if B's work changes code that A's PR depends on, A ships without a new review (the finish still asks for B's own review). A checkout that got work and was deleted before its review stops blocking the finish (D189b, see below); an existing checkout without a review still blocks.
 - A high-stakes FAIL can be cleared by a normal reviewer without a code change, or by a fix in another checkout that does not touch the finding; the findings go to that reviewer, who judges them.
 - A malformed `size` with sizing off drops the launch's tags.
 - Migrating an old per-checkout entry keeps the runs of one checkout only, so an old FAIL in another checkout is dropped.

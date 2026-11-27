@@ -7796,7 +7796,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             release = await takeLedgerLockAsync(path.resolve(s.cwd, lockFile), ledgerRunWaitMs());
           } catch (err) {
             if (err instanceof LedgerLockedError) return { code: 1, stdout: "", stderr: err.message, timedOut: false, error: undefined };
-            return retried(); // the lock file cannot be created: ledger.py reports its own failure
+            // the lock file cannot be created: ledger.py reports its own failure; one line says the run was unlocked
+            const r = await retried();
+            return { ...r, stderr: [`ledger: running without the ledger lock (${(err as Error).message})`, r.stderr].filter(Boolean).join("\n") };
           }
           try {
             return await retried();

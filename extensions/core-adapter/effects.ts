@@ -692,10 +692,11 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
 
 // ------------------------------------------------------------------ redirects, segments, chains
 
-/** A redirect the deterministic allow accepts: an fd dup, /dev/null, output into a scratch dir or /tmp, input from a contained path. */
+/** A redirect the deterministic allow accepts: an fd dup, /dev/null, /dev/stdout, /dev/stderr, output into a scratch dir or /tmp, input from a contained path. */
 export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null, scratch: string[], platform: string): boolean {
   if (r.op === "dup") return /^(\d+|-)$/.test(r.target); // `2>&-` closes an fd; it writes nothing
   if (nullDevice(platform, r.target)) return true;
+  if (r.op !== "<" && SCREEN_SINKS.has(r.target)) return true; // the standard outputs of the process itself
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;
   if (platform === "win32") return !!c && !c.noTmp && !!c.tmpWrite?.length && insideScratch(r.target, c.tmpWrite, platform);
