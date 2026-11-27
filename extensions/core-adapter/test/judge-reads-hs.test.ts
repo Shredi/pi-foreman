@@ -104,7 +104,7 @@ test("the judge's reason is masked of secrets before it reaches the dialog", () 
 });
 
 test("a masked blob line does not hide later lines: every line is shown or named by the more-hint", () => {
-  const blob = Array.from({ length: 25000 }, (_, i) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[(i * 7 + (i >> 3)) % 36]).join("");
+  const blob = "ghp_" + Array.from({ length: 25000 }, (_, i) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[(i * 7 + (i >> 3)) % 36]).join("");
   const rest = Array.from({ length: 50 }, () => "echo harmless");
   put(path.join(cwd, "blob.sh"), `${[blob, ...rest, "rm -rf ~/Documents"].join("\n")}\n`);
   const { block } = one("blob.sh");
@@ -119,7 +119,7 @@ test("a masked blob line does not hide later lines: every line is shown or named
 });
 
 test("a 400-line file with an early blob and long lines: header and hint name only lines really shown", () => {
-  const blob = Array.from({ length: 25000 }, (_, i) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[(i * 7 + (i >> 3)) % 36]).join("");
+  const blob = "ghp_" + Array.from({ length: 25000 }, (_, i) => "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"[(i * 7 + (i >> 3)) % 36]).join("");
   const line = "c".repeat(99);
   put(path.join(cwd, "many.txt"), `${[blob, ...Array.from({ length: 399 }, () => line)].join("\n")}\n`);
   const { block } = one("many.txt");
@@ -166,7 +166,7 @@ test("masking works line by line: the secret= variant keeps every line", () => {
 
 test("only the reads-on judge prompt carries the [redacted] sentence", () => {
   assert.ok(!judgeSystemPrompt().includes("[redacted]"));
-  assert.match(judgeSystemPrompt(true), /\[redacted\] in a file marks a masked value that may hide code; if what it hides matters for the verdict, answer refuse/);
+  assert.match(judgeSystemPrompt(true), /\[redacted\] in a file marks a masked key value \(a token, a password or a key block\), not code/);
 });
 
 test("a folder listing is masked per entry: no pattern spans names, the count matches the lines", () => {

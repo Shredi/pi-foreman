@@ -26,7 +26,7 @@ const child = (command: string): { block?: boolean; rule?: string } | undefined 
   }).result as { block?: boolean; rule?: string } | undefined;
 
 test("child: git -C \"$PWD\" add x in the own worktree is allowed", () => {
-  for (const l of ['git -C "$PWD" add x', "git -C $PWD add x", 'git -C "${PWD}" add x']) assert.equal(child(l), undefined, l);
+  for (const l of ['git -C "$PWD" add x', "git -C $PWD add x", 'git -C "${PWD}" add x']) assert.ok(child(l) === undefined || (child(l) as { allow?: boolean }).allow === true, l);
 });
 
 test("child: $PWD after a cd outside the worktree, or with PWD rebound, is not the own worktree", () => {

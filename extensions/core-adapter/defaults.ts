@@ -245,6 +245,11 @@ function gitC(argv: string[]): string[] {
   return argv.slice(i);
 }
 
+/** `dir` lies in the session's read roots (`readRootsOfGate`, the one list). */
+function gitDirReadable(r: GateRoots, dir: string, platform: string): boolean {
+  return readRootsOfGate(r).some((d) => rootHolds(d, dir, platform, r.realpath, r.worktree));
+}
+
 /** `cd <dir>` into the session's own checkout or a worktree it created: a read, so a following push in that worktree can be a default. */
 function cdIntoOwn(argv: string[], cwd: string, c: DefaultCtx): boolean {
   if (c.roots.child || argv.length !== 1 || argv[0].startsWith("-") || !c.facts.isOwnWorktree) return false;
@@ -266,9 +271,16 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   const sub = argv[0];
   const rest = argv.slice(1);
   if (sub === "-C") {
-    // `git -C <dir> push ...` only: the branch, protected and push-config facts are those of <dir>
+    // `git -C <dir> <sub> ...`: <dir> (the segment's cwd) inside the read roots classifies like the plain form; any other dir is judged first (`danger-git-other-dir`)
     const after = gitC(argv);
-    if (after[0] !== "push" || workFolderBarred(c, cwd)) return null;
+    if (after[0] !== "push") {
+      if (!gitDirReadable(c.roots, cwd, c.platform)) return null;
+      const plain = gitDefault(after, text, cwd, c, ec, { ...chain, words: [chain.words[0], ...after] });
+      // a read-only root (`additionalDirectories`, an install root) is no place for a git write: only the worktree and scratch dirs keep a write default
+      return plain === null || plain === "default-git-read" || [c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree)) ? plain : null;
+    }
+    // a push: the branch, protected and push-config facts are those of <dir>
+    if (workFolderBarred(c, cwd)) return null;
     // without the session's worktree list, only the session's checkout is known to be own
     if (!(c.facts.isOwnWorktree ? c.facts.isOwnWorktree(cwd) : rootHolds(c.roots.worktree, cwd, c.platform, c.roots.realpath, c.roots.worktree))) return null;
     return pushOk(after.slice(1), text, cwd, c) ? "default-git-push" : null;
@@ -685,8 +697,16 @@ export function withMergedFacts(facts: GitFacts, merged: Map<string, boolean>): 
 /** The option `long` (a program-running option) among `words`, in any spelling of `gitOptSpellings`. */
 const gitProgOpt = (words: string[], long: string, short?: string): boolean => gitOptSpellings(words, long, { short }).length > 0;
 
+/** A git call with a `-C <dir>` global option whose dir (the segment's cwd) is unknown or outside the read roots (`danger-git`). */
+function gitOtherDir(s: ShellSegment, env: DangerEnv): boolean {
+  let named = false;
+  for (let i = 0; i < s.argv.length && s.argv[i].startsWith("-"); i += gitGlobalWidth(s.argv, i)) named ||= s.argv[i] === "-C";
+  return named && (s.cwd === null || !gitDirReadable(env.roots, s.cwd, env.platform));
+}
+
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   if (progOf(s) !== "git") return false;
+  if (gitOtherDir(s, env)) return true;
   const { sub, rest } = gitParts(s.argv);
   const flag = (re: RegExp): boolean => rest.some((w) => re.test(w));
   // forms that move, overwrite or delete a ref shared with the main checkout: judged for a subagent only
@@ -743,7 +763,8 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return child && (words.some((w) => /^-[a-zA-Z]*d/.test(w)) || gitProgOpt(words, "--delete") || rest.includes("--delete"));
     }
     case "stash":
-      return rest[0] === "drop" || rest[0] === "clear";
+      // pop and apply restore an entry of the stash list shared by every worktree of the repository
+      return rest[0] === "drop" || rest[0] === "clear" || rest[0] === "pop" || rest[0] === "apply";
     case "worktree":
       return rest[0] === "remove" || rest[0] === "prune" || (child && (rest[0] === "move" || (rest[0] === "add" && flag(/^-[a-zA-Z]*B/))));
     case "reflog":
@@ -1306,7 +1327,7 @@ function netWrite(c: DangerCall, e: DangerEnv): boolean {
 
 export const JUDGE_FIRST: readonly DangerRule[] = [
   { name: "danger-write-outside", reason: "a child's write whose target cannot be resolved (a variable, a substitution, `~`, a brace list, a changed directory), so it may lie outside its worktree", test: (c, e) => !!e.roots.child && (unresolvedShellWriteWords(c.segments ?? [], e.platform).length > 0 || (c.segments ?? []).some((s) => progOf(s) === "git" && s.cwd === null && gitWriteForm(s))) },
-  { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, rebase, amend of published work, stash drop, worktree removal, history rewrite) or runs a program or moves credentials through git", test: segs(gitSeg) },
+  { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout, branch delete, rebase, amend, stash drop, pop or apply, worktree removal), runs a program or moves credentials through git, or runs git with -C on a folder outside the read roots", test: segs(gitSeg) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
   { name: "danger-inline-code", reason: "runs code the harness cannot read: an interpreter one-liner (python -c, node -e), a script built at run time or fed on stdin to a shell or interpreter, or one run by a shell the harness does not parse (zsh, pwsh, cmd, script -c)", reasonOf: (c, e) => (inlineCodeHits(c, e).every(codeInCommand) ? "runs inline code the gate does not parse; the code is in the command" : "runs code the harness cannot read"), test: (c, e) => inlineCodeHits(c, e).length > 0 },
   { name: "danger-remote", reason: "runs a command on another machine or in a container (ssh, docker or podman exec, kubectl exec), which the harness cannot check", test: (c, e) => nestedSegments(c.segments ?? [], e).some((s) => s.program !== "" && remoteCommand(s, progOf(s)) !== null) },

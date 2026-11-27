@@ -330,6 +330,28 @@ export function sameFileState(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
 
+const KEY_TOKEN = /\b(?:gh[pousr]_|github_pat_|npm_|glpat-|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}|\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b|\bAIza[A-Za-z0-9_-]{6,}/g;
+const KEY_PEM = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)/g;
+const KEY_NAME = /password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|(?:^|[_-])auth(?:$|[_-])/i;
+const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\?"[^"\\\n]*\\?"|\\?'[^'\\\n]*\\?'|[^\s'",;]+)/g;
+
+/**
+ * File text as the judge sees it: only real key shapes are hidden (known token prefixes, PEM private-key blocks, the literal value of a secret-named key). Code,
+ * identifiers and hashes pass. Newlines are kept, so the line numbers of a window stay true. (Trace and command masking is `redactCommand`, which also hides long runs.)
+ */
+export function maskKeys(text: string): string {
+  const R = "[redacted]";
+  return text
+    .replace(KEY_PEM, (m) => R + m.replace(/[^\n]/g, "").replace(/\r/g, ""))
+    .replace(KEY_TOKEN, R)
+    .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => {
+      if (!KEY_NAME.test(name)) return m;
+      const quoted = /^\\?["']/.test(value);
+      if (quoted) return value.replace(/^\\?["']|\\?["']$/g, "").length > 0 ? `${name}${sep}${R}` : m;
+      return value.length >= 12 && /\d/.test(value) && !/[()$]/.test(value) ? `${name}${sep}${R}` : m;
+    });
+}
+
 function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   const win32 = scope.platform === "win32";
   const flags = fs.constants.O_RDONLY | (win32 ? 0 : (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
@@ -346,7 +368,7 @@ function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, a
     const data = buf.subarray(0, n);
     if (data.subarray(0, 8192).includes(0)) return { outcome: "binary", body: "binary file, not shown" };
     const partial = size > MAX_SCAN_BYTES;
-    const text = data.toString("utf8");
+    const text = maskKeys(data.toString("utf8"));
     const lines = text.split("\n");
     if (text.endsWith("\n")) lines.pop();
     const jsonl = /\.jsonl$/i.test(res.real);
@@ -354,12 +376,12 @@ function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, a
     const wanted = res.window ? Math.max(1, res.window.to - from + 1) : MAX_FILE_LINES;
     const count = Math.min(MAX_FILE_LINES, wanted, jsonl ? MAX_JSONL_LINES : MAX_FILE_LINES);
     if (from > lines.length) return { outcome: "ok", body: `(no lines from ${from}: the file has ${lines.length} lines${partial ? " in its first 1 MiB" : ""})` };
-    // A line is masked before any cut, so a cut never leaves half a secret; the last line of a file the scan stopped inside carries `[cut]`.
+    // The text is masked as a whole before any window or cut, so a cut never leaves half a secret; the last line of a file the scan stopped inside carries `[cut]`.
     const scanCut = partial && !text.endsWith("\n");
     const slice = lines.slice(from - 1, from - 1 + count).map((l, i) => {
       const lastOfScan = scanCut && from - 1 + i === lines.length - 1;
       if (!jsonl && !lastOfScan) return l;
-      let masked = redactCommand(l);
+      let masked = l;
       if (jsonl && masked.length > MAX_JSONL_LINE_CHARS) masked = `${masked.slice(0, MAX_JSONL_LINE_CHARS)} [cut]`;
       return lastOfScan && !masked.endsWith(" [cut]") ? `${masked} [cut]` : masked;
     });
@@ -369,13 +391,13 @@ function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, a
     const cap = Math.min(MAX_FILE_BYTES, budget.left);
     // The cut falls on a line boundary; `last` is the last line shown whole. When not even the first line fits, that line is shown cut and the hint
     // continues at the next line (the rest of the long line is not offered again).
-    // Each line is masked on its own and the walk stops at the first line that does not fit, so a line masking shrinks never hides the ones after it.
+    // The walk stops at the first line that does not fit.
     const shownLines: string[] = [];
     let used = 0;
     let k = 0;
     let first = "";
     for (; k < slice.length; k++) {
-      const masked = redactCommand(slice[k]);
+      const masked = slice[k];
       if (k === 0) first = masked;
       if (used + (k ? 1 : 0) + masked.length > cap) break;
       used += (k ? 1 : 0) + masked.length;
@@ -472,6 +494,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
     }
     const rec: ReadRecord = { asked: a, outcome: res.outcome };
     let body = "";
+    let fileText = false; // file text is masked by `maskKeys` already
     if (res.outcome === "not-found") {
       rec.real = res.real;
       rec.ancestor = res.ancestor;
@@ -501,10 +524,11 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
         const r = readFileBlock(res as Resolution & { real: string; st: fs.BigIntStats }, a, scope, budget);
         rec.outcome = r.outcome;
         body = r.body;
+        fileText = true;
       }
     }
     records.push(rec);
-    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]}${res.literal ? "; read by its literal name, no line window" : ""})`, body: body.split("\n").map(redactCommand).join("\n") });
+    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]}${res.literal ? "; read by its literal name, no line window" : ""})`, body: fileText ? body : body.split("\n").map(redactCommand).join("\n") });
   }
   return { blocks, records };
 }

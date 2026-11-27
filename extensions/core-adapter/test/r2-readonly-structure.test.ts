@@ -80,9 +80,9 @@ test("(c) a git subcommand that writes is refused in the worktree (cwd, -C <wt>,
   // (an unreadable `-C` is no judge case for a builder any more: child-write-outside refuses it first, plan D2 / ledger item 5; the read-only roles keep their own rule)
   for (const role of ROLES) assert.equal(verdict('git -C "$D" clean -fd', role, "ro")?.rule, RO, role);
   assert.equal(verdict('git -C "$D" clean -fd', "builder", "child")?.rule, "child-write-outside");
-  // a plain `git fetch origin` is a fetch rule (free); with -C it is not that rule's form
-  mustRefuse([`git -C ${W} fetch origin`, `git -C "$D" fetch origin`]);
-  mustFree(["git fetch origin", "git config --get x", `cd ${S} && git clone ${W} c2`]);
+  // a plain `git fetch origin` is a fetch rule (free); `-C <the worktree>` classifies like the plain form, an unreadable `-C` is no fetch rule form
+  mustRefuse([`git -C "$D" fetch origin`]);
+  mustFree([`git -C ${W} fetch origin`, "git fetch origin", "git config --get x", `cd ${S} && git clone ${W} c2`]);
   mustFree(GIT_WRITES.filter((s) => !s.startsWith("clone") && !s.startsWith("init")).flatMap((s) => [`git -C ${S}/c ${s}`]));
   mustFree(["git commit -m x", "git add .", "git log", "git fetch origin", "git reflog expire --all", "git diff --ext-diff", "git checkout -b x", `git -C ${S}/c reflog expire --all`], clone);
   // `git --work-tree=<wt> checkout` from the scratch dir names the worktree

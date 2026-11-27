@@ -11,6 +11,7 @@ import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { FIND_BAD, GIT_READ, READ_CLASS, READ_PROGS, RUNNERS, WRITE_FLAGS, gitReadWrites } from "./effects.ts";
 import { nonPathArgs } from "./patternargs.ts";
 import { SSH_ARG } from "./protected.ts";
+import { webOutputWords } from "./weboutput.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { psUnitTexts } from "./psunits.ts";
 import { redactCommand } from "./trace.ts";
@@ -697,10 +698,29 @@ function segmentDenyOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[], s
   const reads = readOperands(seg, prog);
   for (const [i, w] of words.entries()) {
     if ((dataWord(w) && !FORM_LIST.test(w)) || payload.includes(w) || patterns.has(i)) continue;
-    const s = secretPath(w, { ...env, segCwd: seg.cwd ?? null }, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
-    if (s) return s;
+    const senv = { ...env, segCwd: seg.cwd ?? null };
+    const s = secretPath(w, senv, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
+    if (!s) continue;
+    // the login file as a plain word of a program that is no reader, writer or copier of it (`curl --netrc-file ~/.netrc URL`): the judge decides; a deny found on a later word wins
+    const login = i < seg.argv.length ? loginFileHit(seg, prog, senv, w, reads.argv(w)) : null;
+    if (!login) return s;
+    keep(login);
   }
   return null;
+}
+
+/** A word that is a `.netrc` or `_netrc` path and nothing else: no option prefix, no `@`, `=` or `<` before the name. */
+const LOGIN_WORD = /^(?:[^-@=<][^@=<]*)?[\\/](?:\.netrc|_netrc)$/i;
+
+/**
+ * The judge-first hit for the stored-login file named as an argument (`secretPath` is a hit for it): only when the word is exactly that path (no other secret
+ * place in it) and nothing on the segment shows that the file is read, written, copied or sent: not a read program's operand, a redirect target, an argument of a
+ * known writer, an output file of curl or wget (`webOutputWords`) or a copy source. The judge refuses reading, copying, sending or changing the file.
+ */
+function loginFileHit(seg: ShellSegment, prog: string, env: FloorEnv, w: string, reads: boolean): FloorHit | null {
+  if (!LOGIN_WORD.test(w) || reads || knownWriter(prog) || cleanReadSegment(seg, env) || webOutputWords(seg).has(w) || copySourceWords(seg, prog).has(w)) return null;
+  if (secretPath(w.replace(/(?:\.netrc|_netrc)$/i, "x"), env) !== null) return null;
+  return judgeHit("login-file", `\`${prog}\` is given the login file '${w.slice(0, 120)}'. A tool that reads it by itself for a plain download is fine; reading, printing, copying, sending or changing it is not.`, w);
 }
 
 // ------------------------------------------------------------------ whole-filesystem scan

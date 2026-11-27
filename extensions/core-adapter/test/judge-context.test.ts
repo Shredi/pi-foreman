@@ -99,7 +99,7 @@ test("injection fencing: a task with an end marker and the nonce stays inside it
 test("the task line cut: 10 000 characters become the first 160 on one line; the call's other text is untouched", () => {
   const long = Array.from({ length: 10000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join("");
   const text = judgeRequestText({ ...CALL, launchTask: long }, "0123456789abcdef");
-  assert.ok(text.includes(long.slice(0, 160)) && !text.includes(long.slice(0, 161)));
+  assert.ok(text.includes(long.slice(0, 160)) && !text.includes(long.slice(0, 4001)), "the task line is 160 characters, the brief block at most 4000");
   assert.equal(cutTask(long), `${long.slice(0, 2500)}\n[… 6000 chars cut …]\n${long.slice(-1500)}`, "the protected check keeps its longer cut");
   assert.equal(cutTask("x".repeat(4000)), "x".repeat(4000));
 });
