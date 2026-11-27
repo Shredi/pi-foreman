@@ -1156,3 +1156,81 @@ test("a detached run's command sees TMPDIR inside a pf-run- root, removed by the
   // the worker's start swept the old entry (a run mode), proving the sweep ran in the worker and not in the control calls
   assert.ok(!fs.existsSync(path.join(b, "pf-old-control")));
 });
+
+// --- signals sent to the wrapper itself ---
+
+const POSIX_ONLY = { skip: process.platform === "win32" && "POSIX signals" };
+/** A command that ignores SIGTERM and SIGHUP, starts a grandchild doing the same, and records the grandchild's pid. */
+function stubbornTree(pidFile) {
+  const grand = `process.on("SIGTERM", () => {}); process.on("SIGHUP", () => {}); require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  return `process.on("SIGTERM", () => {}); process.on("SIGHUP", () => {}); require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grand)}], { stdio: "ignore" }); setInterval(() => {}, 1000)`;
+}
+
+test("SIGTERM to a running wrapper stops the whole tree, releases the lock, exits 143 and lets a queued caller run", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  try {
+    const holder = launch(dir, dir, execArgs(stubbornTree(pidFile)));
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    const second = launch(dir, dir, execArgs(touchMarker(dir)));
+    const sid = await waitFor(() => second.id());
+    await waitFor(() => recordOf(dir, sid)?.state === "waiting");
+    const sent = Date.now();
+    holder.child.kill("SIGTERM");
+    assert.equal(await holder.done, 143);
+    assert.ok(Date.now() - sent < 15_000, "the wrapper exited promptly");
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.equal(await second.done, 0);
+    assert.ok(fs.existsSync(marker(dir)), "the queued caller ran");
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SIGHUP to a running wrapper stops the whole tree, releases the lock and exits 129", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  try {
+    const holder = launch(dir, dir, execArgs(stubbornTree(pidFile)));
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    holder.child.kill("SIGHUP");
+    assert.equal(await holder.done, 129);
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.ok(!fs.existsSync(lockFile(dir)));
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SIGHUP to a queued wrapper drops its ticket and does not block a later caller", POSIX_ONLY, async () => {
+  const dir = tmp();
+  try {
+    const holder = launch(dir, dir, execArgs(`setInterval(() => {}, 1000)`));
+    await waitFor(() => holder.id() && recordOf(dir, holder.id())?.state === "running");
+    const waiter = launch(dir, dir, execArgs(touchMarker(dir)));
+    const wid = await waitFor(() => waiter.id());
+    await waitFor(() => recordOf(dir, wid)?.state === "waiting" && tickets(dir).length === 1);
+    waiter.child.kill("SIGHUP");
+    assert.equal(await waiter.done, 129);
+    assert.deepEqual(tickets(dir), []);
+    assert.equal(recordOf(dir, wid), undefined);
+    const later = launch(dir, dir, execArgs(touchMarker(dir)));
+    const lid = await waitFor(() => later.id());
+    await waitFor(() => recordOf(dir, lid)?.state === "waiting");
+    holder.child.kill("SIGINT");
+    assert.equal(await holder.done, 130);
+    assert.equal(await later.done, 0);
+    assert.ok(fs.existsSync(marker(dir)), "the later caller ran");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("nodeTestArgs forwards --test-shard to node, before --test", () => {
+  assert.deepEqual(nodeTestArgs(["--import", "./h.mjs", "--test-shard=2/3", "a/*.ts", "b/*.ts"], 2), ["--import", "./h.mjs", "--test-shard=2/3", "--test", "--test-concurrency=2", "a/*.ts", "b/*.ts"]);
+});

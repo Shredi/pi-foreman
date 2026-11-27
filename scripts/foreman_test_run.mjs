@@ -11,7 +11,8 @@
 // (the wait counter restarts whenever the holder changes): exit 75, nothing run.
 // Every run prints one stderr line with its run id and keeps a record <lockdir>/test-runs/<id>.json (removed on exit). `--stop <id>` writes
 // <id>.stop, which the run polls (waiting or running): a queued run leaves the queue, a running run's tree is stopped and the lock released;
-// the stopped run exits 130. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
+// the stopped run exits 130. A SIGINT, SIGTERM or SIGHUP to the wrapper itself ends it the same way: waiting, the ticket is dropped; running,
+// the whole child tree is stopped (SIGTERM, after 5 s SIGKILL), the lock is released and it exits 128+signal. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
 // The holder touches the lock file every 5 s (heartbeat); a lock is stale when its pid is dead or the heartbeat is older than 60 s (a lock without an id, written by the old wrapper, instead when `started` is older than the max minutes). A live
 // holder is never taken over: it caps its own run at FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) and exits 124.
 // `--targeted <node args and globs/files...>` is a node-mode run that takes one of FOREMAN_TEST_TARGETED_SLOTS (default 2) machine-wide
@@ -1146,7 +1147,7 @@ async function main(rawArgv, env = process.env) {
   const limitLine = () =>
     `foreman_test_run: time limit of ${limitS} s reached after ${elapsedS()} s; stopped the run${holder ? `; waited for the ${targeted ? "slots held by" : "lock held by"} ${[holder].flat().map(holderText).join("; ")}` : ""}\n`;
   // a signal while waiting ends the process; the exit handlers remove the record, the stop file and the ticket
-  const waitSignals = ["SIGINT", "SIGTERM"].map((s) => [s, () => process.exit(128 + os.constants.signals[s])]);
+  const waitSignals = ["SIGINT", "SIGTERM", "SIGHUP"].map((s) => [s, () => process.exit(128 + os.constants.signals[s])]);
   for (const [s, h] of waitSignals) process.on(s, h);
   if (!lockDisabled(env)) {
     const waitMin = Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_WAIT_MINUTES) : 20;
@@ -1181,10 +1182,14 @@ async function main(rawArgv, env = process.env) {
   record.state = "running";
   writeRecord();
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(runRoot ?? os.tmpdir(), "pf-spawn-count-"));
+  let signalExit; // 128+signo of the signal that stopped the run
   const code = await new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
-    const forward = (sig) => () => child.kill(sig);
-    const handlers = ["SIGINT", "SIGTERM"].map((s) => [s, forward(s)]);
+    const forward = (sig) => () => {
+      signalExit = 128 + os.constants.signals[sig];
+      stopRun("signal", `foreman_test_run: run ${id} got ${sig}; stopped the run\n`);
+    };
+    const handlers = ["SIGINT", "SIGTERM", "SIGHUP"].map((s) => [s, forward(s)]);
     for (const [s, h] of handlers) process.on(s, h);
     let timer;
     let capTimer;
@@ -1206,7 +1211,7 @@ async function main(rawArgv, env = process.env) {
       if (killing) await killing;
       for (const [s, h] of handlers) process.off(s, h);
       release();
-      resolve(reason === "stop" ? 130 : reason ? 124 : code);
+      resolve(reason === "signal" ? signalExit : reason === "stop" ? 130 : reason ? 124 : code);
     };
     if (limitMs !== undefined) {
       timer = setTimeout(() => stopRun("limit", limitLine()), Math.max(0, limitMs - (Date.now() - started)));
@@ -1220,7 +1225,10 @@ async function main(rawArgv, env = process.env) {
     });
     child.on("close", (code, signal) => done(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1)));
   });
-  if (!countDir) return code;
+  if (!countDir || signalExit !== undefined) {
+    if (countDir) fs.rmSync(countDir, { recursive: true, force: true });
+    return code;
+  }
   try {
     const records = readSpawnCounts(countDir);
     const totals = sumSpawnCounts(records);
