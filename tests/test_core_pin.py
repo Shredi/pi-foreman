@@ -1,4 +1,8 @@
 import hashlib
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -34,6 +38,31 @@ class CorePinTest(unittest.TestCase):
         self.assertEqual(
             [r for r in want if want[r] != have[r]], [], "changed files"
         )
+
+
+class ManifestRoundTripTest(unittest.TestCase):
+    def test_write_manifest_roundtrip_and_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            shutil.copy(ROOT / "scripts" / "pull_core.py", root / "scripts" / "pull_core.py")
+            shutil.copytree(CORE, root / "core", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            script = str(root / "scripts" / "pull_core.py")
+
+            def run(flag):
+                return subprocess.run(
+                    [sys.executable, "-I", script, flag], capture_output=True, text=True
+                ).returncode
+
+            original = (CORE / "MANIFEST").read_bytes()
+            self.assertEqual(run("--write-manifest"), 0)
+            self.assertEqual((root / "core" / "MANIFEST").read_bytes(), original)
+            self.assertEqual(run("--check"), 0)
+            target = next(p for p in sorted((root / "core").rglob("*.py")))
+            target.write_bytes(target.read_bytes() + b"\n# edited\n")
+            self.assertEqual(run("--check"), 1)
+            self.assertEqual(run("--write-manifest"), 0)
+            self.assertEqual(run("--check"), 0)
 
 
 if __name__ == "__main__":
