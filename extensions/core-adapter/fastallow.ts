@@ -90,12 +90,12 @@ function psFileSystemPath(p: string): boolean {
 
 /**
  * Skip-only: `powershell|pwsh [.exe] -NoProfile [-NonInteractive] -Command <line>` where the line is one of `Get-Volume`, `Get-PSDrive [-PSProvider FileSystem]` or
- * `Get-ChildItem` with `-Recurse -File -Directory -Force` and one path without `*`, `?` or `[` (`-Path <p>` or positional): a drive path or a relative path of the FileSystem provider that
+ * `Get-ChildItem` with `-File -Directory -Force` (never `-Recurse`: a whole-disk scan is judged like `ls -R /`) and one path without `*`, `?` or `[` (`-Path <p>` or positional): a drive path or a relative path of the FileSystem provider that
  * `secret` does not name. Without `-NoProfile` PowerShell runs the user's profile script, so it is required. Anything else is no skip-only form (the judge looks).
- * Reads no cmdlet knowledge from the line beyond this table; the segment must be the whole foreign-shell unit (no wrapper, redirect or here-document).
+ * Reads no cmdlet knowledge from the line beyond this table; the segment must be the whole foreign-shell unit (no wrapper, assignment prefix, redirect or here-document).
  */
 export function psSkipOnlyOk(seg: ShellSegment, secret: (path: string) => boolean): boolean {
-  if (seg.opaque !== "foreign_shell" || !PS_PROGRAMS.has(seg.program) || seg.wrappers.length > 0 || seg.redirects.length > 0 || seg.heredoc) return false;
+  if (seg.opaque !== "foreign_shell" || !PS_PROGRAMS.has(seg.program) || seg.wrappers.length > 0 || seg.assignPrefix || seg.redirects.length > 0 || seg.heredoc) return false;
   const a = seg.argv;
   const cmd = a.findIndex((w) => w.toLowerCase() === "-command");
   if (cmd < 0 || cmd === a.length - 1) return false;
@@ -119,7 +119,7 @@ export function psSkipOnlyOk(seg: ShellSegment, secret: (path: string) => boolea
   for (let i = 0; i < rest.length; i++) {
     const w = rest[i];
     const k = w.toLowerCase();
-    if (k === "-recurse" || k === "-file" || k === "-directory" || k === "-force") {
+    if (k === "-file" || k === "-directory" || k === "-force") {
       if (seen.has(k)) return false;
       seen.add(k);
     } else if (k === "-path") {

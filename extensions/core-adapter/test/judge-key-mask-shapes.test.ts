@@ -79,3 +79,14 @@ test("sk- runs mask in linear time (1 MiB)", () => {
     assert.ok(ms < 5000, `${ms} ms`);
   }
 });
+
+test("URL userinfo, bearer and private-key masks run in linear time (1 MiB of adversarial text)", () => {
+  const begin = "-----BEGIN PRIVATE KEY-----";
+  for (const unit of ["://a:", "Authorization: Bearer ", "Bearer a", `${begin}\n`, `${begin}\n\n  \n`, `${begin}AAAA\nAAAA\n`, "a:b@://"]) {
+    const input = unit.repeat(Math.ceil((1 << 20) / unit.length));
+    const t0 = performance.now();
+    maskKeys(input);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 5000, `${JSON.stringify(unit)}: ${ms} ms`);
+  }
+});

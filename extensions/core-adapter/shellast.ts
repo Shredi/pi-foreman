@@ -95,6 +95,8 @@ export interface ShellSegment {
    * body text once (as before) and spend their per-line budget on these copies alone.
    */
   walked?: boolean;
+  /** Set (true only; not enumerable, handed on by `carryFacts`) on a segment whose command word carried an assignment prefix (`NAME=value cmd`). */
+  assignPrefix?: true;
 }
 
 /** Hands the non-enumerable facts of `from` on to `copy` (a `{ ...seg }` copy drops them). */
@@ -102,6 +104,7 @@ export function carryFacts<S extends object>(copy: S, from: ShellSegment): S {
   if (from.programUnknown !== undefined) Object.defineProperty(copy, "programUnknown", { value: from.programUnknown, enumerable: false, configurable: true, writable: true });
   if (from.harnessRebound !== undefined) Object.defineProperty(copy, "harnessRebound", { value: from.harnessRebound, enumerable: false, configurable: true, writable: true });
   if (from.walked) Object.defineProperty(copy, "walked", { value: true, enumerable: false, configurable: true, writable: true });
+  if (from.assignPrefix) Object.defineProperty(copy, "assignPrefix", { value: true, enumerable: false, configurable: true, writable: true });
   if (from.behind !== undefined) Object.defineProperty(copy, "behind", { value: from.behind, enumerable: false, configurable: true, writable: true });
   return copy;
 }
@@ -756,6 +759,7 @@ function doCommand(cmd: Command, sc: Scope): string | null {
   for (const a of prefix) if (!(a.assign && harmless(a.assign))) c.reason = pick(c.reason, "assignment");
   const before = sc.run.out.length;
   const end = run(words, c, sc.cwd);
+  if (prefix.length > 0) for (const o of sc.run.out.slice(before)) Object.defineProperty(o, "assignPrefix", { value: true, enumerable: false, configurable: true, writable: true });
   if (prefix.some((a) => steersCode(a.assign)) && sc.run.out.length > before) markUnknown(sc);
   return end;
 }

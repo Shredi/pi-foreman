@@ -166,7 +166,7 @@ test("masking works line by line: the secret= variant keeps every line", () => {
 
 test("only the reads-on judge prompt carries the [redacted] sentence", () => {
   assert.ok(!judgeSystemPrompt().includes("[redacted]"));
-  assert.match(judgeSystemPrompt(true), /\[redacted\] in a file marks a masked key value \(a token, a password or a key block\), not code/);
+  assert.match(judgeSystemPrompt(true), /\[redacted\] in a file marks a masked key value \(a token, a password or a key block\) and may hide code; if what it hides matters for the verdict, answer refuse/);
 });
 
 test("a folder listing is masked per entry: no pattern spans names, the count matches the lines", () => {

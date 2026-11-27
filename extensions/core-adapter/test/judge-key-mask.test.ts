@@ -56,11 +56,11 @@ test("real key shapes are masked: token prefixes, a PEM block, secret-named lite
   assert.ok(body.includes("after the block"));
 });
 
-test("a PEM block keeps its line count, so a window and the more-hint stay true; an unterminated block is masked to the end", () => {
+test("a PEM block keeps its line count, so a window and the more-hint stay true; an unterminated BEGIN masks only its own line (defect 2: the mask never hides code)", () => {
   const masked = maskKeys("a\n-----BEGIN PRIVATE KEY-----\nxx\nyy\n-----END PRIVATE KEY-----\nb\n");
   assert.equal(masked.split("\n").length, 7);
   assert.ok(masked.startsWith("a\n[redacted]") && masked.endsWith("\nb\n"));
-  assert.ok(!maskKeys("a\n-----BEGIN OPENSSH PRIVATE KEY-----\nxx\nyy").includes("xx"));
+  assert.equal(maskKeys("a\n-----BEGIN OPENSSH PRIVATE KEY-----\nxx\nyy"), "a\n[redacted]\nxx\nyy");
 });
 
 test("a long run is no key by its length: a 40-char identifier and a 64-hex hash are shown, a [redacted] mark appears only for a key", () => {

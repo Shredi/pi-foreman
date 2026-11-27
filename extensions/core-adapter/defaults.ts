@@ -267,6 +267,11 @@ function workFolderBarred(c: DefaultCtx, dir: string): boolean {
   return inWorkFolder(c, dir) && ![c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, dir, c.platform, c.roots.realpath, c.roots.worktree));
 }
 
+/** `cwd` lies in the worktree or a scratch dir: the only places (besides read-only roots' reads) where a git write keeps a default. */
+function ownGitRoot(c: DefaultCtx, cwd: string): boolean {
+  return [c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree));
+}
+
 function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec: EffectCtx, chain: Segment): string | null {
   const sub = argv[0];
   const rest = argv.slice(1);
@@ -277,7 +282,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
       if (!gitDirReadable(c.roots, cwd, c.platform)) return null;
       const plain = gitDefault(after, text, cwd, c, ec, { ...chain, words: [chain.words[0], ...after] });
       // a read-only root (`additionalDirectories`, an install root) is no place for a git write: only the worktree and scratch dirs keep a write default
-      return plain === null || plain === "default-git-read" || [c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree)) ? plain : null;
+      return plain === null || plain === "default-git-read" || ownGitRoot(c, cwd) ? plain : null;
     }
     // a push: the branch, protected and push-config facts are those of <dir>
     if (workFolderBarred(c, cwd)) return null;
@@ -291,6 +296,8 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !gitReadSubWrite(sub, rest) && !(sub === "grep" && rest.some((a) => GIT_GREP_PAGER.test(a))) ? "default-git-read" : null;
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
   if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
+  // the same for a `cd` into a read-only root (`additionalDirectories`, an owned read root, the state dir): a git write there is no default
+  if (!GIT_READ_ONLY_SUBS.has(sub) && gitDirReadable(c.roots, cwd, c.platform) && !ownGitRoot(c, cwd)) return null;
   switch (sub) {
     case "branch":
       if (branchDeleteMerged(rest, cwd, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts })) return "default-git-branch-merged";

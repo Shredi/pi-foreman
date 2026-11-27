@@ -25,7 +25,7 @@ test("the listed forms run with no judge call, main and child", () => {
   for (const l of [
     "powershell -NoProfile -Command Get-Volume", "pwsh -NoProfile -Command Get-Volume", "powershell.exe -NoProfile -NonInteractive -Command Get-Volume", "pwsh.exe -NonInteractive -NoProfile -Command get-volume",
     'powershell -NoProfile -Command "Get-PSDrive -PSProvider FileSystem"', "powershell -NoProfile -Command Get-PSDrive",
-    'powershell -NoProfile -Command "Get-ChildItem -Path C:\\Users\\me -Recurse -File"', "powershell -NoProfile -Command Get-ChildItem C:/x -Directory -Force", "powershell -NoProfile -Command Get-ChildItem",
+    'powershell -NoProfile -Command "Get-ChildItem -Path C:\\Users\\me -File"', "powershell -NoProfile -Command Get-ChildItem C:/x -Directory -Force", "powershell -NoProfile -Command Get-ChildItem",
     "powershell -NoProfile -Command Get-ChildItem sub\\dir", "powershell -NoProfile -Command Get-Volume | cat",
   ]) for (const r of [roots, { ...roots, child: true, role: "builder" }]) assert.ok(allowed(l, r), `${r.child ? "child" : "main"}: ${l} -> ${JSON.stringify(run(l, r))}`);
 });
