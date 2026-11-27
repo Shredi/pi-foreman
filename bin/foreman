@@ -1,10 +1,10 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs). reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge|test-run [args]` -> scripts/foreman_<name>.py (features, knowledge, test-run: .mjs; test-run runs any command behind the machine-wide test lock: `foreman test-run [--detach] [--targeted] -- <cmd>`, `--wait <id>`, `--stop <id>`). reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 # native Windows path under MSYS (node and python get `C:/...`, not `/c/...`): pwd -W, then cygpath -m, then pwd
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && { pwd -W 2>/dev/null || cygpath -m "$(pwd)" 2>/dev/null || pwd; })
 sub="${1:-}"
 # a GUI app's PATH has no nvm node: the Node of the last Pi session (extensions/core-adapter/nodepath.ts) joins PATH for the Node subcommands
-case "$sub" in setup|dialogs|prs|rounds|reports|pane-resume|features|knowledge)
+case "$sub" in setup|dialogs|prs|rounds|reports|pane-resume|features|knowledge|test-run)
     if ! command -v node >/dev/null 2>&1; then
         nrec="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/node-path"
         nbin=""
@@ -83,6 +83,10 @@ if [ "$sub" = "features" ]; then
     shift
     exec node "$here/../scripts/foreman_features.mjs" "$@"
 fi
+if [ "$sub" = "test-run" ]; then
+    shift
+    exec node "$here/../scripts/foreman_test_run.mjs" --generic "$@"
+fi
 if [ "$sub" = "knowledge" ]; then
     shift
     exec node "$here/../scripts/foreman_knowledge.mjs" "$@"
@@ -101,7 +105,7 @@ case "$sub" in
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
     machine) script="$here/../scripts/foreman_session.py"; set -- machine "$@" ;; # `foreman machine setup <name>` is a session verb
     *) case "$sub" in backlog) echo "foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)" >&2; exit 2 ;; esac
-       echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]" >&2; exit 2 ;;
+       echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge|test-run [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

@@ -41,6 +41,7 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 
 ### Ledger
 - The ledger is `.workflow/LEDGER-<topic>.md`. One line per requirement: `- [ ] N. item`. The last item is `- [ ] V. fresh-eyes verification passed`.
+- An item's full line (text plus notes) holds at most 1000 characters, so keep evidence in a file and link it; the tools and the write guard refuse a longer one.
 - Create the ledger with the `write` tool. Writing it binds the session; a shell-written ledger stays unbound, so the gates see none.
 - The spawn gate refuses a child launch until a ledger exists. The stop gate blocks ending the session while items are open.
 <!--ledgerHelper=tool-->- Manage items with the tool `foreman_ledger({action, items?, text?})` on your own ledger. Actions: `status`; `mark` (`items`: item numbers, several in one call); `add` (`text`, or `texts` for several items in one call); `init` (`topic`, `texts?`: creates and binds `.workflow/LEDGER-<topic>.md` with the `texts` items plus V when `write` is missing, and binds an existing file unless the session is bound elsewhere); `upsert` (`item?`, `text`: replace that item's text and keep its state, or append when `item` is omitted; same text is a no-op; `entries: [{item?, text}]` for several in one call); `note` and `defer` (one item, `text` is the note or the reason). Every call returns `ledger status`.

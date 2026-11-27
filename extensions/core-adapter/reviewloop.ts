@@ -5,7 +5,7 @@
 //   stalled: the state is unchanged (no diff) and the sig brings nothing new (a subset).
 // A PASS restarts the comparison; a FAIL with an empty sig fires nothing (there is nothing to compare). The stop
 // (`LoopStop`) refuses builder and reviewer launches (index.ts) until an owner prompt, an answered ask_user_question, a parent brief,
-// or a `/ceremony` tier change clears it.
+// or a `/ceremony` tier change clears it. A stop belongs to one plan (`LoopStop.plan`): a launch about another plan (a new plan file in the same worktree) is not refused by it.
 // A finding is keyed on its normalized text (`txt:`), not on file, line or class: the stop fires only when the same problem comes back.
 // Code reviews (`loopVerdictOf`): an item-only repeat (no `txt:` key) is not a repeat when both rounds carry a `work` count that grew and the known state changed.
 // Plan reviews (`loopVerdictOf`): an equal set across two different plan versions is a repeat only when it holds a `txt:` key; an
@@ -31,7 +31,12 @@ export interface LoopStop {
   rule: LoopRule;
   kind: ReviewKind;
   sig: string[];
+  /** The plan path the stop belongs to (a plan-review round: that plan file; a code round: the session's plan record). Absent = no plan, or a state saved before the field: the stop applies to every launch. A launch about another plan is not refused by it. */
+  plan?: string;
 }
+
+/** Whether a stop applies to a launch about `launchPlan` (null = no plan known): a stop or launch without a plan path always applies; two plan paths must be equal. */
+export const stopApplies = (stop: LoopStop, launchPlan: string | null): boolean => !stop.plan || launchPlan === null || stop.plan === launchPlan;
 
 /** The located finding's key: the `finding_id` triple of scripts/foreman_findings.py (file, line // 5, class); the note is not part of it. A line gives `-`, an absent class `""`. */
 export const findingKey = (f: { file: string; line: number | null; class: string }): string => `at:${f.file}:${f.line === null ? "-" : Math.floor(f.line / 5)}:${f.class}`;
