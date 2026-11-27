@@ -1312,6 +1312,66 @@ test("a running wrapper whose caller was SIGKILLed stops its tree, releases the 
   }
 });
 
+const historyExit = (dir, id) => {
+  const f = path.join(dir, "test-history", "history.jsonl");
+  if (!fs.existsSync(f)) return undefined;
+  const line = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((r) => r.id === id);
+  return line?.exit;
+};
+
+test("a running wrapper whose caller is gone with closed pipes still kills a SIGTERM-ignoring tree, removes the lock and exits 125", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  let h;
+  try {
+    h = launchBehindSh(dir, execArgs(stubbornTree(pidFile)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    const id = await waitFor(() => h.id());
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    h.child.stdout.destroy();
+    h.child.stderr.destroy();
+    h.child.kill("SIGKILL");
+    assert.ok(await goneWithin(wpid, 20_000), "the orphaned wrapper exited");
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.ok(!fs.existsSync(lockFile(dir)), "the lock file is removed");
+    assert.equal(await waitFor(() => historyExit(dir, id)), 125);
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    if (fs.existsSync(pidFile)) killQuiet(Number(fs.readFileSync(pidFile, "utf8")));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a queued wrapper whose caller is gone with closed pipes leaves the queue and exits 125", POSIX_ONLY, async () => {
+  const dir = tmp();
+  let h;
+  try {
+    const holder = launch(dir, dir, execArgs(`setTimeout(() => process.exit(0), 4000)`));
+    await waitFor(() => holder.id() && recordOf(dir, holder.id())?.state === "running");
+    h = launchBehindSh(dir, execArgs(touchMarker(dir)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    const id = await waitFor(() => h.id());
+    await waitFor(() => recordOf(dir, id)?.state === "waiting" && tickets(dir).length === 1);
+    h.child.stdout.destroy();
+    h.child.stderr.destroy();
+    h.child.kill("SIGKILL");
+    assert.ok(await gone(wpid), "the orphaned wrapper exited");
+    assert.deepEqual(tickets(dir), []);
+    assert.equal(recordOf(dir, id), undefined);
+    assert.equal(await waitFor(() => historyExit(dir, id)), 125);
+    assert.ok(!fs.existsSync(marker(dir)), "the orphan ran nothing");
+    assert.equal(await holder.done, 0);
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("a detached run is orphaned by design and still completes after its caller exited", POSIX_ONLY, async () => {
   const dir = tmp();
   const e = env(dir);

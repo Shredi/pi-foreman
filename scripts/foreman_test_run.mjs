@@ -16,7 +16,7 @@
 // Orphan check: a caller that is aborted (a tool timeout, a SIGKILL) can die without signalling the wrapper. The wrapper records process.ppid at start and checks it on the
 // wait poll (250 ms) and the stop poll (200 ms): POSIX, the ppid changed (reparented to 1 or a subreaper); Windows, the start parent pid is no longer alive. Then it stops
 // like `--stop` (waiting: ticket dropped; running: tree stopped, lock released), prints `foreman_test_run: run <id> caller gone ...` and exits 125. The detached worker
-// (FOREMAN_TEST_DETACHED, orphaned by design) is exempt. `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
+// (FOREMAN_TEST_DETACHED, orphaned by design) is exempt. The dead caller's stdout/stderr pipes are closed: stream errors (EPIPE) are ignored so the stop path always ends. Known limit: a wrapper whose parent is already gone at start (ppid 1 from the start) is not seen as orphaned, since ppid 1 is also a legitimate parent (init, a container). `--stop-cwd` stops this worktree's runs only; `--list` prints the holder and the runs. No signals, no pattern kill.
 // The holder touches the lock file every 5 s (heartbeat); a lock is stale when its pid is dead or the heartbeat is older than 60 s (a lock without an id, written by the old wrapper, instead when `started` is older than the max minutes). A live
 // holder is never taken over: it caps its own run at FOREMAN_TEST_LOCK_MAX_MINUTES (default 30) and exits 124.
 // `--targeted <node args and globs/files...>` is a node-mode run that takes one of FOREMAN_TEST_TARGETED_SLOTS (default 2) machine-wide
@@ -1008,6 +1008,8 @@ async function main(rawArgv, env = process.env) {
   if (detach) return detachRun(argv, env, started);
   // a detached child ignores the time limit (FOREMAN_TEST_TIMEOUT and --timeout); its caller returned long ago
   const detachedRun = env.FOREMAN_TEST_DETACHED === "1";
+  // A caller that is gone has closed our stdout/stderr pipes: a write then raises an asynchronous EPIPE that would crash the wrapper before the stop path (kill, lock release) ends.
+  for (const stream of [process.stdout, process.stderr]) stream.on("error", () => {});
   let limitS;
   if (argv[0] === "--timeout") {
     limitS = detachedRun ? undefined : positiveNumber(argv[1]);
