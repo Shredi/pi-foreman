@@ -33,6 +33,11 @@ class BinLedgerRetryTest(unittest.TestCase):
             )
             fake.chmod(0o755)
             env = dict(os.environ, PI_FOREMAN_PYTHON=str(fake), PI_FOREMAN_STATE_DIR=str(state))
+            if os.name == "nt":
+                # Node cannot start a shebang script on Windows (a real install names an interpreter .exe), so the shim's own
+                # sh retry loop is the subject here: no node on its PATH (the Node helper's rerun: test_ledger_run_bytes.py)
+                env["PATH"] = os.pathsep.join(d for d in env["PATH"].split(os.pathsep) if not os.path.exists(os.path.join(d, "node.exe")))
+                env["PI_CODING_AGENT_DIR"] = str(tmp / "agent")
             proc = subprocess.run(
                 ["sh", str(SHIM), "mark", "1"], env=env, capture_output=True, text=True, timeout=30
             )

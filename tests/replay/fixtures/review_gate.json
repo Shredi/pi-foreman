@@ -61,7 +61,7 @@
   "b-p2": [{"text": "[[replay:p2]] built"}],
   "r-p3": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "pass"}}]}, {"text": "[[replay:p3]] reviewed"}],
   "z-p4": [{"text": "looked"}],
-  "b-p6": [{"text": "[[replay:p6]] changed"}],
+  "b-p6": [{"tools": [{"name": "write", "arguments": {"path": "change.txt", "content": "changed\n"}}]}, {"text": "[[replay:p6]] changed"}],
   "r-p7": [{"tools": [{"name": "review_verdict", "arguments": {"verdict": "fail", "findings": [{"kind": "defect", "text": "a.txt:1 fails", "file": "a.txt", "line": 1}]}}]}, {"text": "[[replay:p7]] reviewed"}]
  }
 }

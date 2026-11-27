@@ -29,8 +29,9 @@ function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function exec(spec) {
-  return spawnSync(spec.cmd, spec.args, { encoding: "utf8", stdio: ["inherit", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+/** Output as bytes (`encoding: "buffer"`): ledger.py's stdout and stderr go on unchanged, never decoded and re-encoded. */
+function exec(spec, encoding = "buffer") {
+  return spawnSync(spec.cmd, spec.args, { encoding, stdio: ["inherit", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
 }
 
 /** ledger.py with the bounded rerun on the Windows access-denied marker; passes its output and returns its exit code. */
@@ -38,7 +39,7 @@ function runLedger(spec) {
   let r;
   for (let i = 0; ; i++) {
     r = exec(spec);
-    if (r.status !== 0 && i < RETRY_DELAYS_MS.length && RETRY_MARKER.test(r.stderr ?? "")) {
+    if (r.status !== 0 && i < RETRY_DELAYS_MS.length && RETRY_MARKER.test(r.stderr?.toString("latin1") ?? "")) {
       sleep(RETRY_DELAYS_MS[i]);
       continue;
     }
@@ -48,8 +49,8 @@ function runLedger(spec) {
     process.stderr.write(`ledger: ${r.error.message}\n`);
     return 1;
   }
-  if (r.stdout) process.stdout.write(r.stdout);
-  if (r.stderr) process.stderr.write(r.stderr);
+  if (r.stdout?.length) process.stdout.write(r.stdout);
+  if (r.stderr?.length) process.stderr.write(r.stderr);
   return r.status ?? 1;
 }
 
@@ -72,7 +73,7 @@ function main() {
     }
     if (!lockMod) return unlocked(plan, "the lock module did not load");
     let target = "";
-    const r = exec(plan.resolve);
+    const r = exec(plan.resolve, "utf8");
     if (r.status === 0 && !r.error) target = (r.stdout ?? "").trim();
     // no target: ledger.py reports its own error (or the read-only use needs no lock), so this case stays quiet
     if (!target) return runLedger(plan.run);
