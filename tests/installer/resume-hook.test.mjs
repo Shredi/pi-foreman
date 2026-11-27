@@ -1,5 +1,6 @@
 // The resume block (setup/resume-hook.mjs, docs/install.md): written per shell and file rule under the guard of the env block, replaced on a
 // re-run, taken out by --no-resume-hook and --remove; a dry run, win32 and --no-env write none (a custom agent dir: resume-hook-custom-dir.test.mjs). Temp homes only.
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
