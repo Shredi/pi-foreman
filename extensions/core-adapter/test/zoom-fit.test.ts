@@ -1,0 +1,72 @@
+// The figure fit and the Enlarge button of the page snippet (zoom.ts): the rules that shrink every figure to its box, and the corner button that
+// opens the same overlay as a click. The repo has no DOM library, so these pin the snippet's text and compile its script; the live check (headless
+// Chromium, run by hand; its results are in the PR's Verification section) covers the layout.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as vm from "node:vm";
+import { ZOOM_SNIPPET } from "../zoom.ts";
+
+const STYLE = /<style>([\s\S]*?)<\/style>/.exec(ZOOM_SNIPPET)?.[1] ?? "";
+const SCRIPT = /<script>([\s\S]*?)<\/script>/.exec(ZOOM_SNIPPET)?.[1] ?? "";
+
+test("the fit rules shrink every figure to its box and keep its shape, never past natural size", () => {
+  // the cap: 100% of the box, or the viewBox width for an SVG without a pixel width (set by the script); !important beats a page's own sizes
+  assert.match(STYLE, /:is\(img,svg\):not\(svg \*\):not\(\.pfz-ov \*\)\{max-width:min\(100%,var\(--pfz-w,100%\)\)!important\}/);
+  // the height follows the width: an SVG with a viewBox and an img keep their aspect ratio
+  assert.match(STYLE, /:is\(img,svg\[viewBox\]\):not\(svg \*\):not\(\.pfz-ov \*\)\{height:auto!important\}/);
+  // a picture (a mermaid diagram) is a block, so the figure inside it is capped by its box
+  assert.match(STYLE, /picture\{display:block\}/);
+});
+
+test("the fit rules leave the overlay and the figures inside an SVG alone", () => {
+  // the overlay's own sizes (set by the script on its clones) must not be capped
+  assert.equal(STYLE.split(":not(.pfz-ov *)").length - 1, 3);
+  assert.equal(STYLE.split(":not(svg *)").length - 1, 2);
+});
+
+test("the SVGs without a pixel width get their viewBox width as the cap, once, at load", () => {
+  assert.match(SCRIPT, /function fit\(\)\{document\.querySelectorAll\('svg\[viewBox\]'\)/);
+  assert.match(SCRIPT, /if\(v\.width&&\(!w\|\|\/%\$\/\.test\(w\)\)\)s\.style\.setProperty\('--pfz-w',v\.width\+'px'\);/);
+  // an img of an SVG picture (a mermaid diagram) is capped the same way, by the viewBox width read from its data URI
+  assert.match(SCRIPT, /document\.querySelectorAll\('img'\)\.forEach\(function\(i\)\{var t=i\.src\.indexOf\('data:image\/svg\+xml;base64,'\)===0/);
+  assert.match(SCRIPT, /i\.style\.setProperty\('--pfz-w',p\[2\]\+'px'\)/);
+  assert.match(SCRIPT, /fit\(\);enl\(\);/);
+});
+
+test("the Enlarge button: a real button with aria-label and title Enlarge, added to each figure", () => {
+  assert.match(SCRIPT, /function enl\(\)\{document\.querySelectorAll\('img,svg'\)/);
+  assert.match(SCRIPT, /b\.type='button';b\.className='pfz-enl';b\.title='Enlarge';b\.setAttribute\('aria-label','Enlarge'\)/);
+  assert.match(SCRIPT, /w\.appendChild\(b\)/);
+  // the wrapper takes the figure's place in the flow; a picture is a block wrapper (its margins stay inside it)
+  assert.match(SCRIPT, /w\.className='pfz-w'\+\(t\.tagName==='PICTURE'\?' pfz-b':''\);p\.insertBefore\(w,t\);w\.appendChild\(t\)/);
+});
+
+test("the Enlarge button opens the same overlay as a click on the figure", () => {
+  assert.match(SCRIPT, /b\.addEventListener\('click',function\(\)\{open\(g\);\}\)/);
+});
+
+test("no button for a figure inside a link or a button, inside the overlay, or inside an SVG", () => {
+  assert.match(SCRIPT, /if\(!p\|\|g\.closest\('a,button,\.pfz-ov'\)\|\|\(g\.tagName\.toLowerCase\(\)==='svg'&&p\.closest\('svg'\)\)\)return;/);
+});
+
+test("the button is low on screen normally, full on hover and keyboard focus, and visible on touch (hover:none)", () => {
+  assert.match(STYLE, /\.pfz-enl\{[^}]*opacity:\.35/);
+  assert.match(STYLE, /\.pfz-enl:hover,\.pfz-enl:focus-visible,\.pfz-w:hover>\.pfz-enl\{opacity:1\}/);
+  assert.match(STYLE, /\.pfz-enl:focus-visible\{outline:2px solid #fff;outline-offset:2px\}/);
+  assert.match(STYLE, /@media \(hover:none\)\{\.pfz-enl\{opacity:\.9\}\}/);
+});
+
+test("the wrapper keeps the figure in place: relative, inline-block (block for a picture), capped at its box", () => {
+  assert.match(STYLE, /\.pfz-w\{position:relative;display:inline-block;max-width:100%;vertical-align:top\}/);
+  assert.match(STYLE, /\.pfz-w\.pfz-b\{display:block\}/);
+});
+
+test("the added style and script stay ASCII, with no request and no remote URL", () => {
+  assert.doesNotMatch(ZOOM_SNIPPET, /[^\x00-\x7f]/);
+  assert.doesNotMatch(ZOOM_SNIPPET, /https?:\/\//);
+  assert.doesNotMatch(SCRIPT, /\beval\(|localStorage|sessionStorage|fetch\(|XMLHttpRequest/);
+});
+
+test("the script with the button compiles as JavaScript", () => {
+  assert.doesNotThrow(() => new vm.Script(SCRIPT));
+});

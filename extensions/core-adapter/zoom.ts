@@ -2,6 +2,8 @@
 // of a served HTML page, at serve time only (pageserver.ts `handle`): the stored plan, note and brief bytes stay as they are, so plan hashes and
 // approvals do not change. The snippet is ASCII, makes no request, uses no storage and no eval, and runs under the page's sandbox (allow-scripts).
 // Enlarged images and inline SVG are redrawn at the new size (never scaled as a bitmap), so a mermaid diagram stays sharp.
+// The same style fits every figure to its box (a model's own HTML plan has no harness stylesheet, so its figures need these rules too), and the
+// script puts a small Enlarge button in the corner of each figure; it opens the same overlay as a click.
 
 export const ZOOM_MARKER = "<!-- pi-foreman:zoom -->";
 
@@ -13,6 +15,10 @@ export const ZOOM_SNIPPET = [
   ".pfz-bar{position:absolute;top:12px;right:12px;display:flex;gap:8px;z-index:1}",
   ".pfz-ov button{min-width:44px;min-height:44px;padding:0 12px;border:0;border-radius:22px;font:600 20px/1 system-ui,sans-serif;background:#fff;color:#111;cursor:pointer}",
   ":is(img,svg):not(a *):not(.pfz-ov *):hover{cursor:zoom-in;outline:2px dashed currentColor;outline-offset:3px}",
+  "picture{display:block}:is(img,svg):not(svg *):not(.pfz-ov *){max-width:min(100%,var(--pfz-w,100%))!important}:is(img,svg[viewBox]):not(svg *):not(.pfz-ov *){height:auto!important}",
+  ".pfz-w{position:relative;display:inline-block;max-width:100%;vertical-align:top}.pfz-w.pfz-b{display:block}",
+  ".pfz-enl{position:absolute;top:6px;right:6px;z-index:1;display:flex;align-items:center;justify-content:center;width:32px;height:32px;margin:0;padding:0;border:0;border-radius:8px;background:rgba(0,0,0,.6);color:#fff;opacity:.35;cursor:zoom-in;transition:opacity .15s}",
+  ".pfz-enl:hover,.pfz-enl:focus-visible,.pfz-w:hover>.pfz-enl{opacity:1}.pfz-enl:focus-visible{outline:2px solid #fff;outline-offset:2px}@media (hover:none){.pfz-enl{opacity:.9}}",
   "</style>",
   "<script>",
   "(function(){",
@@ -43,6 +49,14 @@ export const ZOOM_SNIPPET = [
   "ov.addEventListener('click',function(e){var t=e.target,a=t.getAttribute('data-a');if(a==='close')close();else if(a==='reset')reset();else if(t===ov&&!moved)close();});}",
   "document.addEventListener('click',function(e){var t=e.target;if(ov||!t.closest||t.closest('a,button'))return;var g=t.closest('img,svg');if(!g)return;",
   "while(g.tagName.toLowerCase()==='svg'&&g.parentElement&&g.parentElement.closest('svg'))g=g.parentElement.closest('svg');open(g);});",
+  "function fit(){document.querySelectorAll('svg[viewBox]').forEach(function(s){var v=s.viewBox.baseVal,w=s.getAttribute('width');if(v.width&&(!w||/%$/.test(w)))s.style.setProperty('--pfz-w',v.width+'px');});",
+  "document.querySelectorAll('img').forEach(function(i){var t=i.src.indexOf('data:image/svg+xml;base64,')===0?atob(i.src.split(',')[1]):'',k=t.indexOf('viewBox=');if(k<0)return;var p=t.slice(k+8,k+80).split(/[\\s\"'>]+/).filter(Boolean);if(p[2])i.style.setProperty('--pfz-w',p[2]+'px');});}",
+  "function enl(){document.querySelectorAll('img,svg').forEach(function(g){var t=g.parentElement&&g.parentElement.tagName==='PICTURE'?g.parentElement:g,p=t.parentElement;",
+  "if(!p||g.closest('a,button,.pfz-ov')||(g.tagName.toLowerCase()==='svg'&&p.closest('svg')))return;var w=document.createElement('span'),b=document.createElement('button');",
+  "w.className='pfz-w'+(t.tagName==='PICTURE'?' pfz-b':'');p.insertBefore(w,t);w.appendChild(t);b.type='button';b.className='pfz-enl';b.title='Enlarge';b.setAttribute('aria-label','Enlarge');",
+  "b.innerHTML='<svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" aria-hidden=\"true\"><path d=\"M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg>';",
+  "b.addEventListener('click',function(){open(g);});w.appendChild(b);});}",
+  "fit();enl();",
   "})();",
   "</script>",
   "",
