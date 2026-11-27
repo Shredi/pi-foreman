@@ -75,8 +75,8 @@ test("the snippet hooks img and svg, makes no request and uses no http(s) URL", 
   assert.match(ZOOM_SNIPPET, /svg/);
   assert.doesNotMatch(ZOOM_SNIPPET, /https?:\/\//);
   assert.doesNotMatch(ZOOM_SNIPPET, /[^\x00-\x7f]/);
-  // 7168: the wrapper variants (block, percentage, centred) and the focus return grew the snippet from 4096 (see zoom-fit.test.ts)
-  assert.ok(Buffer.byteLength(ZOOM_SNIPPET) < 7168, "snippet stays small");
+  // 8192: the wrapper variants (block, percentage, centred, right), the focus return and the natural-size skip grew the snippet from 4096 (see zoom-fit.test.ts)
+  assert.ok(Buffer.byteLength(ZOOM_SNIPPET) < 8192, "snippet stays small");
 });
 
 test("the overlay sizes from visualViewport and keeps a near-opaque backdrop", () => {

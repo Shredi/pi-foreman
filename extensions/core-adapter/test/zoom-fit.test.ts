@@ -72,8 +72,25 @@ test("the Enlarge button's focus goes back to it when an overlay it opened close
   assert.match(SCRIPT, /b\.addEventListener\('click',function\(\)\{open\(g,b\);\}\)/);
 });
 
-test("no Enlarge button for a figure rendered under 48 px in either dimension", () => {
-  assert.match(SCRIPT, /var r=g\.getBoundingClientRect\(\);if\(r\.width&&r\.height&&\(r\.width<48\|\|r\.height<48\)\)return;/);
+test("no Enlarge button for a figure whose natural size is under 48 px in either dimension", () => {
+  assert.match(SCRIPT, /var n=nat\(g\);if\(n&&\(n\[0\]<48\|\|n\[1\]<48\)\)return;/);
+});
+
+test("the natural size: the viewBox for an SVG, the data-URI viewBox for an img of SVG, else the natural size or the pixel attributes", () => {
+  assert.match(SCRIPT, /function nat\(g\)\{var s=g\.tagName\.toLowerCase\(\)==='svg',v=s\?g\.viewBox\.baseVal:null/);
+  assert.match(SCRIPT, /if\(v&&v\.width&&v\.height\)return \[v\.width,v\.height\];/);
+  assert.match(SCRIPT, /if\(!s&&g\.src\.indexOf\('data:image\/svg\+xml;base64,'\)===0\)\{t=atob\(g\.src\.split\(','\)\[1\]\);k=t\.indexOf\('viewBox='\);/);
+  assert.match(SCRIPT, /if\(!s&&g\.naturalWidth&&g\.naturalHeight\)return \[g\.naturalWidth,g\.naturalHeight\];/);
+  // a percentage width is not a pixel size; an unknown size keeps the button
+  assert.match(SCRIPT, /function px\(v\)\{var n=parseFloat\(v\);return n>0&&!\/%\$\/\.test\(v\)\?n:0;\}/);
+  assert.match(SCRIPT, /var w=px\(g\.getAttribute\('width'\)\|\|g\.style\.width\),h=px\(g\.getAttribute\('height'\)\|\|g\.style\.height\);return w&&h\?\[w,h\]:null;\}/);
+});
+
+test("a figure centred or right-aligned by its parent keeps that alignment through a block wrapper", () => {
+  // a block wrapper does not inherit text-align: the parent's computed alignment becomes a margin on the wrapper
+  assert.match(SCRIPT, /var pa=getComputedStyle\(p\)\.textAlign;if\(\(pc\|\|bl\)&&\/center\$\/\.test\(pa\)\)w\.classList\.add\('pfz-c'\);/);
+  assert.match(SCRIPT, /else if\(\(pc\|\|bl\)&&\/\^\(right\|end\)\$\/\.test\(pa\)\)w\.classList\.add\('pfz-r'\);/);
+  assert.match(STYLE, /\.pfz-w\.pfz-r\{margin-left:auto\}/);
 });
 
 test("the dashed hover outline skips the Enlarge button's own icon", () => {
