@@ -73,12 +73,14 @@ test("child-reviewer-write names $FOREMAN_OUT only with an output dir and no var
 });
 
 test("child-write-foreman-checkout names $FOREMAN_SCRATCH only with a scratch dir", () => {
+  // the command line is shell text: forward slashes, a backslash would be eaten
+  const elsewhereSh = elsewhere.replaceAll("\\", "/");
   const roots = { ...rootsOf("builder", "none"), checkout: elsewhere };
-  const r = gateEvaluate("bash", { command: `cp a ${elsewhere}/b` }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: true }), roots: () => roots }).result as { reason?: string; rule?: string } | undefined;
+  const r = gateEvaluate("bash", { command: `cp a ${elsewhereSh}/b` }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: true }), roots: () => roots }).result as { reason?: string; rule?: string } | undefined;
   assert.equal(r?.rule, "child-write-foreman-checkout");
   assert.ok(!/\$FOREMAN_SCRATCH/.test(r?.reason ?? ""), r?.reason);
   const roots2 = { ...rootsOf("builder", "both"), checkout: elsewhere };
-  const r2 = gateEvaluate("bash", { command: `cp a ${elsewhere}/b` }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: true, scratch: roots2.scratch, out }), roots: () => roots2 }).result as { reason?: string } | undefined;
+  const r2 = gateEvaluate("bash", { command: `cp a ${elsewhereSh}/b` }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: true, scratch: roots2.scratch, out }), roots: () => roots2 }).result as { reason?: string } | undefined;
   assert.match(r2?.reason ?? "", /\$FOREMAN_SCRATCH/);
 });
 
