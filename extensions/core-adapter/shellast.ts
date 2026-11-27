@@ -117,6 +117,8 @@ export interface ShellParseOptions {
   platform?: string;
   /** A function body the caller reads again for itself (the text of a body, which its own segment already carries): a call of a function the text defines is not walked, so the text reads as it did before the walk existed. */
   noCalls?: boolean;
+  /** The parser, for a test that needs a node kind `unbash` does not emit; defaults to `unbash`'s `parse`. */
+  parse?: (src: string) => Script;
 }
 
 export const MAX_DEPTH = 4;
@@ -692,14 +694,24 @@ function walkNode(n: any, sc: Scope): string | null {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       seg(sc, names[n.type] ?? n.type, [], "unsupported");
       withBodies(sc, nodeBodies(n, sc.src ?? ""));
-      // the substitutions inside a `[[ ]]` test and a select's word list and body run: they are real segments next to the opaque one (which still keeps any allow off the line)
-      if (n.type === "TestCommand") {
+      // a node kind this walk does not know is unread: judge-first, never an allow (`analyse` marks the same for a unit of such a kind)
+      if (!(n.type in names)) markUnknown(sc);
+      // the substitutions inside a `[[ ]]` test, a `(( ))` command or a `for ((;;))` header run: they are real segments next to the opaque one (which still keeps any allow off the line)
+      if (n.type === "TestCommand" || n.type === "ArithmeticCommand" || n.type === "ArithmeticFor" || !(n.type in names)) {
         const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
-        scriptsIn(n, acc);
+        // the header of `for ((;;))` only: its body is walked below
+        for (const part of n.type === "ArithmeticFor" ? [n.initialize, n.test, n.update].filter(Boolean) : [n]) scriptsIn(part, acc);
         walkSubs(acc.subs, sc);
-      } else if (n.type === "Select") {
+      }
+      // a loop body runs like any other: its commands are segments the floors read (a select's body is read as a loop of its own)
+      if (n.type === "Select") {
         walkWords(n.wordlist, sc);
         walkLists([n.body], { ...sc, inSelect: true });
+      } else if (n.type === "ArithmeticFor") {
+        walkLists([n.body], { ...sc, inSelect: true });
+      } else if (n.type === "Coproc") {
+        // the body (a command or a group, named or not) runs in the background in a shell of its own
+        isolated(sc.run, () => walkNode(n.body, { ...sc, inSelect: true }));
       }
       return sc.cwd;
     }
@@ -1681,7 +1693,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   let script: Script | undefined;
   let overflow = false;
   try {
-    script = parse(command);
+    script = (opts.parse ?? parse)(command);
   } catch (e) {
     script = undefined;
     overflow = e instanceof RangeError;
@@ -1807,6 +1819,9 @@ export function unitNodes(script: Script): SyntaxNode[] {
     return n.type === "AndOr" ? (n.commands as SyntaxNode[]) : [n as SyntaxNode];
   });
 }
+
+/** The statement kinds `walkNode` reads; a run unit of any other kind is unread (`analyse` marks it, `walkNode` judges it). */
+const READ_KINDS = new Set(["Command", "Redirected", "Pipeline", "AndOr", "If", "For", "While", "Case", "Function", "Subshell", "BraceGroup", "CompoundList", "Select", "Coproc", "ArithmeticFor", "TestCommand", "ArithmeticCommand"]);
 
 const PLAIN_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const NUMBER_ATOM = /^(?:[0-9]+(?:#[0-9A-Za-z]+)?|0[xX][0-9a-fA-F]+)$/;
@@ -2365,6 +2380,8 @@ function boundWalk(command: string): { out: BoundNames; detail: BoundDetail } {
     detail.units = nodes.length;
     nodes.forEach((u, k) => {
       unit = k;
+      // a kind of statement the walk does not read: a site that fires, so the unit is `programUnknown` (judge-first)
+      if (!READ_KINDS.has((u as any).type)) site("arith", () => true);
       visit(u, 0);
     });
     if (late.some((f) => f()) || [...expanded].some((n) => assigned.has(n))) out.any = true;
