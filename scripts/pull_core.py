@@ -5,7 +5,9 @@
     python scripts/pull_core.py --check        (offline: verify core/ vs MANIFEST)
     python scripts/pull_core.py --conformance  (run upstream tests against core/)
 
-core/ is written ONLY by this script, never edited by hand. Bytes are stored
+core/ is maintained in this repo now: every edit must update the MANIFEST
+hashes (the --check / tests/test_core_pin.py pin). --conformance compares with
+the legacy upstream and is no longer run in CI. Bytes are stored
 as extracted (nothing normalised); the repo-root .gitattributes marks core/**
 as -text so hashes match on every OS.
 
