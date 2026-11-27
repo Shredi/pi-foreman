@@ -61,6 +61,6 @@ test("a subagent cp into a handoff dir that is not its work/ is refused and name
   const r: GateRoots = { worktree: wt, scratch: [scr], tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false, childHandoff: H };
   const t = run(`cp ${wt}/a ${H}`, r);
   assert.equal(t.block, "child-write-outside");
-  assert.ok(t.reason?.includes(`Refused: ${H},`), t.reason);
+  assert.ok(t.reason?.includes(`Refused: ${H}/a,`), t.reason);
   assert.ok(!t.reason?.includes(`Refused: ${wt},`), t.reason);
 });
