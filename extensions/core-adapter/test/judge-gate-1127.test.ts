@@ -22,21 +22,21 @@ async function rig(t: Parameters<typeof r11Rig>[0], child: boolean) {
   return { ...r, calls };
 }
 
+// the foreman's own shell writes into project files are refused before the judge (`git stash` included), so the stash lines are tried with a child only
+test(`child: a stash pop or apply reaches the judge, a plain stash list does not`, async (t) => {
+  const r = await rig(t, true);
+  for (const line of ["git stash pop", "git stash apply", "git stash pop stash@{1}", "git stash apply stash@{0}"]) {
+    const before = r.calls.length;
+    assert.equal(await r.call("bash", { command: line }), undefined, line);
+    assert.equal(r.calls.length, before + 1, line);
+  }
+  const before = r.calls.length;
+  await r.call("bash", { command: "git stash list" });
+  assert.equal(r.calls.length, before, "git stash list");
+});
+
 for (const child of [false, true]) {
   const who = child ? "child" : "foreman";
-
-  // the foreman's own shell writes into project files are refused before the judge (`git stash` included), so the stash lines are tried with a child only
-  test(`${who}: a stash pop or apply reaches the judge, a plain stash list does not`, { skip: !child }, async (t) => {
-    const r = await rig(t, child);
-    for (const line of ["git stash pop", "git stash apply", "git stash pop stash@{1}", "git stash apply stash@{0}"]) {
-      const before = r.calls.length;
-      assert.equal(await r.call("bash", { command: line }), undefined, line);
-      assert.equal(r.calls.length, before + 1, line);
-    }
-    const before = r.calls.length;
-    await r.call("bash", { command: "git stash list" });
-    assert.equal(r.calls.length, before, "git stash list");
-  });
 
   test(`${who}: git -C <a folder outside the read roots> reaches the judge for every subcommand`, async (t) => {
     const r = await rig(t, child);
