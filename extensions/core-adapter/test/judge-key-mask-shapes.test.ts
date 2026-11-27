@@ -63,3 +63,19 @@ test("a key with a dash early in its body is masked; css stays visible; backslas
   const pw = maskKeys("PASSWORD='p4ssw0rd\\'\n");
   assert.ok(!pw.includes("p4ssw0rd") && pw.includes("[redacted]"), pw);
 });
+
+test("sk- + 25 word chars + dash + rest is masked whole, no tail visible", () => {
+  const masked = maskKeys(`k=sk-${"abcde".repeat(5)}-tailtailxy\n`);
+  assert.ok(!masked.includes("tail") && masked.includes("[redacted]"), masked);
+});
+
+test("sk- runs mask in linear time (1 MiB)", () => {
+  for (const unit of ["sk-", `sk-${"a".repeat(19)}-`]) {
+    const input = unit.repeat(Math.ceil((1 << 20) / unit.length));
+    const t0 = performance.now();
+    maskKeys(input);
+    const ms = performance.now() - t0;
+    console.log(`sk- timing ${unit.length}-char unit: ${ms.toFixed(0)} ms`);
+    assert.ok(ms < 5000, `${ms} ms`);
+  }
+});

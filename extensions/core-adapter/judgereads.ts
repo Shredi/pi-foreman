@@ -330,7 +330,9 @@ export function sameFileState(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
 
-const KEY_TOKEN = /\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{6,}|\bnpm_[A-Za-z0-9]{36}\b|\bsk-(?:[A-Za-z0-9_]{20,}|(?=[A-Za-z0-9_-]*[\dA-Z])[A-Za-z0-9_-]{20,})|\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b|\bAIza[A-Za-z0-9_-]{6,}/g;
+const KEY_TOKEN = /\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{6,}|\bnpm_[A-Za-z0-9]{36}\b|\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b|\bAIza[A-Za-z0-9_-]{6,}/g;
+/** `sk-` keys: no lookahead (linear); a dashed all-lowercase body shorter than 20 word chars before the first dash is a CSS class and stays visible. */
+const KEY_SK = /\bsk-[A-Za-z0-9_-]{20,}/g;
 const KEY_PEM = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)/g;
 const KEY_NAME = /password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|(?:^|[_-])auth(?:$|[_-])/i;
 const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^\n]*?\\"|\\'[^\n]*?\\'|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|'[^'\n]*'|[^\s'",;]+)/g;
@@ -344,6 +346,7 @@ export function maskKeys(text: string): string {
   return text
     .replace(KEY_PEM, (m) => R + m.replace(/[^\n]/g, "").replace(/\r/g, ""))
     .replace(KEY_TOKEN, R)
+    .replace(KEY_SK, (m) => (!m.includes("-", 3) || /[\dA-Z]/.test(m.slice(3)) || /^sk-\w{20}/.test(m) ? R : m))
     .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => {
       if (!KEY_NAME.test(name)) return m;
       const quoted = /^\\?["']/.test(value);
