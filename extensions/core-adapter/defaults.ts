@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, LIST_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
-import { SKIP_ONLY, readGlobSegment, skipOnlyOk } from "./fastallow.ts";
+import { SKIP_ONLY, mkdirModeWords, readGlobSegment, skipOnlyOk } from "./fastallow.ts";
 import { webReadAllow } from "./webread.ts";
 import { GIT_GREP_PAGER } from "./patternargs.ts";
 import type { EffectCtx } from "./effects.ts";
@@ -767,8 +767,9 @@ function pathOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
   const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
   if (!["path", "file_path", "filePath", "dst"].some((k) => typeof i[k] === "string")) return null;
   if (pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) !== undefined) return null;
-  // an uncovered write in an `auto` work folder is no write outside (the call then reaches the mode step); reads must be covered as usual
-  const ops = opsOf(c.tool, i);
+  // a copy's source is only read: the secret floors judge it; the write area is checked on the destination alone
+  if (c.tool === "foreman_copy" && typeof i.dst === "string" && pathDecide("write", { path: i.dst }, env.cwd, env.roots, env.platform) !== undefined) return null;
+  const ops = c.tool === "foreman_copy" ? opsOf("write", { path: i.dst }) : opsOf(c.tool, i);
   const covered = ([w, dir]: [unknown, "read" | "write"]): boolean => {
     const abs = resolveWord(env.platform, env.cwd, w);
     if (!abs) return false;
@@ -924,9 +925,18 @@ function programTargets(s: ShellSegment): WriteTarget[] {
     case "rmdir":
     case "unlink":
     case "shred":
-    case "mkdir":
     case "touch":
       return named(operands(a));
+    case "mkdir": {
+      const ops: string[] = [];
+      let opts = true;
+      for (let i = 0; i < a.length; i++) {
+        if (opts && a[i] === "--") opts = false;
+        else if (opts && a[i].startsWith("-") && a[i] !== "-") i += Math.max(mkdirModeWords(a, i), 1) - 1;
+        else ops.push(a[i]);
+      }
+      return named(ops);
+    }
     case "awk":
     case "gawk": {
       const inplace = a.some((w, i) => w === "-iinplace" || w === "--include=inplace" || ((w === "-i" || w === "--include") && a[i + 1] === "inplace"));

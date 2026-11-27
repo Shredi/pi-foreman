@@ -139,7 +139,8 @@ test("an unsure judge refuses a child's write whose only labels are write-outsid
     const reason = String(res?.reason);
     assert.match(reason, /danger-write-outside/, s.name);
     assert.match(reason, /cannot tell where \$F points/, `${s.name}: the judge's reason`);
-    assert.match(reason, /\$FOREMAN_SCRATCH/, s.name);
+    // this rig binds no scratch or output dir: the text names no variable it does not have (D196a)
+    assert.doesNotMatch(reason, /\$FOREMAN_(SCRATCH|OUT)/, s.name);
     assert.match(reason, /your worktree/, `${s.name}: a builder may write its worktree`);
     assert.doesNotMatch(reason, /no pane/, s.name);
     assert.equal(r.asked(), false, `${s.name}: no ask.md`);
@@ -206,14 +207,15 @@ test("a child with gate.childAsk deny gets the new refusal for this line shape t
   assert.equal(r.asked(), false);
 });
 
-test("a reviewer's refusal names $FOREMAN_SCRATCH and $FOREMAN_OUT, not the worktree (a reviewer that is not in a round: the gate leaves its write to the judge)", async (t) => {
+test("a reviewer's refusal names no folder the rig does not bind, and not the worktree (a reviewer that is not in a round: the gate leaves its write to the judge)", async (t) => {
   const r = await rig(t, { role: "reviewer", judge: "unsure" });
   const res = await r.call("bash", { command: "echo x > $F" });
   assert.equal(res?.block, true);
   const reason = String(res?.reason);
   assert.match(reason, /danger-write-outside/);
-  assert.match(reason, /\$FOREMAN_SCRATCH/);
-  assert.match(reason, /\$FOREMAN_OUT/);
+  // this rig binds no scratch or output dir: the text names no variable it does not have (D196a)
+  assert.doesNotMatch(reason, /\$FOREMAN_(SCRATCH|OUT)/);
+  assert.match(reason, /No writable folder outside the worktree is bound/);
   assert.doesNotMatch(reason, /your worktree/);
 });
 

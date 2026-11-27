@@ -11,6 +11,7 @@
 
 import { GATE_DENY_PREFIXES } from "./gatedialog.ts";
 import { isLiveLedgerName } from "./marker.ts";
+import { vOpen } from "./reviewgates.ts";
 
 export const LEDGER_TOOL = "foreman_ledger";
 export type LedgerHelper = "tool" | "bash" | "off";
@@ -22,9 +23,6 @@ export const LEDGER_TOPIC_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const LEDGER_INIT_MAX_TEXTS = 32;
 export const V_REFUSAL = "V closes after a reviewer PASS that still stands (no PASS yet, or a checkout whose last review failed, keeps it open)";
 export const V_ATTESTED_NOTE = "closed by the foreman after a reviewer PASS (harness-attested)";
-
-/** V may close when the gate's last verdict is PASS, or a counting reviewer PASS run exists and no checkout's last reviewer verdict is FAIL; work after the PASS (`revised`) and a review that ended without a verdict do not matter. */
-const vOpen = (g: { last: string | null; passRun?: string; failed?: boolean }): boolean => g.last === "pass" || (g.passRun !== undefined && g.last !== "fail" && !g.failed);
 
 /** `ceremony.ledgerHelper`; anything else is the default "tool". */
 export function ledgerHelperMode(v: unknown): LedgerHelper {
@@ -232,8 +230,8 @@ function itemId(v: unknown): string | null {
 
 /**
  * Plan one `foreman_ledger` call as ledger.py argument lists (status is appended by the caller).
- * Foreman: every action; `mark V` only while the latest review verdict is PASS with no revision
- * since, then with `--verifier` and the attested note; `planPass` (a session with no builder and no project edit, every plan's latest
+ * Foreman: every action; `mark V` only while `vOpen` holds (a counted PASS exists and no checkout's last review failed; a revision after the PASS does not reopen V),
+ * then with `--verifier` and the attested note; `planPass` (a session with no builder and no project edit, every plan's latest
  * review a PASS on its current version; index.ts planOnlyPass) lets V close too. A reviewer child closes V through `review_verdict`, not here.
  */
 export function planLedgerCall(params: Record<string, unknown>, opts: { child?: boolean; gate: GateView; planPass?: boolean }): LedgerPlan {

@@ -1729,11 +1729,12 @@ const rawWords = (text: string): string[] => text.toLowerCase().split(/[\s'"`=;&
  * call, never a deny and never the classifier's. A package publish or a removal of the root stays a deny. Obfuscation reaches the owner or a deny,
  * never a default allow and never the mode step.
  */
-export function opaqueTextFloors(text: string, env: FloorEnv): FloorHit | null {
-  return opaqueTextFloorsAt(text, env, false);
+export function opaqueTextFloors(text: string, env: FloorEnv, parsed = false): FloorHit | null {
+  return opaqueTextFloorsAt(text, env, false, parsed);
 }
 
-function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): FloorHit | null {
+/** `parsed`: the text is a command the parser read (a segment's own words), so a publish match is the real command, a hard floor; on an unparsed line it may sit in data and goes to the judge. */
+function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean, parsed = false): FloorHit | null {
   const lower = text.toLowerCase();
   let soft: FloorHit | null = null;
   // A2: git counts only at a command position (after `;` `&` `|` `(` a newline, a shell keyword or a wrapper program); the verb is the word after git's own options
@@ -1761,7 +1762,10 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
   // the package program stands at a command position (anywhere: a runner reads the text as code) and the verb follows within the same statement
   const pubWords = "(?:npm|pnpm|yarn|bun|cargo|twine|gem|poetry)[ \\t]+[^\\n;&|]*?\\b(?:publish|upload|push)\\b";
   const pub = new RegExp(anywhere ? `\\b${pubWords}` : `${CALL_PREFIX}${pubWords}`).exec(lower);
-  if (pub) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.", text.slice(pub.index, pub.index + pub[0].length).replace(/^[\s;&|(`$]+/, ""));
+  const pubText = pub ? text.slice(pub.index, pub.index + pub[0].length).replace(/^[\s;&|(`$]+/, "") : "";
+  // code text handed to a runner is read as code: a hard floor. On an unparsed line the match may sit in data (a here-document body, file text): the judge reads the line, the hard floors below still win
+  if (pub && (anywhere || parsed)) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.", pubText);
+  if (pub) soft ??= judgeHit("publish", "The unparsed line may publish a package (outbound: an owner answer for a real publish) or only mention publishing in file text or data.", pubText);
   const rmRoot = new RegExp(`${CMD}rm\\s+(?:-\\S+\\s+)*(?:--\\s+)?(?:/|~|\\$HOME|\\$\\{HOME\\})/?\\*?(?:\\s|$)`).exec(text);
   if (rmRoot) return hit("rm-system", "Removing the file system root or the home directory is never allowed.", rmRoot[0].replace(/^[\s;&|(`$]+/, "").trim());
   return soft;
@@ -2005,7 +2009,7 @@ export function fieldLineFloors(line: string, segments: ShellSegment[], env: Flo
   // a function body is only defined here, so its quoted text is not parsed: each quote-delimited piece of it is scanned
   if (segments.some((s) => s.opaque === "function_def")) {
     for (const piece of line.split(/[\n'"`]/).map((p) => p.trim()).filter(Boolean)) {
-      const h = rawScan(piece, false) ?? opaqueTextFloors(piece, env);
+      const h = rawScan(piece, false) ?? opaqueTextFloors(piece, env, true);
       if (h?.kind === "deny") return h;
       ask = strongerHit(ask, h);
     }
@@ -2018,7 +2022,7 @@ export function fieldLineFloors(line: string, segments: ShellSegment[], env: Flo
     }
     const prog = /^\$'([^']*)'$/.exec(s.program)?.[1] ?? (/[=\s]/.test(s.program) ? "''" : s.program);
     const text = [prog, ...s.argv.map((w) => (/[\s;&|()<>`]/.test(w) ? "''" : w))].join(" ");
-    let h = rawScan(text, false) ?? opaqueTextFloors(text, env);
+    let h = rawScan(text, false) ?? opaqueTextFloors(text, env, true);
     // the unanchored publish word counts only as the segment's program
     if (h?.rule === "floor-publish" && !text.toLowerCase().startsWith((h.fragment ?? "").toLowerCase().split(/\s/)[0])) h = null;
     if (h?.kind === "deny") return h;

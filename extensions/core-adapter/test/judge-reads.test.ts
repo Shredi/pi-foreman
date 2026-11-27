@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { MAX_READ_BUDGET, judgeReadScope, readHooks, readLogPaths, readPaths, readsUnchanged, resolveReadable } from "../judgereads.ts";
 import type { JudgeReadScope } from "../judgereads.ts";
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-")));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "judge-reads-")));
 const home = path.join(tmp, "home");
 const agent = path.join(home, ".pi", "agent");
 const wt = path.join(home, "proj");
@@ -31,11 +31,12 @@ const one = (p: string, s: JudgeReadScope = S, budget = { left: MAX_READ_BUDGET 
 };
 const shown = (o: string): boolean => o === "ok" || o === "dir";
 
-test("scope: reads off gives none; home, an ancestor of home, the disk root and a missing root are dropped", () => {
+test("scope: reads off gives none; a missing root is dropped; home, an ancestor of home and the disk root are no longer dropped (flipped)", () => {
   assert.equal(judgeReadScope({ cwd, worktree: wt, agentDir: agent, home, config: { gate: { judgeReads: false } } }), undefined);
   const s = judgeReadScope({ cwd: home, worktree: tmp, out: path.join(tmp, "missing"), scratch: path.parse(tmp).root, agentDir: agent, home, config: {} }) as JudgeReadScope;
-  assert.deepEqual(s.roots, []);
-  assert.equal(one(path.join(home, "proj", "a.txt"), s).rec.outcome, "outside");
+  assert.deepEqual(s.roots.map((r) => r.label), ["<worktree>", "<cwd>", "<scratch>"], "no <out>: that folder is missing");
+  put(path.join(home, "proj", "a.txt"));
+  assert.equal(one(path.join(home, "proj", "a.txt"), s).rec.outcome, "ok");
   const keep = scope();
   assert.deepEqual(keep.roots.map((r) => r.label), ["<worktree>", "<cwd>", "<out>", "<scratch>"]);
 });
@@ -44,13 +45,17 @@ test("bound: worktree, cwd, out, scratch, agent sessions and pi-foreman are read
   for (const p of [put(path.join(wt, "a.sh")), put(path.join(cwd, "b.sh")), put(path.join(out, "c.txt")), put(path.join(scratch, "d.txt")), put(path.join(agent, "sessions", "s", "x.jsonl")), put(path.join(agent, "pi-foreman", "state", "x.json")), put(path.join(agent, "AGENTS.md"))]) {
     assert.equal(one(p).rec.outcome, "ok", p);
   }
-  for (const p of [put(path.join(agent, "extensions", "x.ts")), put(path.join(agent, "install", "x")), put(path.join(agent, "cc-cli-logs", "x")), put(path.join(agent, "npm", "x")), put(path.join(outside, "f.txt")), path.join(tmp, "elsewhere", "..", "elsewhere", "f.txt"), "/etc/hosts"]) {
+  for (const p of [put(path.join(agent, "extensions", "x.ts")), put(path.join(agent, "install", "x")), put(path.join(agent, "cc-cli-logs", "x")), put(path.join(agent, "npm", "x"))]) {
     assert.ok(!shown(one(p).rec.outcome), p);
   }
+  // flipped: files outside every project root are readable now
+  for (const p of [put(path.join(outside, "f.txt")), path.join(tmp, "elsewhere", "..", "elsewhere", "f.txt"), ...(fs.existsSync("/etc/hosts") ? ["/etc/hosts"] : [])]) {
+    assert.equal(one(p).rec.outcome, "ok", p);
+  }
   assert.equal(one("../a.sh").rec.outcome, "ok", "a relative path resolves against the cwd");
-  assert.equal(one("../../../elsewhere/f.txt").rec.outcome, "outside", "a .. escape is refused");
-  assert.equal(one(home).rec.outcome, "outside");
-  assert.equal(one(path.dirname(home)).rec.outcome, "outside");
+  assert.equal(one("../../../elsewhere/f.txt").rec.outcome, "ok", "a .. escape is readable now (flipped)");
+  assert.equal(one(home).rec.outcome, "dir", "flipped");
+  assert.equal(one(path.dirname(home)).rec.outcome, "dir", "flipped");
 });
 
 test("bound: the agent dir inside a project root keeps its allow list", () => {
@@ -68,8 +73,8 @@ test("bound: symlinks are followed to their real path", () => {
   fs.symlinkSync(f, bad);
   fs.symlinkSync(path.join(wt, "a.sh"), good);
   const r = one(bad);
-  assert.equal(r.rec.outcome, "outside");
-  assert.ok(!r.block.body.includes("secret place"));
+  assert.equal(r.rec.outcome, "ok", "a link out of the worktree is readable now (flipped)");
+  assert.equal(r.rec.real, f);
   assert.equal(one(good).rec.outcome, "ok");
   const toAuth = path.join(wt, "link-auth");
   put(path.join(agent, "auth.json"), '{"k":"v"}');
@@ -233,7 +238,7 @@ test("records: unchanged is true; a change of size, mtime, inode, symlink target
 });
 
 test("resolveReadable: a missing path outside the bound is outside, not not-found", () => {
-  assert.equal(resolveReadable(path.join(outside, "nope.txt"), S).outcome, "outside");
+  assert.equal(resolveReadable(path.join(outside, "nope.txt"), S).outcome, "not-found", "flipped: outside the project roots is in scope");
   assert.equal(resolveReadable(path.join(wt, "nope.txt"), S).outcome, "not-found");
 });
 

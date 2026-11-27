@@ -220,16 +220,16 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
   if (segments && mergesPullRequest(segments)) return deny("child-pr-merge", "Children never merge a pull or merge request; the foreman or the owner does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
-  if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
+  if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", `Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree${boundDirs(env.roots).scratch ? " and your scratch dir ($FOREMAN_SCRATCH)" : ""}.`);
   const outside = outsideTarget(call, env);
   // a git write whose `-C` target cannot be read, in a read-only role: the repository it may change is the round worktree, so its own refusal names it (not an outside target)
   const roGit = outside !== null && env.roots.roundReadOnly && readonlyWrite(tool, input, segments, cmd, env)?.gitAny === true;
   if (outside !== null && !roGit) {
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
-    const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? ` Use $FOREMAN_SCRATCH${r.scratch.length ? ` (${r.scratch[0]})` : ""}, not /tmp.` : "";
+    const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? (boundDirs(r).scratch ? ` Use $FOREMAN_SCRATCH (${boundDirs(r).scratch}), not /tmp.` : " No scratch dir is bound for this child; write inside the worktree, not /tmp.") : "";
     const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md only when intercom cannot reach the parent, ask-<n>.md and anything below work/)` : "no handoff dir is set";
-    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.${tmpHint} For another worktree, the foreman launches a child with cwd set to it.`);
+    return deny("child-write-outside", `Children write only inside their own worktree${boundDirs(r).scratch ? " and their scratch dir ($FOREMAN_SCRATCH)" : ""}, never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.${tmpHint} For another worktree, the foreman launches a child with cwd set to it.`);
   }
   if (env.roots.roundReadOnly) {
     const target = readonlyWrite(tool, input, segments, cmd, env);
@@ -250,10 +250,30 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
       if (dir !== "write") continue;
       const abs = resolveWord(platform, cwd, w);
       if (abs !== null && sanctioned(abs)) continue;
-      return deny("child-reviewer-write", `Your role writes files only with the write tool into your scratch dir (${roots.scratch[0] ?? "$FOREMAN_SCRATCH"}) or your output dir (${roots.out ?? "$FOREMAN_OUT"}), never into the worktree or elsewhere. Refused: ${abs ?? String(w)}. Write probe and test data there, with a literal path.`);
+      const where = [...(boundDirs(roots).scratch ? [`your scratch dir (${boundDirs(roots).scratch})`] : []), ...(roots.out ? [`your output dir (${roots.out})`] : [])].join(" or ");
+      return deny("child-reviewer-write", `Your role writes files ${where ? `only with the write tool into ${where}` : "nowhere: no scratch or output dir is bound for this child"}, never into the worktree or elsewhere. Refused: ${abs ?? String(w)}.${where ? " Write probe and test data there, with a literal path." : ""}`);
     }
   }
   return undefined;
+}
+
+/** The folders a child may name in a refusal, only the ones its launch bound: `$FOREMAN_SCRATCH` with a scratch root, `$FOREMAN_OUT` with an output dir. */
+export function boundDirs(r: GateRoots): { scratch: string | undefined; out: string | undefined } {
+  return { scratch: r.scratch.find((s) => s !== r.out), out: r.out };
+}
+
+/** "`$FOREMAN_SCRATCH`, `$FOREMAN_OUT` or your worktree" over the bound folders; "" when none is bound and the worktree is not offered. */
+export function writableDirsText(r: GateRoots, mayWriteWorktree: boolean): string {
+  const b = boundDirs(r);
+  const names = [...(b.scratch ? ["`$FOREMAN_SCRATCH`"] : []), ...(b.out ? ["`$FOREMAN_OUT`"] : []), ...(mayWriteWorktree ? ["your worktree"] : [])];
+  if (names.length === 0) return "";
+  return names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} or ${names[names.length - 1]}`;
+}
+
+/** The refusal of a child's write whose target the gate cannot read when the judge did not clear it: the cause, the judge's reason and the way out. */
+export function unreadableWriteText(judgeReason: string, mayWriteWorktree: boolean, roots: GateRoots | undefined): string {
+  const dirs = roots ? writableDirsText(roots, mayWriteWorktree) : mayWriteWorktree ? "`$FOREMAN_SCRATCH`, `$FOREMAN_OUT` or your worktree" : "`$FOREMAN_SCRATCH` or `$FOREMAN_OUT`";
+  return `pi-foreman: denied (danger-write-outside): this write goes to a target the gate cannot read (a variable, a substitution, \`~\` or a changed directory), and the permission judge did not clear it${judgeReason ? `: ${judgeReason}` : "."} Nobody is asked. ${dirs ? `Write to a path the gate can read, such as a literal path in ${dirs}, or report this line to the foreman.` : "No writable folder outside the worktree is bound for this child: report this line to the foreman."}`;
 }
 
 /** The command text of a shell-like tool call, or null. */

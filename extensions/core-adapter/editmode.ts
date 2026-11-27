@@ -57,7 +57,7 @@ export function scratchRoot(realRoot: string, scratchDir: string, platform: stri
 
 /**
  * True when a foreman file-tool call changes a project file: a workspace target (workspaceTargets,
- * which also feeds the trivial tally) that is not under `.workflow/` nor the real scratch dir.
+ * which also feeds the trivial tally) that is not under a real `.workflow/` (the checkout root's, or one on the way from the cwd up to it: `workflowDirs`) nor the real scratch dir.
  */
 export function projectChange(toolName: string, input: Record<string, unknown>, scratchDir: string, opts: { cwd: string; home: string; platform: string }): boolean {
   if (!GATED_TOOLS.has(toolName)) return false;

@@ -9,6 +9,8 @@ import { build, end, git, launch, settle, setup, tick, worktree } from "./_hsrig
 import type { Rig, World } from "./_hsrig.ts";
 
 const VERDICT = "Overall verdict: PASS";
+/** A code change in `dir`: a builder run that changes no file is no revision (D189a). */
+const chg = (dir: string): void => fs.writeFileSync(path.join(dir, `chg-${Math.random().toString(36).slice(2)}.ts`), "export const x = 1;\n");
 const real = (p: string) => fs.realpathSync.native(p);
 
 async function two(t: Parameters<typeof setup>[0], o: Parameters<typeof setup>[1] = {}) {
@@ -42,6 +44,7 @@ test("a touch-up builder in A (docs only) withdraws A's revision, not B's", asyn
   await build(a, {}, b);
   await marks(w, 2);
   const nb = await launch(a, "builder", "build more", { cwd: b });
+  chg(b);
   await end(a, nb, "builder", "done", b);
   const ta = await launch(a, "builder", "tidy the docs");
   assert.equal(ta.blocked, null);
@@ -82,29 +85,28 @@ test("a resumed reviewer's verdict applies to the checkouts of its target run; a
   assert.equal(await settle(a), "", "B's gate got the PASS of its resumed review; A still stands");
 
   const bld = await launch(a, "builder", "build more", { cwd: b });
+  chg(b);
   await end(a, bld, "builder", "done", b);
   await pass(a, b);
   await tick(300);
   assert.equal(await settle(a), "");
   const again = await launch(a, "builder", "more", { action: "resume", id: `run-${bld.id}` });
   assert.equal(again.blocked, null, String(again.blocked));
+  chg(b);
   await end(a, again, "builder", "done", b);
   const text = await settle(a);
   assert.ok(text.includes(`${real(b)}: revised after the last PASS`), text);
   assert.doesNotMatch(text, /unknown|main: /);
 });
 
-test("a checkout deleted before its review keeps blocking the finish (the valve ends it after two refusals)", async (t) => {
+test("a checkout deleted before its review no longer blocks the finish (D189b)", async (t) => {
   const { a, w, b } = await two(t);
   await build(a);
   const nb = await launch(a, "builder", "build it", { cwd: b });
+  chg(b);
   await end(a, nb, "builder", "done", b);
   git(w.project, "worktree", "remove", "--force", b);
-  const first = await settle(a);
-  assert.ok(first.includes(`${real(w.project)}/../wtb`) || first.includes("wtb: built, no review yet") || /wtb/.test(first), first);
-  assert.match(await settle(a), /requires reviewer/);
-  assert.equal(await settle(a), "", "the third try goes through (ceremony incomplete)");
-  assert.equal((await w.traceEvents()).filter((e) => e.event === "ceremony_incomplete").length, 1);
+  assert.equal(await settle(a), "");
 });
 
 test("a session opened by another session (handoff and parent) keeps the gate per checkout too", async (t) => {
@@ -130,6 +132,7 @@ test("reload: the per-checkout gates and marks come back; B's work after the rel
   const again = await launch(a2, "reviewer", "review once more");
   assert.match(again.blocked ?? "", /the last review passed/, "the mark came back: nothing changed");
   const nb = await launch(a2, "builder", "build it", { cwd: b });
+  chg(b);
   await end(a2, nb, "builder", "done", b);
   const text = await settle(a2);
   assert.ok(text.includes(`${real(b)}: revised after the last PASS`), text);

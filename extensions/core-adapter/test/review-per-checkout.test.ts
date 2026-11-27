@@ -18,6 +18,8 @@ const review = async (a: Rig, verdict: string, cwd?: string, task = "[pre-pr] re
 const builder = async (a: Rig, cwd?: string) => {
   const b = await launch(a, "builder", "build the widget", cwd ? { cwd } : {});
   assert.equal(b.blocked, null, String(b.blocked));
+  fs.mkdirSync(cwd ?? (a.ctx.cwd as string), { recursive: true });
+  fs.writeFileSync(path.join(cwd ?? (a.ctx.cwd as string), `built-${Math.random().toString(36).slice(2)}.ts`), "export const x = 1;\n"); // D189a: a run that changes no file is no revision
   await end(a, b, "builder", "done", cwd);
 };
 /** The foreman edits a project file (its tool result; the gate of the edit itself is not under test). */
@@ -122,6 +124,7 @@ test("a project edit in a never-reviewed B (a worktree inside the workspace) aft
   await review(a, VERDICT, inner);
   await tick(300);
   assert.equal(await settle(a), "");
+  fs.writeFileSync(path.join(a.ctx.cwd as string, "src.ts"), "export const x = 1;\n"); // D189a: an edit that changes no file is no revision
   await edit(a, path.join(a.ctx.cwd as string, "src.ts"));
   assert.match(await settle(a), /requires reviewer \(re-review needed: revised after the last PASS\)/);
 });
