@@ -47,8 +47,8 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { ReviewMemory } from "./reviewmemory.ts";
-import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, goneDropped, vAccepts, type ReviewGates } from "./reviewgates.ts";
-import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, stepsOfRunEnd } from "./bound.ts";
+import { combined, gateOf, gatesClearFail, gatesRejected, gatesMarkStood, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, goneDropped, vAccepts, type ReviewGates } from "./reviewgates.ts";
+import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, rejectedNote, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
@@ -544,6 +544,8 @@ interface Session {
   reviewMarked: Set<string>;
   /** Foreman only: the verdict record of a review run, read once (verdictRecordOf); null = the run left none (or an invalid one). The file is renamed after the read. */
   reviewRecords: Map<string, VerdictRecord | null>;
+  /** Foreman only: review runs whose verdict record the parent rejected, with the reason code (the gate entries carry it on, persisted). */
+  rejectedRecords: Map<string, string>;
   /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; the run records come back from the session entries after a reload. */
   ledgerByCall: Map<string, LedgerRoute>;
   ledgerByRun: Map<string, LedgerRoute>;
@@ -1266,6 +1268,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       markSync: Promise.resolve(),
       reviewMarked: new Set(),
       reviewRecords: new Map(),
+      rejectedRecords: new Map(),
       ledgerByCall: new Map(),
       ledgerByRun: new Map(),
       passSnaps: {},
@@ -1791,7 +1794,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let read = readRecordFile(dir, launch, items);
     if (read) consumeRecord(dir, runId);
     else read = readConsumed(dir, runId, launch, items);
-    if (read && "invalid" in read) s.trace?.emit({ event: "review_record_invalid", runId, reason: read.invalid });
+    if (read && "invalid" in read) {
+      s.trace?.emit({ event: "review_record_invalid", runId, reason: read.invalid });
+      capSet(s.rejectedRecords, runId, read.invalid);
+    }
     const record = read && "record" in read ? read.record : null;
     capSet(s.reviewRecords, runId, record);
     return record;
@@ -3753,6 +3759,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const verdicts = reviewVerdictsOfRunEnd(reviewResults);
           const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
           s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
+          const rejectedReason = s.isChild ? undefined : s.rejectedRecords.get(runId);
+          if (rejectedReason !== undefined) {
+            s.reviewGates = gatesRejected(s.reviewGates, roots ?? [SESSION_WIDE], { runId, reason: rejectedReason });
+            const note = rejectedNote({ last: "none", revised: false, rejected: { runId, reason: rejectedReason } });
+            pi.sendMessage({ customType: "pi-foreman-review-record-rejected", content: `pi-foreman: review run ${runId.slice(0, 8)} counts as no verdict: ${note}.`, display: true }, { triggerTurn: false });
+          }
           persistCeremonyState(s);
           if (!s.isChild) onRunEndReview(s, runId, reviewResults, verdicts.length > 0, roots, data);
           const cited = s.retro.launchItems.get(runId) ?? [];
@@ -7271,6 +7283,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return gateReviews(s);
       },
       highStakes: hsGate(s),
+      rejected: (top) => rejectedNote(s.reviewGates[top] ?? { last: null, revised: false }) || null,
       watches: s.prWatches,
       trace: (r) => s.trace?.emit(r),
       tracker: s.prHost,

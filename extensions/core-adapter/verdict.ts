@@ -214,6 +214,19 @@ export const noToolRecord = (launchId: string, now?: Date): VerdictRecord => rec
 export type ReadRecord = { record: VerdictRecord } | { invalid: string };
 
 /**
+ * The findings of a record file with each class this code does not know dropped (a newer child may know more classes). The class is optional advice
+ * and gates nothing, so the finding stays; every other field is checked as before. Anything that is not a list of objects is returned as it is.
+ */
+function withoutUnknownClasses(findings: unknown): unknown {
+  if (!Array.isArray(findings)) return findings;
+  return findings.map((f) => {
+    if (!isObj(f) || f.class === undefined || (typeof f.class === "string" && (FINDING_CLASSES as readonly string[]).includes(f.class))) return f;
+    const { class: _unknown, ...rest } = f;
+    return rest;
+  });
+}
+
+/**
  * A record file as untrusted input: JSON, `v` 1, the launch's own id, the field schema and caps of the tool, every item id one of `allowed`.
  * `raw` null = no file (no verdict, not invalid).
  */
@@ -229,7 +242,7 @@ export function parseRecord(raw: string | null, launchId: string, allowed: reado
   if (j.v !== 1) return { invalid: "version" };
   if (j.launchId !== launchId) return { invalid: "launch_mismatch" };
   if (typeof j.at !== "string") return { invalid: "no_time" };
-  const c = checkVerdictCall({ verdict: j.verdict, items: j.items, findings: j.findings, suites: j.suites, reason: j.reason }, allowed);
+  const c = checkVerdictCall({ verdict: j.verdict, items: j.items, findings: withoutUnknownClasses(j.findings), suites: j.suites, reason: j.reason }, allowed);
   if ("error" in c) return { invalid: "schema" };
   return { record: { v: 1, launchId, verdict: c.call.verdict, items: c.call.items, findings: c.call.findings, ...(c.call.suites ? { suites: c.call.suites } : {}), ...(c.call.reason ? { reason: c.call.reason } : {}), at: j.at } };
 }

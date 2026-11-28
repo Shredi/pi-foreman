@@ -6,7 +6,7 @@
 //   verdict  known roots take the verdict each; a PASS also clears an existing "". An unknown root: a PASS clears "" only, a FAIL or no verdict hits every entry.
 //   read     `gateOf`: the root's entry, else "" , else nothing yet; an unknown root reads `combined`. The finish gate reads `combined`: every entry must stand.
 import * as path from "node:path";
-import { initialReviewGate, onReviewVerdicts, onRevision, reopened, reviewHint, REREVIEW_WAY, type ReviewGate } from "./bound.ts";
+import { initialReviewGate, onReviewVerdicts, onRevision, reopened, rejectedNote, reviewHint, REREVIEW_WAY, type ReviewGate } from "./bound.ts";
 import type { Verdict } from "./rounds.ts";
 
 export type ReviewGates = Record<string, ReviewGate>;
@@ -78,6 +78,16 @@ export function gatesVerdict(g: ReviewGates, roots: readonly string[] | null, ve
   return next;
 }
 
+/** The review run `runId` ended with a rejected record: each entry of `keys` (null = every entry) that now reads "no verdict" keeps the run and the reason. */
+export function gatesRejected(g: ReviewGates, keys: readonly string[] | null, rejected: { runId: string; reason: string }): ReviewGates {
+  const next: ReviewGates = { ...g };
+  for (const k of keys === null || keys.length === 0 ? Object.keys(g) : keys) {
+    const e = g[k];
+    if (e && e.last === "none") next[k] = { ...e, rejected };
+  }
+  return next;
+}
+
 /** A high-stakes FAIL was just written (`after`, from `before`): each entry now at FAIL records whether its PASS stood before the verdict; an entry that was revised or never passed stays open at the clear. */
 export function gatesMarkStood(before: ReviewGates, after: ReviewGates): ReviewGates {
   const next: ReviewGates = { ...after };
@@ -109,6 +119,7 @@ const reasonOf = (e: ReviewGate): string => {
   const why = reopened(e);
   if (why === "fail") return "last verdict FAIL";
   if (why === "revision") return e.last === "pass" ? "revised after the last PASS" : "revised after the last review";
+  if (rejectedNote(e)) return `no review yet (${rejectedNote(e)})`;
   return e.last === null && e.revised ? "built, no review yet" : "no review yet";
 };
 
@@ -120,7 +131,7 @@ const reasonOf = (e: ReviewGate): string => {
 export function openHint(g: ReviewGates, o: { cwd: string; own: string }): string {
   const open = openRoots(g);
   if (open.length === 0) return reviewHint(combined(g));
-  if (open.length === 1 && (open[0] === SESSION_WIDE || open[0] === o.own)) return reviewHint(g[open[0]]);
+  if (open.length === 1 && (open[0] === SESSION_WIDE || open[0] === o.own)) return [reviewHint(g[open[0]]), rejectedNote(g[open[0]]) ? `(${rejectedNote(g[open[0]])})` : ""].filter(Boolean).join(" ");
   const name = (k: string): string => {
     if (k === SESSION_WIDE) return "unknown checkout";
     const rel = path.relative(o.cwd, k);

@@ -300,6 +300,8 @@ export interface PrPackSession {
   headless?(): Promise<string | null>;
   /** Awaits the review sync, then every recorded verdict (for the `pr_create {cwd}` checkout test). Absent: none. */
   records?(): Promise<readonly ReviewRecord[]>;
+  /** The note of a rejected review record of the checkout `top` (a toplevel), null when there is none. */
+  rejected?(top: string): string | null;
   /** Gives a commit whose tree equals the reviewed content its review record (index.ts coverHead), before the tools read the reviewed heads; `cwd` is the PR's checkout. Absent: the head rule as it was. */
   cover?(cwd: string, head: string): Promise<void>;
   /** The high-stakes test of the PR gate (reviews.ts HighStakesGate); absent: none (no model set, or an older caller). */
@@ -519,7 +521,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
             const head = await commitOf(dir ?? ctx.cwd, named ?? "HEAD");
             if (head) await s.cover(dir ?? ctx.cwd, head).catch(() => undefined);
           }
-          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head }, ...(s.highStakes ? { highStakes: s.highStakes } : {}), ...(dir ? { checkout: { cwd: dir, records: (await s.records?.()) ?? [] } } : {}) });
+          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head }, ...(s.highStakes ? { highStakes: s.highStakes } : {}), ...(dir ? { checkout: { cwd: dir, records: (await s.records?.()) ?? [], ...(s.rejected ? { rejected: (top: string) => s.rejected?.(top) ?? null } : {}) } } : {}) });
           if (refusal) {
             s.trace({ event: "pr_refused", reason: refusal.reason, toolFamily: "pr_create" });
             return failure(refusal.message, { decision: "pr_refused", reason: refusal.reason });

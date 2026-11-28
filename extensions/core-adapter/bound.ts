@@ -253,6 +253,14 @@ export interface ReviewGate {
   passRun?: string;
   /** The latest real verdict is FAIL: a later review that ended without a verdict (`last` "none") keeps it until a PASS. */
   failed?: boolean;
+  /** The verdict record of this run was rejected by the parent (`review_record_invalid`) and `last` is "none" because of it; cleared by the next verdict. */
+  rejected?: { runId: string; reason: string };
+}
+
+/** The hint for a gate entry whose review record was rejected ("" otherwise): the run, the reason, the likely cause and the way out. */
+export function rejectedNote(g: ReviewGate): string {
+  if (!g.rejected || g.last !== "none") return "";
+  return `record of run ${g.rejected.runId.slice(0, 8)} rejected: ${g.rejected.reason}; the session may run older harness code than its reviewer: reload it (/reload) and run the reviewer again`;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {
