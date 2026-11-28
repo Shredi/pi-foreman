@@ -209,7 +209,8 @@ async function runRow(row: CorpusRow, o: BenchOptions): Promise<RowResult> {
   else if (res.cause === "timeout" || res.cause === "provider_error" || res.cause === "no_model" || res.cause === "wrong_entry") outcome = "error";
   else {
     // the judge's own stop: a verdict word from the result (new judge) or from the last raw reply (old judge: `unsure`)
-    const word = res.verdict ?? raw?.verdict;
+    // an owner cause is an owner stop also when the raw reply said clear (a voided sentence)
+    const word = res.verdict ?? (res.cause === "owner" ? "owner" : raw?.verdict);
     outcome = word === "owner" ? "owner" : word === "refuse" ? "refuse" : "unsure";
     if (outcome === "owner") cls = res.class ?? raw?.class;
   }

@@ -9,6 +9,8 @@ import type { GateRecord } from "../gatelog.ts";
 
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 const CALL: JudgeCall = { tool: "bash", payload: "git config core.hooksPath x", reason: "danger-git-config: changes git config", kind: "owner", role: "foreman", cwd: "/w", worktree: "/w", defaultBranch: "main", ownerMessage: "set the hooks path" };
+// a label outside the never-cover set (a sentence-cited clear on `danger-git-config` is voided, see sentence-never-cover.test.ts)
+const CALL_OK: JudgeCall = { ...CALL, reason: "danger-remote: runs a command on another machine" };
 const A1: AllowSentence = { id: "A1", text: "Restarting the example service on host.example.net is fine.", hash: "11111111" };
 const A2: AllowSentence = { id: "A2", text: "Installing updates on the example servers is fine.", hash: "22222222" };
 
@@ -106,7 +108,7 @@ test("parse: a sentence on an owner, refuse, unsure or read answer is dropped (n
 test("judge: a cited sentence is logged (gate-log sentence A<n>#<hash>), the rule stays judge, the result carries the id", async () => {
   const k = new Classifier();
   const { c, rows, calls } = rig([clear({ sentence: "A1" })]);
-  const r = await k.judge({ ...CALL, allow: [A1, A2] }, c);
+  const r = await k.judge({ ...CALL_OK, allow: [A1, A2] }, c);
   assert.deepEqual([r.clear, r.clear && r.sentence], [true, "A1"]);
   assert.equal(rows.length, 1);
   assert.deepEqual([rows[0].rule, rows[0].sentence, rows[0].verdict, rows[0].cached], ["judge", "A1#11111111", "allow", false]);
@@ -117,17 +119,17 @@ test("judge: a cited sentence is logged (gate-log sentence A<n>#<hash>), the rul
 test("judge: a cache hit logs the sentence the clear rested on; removing the sentence reaches the judge again", async () => {
   const k = new Classifier();
   const { c, rows, calls } = rig([clear({ sentence: "A2" })]);
-  await k.judge({ ...CALL, allow: [A1, A2] }, c);
-  const again = await k.judge({ ...CALL, allow: [A1, A2] }, c);
+  await k.judge({ ...CALL_OK, allow: [A1, A2] }, c);
+  const again = await k.judge({ ...CALL_OK, allow: [A1, A2] }, c);
   assert.deepEqual([again.clear && again.cached, again.clear && again.sentence], [true, "A2"]);
   assert.deepEqual([rows[1].layer, rows[1].sentence, rows[1].cached], ["cache", "A2#22222222", true]);
   assert.equal(calls.length, 1);
-  await k.judge({ ...CALL, allow: [A1] }, c);
+  await k.judge({ ...CALL_OK, allow: [A1] }, c);
   assert.equal(calls.length, 2, "a changed set is another key");
-  await k.judge({ ...CALL, allow: [A1, { ...A2, text: "Changed." }] }, c);
+  await k.judge({ ...CALL_OK, allow: [A1, { ...A2, text: "Changed." }] }, c);
   assert.equal(calls.length, 3, "a changed text is another key");
   const before = calls.length;
-  await k.judge(CALL, c);
+  await k.judge(CALL_OK, c);
   assert.ok(calls.length > before, "no sentences is another key");
   assert.notEqual(allowDigest([A1]), allowDigest([A1, A2]));
   assert.equal(allowDigest(undefined), "");
@@ -136,7 +138,7 @@ test("judge: a cache hit logs the sentence the clear rested on; removing the sen
 test("judge: a clear that read files and cited a sentence logs it on a clearedReads hit", async () => {
   const k = new Classifier() as unknown as { clearedReads: Map<string, unknown>; judge: Classifier["judge"] };
   const { c, rows } = rig([clear({ sentence: "A1" })]);
-  const call: JudgeCall = { ...CALL, allow: [A1] };
+  const call: JudgeCall = { ...CALL_OK, allow: [A1] };
   await k.judge(call, c);
   // a clear without reads is cached in `cleared`; seed the reads cache the way a read-round clear does, then hit it
   const priv = k as unknown as { cleared: Map<string, string | undefined> };
@@ -185,7 +187,7 @@ test("judge: a reply to a request without sentences is parsed as today (a stray 
 
 test("judge: the retry after an unreadable reply names the sentence schema when sentences were sent", async () => {
   const { c, calls } = rig(["not json", clear({ sentence: "A1" })]);
-  const r = await new Classifier().judge({ ...CALL, allow: [A1] }, c);
+  const r = await new Classifier().judge({ ...CALL_OK, allow: [A1] }, c);
   assert.deepEqual([r.clear, r.clear && r.sentence], [true, "A1"]);
   assert.match(calls[1].text, /"sentence":"A<n>"/);
   const plain = rig(["not json", clear()]);
