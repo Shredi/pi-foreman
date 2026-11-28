@@ -71,7 +71,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
   const blocked: { active: boolean; label?: string }[] = [];
   const sent: { message: Record<string, unknown>; opts: Record<string, unknown> }[] = [];
   const pi = {
-    events: { on: () => undefined, emit: (ch: string, d: unknown) => void (ch === "herdr:blocked" && blocked.push(d as { active: boolean; label?: string })) },
+    events: { on: () => undefined, emit: (ch: string, d: unknown) => { if (ch === "herdr:blocked") blocked.push(d as { active: boolean; label?: string }); } },
     on: (n: string, h: Handler) => {
       const prev = handlers.get(n);
       // tool_call: the first block wins; any other event runs every handler

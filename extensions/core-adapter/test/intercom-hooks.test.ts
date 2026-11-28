@@ -26,7 +26,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], branch: unknown[] = []) {
   const sent: string[] = [];
   const prev = process.env.PI_FOREMAN_PARENT_INTERCOM;
   process.env.PI_FOREMAN_PARENT_INTERCOM = "parent-1";
-  t.after(() => void (prev === undefined ? delete process.env.PI_FOREMAN_PARENT_INTERCOM : (process.env.PI_FOREMAN_PARENT_INTERCOM = prev)));
+  t.after(() => { if (prev === undefined) delete process.env.PI_FOREMAN_PARENT_INTERCOM; else (process.env.PI_FOREMAN_PARENT_INTERCOM = prev); });
   const notes: string[] = [];
   const r = await r11Rig(t, {}, {
     config,

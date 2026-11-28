@@ -17,7 +17,7 @@ const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open"
 
 function harness(o: { child?: boolean; returnToBase?: PrWatchesDeps["returnToBase"]; fresh?: PrWatchesDeps["fresh"] }) {
   const timers: { fn: () => void; live: boolean }[] = [];
-  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   const sent: string[] = [];
   const traces: Record<string, unknown>[] = [];
   const notices: string[] = [];

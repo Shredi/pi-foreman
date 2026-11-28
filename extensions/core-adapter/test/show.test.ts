@@ -629,7 +629,7 @@ const stubEngine = (svg = GOOD_SVG, gate?: Promise<void>): Engine => ({ render: 
 test("note: writes note.md and note.json last, v increments, the live field carries note", async (t) => {
   const e = env(t);
   let changes = 0;
-  const { show, traces } = e.start({ onChange: () => void changes++ });
+  const { show, traces } = e.start({ onChange: () => { changes++; } });
   const r = await show.note("First", "hello\n```ts title=x\nlet a;\n```\n");
   assert.equal(r.v, 1);
   assert.equal(r.diagrams, 0);
@@ -701,7 +701,7 @@ test("note: a symlinked show root is refused and nothing is written behind the l
 test("diagrams: a note's sidecars are written after the result, named <sha>-dark|light.svg, and listed in note.json", async (t) => {
   const e = env(t);
   let release!: () => void;
-  const gate = new Promise<void>((res) => void (release = res));
+  const gate = new Promise<void>((res) => { release = res; });
   const { show } = e.start({ engine: () => stubEngine(GOOD_SVG, gate) });
   const r = await show.note("T", withFence()); // resolves while the render is still gated
   assert.equal(r.diagrams, 1);

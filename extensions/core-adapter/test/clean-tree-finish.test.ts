@@ -93,7 +93,7 @@ test("cleanTreeStatus: empty for harness files only, the path of a project file 
 
 // hsReminderHold: nothing built, no step required, a high-stakes pass due (a restored fired reason): held once with the reminder, unless only harness files changed
 test("hsReminderHold: only .workflow/ files: not held; a project file: held once", async (t) => {
-  const { w, a } = await setup(t, { onMain: true, ceremony: { required: { standard: [], heavy: [] } } });
+  const { w } = await setup(t, { onMain: true, ceremony: { required: { standard: [], heavy: [] } } });
   git(w.project, "rm", "-q", ".gitignore");
   git(w.project, "commit", "-q", "-m", "no ignore");
   const last = w.ceremonyEntries().at(-1)!;
@@ -101,7 +101,6 @@ test("hsReminderHold: only .workflow/ files: not held; a project file: held once
   data.highStakes = { ...data.highStakes, fired: { reasons: ["design"] } };
   w.entries.push({ ...last, data } as never);
   const b = await w.adapter("resume");
-  void a;
   put(w.project, ".workflow/scratch/t/desc.txt");
   assert.equal(await hsSettle(b), "");
   put(w.project, "src/a.ts");

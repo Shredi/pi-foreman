@@ -54,7 +54,7 @@ jobs:
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
       - name: installer tests (dry-run, idempotent second run, remove)
         run: node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"
-      - name: typescript type check (extensions, Pi 1.6.1 types)
+      - name: typescript type check (extensions, Pi 1.7.0 types)
         if: runner.os == 'Linux'
         run: npx tsc --noEmit -p tsconfig.json
   test-macos:
@@ -183,7 +183,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-      - name: install bundled packages (pi-subagents, intercom, Pi 1.6.1 from the lockfile)
+      - name: install bundled packages (pi-subagents, intercom, Pi 1.7.0 from the lockfile)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: replay scenarios (fake provider only, no secrets), one shard
         env:

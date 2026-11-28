@@ -12,7 +12,7 @@ const snap = (head: string): WatchSnapshot => ({ state: "open", mergeable: "merg
 
 function harness(passes: string[]) {
   const timers: { fn: () => void; live: boolean }[] = [];
-  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   let read: StoreRead = { kind: "down" };
   const sent: string[] = [];
   const w = new PrWatches({ storeEntry: async () => read, reviewedHeads: () => passes, cwd: () => "/work", send: (m) => void sent.push(m.content), idle: () => true, trace: () => {}, intervalMs: () => 5000, now: () => 0, timers: fake });

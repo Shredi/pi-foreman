@@ -17,9 +17,9 @@ async function load() {
   const tools: Tool[] = [];
   const blocked: Blocked[] = [];
   const pi = {
-    registerTool: (d: Tool) => void tools.push(d),
+    registerTool: (d: Tool) => { tools.push(d); },
     on: () => {},
-    events: { emit: (ch: string, d: unknown) => void (ch === "herdr:blocked" && blocked.push(d as Blocked)), on: () => () => {} },
+    events: { emit: (ch: string, d: unknown) => { if (ch === "herdr:blocked") blocked.push(d as Blocked); }, on: () => () => {} },
   };
   addon.default(pi as never);
   const tool = tools.find((x) => x.name === "ask_user_question");

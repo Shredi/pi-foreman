@@ -11,11 +11,10 @@ import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 import { SHELL_WRITE_REFUSAL } from "../shellwriteguard.ts";
 
 let calls = 0;
-let system = "";
 const modelRegistry = {
   find: () => ({ cost: { input: 1 } }),
   getProviderAuthStatus: () => ({ configured: true }),
-  complete: async (_m: unknown, c: { systemPrompt?: string }) => (calls++, system = c.systemPrompt ?? "", { content: [{ type: "text", text: '{"verdict":"allow","entry":"A1","reason":"stub"}' }], stopReason: "stop" }),
+  complete: async () => (calls++, { content: [{ type: "text", text: '{"verdict":"allow","entry":"A1","reason":"stub"}' }], stopReason: "stop" }),
 };
 let dialogs = 0;
 const ui = { notify: () => undefined, confirm: async () => (dialogs++, false), select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined };
@@ -42,5 +41,4 @@ test("r17b live shape: cp from outside the workspace into the own relative scrat
   // the shell write guard still refuses afterwards. What ruling-10 forbids is a dialog, a classifier call, or an ask/deny gate record.
   assert.equal(recs.some((x) => x.event === "auto_review_allow" || (x.event === "guard" && x.guard === "gate" && x.decision !== "allowed")), false, JSON.stringify(recs));
   assert.deepEqual([dialogs, calls], [0, 0]);
-  void system;
 });

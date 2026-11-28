@@ -90,7 +90,7 @@ test("the mounted footer appends foreign statuses, never repeats the foreman's o
   const setStatus: string[] = [];
   let repaints = 0;
   const ctx = { mode: "tui", model: { id: "m", reasoning: false, contextWindow: 200_000 }, getContextUsage: () => ({ percent: 10, contextWindow: 200_000 }), ui: { setStatus: (k: string, v: string | undefined) => void setStatus.push(`${k}=${v}`) } };
-  const mount = f.mount("s", ctx, { requestRender: () => void repaints++ }, theme, data, () => "high");
+  const mount = f.mount("s", ctx, { requestRender: () => { repaints++; } }, theme, data, () => "high");
   f.update("s", ctx, MSG, { enabled: true, isChild: false });
   assert.equal(repaints, 1);
   assert.deepEqual(setStatus, []);
@@ -136,7 +136,7 @@ test("footer.style foreman in a tui session installs the footer; the usage line 
 test("footer.style pi: no setFooter, the usage line stays in the one-line status", async (t) => {
   let factories = 0;
   const calls: string[] = [];
-  const a = await r11Rig(t, {}, { config: { footer: { style: "pi" } }, ctx: { ui: usageCtx(calls, { setFooter: () => void factories++ }) } });
+  const a = await r11Rig(t, {}, { config: { footer: { style: "pi" } }, ctx: { ui: usageCtx(calls, { setFooter: () => { factories++; } }) } });
   await a.launch({ agent: "builder", task: "touch up" });
   assert.equal(factories, 0);
   assert.ok(calls.some((c) => c.startsWith(`${FOOTER_KEY}=↑`)), calls.join("\n"));
@@ -144,7 +144,7 @@ test("footer.style pi: no setFooter, the usage line stays in the one-line status
 
 test("a child session never installs a footer", async (t) => {
   let factories = 0;
-  await r11Rig(t, {}, { child: true, ctx: { ui: usageCtx([], { setFooter: () => void factories++ }) } });
+  await r11Rig(t, {}, { child: true, ctx: { ui: usageCtx([], { setFooter: () => { factories++; } }) } });
   assert.equal(factories, 0);
 });
 

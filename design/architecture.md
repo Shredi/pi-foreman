@@ -12,6 +12,7 @@
 | Pin update | 2026-11-17: pi-subagents 0.78.0 -> 0.89.0, @inquirer/prompts 8.7.4 -> 8.8.0, unbash 6.0.1 -> 6.0.4 (Pi 1.5.2 and both forks held). 0.89 sends the parent-wake notice itself with `triggerTurn:true` (a custom run, no `input` event), so the adapter classifies a wake by its custom message type and runs the trailing catch-up at each custom `message_end`; it moves the package root under `bundle/` for the main import (role skills are found by walking up to `package.json`); it wraps notices in `<pi_subagents_notice>` (the self-warm capture follows the wrap); and it aborts a child whose allowlisted, registered tool is missing from the request, so a child never hides an allowlisted tool. D25b and the `/dev/null` case are fixed upstream; D25a stays a documented limit. |
 | Pin update | 2026-11-20: Pi 1.5.2 -> 1.6.0 (range 1.6.x), pi-subagents 0.89.0 -> 0.89.1, pi-polish 0.1.2 -> 0.1.13, pi-quiver 6.14.2 -> 6.15.2. 0.89.1 checks the child allowlist against the *active* tools, not the registered ones (so a tool a child run has switched off no longer aborts it). setup writes `control.notifyChannels: ["event"]` into the subagent config, so a child's attention notice arrives once (the intercom copy is off). |
 | Pin update | 2026-11-25: Pi 1.6.0 -> 1.6.1 (range 1.6.x); no harness change needed. |
+| Pin update | 2026-11-27: Pi 1.6.1 -> 1.7.0 (range 1.7.x), pi-subagents 0.89.1 -> 0.90.0, @inquirer/prompts 8.8.0 -> 8.8.1, unbash 6.0.4 -> 6.0.5. Extension types (`dist/core/extensions`) byte-identical 1.6.1 -> 1.7.0, no harness change. Pi 1.7.0 removes install telemetry (`PI_TELEMETRY` is now a no-op). pi-subagents 0.90.0 is additive. oxlint 1.95 `no-meaningless-void-operator` errors fixed in the tests. |
 | Latency run | `.github/workflows/guard-latency.yml` (see that workflow's Actions runs) |
 | Upstream core | Python core from `Shredi/fable5-opus5-orchestrator` (MIT), a fork of `Rylaa/fable5-opus5-orchestrator` (now `Rylaa/fable5-opus5.5-orchestrator`), credited in `NOTICE` |
 
@@ -31,7 +32,7 @@
 
 | Layer | Form | Pins | Owns |
 |---|---|---|---|
-| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (own legacy Python), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.6.x, its third-party packages (§13) | Mechanisms, neutral roles, default policy |
+| L1 pi-foreman (public) | npm Pi package `pi-foreman`: `extensions/`, `agents/`, `skills/`, `core/` (own legacy Python), `scripts/` (own Python), `config/` (defaults + schema), `setup.mjs` | Pi 1.7.x, its third-party packages (§13) | Mechanisms, neutral roles, default policy |
 | L2 private overlay | A user's own Pi package plus `foreman.json` in the Pi agent dir | `pi-foreman@x.y.z` exactly | Model maps, extra roles, MCP servers, repository list, personal preferences |
 | L3 organisation overlay | Organisation-owned Pi package declaring `pi.foreman.config` in its `package.json` | `pi-foreman@x.y.z` exactly | Provider gateways (via `registerProvider`), internal tools and skills, default policy for its users |
 
@@ -593,7 +594,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 
 | Capability | Choice | Version tested | Evidence summary |
 |---|---|---|---|
-| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.6.1 | All runs; signatures read from installed types |
+| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.7.0 | All runs; signatures read from installed types |
 | Subagents | **adopt** `pi-subagents`, every role detached | 0.75.0 | Hands-on: package roles discovered and launched; provider switch changes child model; full-id thinking override; codemode in child; required child extension blocks; strict tool allowlist. FAIL: foreground ask forwarding. |
 | Subagents (fallback) | fallback `@gotgenes/pi-subagents`, used only if the primary blocks | 22.0.0 | Hands-on: forwards foreground asks. Role and provider features not tested. |
 | Permission map | **replaced** by the own tool gate (r41); formerly `@gotgenes/pi-permission-system` 39.0.2 | n/a | Hands-on in the earlier layer notes; see `docs/permissions.md` |

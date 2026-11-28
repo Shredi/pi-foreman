@@ -13,7 +13,7 @@ const NOT = (head: string, last: string) => `head ${head.slice(0, 7)} not review
 
 function harness(passes: string[], opts: { reviewedHeads?: boolean } = {}) {
   const timers: { fn: () => void; live: boolean }[] = [];
-  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   let read: StoreRead = { kind: "down" };
   const sent: string[] = [];
   const persisted: WatchRecord[][] = [];
@@ -29,7 +29,7 @@ function harness(passes: string[], opts: { reviewedHeads?: boolean } = {}) {
     now: () => 0,
     timers: fake,
   });
-  const entry = (head: string, okAt: number): void => void (read = { kind: "entry", snap: snap(head), okAt });
+  const entry = (head: string, okAt: number): void => { read = { kind: "entry", snap: snap(head), okAt }; };
   const tick = async (): Promise<void> => {
     const t = [...timers].reverse().find((x) => x.live);
     if (t) {
@@ -38,7 +38,7 @@ function harness(passes: string[], opts: { reviewedHeads?: boolean } = {}) {
     }
     await new Promise((r) => setImmediate(r));
   };
-  return { w, sent, persisted, passes, entry, set: (r: StoreRead) => void (read = r), tick, last: () => persisted.at(-1)?.[0].state };
+  return { w, sent, persisted, passes, entry, set: (r: StoreRead) => { read = r; }, tick, last: () => persisted.at(-1)?.[0].state };
 }
 const drifts = (sent: string[]): string[] => sent.filter((c) => c.includes("not reviewed"));
 

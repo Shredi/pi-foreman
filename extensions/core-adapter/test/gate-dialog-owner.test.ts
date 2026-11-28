@@ -97,7 +97,7 @@ test("presence disabled: an away-reporting presence is never probed and the dial
   const w = world(t);
   const u = ui({ select: ["allow once"] });
   let refreshed = 0;
-  const presence = { refresh: async () => void refreshed++, away: () => true };
+  const presence = { refresh: async () => { refreshed++; }, away: () => true };
   const r = await askOwner(ASK, deps(u, w, { presence, presenceEnabled: false }).d);
   assert.notEqual((r as { how?: string }).how, "away");
   assert.equal(refreshed, 0);
@@ -172,7 +172,7 @@ test("an owner who turns away while the dialog is open: no probe, no watchdog, t
   let refreshed = 0;
   let timersSet = 0;
   const timers = { set: () => (timersSet++, 1), clear: () => undefined };
-  const p = askOwner(ASK, deps({ ui: h.u } as never, w, { ui: h.u, presence: { refresh: async () => void refreshed++, away: () => away }, presenceTimers: timers, presenceIntervalMs: 5 }).d);
+  const p = askOwner(ASK, deps({ ui: h.u } as never, w, { ui: h.u, presence: { refresh: async () => { refreshed++; }, away: () => away }, presenceTimers: timers, presenceIntervalMs: 5 }).d);
   await new Promise((r) => setTimeout(r, 30));
   away = true;
   await new Promise((r) => setTimeout(r, 30));

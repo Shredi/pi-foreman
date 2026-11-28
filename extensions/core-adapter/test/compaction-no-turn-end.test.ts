@@ -45,7 +45,7 @@ for (const child of [false, true]) {
       isIdle: () => true,
       hasPendingMessages: () => false,
       getContextUsage: () => ({ tokens: 199_000, percent: 99.5, contextWindow: 200_000 }),
-      compact: () => void compactCalls++,
+      compact: () => { compactCalls++; },
       modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
       ui: { notify: () => undefined, confirm: async () => false, setStatus: () => undefined },
     };

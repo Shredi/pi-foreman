@@ -170,7 +170,7 @@ function mounted(src: () => CacheSource | null) {
   const f = new UsageFooter(null, () => null, timers);
   const ctx = { mode: "tui", model: { id: "m" }, getContextUsage: () => ({ percent: 10, contextWindow: 200_000 }), ui: { setStatus: () => undefined } };
   const data = { getGitBranch: () => null, getExtensionStatuses: () => new Map<string, string>() };
-  const mount = f.mount("s", ctx, { requestRender: () => void renders++ }, theme, data, () => "off", src);
+  const mount = f.mount("s", ctx, { requestRender: () => { renders++; } }, theme, data, () => "off", src);
   return { timers, mount, renders: () => renders, f };
 }
 

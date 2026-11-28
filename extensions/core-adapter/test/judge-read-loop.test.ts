@@ -157,9 +157,8 @@ test("cache: unchanged reads hit; a changed file, a created not-found path, a mi
   const hit = await k.judge(CALL, a.c);
   assert.deepEqual([hit.clear, hit.clear && hit.cached], [true, true]);
   assert.equal(a.reg.calls.length, 2);
-  const noScope = await k.judge({ ...CALL, readScope: undefined }, a.c);
+  await k.judge({ ...CALL, readScope: undefined }, a.c);
   assert.equal(a.reg.calls.length > 2, true, "a call without a scope is no hit");
-  void noScope;
   const t = new Date(Date.now() + 60000);
   const b = rig([R("c/s.sh"), V("clear"), R("c/s.sh"), V("clear")]);
   const k2 = new Classifier();

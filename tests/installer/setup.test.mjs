@@ -97,7 +97,7 @@ test("dry run writes nothing and runs no install", () => {
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
   assert.doesNotMatch(r.out, /would run: pi (install|remove)/);
-  assert.match(r.out, /package pi-subagents@0\.89\.1: bundled with pi-foreman/);
+  assert.match(r.out, /package pi-subagents@0\.90\.0: bundled with pi-foreman/);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
   assert.doesNotMatch(r.out, /permission-system config|gate migration/);
   assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);
@@ -339,14 +339,14 @@ test("--remove keeps a hand-edited block", () => {
   assert.deepEqual(readSettings(env).subagents.agentOverrides.builder.tools, ["read"]);
 });
 
-test("Pi outside 1.6.x is refused and nothing is written", () => {
+test("Pi outside 1.7.x is refused and nothing is written", () => {
   const env = fresh();
   seed(env);
   const before = snapshot(env.base);
   const r = run(env, [], { FAKE_PI_VERSION: "1.2.0" });
   assert.notEqual(r.code, 0);
-  assert.match(r.out, /outside the supported range 1\.6\.x/);
-  assert.match(r.out, /pi-coding-agent@1\.6\.1 \(pinned\)/);
+  assert.match(r.out, /outside the supported range 1\.7\.x/);
+  assert.match(r.out, /pi-coding-agent@1\.7\.0 \(pinned\)/);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
 });

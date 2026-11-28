@@ -12,14 +12,14 @@ const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open"
 
 function harness(poll: (key: PrKey, cwd?: string) => Promise<WatchPoll>) {
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
-  const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
+  const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => { if (timers[h as number]) timers[h as number].live = false; } };
   let clock = 1_000_000;
   const sent: { msg: { customType: string; content: string; details: Record<string, unknown> }; idle: boolean }[] = [];
   const traces: Record<string, unknown>[] = [];
   const persisted: WatchRecord[][] = [];
   const w = new PrWatches({ storeEntry: storeFromPoll((key) => poll(key)), cwd: () => "/work", persist: (x) => void persisted.push(x), send: (msg, idle) => void sent.push({ msg, idle }), idle: () => true, trace: (r) => void traces.push(r), intervalMs: () => 5000, now: () => clock, timers: fake });
   const settle = () => new Promise((r) => setImmediate(r));
-  return { w, sent, traces, persisted, timers, settle, advance: (ms: number) => void (clock += ms), now: () => clock };
+  return { w, sent, traces, persisted, timers, settle, advance: (ms: number) => { clock += ms; }, now: () => clock };
 }
 
 const entry = (watches: unknown, piSessionId: string | undefined = SID, v: unknown = 2) => [{ type: "custom", customType: PRWATCH_ENTRY, data: { v, piSessionId, watches } }];

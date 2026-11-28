@@ -161,7 +161,6 @@ test("13: a reload keeps the first baseline (a change made before the reload sti
   const b = await w.adapter("reload");
   assert.match(await settle(b), /requires builder, reviewer/);
   assert.ok(!(await noChangeTrace(w)));
-  void a;
 });
 
 test("13: a reload of an untouched dirty checkout still finishes", async (t) => {

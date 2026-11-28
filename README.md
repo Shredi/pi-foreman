@@ -23,7 +23,7 @@ macOS (Homebrew):
 
 ```sh
 brew install node python@3.13 git
-npm install -g @earendil-works/pi-coding-agent@1.6
+npm install -g @earendil-works/pi-coding-agent@1.7
 ```
 
 Linux, Debian 13 or Ubuntu 25.04 and later (their `python3` is 3.13):
@@ -31,7 +31,7 @@ Linux, Debian 13 or Ubuntu 25.04 and later (their `python3` is 3.13):
 ```sh
 sudo apt-get update && sudo apt-get install -y curl git python3
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs
-sudo npm install -g @earendil-works/pi-coding-agent@1.6
+sudo npm install -g @earendil-works/pi-coding-agent@1.7
 ```
 
 On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the last line.
@@ -47,7 +47,7 @@ winget install Python.Python.3.13
 Open a new terminal, then:
 
 ```powershell
-npm install -g @earendil-works/pi-coding-agent@1.6
+npm install -g @earendil-works/pi-coding-agent@1.7
 ```
 
 **2. Install the package.**

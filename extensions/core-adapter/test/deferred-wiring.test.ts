@@ -41,7 +41,7 @@ async function rigWith(t: T, o: Opts = {}) {
       getActiveTools: () => [...active],
       getAllTools: () => (o.all ?? NAMES).map((name) => ({ name, description: `${name} tool`, parameters: { type: "object", properties: {} }, exposure: "direct" })),
       setActiveTools: (n: string[]) => { active = [...n]; sets.push([...n]); },
-      appendEntry: (customType: string, data: unknown) => void (customType === "deferred-loaded" && entries.push({ type: customType, data })),
+      appendEntry: (customType: string, data: unknown) => { if (customType === "deferred-loaded") entries.push({ type: customType, data }); },
     },
   });
   return { rig, registered, entries, commands, notes, sets, active: () => active };

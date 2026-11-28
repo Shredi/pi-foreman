@@ -93,15 +93,13 @@ test("a reload keeps the baseline: no new entry, the same map, the scope file re
   const before = JSON.stringify(lastMap(w));
   fs.rmSync(sessionsDir(w), { recursive: true, force: true });
   put(w.project, "pre/one.txt", "edited after the baseline\n");
-  const b = await w.adapter("reload");
+  await w.adapter("reload");
   assert.equal(dirtyEntries(w).length, 1);
   assert.equal(JSON.stringify(lastMap(w)), before, "the stored hashes, not the current files");
   assert.deepEqual(scope(w)?.roots?.map((r) => r.repo), [proj(w)]);
   assert.equal(scope(w)?.legacy, undefined);
-  const c = await w.adapter("resume");
+  await w.adapter("resume");
   assert.equal(dirtyEntries(w).length, 1);
-  void b;
-  void c;
 });
 
 test("a fork keeps the parent's map and appends none", async (t) => {
