@@ -2349,6 +2349,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       tier: s.ceremony.tier,
       reviewPassed: newest?.latest.verdict === "pass" && (!plan || newest.latest.hash === now),
       planOpen: plan?.status !== "approved" || now !== plan.hash, // approved only while the plan bytes are the approved bytes
+      planPhase: s.planPhase,
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
@@ -2363,7 +2364,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = restoreRoundState(dir, (topic) => { const p = readPlan(path.join(o.scratchDir, `plan-${topic}.md`), o); return "plan" in p ? { path: p.plan.path, hash: p.plan.hash } : null; });
     if (!r) {
       // discarded: the file now holds the fresh state, so nothing of the old one can come back later
-      if (fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s);
+      if (s.planPhase || fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s); // a plan-first start records its phase at once
       return;
     }
     s.round = r.round;
@@ -8361,7 +8362,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.planPhase) s.planPhaseOrigin = "owner"; // the owner's phase, also inside a child: a plan-review PASS never ends it
         else delete process.env.PI_FOREMAN_PLAN_PHASE;
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
-        persistCeremonyState(s);
+        persistRounds(s); // also rewrites round-state.json: a parent reads the phase there
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");
         return;
       }
