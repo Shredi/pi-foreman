@@ -37,10 +37,11 @@ test("a leftover mode key is ignored and recorded", () => {
   assert.deepEqual(store({ mode: "allow" }).resolve().ignored, ["user mode"]);
 });
 
-test("leftover rule lists, allow sentences and profiles are ignored and recorded, one entry per key", () => {
+test("leftover rule lists and profiles are ignored and recorded, one entry per key; classifier.allow is read as allow sentences", () => {
   const r = store({ allow: ["Bash(ls)"], ask: ["Bash(rm *)"], deny: ["Bash(x)"], classifier: { allow: ["Anything."], deny: ["Never touch prod."] }, profiles: { p: { mode: "ask" } } }).resolve();
-  assert.deepEqual([...r.ignored].sort(), ["user allow", "user ask", "user classifier.allow", "user deny", "user profiles"]);
+  assert.deepEqual([...r.ignored].sort(), ["user allow", "user ask", "user deny", "user profiles"]);
   assert.deepEqual(r.prose.deny.map((e) => e.text), ["Never touch prod."]);
+  assert.deepEqual(r.allow.map((e) => [e.id, e.text]), [["A1", "Anything."]]);
 });
 
 test("deny sentences and protected entries still apply", () => {

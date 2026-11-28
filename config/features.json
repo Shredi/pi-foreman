@@ -832,6 +832,18 @@
       "enable": ""
     },
     {
+      "id": "allow-sentences",
+      "area": "safety",
+      "title": "Owner allow sentences",
+      "purpose": "Short sentences in `classifier.allow` of your user file or trusted project file tell the judge what you are fine with. The judge reads all of them with every call it looks at and, where it would have asked you and one sentence plainly covers the exact call, answers `clear` and names the sentence (`A<n>`), which the log records. No code reads the sentence; floors, protected entries and the fixed limits are decided before the judge. The tracked `.pi/permissions.json` and an untrusted project file are never read. Step 1: you edit the file by hand.",
+      "doc": "docs/permissions.md#your-allow-sentences",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "owner-script",
       "area": "safety",
       "title": "Owner script approval",

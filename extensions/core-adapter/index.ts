@@ -4238,7 +4238,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // file reads: not for the withheld kinds (the judge sees no task text for them on purpose), not for a call on another machine (its paths live there; `noReads`: a protected host matched); a child adds its own output and scratch dirs
         const readScope = withhold || noReads || labels.some((n) => NO_READS.has(n)) ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never, ...(roots ? { readRoots: readRootsOfGate(roots), install: roots.install } : {}) });
         const judged = await rt.classifier.judge(
-          { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, defaultBranch: facts.defaultBranch, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
+          { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, defaultBranch: facts.defaultBranch, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}), ...(resolved.allow.length ? { allow: resolved.allow.map((a) => ({ id: a.id, text: a.text, hash: a.hash })) } : {}) },
           {
             registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
             recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
@@ -4247,7 +4247,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           },
         );
-        if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}`);
+        if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}${judged.sentence ? `:sentence:${judged.sentence}` : ""}`);
         if (judged.cause === "owner") return decideByDialog(gs, ctx, rt, resolved, { ...base, cause: `${cause} (judge: ${judged.class})`, classifierReason: judged.reason, dangerName: danger.name });
         // a refusal: nobody is asked. The judge logged its own `deny` row; only a refuse or unsure answer counts towards a child's repeat stop (a timeout, an invalid answer and a missing model never do)
         const count = judged.cause === "model" ? "judge-refused" : null;
@@ -4439,7 +4439,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return done(ans.how, false, ans.reason);
   }
 
-  /** `/foreman perms list`: the protected targets, the deny sentences and the work folders (the answer text). */
+  /** `/foreman perms list`: the allow and deny sentences, the protected targets and the work folders (the answer text). */
   function permsCommand(s: Session, rest: string[]): string {
     const usage = "Usage: /foreman perms list | protect add|remove <kind> <glob>";
     const rt = gateRuntimeOf(s);
@@ -4447,6 +4447,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (sub === "list" && rest.length === 1) {
       const r = rt.store.resolve();
       const lines: string[] = [];
+      for (const e of r.allow) lines.push(`${e.id}: ${e.text} (${e.source})`);
       for (const e of r.prose.deny) lines.push(`${e.id}: ${e.text} (${e.source})`);
       if (r.additionalDirectories.length) lines.push(`additionalDirectories: ${r.additionalDirectories.join(", ")}`);
       lines.push(...protectedBlock(r));

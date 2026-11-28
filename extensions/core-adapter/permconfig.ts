@@ -1,7 +1,7 @@
 // Permission config: the three `permissions.json` files (user, project, tracked) and their trust rules. What they still hold: protected targets, work
-// folders, additional directories, `floors.noteTools` and `classifier.deny` (the protected-target check cites those sentences). The modes, profiles, rule
-// lists (`allow`, `ask`, `deny`) and allow sentences (`classifier.allow`) were removed: a file that still sets one is read, the key is ignored and recorded
-// in `Resolved.ignored` (the doctor prints one INFO line per key). Pure Node, no Pi imports; git is injectable so tests stay hermetic.
+// folders, additional directories, `floors.noteTools`, `classifier.deny` (the protected-target check cites those sentences) and `classifier.allow` (the
+// owner's allow sentences the judge reads; user file and trusted project file only). The modes, profiles and rule lists (`allow`, `ask`, `deny`) were
+// removed: a file that still sets one is read, the key is ignored and recorded in `Resolved.ignored` (the doctor prints one INFO line per key). Pure Node, no Pi imports; git is injectable so tests stay hermetic.
 //
 //   user     <agentDir>/pi-foreman/permissions.json   every key
 //   project  <main checkout>/.workflow/permissions.json   widening keys (additionalDirectories, protected) only when the file is untracked AND ignored by
@@ -9,6 +9,7 @@
 //   tracked  <worktree>/.pi/permissions.json   classifier.deny only (it is reviewed code anyone can push)
 //
 // An invalid file contributes nothing. Bad entries inside a valid file are skipped one by one, each with a notice naming it.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -16,6 +17,10 @@ import { holdsHome } from "./effects.ts";
 import { strRaw } from "./strof.ts";
 export const PROSE_MAX = 300;
 export const PROTECTED_NOTE_MAX = 200;
+/** Above this many allow sentences the doctor warns that each judge call gets slower and dearer; nothing is skipped. */
+export const ALLOW_WARN_ENTRIES = 40;
+/** Characters an allow sentence may not hold: C0/C1 controls, line and paragraph separators, bidi controls, zero-width characters, and every other Unicode format character (category Cf, such as U+061C, U+2060-2064, tag characters), plus U+180E. */
+const HIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u180e\p{Cf}]/u;
 
 /** The check mode of one protected entry; it can only tighten `gate.protected.check` (model < read-only < ask). */
 export type ProtectedCheckMode = "model" | "read-only" | "ask";
@@ -40,7 +45,7 @@ export interface PermBody {
   /** Protected targets (user file and trusted project file only; dropped everywhere else). */
   protected?: ProtectedRaw[];
   additionalDirectories: string[];
-  classifier: { deny: string[] };
+  classifier: { deny: string[]; allow: { text: string; index: number }[] };
   /** `floors.noteTools`: tool names whose prose fields skip the raw-text floors (user file only; dropped everywhere else). */
   noteTools?: string[];
   /** The removed keys this file still sets (`mode`, `profiles`, `allow`, `ask`, `deny`, `classifier.allow`). */
@@ -62,8 +67,22 @@ export interface ProseEntry {
   source: string;
 }
 
+/** An owner allow sentence: `A1`.. in merged order (user file, then the trusted project file); `hash` is the first 8 hex of the sha256 of the text. */
+export interface AllowEntry {
+  id: string;
+  text: string;
+  source: string;
+  hash: string;
+}
+
+export const allowHash = (text: string): string => crypto.createHash("sha256").update(text).digest("hex").slice(0, 8);
+
 export interface Resolved {
   prose: { deny: ProseEntry[] };
+  /** The owner's allow sentences (`classifier.allow` of the user file and the trusted project file), numbered A1.. */
+  allow: AllowEntry[];
+  /** One line per allow sentence skipped (layer, entry index, reason); the doctor prints each as a WARN. */
+  allowNotes: string[];
   /** Protected targets (user, then trusted project), numbered P1.. */
   protected: ProtectedEntry[];
   /** Bumps on every reload and every re-resolve that saw a change (caches key on it). */
@@ -205,7 +224,7 @@ function noteToolList(v: unknown, where: string, notices: string[]): string[] {
 }
 
 function parseBody(o: Json, where: string, notices: string[], dropped?: string[]): PermBody | string {
-  const body: PermBody = { additionalDirectories: [], classifier: { deny: [] }, ignored: [] };
+  const body: PermBody = { additionalDirectories: [], classifier: { deny: [], allow: [] }, ignored: [] };
   if (o.protected !== undefined) {
     if (dropped) dropped.push(`${where}protected`);
     else {
@@ -220,7 +239,16 @@ function parseBody(o: Json, where: string, notices: string[], dropped?: string[]
   body.additionalDirectories = l;
   if (o.classifier !== undefined) {
     if (!isObj(o.classifier)) return `${where}classifier must be an object`;
-    if (o.classifier.allow !== undefined) body.ignored.push("classifier.allow");
+    if (o.classifier.allow !== undefined) {
+      if (dropped) dropped.push(`${where}classifier.allow`);
+      else {
+        if (!Array.isArray(o.classifier.allow)) return `${where}classifier.allow must be a list of strings`;
+        o.classifier.allow.forEach((x, i) => {
+          if (typeof x === "string" && x.trim() !== "") body.classifier.allow.push({ text: x, index: i + 1 });
+          else notices.push(`${where}classifier.allow[${i}] is not a non-empty string; skipped`);
+        });
+      }
+    }
     const d = strList(o.classifier.deny, `${where}classifier.deny`, notices);
     if (d === null) return `${where}classifier.deny must be a list of strings`;
     body.classifier.deny = d;
@@ -413,7 +441,8 @@ export class PermStore {
     if (project.parsed?.ok) {
       if (distrust === null) parts.push({ src: "project", body: project.parsed.body });
       else {
-        const t: PermBody = { ...project.parsed.body, additionalDirectories: [], protected: [] };
+        const t: PermBody = { ...project.parsed.body, additionalDirectories: [], protected: [], classifier: { deny: project.parsed.body.classifier.deny, allow: [] } };
+        if (project.parsed.body.classifier.allow.length) this.note(`${this.filePath("project")}: ${distrust}, so its classifier.allow sentences are not read`);
         if (project.parsed.body.protected?.length) this.note(`${this.filePath("project")}: ${distrust}, so protected is not honoured; dropped`);
         parts.push({ src: "project", body: t });
         if (project.parsed.body.additionalDirectories.length) this.note(`${this.filePath("project")}: ${distrust}, so only its classifier.deny key applies (additionalDirectories is ignored)`);
@@ -422,6 +451,8 @@ export class PermStore {
     if (tracked.parsed?.ok) parts.push({ src: "tracked", body: tracked.parsed.body });
 
     const prose = { deny: [] as ProseEntry[] };
+    const allow: AllowEntry[] = [];
+    const allowNotes: string[] = [];
     const dirs: string[] = [];
     const prot: ProtectedEntry[] = [];
     const ignored: string[] = [];
@@ -435,12 +466,22 @@ export class PermStore {
         }
         prose.deny.push({ id: `D${prose.deny.length + 1}`, text, source: p.src });
       }
+      for (const a of p.body.classifier.allow) {
+        const why = HIDDEN_CHARS.test(a.text) ? "it holds a control, line-break, invisible or direction-changing character" : a.text.trim().length > PROSE_MAX ? `it is longer than ${PROSE_MAX} characters` : "";
+        if (why) {
+          allowNotes.push(`${p.src} classifier.allow entry ${a.index} skipped: ${why}`);
+          this.note(`${p.src} classifier.allow entry ${a.index} is skipped: ${why}`);
+          continue;
+        }
+        const text = a.text.trim();
+        allow.push({ id: `A${allow.length + 1}`, text, source: p.src, hash: allowHash(text) });
+      }
       for (const d of p.body.additionalDirectories) dirs.push(this.expandDir(d));
     }
 
     const workFolderNotes: string[] = [];
     const workFolders = this.validFolders(userOk?.workFolders ?? [], workFolderNotes);
-    const resolved: Resolved = { prose, protected: prot, ignored, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project"), noteTools: [...new Set(userBody?.noteTools ?? [])] };
+    const resolved: Resolved = { prose, allow, allowNotes, protected: prot, ignored, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project"), noteTools: [...new Set(userBody?.noteTools ?? [])] };
     this.cached = { sig, resolved };
     return resolved;
   }

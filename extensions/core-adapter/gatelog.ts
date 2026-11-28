@@ -162,6 +162,8 @@ export interface GateRecord {
   role?: string;
   kind?: GateKind;
   latencyMs?: number;
+  /** The owner's allow sentence a judge clear cited, `A<n>#<hash>` (the hash is the first 8 hex of the sha256 of its text, so the row stays meaningful after renumbering). Logged only. */
+  sentence?: string;
   /** The review model, `provider/id`, when a model decided. */
   model?: string;
   /** The verdict came from the decision cache. */
@@ -239,6 +241,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             ...(typeof rec.latencyMs === "number" ? { latencyMs: Math.round(rec.latencyMs) } : {}),
             ...(rec.model ? { model: field(rec.model) } : {}),
             ...(rec.cached ? { cached: true } : {}),
+            ...(rec.sentence ? { sentence: field(rec.sentence) } : {}),
             ...(rec.follows ? { follows: field(rec.follows) } : {}),
             ...(rec.reasoning ? { reasoning: field(rec.reasoning) } : {}),
             ...(typeof rec.promptChars === "number" ? { promptChars: Math.round(rec.promptChars) } : {}),
