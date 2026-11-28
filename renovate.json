@@ -6,7 +6,7 @@
   "rangeStrategy": "pin",
   "automerge": false,
   "schedule": ["before 6am on monday"],
-  "prBodyNotes": ["## Changelog\n\n- Dependency update from Renovate; versions and release notes are in the table and sections above."],
+  "prBodyNotes": ["## Changelog\n\n- Dependency update from Renovate; the versions are in the table above and the release notes follow below."],
   "packageRules": [
     {
       "matchPackageNames": ["@earendil-works/*", "@mariozechner/*"],
