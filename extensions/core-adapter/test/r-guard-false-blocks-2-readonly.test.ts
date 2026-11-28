@@ -90,7 +90,7 @@ test("adapter: the reads of a read-only child run in mode auto with zero model c
   const r = await r11Rig(t, {}, {
     child: true,
     deps: { spawner: inprocSpawner },
-    ctx: { hasUI: false, mode: "json", modelRegistry: registry, [RIG_PERMISSIONS]: { classifier: { allow: ["Anything at all."] } } },
+    ctx: { hasUI: false, mode: "json", modelRegistry: registry, [RIG_PERMISSIONS]: {} },
     config: { gate: { reviewTimeoutMs: 300 }, providers: { fake: { review: { model: "small" }, roles: { explorer: { model: "fake/explorer" } } } } },
   });
   const dir = path.join(r.agentDir, "pi-foreman", "state", "sessions", "parent-s");

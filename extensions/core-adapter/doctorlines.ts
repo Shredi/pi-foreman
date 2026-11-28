@@ -16,6 +16,7 @@ import { bridgeLoadOrder, PROJECT_BRIDGE_FIX, projectBridgeConfigRisks, userBrid
 import { bridgeTrusted } from "./bridgetrust.ts";
 import { intercomDoctor } from "./intercomguard.ts";
 import { gateLogFile } from "./gatelog.ts";
+import { ALLOW_WARN_ENTRIES } from "./permconfig.ts";
 import type { PermStore } from "./permconfig.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { gateMigrationLines } from "./gatemigrate.ts";
@@ -173,6 +174,13 @@ export function permissionLines(i: { store: PermStore; agentDir: string; cwd: st
   const out: string[] = [];
   const pr = i.store.resolve();
   out.push(`INFO permissions: ${pr.protected.length} protected targets, ${pr.prose.deny.length} deny sentences; decision log ${gateLogFile(i.agentDir)}`);
+  const perLayer = (src: string): number => pr.allow.filter((e) => e.source === src).length;
+  out.push(`INFO permissions: ${pr.allow.length} allow sentences (user ${perLayer("user")}, project ${perLayer("project")})`);
+  for (const n of pr.allowNotes) out.push(`WARN permissions: ${n}`);
+  if (pr.allow.length > ALLOW_WARN_ENTRIES) {
+    const chars = pr.allow.reduce((n, e) => n + e.text.length, 0);
+    out.push(`WARN permissions: ${pr.allow.length} allow sentences (${chars} characters, about ${Math.ceil(chars / 4)} tokens) go to the judge with every call; each judge call gets slower and more expensive above ${ALLOW_WARN_ENTRIES}`);
+  }
   for (const k of pr.ignored) out.push(`INFO permissions: ${k} is no longer used and is ignored (the judge-first list replaces modes, profiles and rule lists)`);
   const profileSet = get(i.config, "permissions.profile");
   if (typeof profileSet === "string" && profileSet.trim() !== "") out.push("INFO permissions: permissions.profile is no longer used and is ignored (the judge-first list replaces modes, profiles and rule lists)");
