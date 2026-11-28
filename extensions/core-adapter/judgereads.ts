@@ -340,9 +340,6 @@ const KEY_PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
 const KEY_PEM_OPEN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=]*/y;
 /** A line of pure base64 key data (the body of a key whose BEGIN has no END). */
 const KEY_B64_LINE = /^[A-Za-z0-9+/=]{40,}\r?$/;
-/** The password of URL userinfo; anchored on `://` (linear), an empty user `://:pass@` included. */
-const KEY_URL_PASS = /(:\/\/[^\s:@/'"]*:)[^\s@/'"]+(?=@)/g;
-const KEY_BEARER = /\b(Authorization\s*[:=]\s*["']?(?:Bearer|Basic|Token)\s+)([^\s"',;]+)|\bBearer\s+([A-Za-z0-9._~+/=-]{16,})/gi;
 const KEY_NAME = new RegExp(`${SECRET_NAME_WORDS}|(?:^|[_-])auth(?:$|[_-])`, "i");
 const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^\n]*?\\"|\\'[^\n]*?\\'|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|'[^'\n]*'|[^\s'",;&|<>]+)/g;
 
@@ -353,20 +350,39 @@ const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^
 export function maskKeys(text: string): string {
   const R = "[redacted]";
   return maskPem(text, R)
-    .replace(KEY_URL_PASS, `$1${R}`)
-    // a value that starts a command substitution stays visible whole, never partly masked
-    .replace(KEY_BEARER, (m: string, pre?: string, val?: string) => (val !== undefined && /^(?:\$\(|\$\{|`)/.test(val) ? m : `${pre ?? "Bearer "}${R}`))
     .replace(KEY_TOKEN, R)
     .replace(KEY_SK, (m) => (!m.includes("-", 3) || /[\dA-Z]/.test(m.slice(3)) || /^sk-\w{20}/.test(m) ? R : m))
     // the value of a secret-named key is masked whole, quoted or not
     .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => (KEY_NAME.test(name) && value.replace(/^\\?["']|\\?["']$/g, "").length > 0 ? `${name}${sep}${R}` : m))
-    // base's per-line rules for secret-named values and command logins (`curl -u user:pass`, `wget --password x`), without its long-run rules
+    // base's per-line rules (URL userinfo, Authorization and Bearer values, secret-named values, command logins), without its long-run rules
     .split("\n")
     .map((l) => redactFileTextLine(l))
     .join("\n");
 }
 
-/** PEM private-key blocks: BEGIN..END is hidden (newlines kept); a BEGIN with no END hides only its own marker and key text. One pass, each marker searched once. */
+const KEY_PEM_MARKER = /-----(?:BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[A-Za-z0-9+/=]|\\[nr])*|END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)/g;
+const KEY_HEADER_LINE = /^(?:Proc-Type|DEK-Info|Comment):/;
+const KEY_PGP_SUM = /^=[A-Za-z0-9+/]{4}\r?$/;
+const KEY_B64_ANY = /^[A-Za-z0-9+/=]+\r?$/;
+
+/** A BEGIN..END region: the markers are masked and only key data (base64 lines, the standard key headers) is blanked; any other line stays visible. Linear in the region. */
+function maskPemRegion(region: string, R: string): string {
+  const lines = region.split("\n");
+  return lines
+    .map((l, i) => {
+      if (l.includes("-----")) {
+        KEY_PEM_MARKER.lastIndex = 0;
+        if (KEY_PEM_MARKER.test(l)) return l.replace(KEY_PEM_MARKER, R);
+      }
+      if (KEY_HEADER_LINE.test(l) || KEY_B64_LINE.test(l)) return "";
+      // a short last key line (and the PGP checksum) sits directly above the END marker or the PGP checksum line; elsewhere a short word is code
+      const next = lines[i + 1] ?? "";
+      return KEY_B64_ANY.test(l) && (i + 1 === lines.length - 1 || KEY_PGP_SUM.test(next)) ? "" : l;
+    })
+    .join("\n");
+}
+
+/** PEM private-key blocks: BEGIN..END has its markers and key data hidden (newlines kept); a BEGIN with no END hides only its own marker and key text. One pass, each marker searched once. */
 function maskPem(text: string, R: string): string {
   KEY_PEM_BEGIN.lastIndex = 0;
   let out = "";
@@ -413,7 +429,7 @@ function maskPem(text: string, R: string): string {
         end = line.le < 0 ? text.length : line.le;
         nl = line.le;
       }
-    } else out += text.slice(at, b.index) + R + text.slice(b.index, end).replace(/[^\n]/g, "");
+    } else out += text.slice(at, b.index) + maskPemRegion(text.slice(b.index, end), R);
     at = end;
     KEY_PEM_BEGIN.lastIndex = end;
   }

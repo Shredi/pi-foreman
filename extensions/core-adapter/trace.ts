@@ -39,8 +39,7 @@ const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(Strin
 const fullCommand = (rec: Record<string, unknown>): boolean => rec.event === "ask_flag" || rec.event === "dialog" || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-"));
 const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits after the lead-in
 
-/** The value of a secret-named `name=value` / `name: value`; `$1` is the name and separator. File text (`fileText`: only the secret-name and login rules, URL, bearer, token-shape and long-run rules are `maskKeys`' own) keeps a bare `key=` and a camelCase `...Key=` visible. */
-const NEVER = /(?!)/g;
+/** The value of a secret-named `name=value` / `name: value`; `$1` is the name and separator. File text (`fileText`: the token-shape and long-run rules are `maskKeys`' own) keeps a bare `key=` and a camelCase `...Key=` visible. */
 const SECRET_VALUE = String.raw`(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)`;
 /** The words that make a name secret in file text (no bare `key`); `maskKeys` tests a whole name against them. */
 export const SECRET_NAME_WORDS = String.raw`token|password|passwd|secret|pwd|[_-]key|api-?key|access-?key|private-?key`;
@@ -59,7 +58,7 @@ export function redactCommand(cmd: string): string {
   return redactWith(cmd, false);
 }
 
-/** The per-line rules of file text (`maskKeys`): `redactCommand`'s secret-name and login rules only; a bare `key=` and a camelCase `...Key=` stay visible. */
+/** The per-line rules of file text (`maskKeys`): `redactCommand`'s per-line rules without its token-shape and long-run rules; a bare `key=` and a camelCase `...Key=` stay visible. */
 export function redactFileTextLine(line: string): string {
   return redactWith(line, true);
 }
@@ -69,14 +68,15 @@ function redactWith(cmd: string, fileText: boolean): string {
   // a run of few distinct characters ("xxxx…") is padding, not a key
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd
-    .replace(fileText ? NEVER : /(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s*)?[^\s'"]+/gi, `$1${R}`)
-    .replace(fileText ? NEVER : /\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`)
+    // file text keeps a value that starts a command substitution (`$(`, `${`, a backtick) visible whole: it is code, not a secret
+    .replace(/(authorization\s*[:=]\s*)((?:(?:bearer|basic|token)\s*)?)([^\s'"]+)/gi, (m: string, pre: string, _scheme: string, val: string) => (fileText && /^(?:\$\(|\$\{|`)/.test(val) ? m : `${pre}${R}`))
+    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`)
     .replace(fileText ? SECRET_ASSIGN_TEXT : SECRET_ASSIGN, `$1${R}`)
-    .replace(fileText ? NEVER : /(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
+    .replace(/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
     .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
     .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`); // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
-  // file text: the token shapes and the long-run rules are `maskKeys`' own (a long run is no key by its length)
-  if (fileText) return out;
+  // file text: the token shapes and the long-run rules are `maskKeys`' own (a long run is no key by its length); on an Authorization line the Digest `response=` and AWS4 `Signature=` values are the credential
+  if (fileText) return out.replace(/(authorization\s*[:=][^\n]{0,300}?\b(?:response|signature)\s*=\s*)(?:"[^"]*"?|'[^']*'?|[^\s'",;]+)/gi, `$1${R}`);
   out = out
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
     .replace(/\b(?:gh[pousr]_|github_pat_|npm_|glpat-|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)

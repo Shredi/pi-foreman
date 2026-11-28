@@ -45,7 +45,7 @@ test("a BEGIN with no END keeps the later lines visible", () => {
 
 test("Authorization with a substitution is shown whole; a plain bearer value is masked", () => {
   for (const l of ["Authorization: Bearer $(rm -rf ~)", "Authorization: Bearer ${TOKEN}", "Authorization: Bearer `rm -rf ~`"]) assert.equal(maskKeys(`${l}\n`), `${l}\n`, l);
-  assert.equal(maskKeys("Authorization: Bearer abc123def\n"), `Authorization: Bearer ${R}\n`);
+  assert.equal(maskKeys("Authorization: Bearer abc123def\n"), `Authorization: ${R}\n`);
 });
 
 test("the mask stays linear on many unpaired BEGIN markers", () => {

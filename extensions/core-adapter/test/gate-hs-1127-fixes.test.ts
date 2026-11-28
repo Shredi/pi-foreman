@@ -27,7 +27,7 @@ test("the value of a secret-named key is masked whatever its length or character
 
 test("URL userinfo passwords and bearer tokens are masked", () => {
   const url = maskKeys("DATABASE=postgres://admin:hunter2pass@db.example.com/x\n");
-  assert.ok(!url.includes("hunter2pass") && url.includes("admin:") && url.includes("@db.example.com/x"), url);
+  assert.ok(!url.includes("hunter2pass") && url.includes(`${R}@db.example.com/x`), url);
   const hdr = maskKeys("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def\n");
   assert.ok(!hdr.includes("eyJ") && hdr.includes(R), hdr);
   assert.ok(!maskKeys("curl -H 'x: Bearer abcdefghijklmnop1234' u\n").includes("abcdefghijklmnop1234"));
@@ -45,7 +45,7 @@ test("an unterminated private-key BEGIN masks only its own line, never later cod
   const later = maskKeys(": '-----BEGIN PRIVATE KEY-----'\nrm -rf ~/Documents\n-----BEGIN PRIVATE KEY-----\nMIIEvQ\n-----END PRIVATE KEY-----\nb\n");
   // the pairing is by marker only (the judge prompt says the mask may hide code), so only the text after the END is certain to show
   assert.ok(!later.includes("MIIEvQ") && later.endsWith("\nb\n"), later);
-  const whole = maskKeys("a\n-----BEGIN RSA PRIVATE KEY-----\nMIIE\nProc-Type: 4,ENCRYPTED\n\nxx==\n-----END RSA PRIVATE KEY-----\nb\n");
+  const whole = maskKeys("a\n-----BEGIN RSA PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7VJTU\nProc-Type: 4,ENCRYPTED\n\nxx==\n-----END RSA PRIVATE KEY-----\nb\n");
   assert.ok(!whole.includes("MIIE") && !whole.includes("xx==") && whole.split("\n").length === 9 && whole.endsWith("\nb\n"), whole);
 });
 
