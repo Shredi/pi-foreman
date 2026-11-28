@@ -24,10 +24,12 @@ the loader the extension uses; the list comes from L1-L3 only):
 
 Git runs with the hardened environment and `-c` options of scripts/safe_ops.py: no system config,
 core.fsmonitor off, ext:: transport off, commit.gpgSign and submodule.recurse off, and core.hooksPath set to an empty
-directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run; core.alternateRefsCommand
+directory, so repository hooks (pre-commit, commit-msg, pre-push) do NOT run; a repo that sets core.hooksPath
+itself is accepted (the command-line value outranks it) and a successful result carries the note
+"repo hooks skipped (core.hooksPath set; sync runs git without hooks)", never the value; config hooks (`hook.*`) stay refused; core.alternateRefsCommand
 and core.alternateRefsPrefixes are emptied. A repo whose local or worktree config (includes followed)
 sets any key outside a small allowlist of harmless keys (ALLOWED_KEYS: core layout/line-ending keys,
-user.name/email, remote.*.url/fetch, branch tracking, pull/push/fetch defaults, display keys; some only
+user.name/email, remote.*.url/fetch, branch tracking, `core.hooksPath`, `branch.<x>.vscode-merge-base` only with a plain ref name, pull/push/fetch defaults, display keys; some only
 with a false value, branch remotes only naming a configured remote, remote urls only https://, ssh://,
 git:// or scp-like `[user@]host:path`, never a local path, file:// or a `<helper>::` transport, whose
 receive-pack hooks would run in this env), includes a file outside the git dir, has objects/info/alternates,
@@ -109,16 +111,18 @@ REDACT = safe_ops.REDACT
 # missed keys twice). Any other key refuses the repo; only its key class (`section.<x>.name`, the
 # subsection masked) or a rule label is reported, never a value. `<x>` = any subsection name.
 # Value rules: "false" = only a false value; "remote" = must name a configured remote;
-# "url" = URL_OK (network transports only).
+# "url" = URL_OK (network transports only); "ref" = a plain ref name (REF_OK); "hooks" = any value
+# (git() forces core.hooksPath to an empty dir, so the repo value never runs; the note says so).
 ALLOWED_KEYS = [(re.compile(rx), rule) for rx, rule in (
     (r"core\.(?:repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks"
      r"|autocrlf|eol|safecrlf|quotepath|untrackedcache|splitindex|checkstat|trustctime|commitgraph"
      r"|multipackindex|abbrev)", None),
-    (r"core\.fsmonitor", "false"),
+    (r"core\.fsmonitor", "false"), (r"core\.hookspath", "hooks"),
     (r"extensions\.(?:worktreeconfig|objectformat|refstorage)", None), (r"init\.defaultbranch", None),
     (r"user\.(?:name|email)", None),
     (r"remote\..+\.url", "url"), (r"remote\..+\.(?:fetch|tagopt|prune)", None),
     (r"branch\..+\.(?:remote|pushremote)", "remote"), (r"branch\..+\.(?:merge|rebase)", None),
+    (r"branch\..+\.vscode-merge-base", "ref"),
     (r"pull\.(?:ff|rebase)", None), (r"push\.(?:default|autosetupremote)", None), (r"fetch\.prune", None),
     (r"gc\.(?:auto|autodetach)", None), (r"(?:commit|tag)\.gpgsign", "false"),
     (r"(?:color|i18n|log|status|advice)\..+", None), (r"diff\.(?:renames|algorithm)", None),
@@ -129,6 +133,8 @@ ALLOWED_KEYS = [(re.compile(rx), rule) for rx, rule in (
 URL_OK = re.compile(r"(?:https|ssh|git)://(?:[A-Za-z0-9][^/@\s]*@)?(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9A-Fa-f:.]+\])"
                     r"(?::[0-9]*)?(?:/\S*)?"
                     r"|(?:[A-Za-z0-9][A-Za-z0-9._~+-]*@)?[A-Za-z0-9][A-Za-z0-9.-]+:(?!:|//)\S*")
+REF_OK = re.compile(r"[A-Za-z0-9._/-]+")
+HOOKS_NOTE = "repo hooks skipped (core.hooksPath set; sync runs git without hooks)"
 TEST_LOCAL_REMOTES = ()  # test seam, see the module docstring
 
 
@@ -265,10 +271,15 @@ def key_class(low):
     return low if len(parts) < 3 else "%s.<x>.%s" % (parts[0], parts[-1])
 
 
-def risky_config(root):
+def ref_ok(val):
+    """True for a plain ref name: [A-Za-z0-9._/-], no leading `-` or `/`, no `..`, no `//`."""
+    return bool(REF_OK.fullmatch(val or "")) and val[0] not in "-/" and ".." not in val and "//" not in val
+
+
+def risky_config(root, facts=None):
     """(rule names, error) for repo-local and worktree config (includes followed) outside ALLOWED_KEYS
     or failing its value rule, and for an alternates file. Key classes and rule names only: key
-    subsections and values are never reported."""
+    subsections and values are never reported. A dict `facts` gets hooks_skipped=True when core.hooksPath is set."""
     dirs = {}
     for flag in ("--git-dir", "--git-common-dir"):
         code, out, err = git(["rev-parse", flag], root)
@@ -296,6 +307,11 @@ def risky_config(root):
                 hits.append("%s (not false)" % low)
             elif rule == "remote" and ((val or "") not in remotes or not name_ok(val)):
                 hits.append("%s (not a configured remote)" % key_class(low))
+            elif rule == "ref" and not ref_ok(val):
+                hits.append("branch.<x>.vscode-merge-base (not a plain ref name)")
+            elif rule == "hooks":
+                if facts is not None:
+                    facts["hooks_skipped"] = True
             elif rule == "url" and not url_ok(val):
                 hits.append("remote.<x>.url (not https/ssh/git or scp-like)")
             elif rule == "include":
@@ -367,9 +383,9 @@ def commit_paths(root, files, message):
 
 # ------------------------------------------------------------------ one repo
 
-def recheck(root, rep, prefix):
+def recheck(root, rep, prefix, facts=None):
     """Run the full repo check (config, alternates, gitlinks); on a hit set rep refused and return False."""
-    risky, err = risky_config(root)
+    risky, err = risky_config(root, facts)
     if err or risky:
         rep["status"] = "refused"
         rep["detail"] = prefix + (err or "repo config sets code-running or redirecting keys: %s" % ", ".join(risky))
@@ -394,7 +410,12 @@ def sync_repo(entry, ctx):
         rep["detail"] = "not a git work tree root"
         return rep
     root = path
-    if not recheck(root, rep, ""):
+    facts = {}
+
+    def hooks_note():
+        return [HOOKS_NOTE] if facts.get("hooks_skipped") else []
+
+    if not recheck(root, rep, "", facts):
         return rep
     code, out, _ = git(["symbolic-ref", "-q", "--short", "HEAD"], root)
     branch = out.strip()
@@ -436,11 +457,11 @@ def sync_repo(entry, ctx):
     rep["files"] = files
     if ctx["dry_run"]:
         rep["status"] = "dry-run"
-        rep["detail"] = "would pull, commit %d file(s), push %s" % (len(files), branch)
+        rep["detail"] = "; ".join(["would pull, commit %d file(s), push %s" % (len(files), branch)] + hooks_note())
         return rep
     committed = False
     if files:
-        if not recheck(root, rep, "before commit: "):
+        if not recheck(root, rep, "before commit: ", facts):
             return rep
         err = commit_paths(root, files, "chore(sync): %s %s" % (ctx["date"], ctx["session"][:8]))
         if err:
@@ -468,9 +489,9 @@ def sync_repo(entry, ctx):
         ahead = code != 0 or out.strip() != "0"
     if not ahead:
         rep["status"] = "committed" if committed else "clean"
-        rep["detail"] = "; ".join(notes + ["nothing to push"])
+        rep["detail"] = "; ".join(notes + ["nothing to push"] + hooks_note())
         return rep
-    if not recheck(root, rep, "%sbefore push: " % ("committed, " if committed else "")):
+    if not recheck(root, rep, "%sbefore push: " % ("committed, " if committed else ""), facts):
         return rep
     code, _, err = git(["push", remote, "refs/heads/%s:refs/heads/%s" % (branch, branch)], root)
     if code != 0:
@@ -478,7 +499,7 @@ def sync_repo(entry, ctx):
         rep["detail"] = "%spush to %s failed: %s" % ("committed, " if committed else "", remote, first_line(err))
         return rep
     rep["status"] = "pushed"
-    rep["detail"] = "; ".join(notes + ["%d file(s) committed, pushed to %s" % (len(files), remote)])
+    rep["detail"] = "; ".join(notes + ["%d file(s) committed, pushed to %s" % (len(files), remote)] + hooks_note())
     return rep
 
 

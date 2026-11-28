@@ -146,7 +146,7 @@ class SyncTest(unittest.TestCase):
         cases = [("filter.x.clean", "touch pwned", na + "filter.<x>.clean"), ("diff.x.textconv", "cat", na + "diff.<x>.textconv"),
                  ("diff.x.command", "x", na + "diff.<x>.command"), ("core.attributesFile", "x", na + "core.attributesfile"),
                  ("submodule.recurse", "true", na + "submodule.recurse"), ("remote.origin.vcs", "x", na + "remote.<x>.vcs"),
-                 ("core.sshCommand", "ssh -o X=y", na + "core.sshcommand"), ("core.hooksPath", "hooks", na + "core.hookspath"),
+                 ("core.sshCommand", "ssh -o X=y", na + "core.sshcommand"),
                  ("credential.helper", "store", na + "credential.helper"), ("gpg.ssh.program", "x", na + "gpg.<x>.program"),
                  ("commit.gpgSign", "true", "commit.gpgsign (not false)"), ("core.fsmonitor", "x", "core.fsmonitor (not false)"),
                  ("url.https://user:pw@example.invalid/.insteadOf", str(self.bare), na + "url.<x>.insteadof"),
@@ -329,6 +329,87 @@ class SyncTest(unittest.TestCase):
         code, rep = self.run_sync()
         self.assertEqual((code, rep["status"]), (1, "refused"))
         self.assertIn("not allowlisted: core.askpass", rep["detail"])
+
+    NOTE = "repo hooks skipped (core.hooksPath set; sync runs git without hooks)"
+
+    def hooks_dir(self):
+        hooks = self.tmp / "my-hooks-dir"
+        hooks.mkdir()
+        marker = self.tmp / "hook-ran"
+        for name in ("pre-commit", "pre-push"):
+            (hooks / name).write_text("#!/bin/sh\ntouch '%s'\nexit 1\n" % marker)
+            (hooks / name).chmod(0o755)
+        return hooks, marker
+
+    def test_vscode_merge_base_plain_ref_syncs(self):
+        g(self.work, "config", "branch.main.vscode-merge-base", "origin/main")
+        self.write("notes/a.md", "note\n")
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (0, "pushed"), rep)
+        self.assertEqual(self.remote_head(), g(self.work, "rev-parse", "HEAD"))
+
+    def test_vscode_merge_base_bad_values_refused(self):
+        self.write("notes/a.md", "note\n")
+        before = self.remote_head()
+        for val in ("-x", "a..b", "ext::x", "/abs"):
+            with self.subTest(val=val):
+                g(self.work, "config", "branch.main.vscode-merge-base", val)
+                code, rep = self.run_sync()
+                self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+                self.assertIn("branch.<x>.vscode-merge-base (not a plain ref name)", rep["detail"])
+        self.assertEqual(self.remote_head(), before)
+
+    def test_hookspath_accepted_hooks_do_not_run_note_without_value(self):
+        hooks, marker = self.hooks_dir()
+        g(self.work, "config", "core.hooksPath", str(hooks))
+        self.write("notes/a.md", "note\n")
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (0, "pushed"), rep)
+        self.assertFalse(marker.exists())
+        self.assertIn(self.NOTE, rep["detail"])
+        self.assertNotIn(str(hooks), json.dumps(rep))
+        self.assertNotIn("my-hooks-dir", json.dumps(rep))
+        self.assertEqual(self.remote_head(), g(self.work, "rev-parse", "HEAD"))
+
+    def test_hookspath_note_on_dry_run_and_clean(self):
+        hooks, _ = self.hooks_dir()
+        g(self.work, "config", "core.hooksPath", str(hooks))
+        self.write("notes/a.md", "note\n")
+        code, rep = self.run_sync("--dry-run")
+        self.assertEqual((code, rep["status"]), (0, "dry-run"), rep)
+        self.assertIn(self.NOTE, rep["detail"])
+        self.assertNotIn(str(hooks), json.dumps(rep))
+        (self.work / "notes" / "a.md").unlink()
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (0, "clean"), rep)
+        self.assertIn("nothing to push", rep["detail"])
+        self.assertIn(self.NOTE, rep["detail"])
+
+    def test_hookspath_in_worktree_config_accepted_with_note(self):
+        hooks, marker = self.hooks_dir()
+        g(self.work, "config", "extensions.worktreeConfig", "true")
+        g(self.work, "config", "--worktree", "core.hooksPath", str(hooks))
+        self.write("notes/a.md", "note\n")
+        code, rep = self.run_sync()
+        self.assertEqual((code, rep["status"]), (0, "pushed"), rep)
+        self.assertIn(self.NOTE, rep["detail"])
+        self.assertFalse(marker.exists())
+
+    def test_hookspath_with_risky_key_still_refused(self):
+        hooks, _ = self.hooks_dir()
+        g(self.work, "config", "core.hooksPath", str(hooks))
+        self.write("notes/a.md", "note\n")
+        before = self.remote_head()
+        for key, val, label in (("hook.x.command", "touch pwned", "not allowlisted: hook.<x>.command"),
+                                ("core.sshCommand", "ssh -o X=y", "not allowlisted: core.sshcommand")):
+            with self.subTest(key=key):
+                g(self.work, "config", key, val)
+                code, rep = self.run_sync()
+                g(self.work, "config", "--unset", key)
+                self.assertEqual((code, rep["status"]), (1, "refused"), rep)
+                self.assertIn(label, rep["detail"])
+                self.assertNotIn(self.NOTE, rep["detail"])
+        self.assertEqual(self.remote_head(), before)
 
     def test_secret_scan_whole_file_bytes_and_names(self):
         pad = b"\0" * (3 * 1024 * 1024 - 10)
