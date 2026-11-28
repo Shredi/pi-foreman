@@ -6,6 +6,7 @@ pi-foreman is a Pi package (extensions, agent roles, skills) with a stdlib-only 
 
 ## Docs
 
+- [Quickstart](README.md#quickstart): what you need, the install commands, the subscription presets and a setup prompt to give an agent
 - [Feature overview](docs/features.md): full feature inventory; read this first to set up
 - [AGENTS.md](AGENTS.md): instructions for coding agents working on the repo, and the docs-by-area index
 - [Install and configure](docs/install.md): package install, `foreman setup` (`--profile`, `--enable`, `--disable`, `--addon`, `--pick`), config layers, update and remove

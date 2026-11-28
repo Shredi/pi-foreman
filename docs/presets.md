@@ -16,7 +16,7 @@ The preset wins over equal keys in your file; the old file is backed up first (`
 result is validated against the schema and nothing is written when it fails. `--dry-run` writes nothing.
 `--foreman` sets the foreman model of the preset's provider. Shipped presets: `claude-bridge`,
 `claude-bridge-sonnet-reviewer`, `github-copilot`, `openai-codex`, `google`, `openai` (fixed model maps) and `inexpensive` (rank tiers, below).
-The first three of these are the subscription presets below.
+Of these, `claude-bridge`, `github-copilot` and `openai-codex` are the subscription presets below.
 
 A fresh install has no rank rules, so a builder launch that names a model outside the builder's own models is refused until a preset sets `providers.<p>.ranks`; the session start says so. Apply a preset (`foreman config apply-preset`) to name explicit builder models.
 

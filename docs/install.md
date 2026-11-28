@@ -6,7 +6,7 @@
 
 ## Install
 
-Setting up with an agent: point it at [features.md](features.md).
+Setting up with an agent: give it the prompt in the README ([Let your agent do it](../README.md#let-your-agent-do-it)). The feature list for agents is [features.md](features.md).
 
 Install the prerequisites first, then Pi (the version range is the one setup checks):
 
@@ -344,7 +344,11 @@ backups ([migration](permissions.md#from-the-permission-package)). Setup writes 
 every other key and never touches `allowRemote`. `--no-intercom` is a package filter: it adds
 `!node_modules/pi-intercom/**` to the pi-foreman package entry and writes no intercom config (delete those filter
 lines from `settings.json` to undo). When the Claude bridge is in use, setup prints a login hint (see
-[below](#claude-bridge-log-in-once)). Map each provider you use to models in `foreman.json`:
+[below](#claude-bridge-log-in-once)).
+
+### Your own model map
+
+Map each provider you use to models in `foreman.json`:
 
 ```json
 {
@@ -353,12 +357,25 @@ lines from `settings.json` to undo). When the Claude bridge is in use, setup pri
     "my-provider": {
       "roles": {
         "foreman": { "model": "my-provider/big-model", "thinking": "high" },
-        "builder": { "model": "my-provider/mid-model", "thinking": "medium" }
+        "explorer": { "model": "my-provider/small-model" },
+        "builder": { "model": "my-provider/mid-model", "thinking": "medium" },
+        "reviewer": { "model": "my-provider/mid-model" }
       }
     }
-  }
+  },
+  "ceremony": { "reviewModel": "my-provider/other-model" }
 }
 ```
+
+Save it as `foreman.json` in Pi's agent folder (`~/.pi/agent`, `%USERPROFILE%\.pi\agent` on Windows, or the folder in `PI_CODING_AGENT_DIR`), with your own provider and model ids instead of the placeholders. For a built-in provider, log in first: type `/login` in Pi to connect a subscription or API key.
+
+A role is a job with its own model: the foreman is the session you talk to, the explorer reads and searches, the builder makes one scoped change, the reviewer checks it. Give the foreman your strongest model and the helpers cheaper ones. When you start a session, the foreman switches to its mapped model (and `thinking` level, if you set one), unless you started Pi with `--model` or picked a model yourself. A reviewer never reviews on the foreman's own model: when the mapped reviewer would be the same model, `ceremony.reviewModel` names the model that reviews instead. Check the file with:
+
+```
+/foreman config validate
+```
+
+Setup must run again after a map change. Setup is what writes the mapped models and Pi's compaction points into Pi's settings, so run `/foreman setup` again.
 
 Or apply a shipped preset: `/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` merges
 `config/presets/<name>.json` into that file (preset values win, every other key is kept), validates the result

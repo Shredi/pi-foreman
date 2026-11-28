@@ -13,11 +13,23 @@ What that gives you: fewer wrong edits, a second pair of eyes before anything is
 around git and the shell, a cost footer so you see what a task used, and the chance to use cheaper models for
 the helpers while a stronger one stays in charge.
 
-## Install
+## Quickstart
 
-Linux, macOS and Windows. Do the steps in order. From step 3 on everything is typed inside Pi, except saving the config file in step 4.
+Linux, macOS and Windows. Do the four parts in order.
 
-**1. Install the prerequisites** (Node 22.19+, Python 3.13+, git) and Pi, with the block for your system:
+### 1. What you need
+
+| You need | Minimum | What for |
+|---|---|---|
+| Node.js | 22.19 | Runs Pi and pi-foreman. npm 11.9 to 11.12 cannot install pi-foreman ([fix](docs/install.md#npm-stops-with-eallowgit)). |
+| Python | 3.13 | Runs setup, the checklist (the ledger), the config commands and other harness scripts. |
+| git | any current version | Pi downloads pi-foreman with it, and the foreman works in git repositories. |
+| [Pi](https://pi.dev) | 1.7.x | The coding agent that pi-foreman extends. |
+| A model login | | A subscription or an API key for a Pi provider. |
+| GitHub CLI `gh` | optional, 2.40 | Only for the pull-request tools (`glab` 1.36 for GitLab). Log in with `gh auth login`. |
+| [herdr-app](#herdr-app-recommended) | optional, 0.1.13 | Recommended: a window with one tab per session and a status sidebar. |
+
+Install the first four with the block for your system.
 
 macOS (Homebrew):
 
@@ -26,7 +38,7 @@ brew install node python@3.13 git
 npm install -g @earendil-works/pi-coding-agent@1.7
 ```
 
-Linux, Debian 13 or Ubuntu 25.04 and later (their `python3` is 3.13):
+Linux, Debian 13 or Ubuntu 25.04 and later (their `python3` is 3.13). On another distribution, install Node, Python and git with its package manager, then run the last line.
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl git python3
@@ -34,95 +46,92 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-ge
 sudo npm install -g @earendil-works/pi-coding-agent@1.7
 ```
 
-On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the last line.
-
-Windows (PowerShell):
+Windows (PowerShell). Open a new terminal before the last line.
 
 ```powershell
 winget install Git.Git
 winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.13
-```
-
-Open a new terminal, then:
-
-```powershell
 npm install -g @earendil-works/pi-coding-agent@1.7
 ```
 
-**2. Install the package.**
+### 2. Install
 
-```sh
-pi install git:github.com/Shredi/pi-foreman
-```
+Type the first command in a terminal. Then start `pi` and type the others inside Pi.
 
-**3. Run setup.** Start `pi`, then type:
+| Command | What it does |
+|---|---|
+| `pi install git:github.com/Shredi/pi-foreman` | Downloads pi-foreman and registers it as a Pi package. |
+| `/foreman setup --profile standard` | Writes the pi-foreman settings into Pi's agent folder, installs three add-on packages and adds a resume block to your shell profile. Add `--dry-run` to see every change first; it writes nothing. |
+| `/foreman config apply-preset <preset>` | Writes the model map for your subscription. Log in first. The presets are in part 3. |
+| `/foreman setup` | Run setup again. It writes the mapped models and their compaction points into Pi's settings. |
+| `/foreman doctor` | Checks the install. A line that starts with `FAIL` names what to fix. |
 
-```
-/foreman setup --profile standard
-```
+Other profiles, flags, add-ons and what setup writes are in [docs/install.md](docs/install.md).
 
-`/foreman setup --dry-run` shows the changes first and writes nothing. Other profiles, flags, add-ons and
-what setup writes are in [docs/install.md](docs/install.md).
+### 3. Pick the preset for your subscription
 
-**4. Map your models.** For a built-in provider, log in first: type `/login` in Pi to connect a subscription or API key. Then tell pi-foreman which model
-does which job: save this as `foreman.json` in Pi's agent folder (`~/.pi/agent`, or `%USERPROFILE%\.pi\agent`
-on Windows, or the folder in `PI_CODING_AGENT_DIR`), with your own provider and model ids instead of the
-placeholders:
+A preset is a ready model map: it says which model does which job. Log in, then apply the preset with the two commands from part 2.
 
-```json
-{
-  "version": 1,
-  "providers": {
-    "my-provider": {
-      "roles": {
-        "foreman": { "model": "my-provider/big-model" },
-        "explorer": { "model": "my-provider/small-model" },
-        "builder": { "model": "my-provider/mid-model" },
-        "reviewer": { "model": "my-provider/mid-model" }
-      }
-    }
-  },
-  "ceremony": { "reviewModel": "my-provider/other-model" }
-}
-```
+| You have | Preset | Log in with | Models |
+|---|---|---|---|
+| Claude Pro or Max | `claude-bridge` | `pi install npm:pi-claude-bridge` (0.11.0 or later), then the [Claude login](docs/install.md#claude-bridge-log-in-once) | Foreman Opus 5.5, helpers Sonnet 5.5 |
+| GitHub Copilot | `github-copilot` | `/login` in Pi | Foreman Claude Opus 5.5, reviewer GPT-6.1 Sol, builder and explorer GPT-6 Luna |
+| ChatGPT Plus or Pro | `openai-codex` | `/login` in Pi | Foreman GPT-6 Astra, reviewer GPT-6.1 Sol, builder and explorer GPT-6 Luna |
+| OpenAI API key (pay per use) | `openai` | `/login` in Pi | Foreman GPT-6 Astra, helpers GPT-6 Luna |
+| Google API key (pay per use) | `google` | `/login` in Pi | Foreman Gemini Pro, helpers Gemini Flash |
 
-A role is a job with its own model: the foreman is the session you talk to, the explorer reads and searches,
-the builder makes one scoped change, the reviewer checks it. Give the foreman your strongest model and the
-helpers cheaper ones. When you start a session, the foreman switches to its mapped model (and `thinking`
-level, if you set one), unless you started Pi with `--model` or picked a model yourself. A reviewer never
-reviews on the foreman's own model: when the mapped reviewer would be the same model, `ceremony.reviewModel`
-names the model that reviews instead. Check the file with:
+If your plan lacks a model, edit the ids in `foreman.json` after applying, or apply the preset with `--foreman <provider>/<model>`. All presets and their details are in [docs/presets.md](docs/presets.md).
 
-```
-/foreman config validate
-```
+No preset fits? Write your own model map in `foreman.json`: give the foreman your strongest model and the helpers cheaper ones. The example and the rules are in [docs/install.md](docs/install.md#your-own-model-map).
 
-Or start from a preset instead of the file: `/foreman config apply-preset <name>` with `claude-bridge`,
-`claude-bridge-sonnet-reviewer`, `google` or `openai` (the provider presets; add `--dry-run` to see the result first;
-[docs/presets.md](docs/presets.md) has the rest, and `inexpensive` needs ranks).
+### 4. First task
 
-**5. Run setup again.** Setup is what writes the mapped models and Pi's compaction points into Pi's settings.
-
-```
-/foreman setup
-```
-
-**6. Check.**
-
-```
-/foreman doctor
-```
-
-**7. First session.**
-
-1. Start `pi` in a repository.
-2. Type a task, for example "add a --verbose flag to the CLI".
-3. Watch the foreman pick a tier (trivial, standard or heavy), launch a builder, then a reviewer, and tick its
-   checklist as the work is verified. A footer shows tokens and cost.
+1. Start `pi` in a git repository.
+2. Type a small task, for example `add a --verbose flag to the CLI`.
+3. Watch the foreman work. It sizes the task (trivial, standard or heavy) and writes a checklist, the ledger. A builder makes the change. A reviewer checks it. The foreman says "done" only when the checklist is ticked and the review passed. A footer shows tokens and cost.
 4. Type `/foreman close` to end the session cleanly.
 
-To work on pi-foreman itself, see [Developing](docs/install.md#developing).
+Read more: [docs/install.md](docs/install.md) (setup in detail), [docs/features.md](docs/features.md) (every feature and its switch), [docs/roles.md](docs/roles.md) (roles and models). To work on pi-foreman itself, see [Developing](docs/install.md#developing).
+
+### Let your agent do it
+
+Paste this prompt into Pi or another coding agent. It installs and sets up pi-foreman, and it asks you before it changes anything outside Pi's agent folder.
+
+```text
+Install and set up pi-foreman (https://github.com/Shredi/pi-foreman) on this machine. It is a package for the pi coding agent. Read the Quickstart in its README first and follow it.
+
+Done means: pi-foreman is installed, setup has run, a model map fits my subscription, and I know what changed.
+
+1. Check what is installed: Node (22.19 or later), npm (not 11.9 to 11.12), Python (3.13 or later; `python3`, on Windows `py -3`), git, and `pi --version` (1.7.x). Also check the optional tools: `gh` and `herdr-app`. Show me the result as a short table.
+2. If a required tool is missing or too old, show me the install command for my system from the README and ask before you run it.
+3. Run `pi install git:github.com/Shredi/pi-foreman`.
+4. Find Pi's agent folder: the folder in PI_CODING_AGENT_DIR, else `~/.pi/agent` (on Windows `%USERPROFILE%\.pi\agent`). The package is in `<agent folder>/git/github.com/Shredi/pi-foreman`.
+5. Run `node <package>/setup.mjs --profile standard --dry-run`. It writes nothing. Tell me in a few lines what it would change: the files in the agent folder, the add-on packages, the block in my shell profile. Ask me, then run it again without `--dry-run`.
+6. Ask me which subscription or API key I use. Pick the preset: `claude-bridge` (Claude Pro or Max), `github-copilot`, `openai-codex` (ChatGPT Plus or Pro), `openai` or `google` (API keys). Run `<package>/bin/foreman config apply-preset <preset>` (on Windows `bin\foreman.cmd`), then `node <package>/setup.mjs` again. If no preset fits, leave the model map and show me the part of the README about writing my own map.
+7. Check your work: run `node <package>/setup.mjs` once more. Its last line must say "up to date, nothing to change".
+8. If herdr-app is missing, tell me in two sentences what it adds and ask whether I want it. Its installer downloads a script and runs it, so run it only after I say yes.
+
+Rules, because this is my machine and my accounts:
+- Ask before any change outside Pi's agent folder, before any command that needs sudo or administrator rights, and before any command that pipes a download into a shell.
+- Do the logins with me, not for me: tell me which login is needed (`/login` inside Pi, or the Claude login from docs/install.md). Do not read or print tokens or keys.
+- If a step fails, stop. Show me the error and what you would try next.
+
+Finish with a short report: what you installed, each file you changed and where its backup is, and what I must still do myself. The last step is mine: I start `pi`, type `/foreman doctor` and fix every line that starts with FAIL.
+```
+
+### herdr-app (recommended)
+
+[herdr-app](https://github.com/herdrdev/herdr-app) is a desktop app for terminals. With it, a session that the foreman opens starts in the app by itself. A sidebar shows each session's status, open questions and pull requests. Terminals keep running when you close the window, and sessions can run on other machines.
+
+pi-foreman works without it. Then the foreman prints the command for a new session, and you start it in a new terminal yourself. There is no sidebar. Sessions on other machines need the `hc` command, which comes with the app. Pull-request watches get reports only when you run `foreman prs poll` on a timer.
+
+```sh
+curl -fsSL https://releases.herdr.dev/app/install.sh | sh    # Linux and macOS (Apple Silicon); also: brew install --cask herdr-app
+irm https://releases.herdr.dev/app/install.ps1 | iex         # Windows (PowerShell)
+```
+
+The installers download and run a script, and they also install [herdr-core](https://github.com/herdrdev/herdr-core) (the `hc` command) when it is missing. pi-foreman needs app 0.1.13 with core 0.1.18 or later. The sidebar is a mod that you copy once; the steps are in [docs/herdr.md](docs/herdr.md#herdr-app-and-herdr-core), and `foreman setup --mods` updates it later. The integration is experimental. The older Herdr terminal UI still works ([docs/herdr.md](docs/herdr.md#install)).
 
 ## Recommended settings
 
@@ -181,7 +190,7 @@ A tool call that no floor or judge-first entry names simply runs. Only a short l
 | [design/architecture.md](design/architecture.md) | The design record and rationale |
 | [CHANGELOG.md](CHANGELOG.md) | What changed |
 
-Setting up with an agent: point it at [docs/features.md](docs/features.md).
+Setting up with an agent: give it the prompt in [Let your agent do it](#let-your-agent-do-it). The feature list for agents is [docs/features.md](docs/features.md).
 
 ## License
 
