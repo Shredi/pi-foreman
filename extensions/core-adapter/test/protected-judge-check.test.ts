@@ -60,7 +60,9 @@ test("judgeProtected: every cause", () => {
     ["local_opaque", v(), facts({ opaque: true }), "refuse", "local_opaque"],
     ["remote_opaque", v(), facts({ remoteOpaque: true }), "refuse", "remote_opaque"],
     ["remote_write read", v(), facts({ remoteClasses: ["write-out"] }), "ask", "remote_write"],
-    ["remote_write write verdict, owner present, mode model", v({ effect: "write" }), facts({ remoteClasses: ["write-out"] }), "ask", "remote_write"],
+    // remote-asks: a write verdict on a harness-seen remote write is decided by the model in mode model (the remote_write ask stays for a read verdict); read-only mode asks (read_only)
+    ["remote_write write verdict, owner present, mode model", v({ effect: "write" }), facts({ remoteClasses: ["write-out"] }), "allow", undefined],
+    ["remote_write write verdict, mode read-only", v({ effect: "write" }), facts({ remoteClasses: ["write-out"], mode: "read-only" }), "ask", "read_only"],
     ["local_write", v(), facts({ classes: ["write-out"] }), "ask", "local_write"],
     ["read_only", v({ effect: "write" }), facts({ mode: "read-only" }), "ask", "read_only"],
     ["away", v({ effect: "deploy" }), facts({ away: true }), "ask", "away"],
@@ -101,9 +103,10 @@ test("a transport-opaque remote command asks with remote_opaque, an away write v
   assert.deepEqual([away.accepted, away.cause], ["ask", "away"]);
 });
 
-test("remote write that the harness sees: the owner present, mode model, write verdict still asks", async () => {
+test("remote write that the harness sees: the owner present, mode model, write verdict allows, read verdict asks", async () => {
+  // remote-asks: the model's write verdict decides in mode model; only a read verdict on a visible remote write asks (remote_write)
   const r = await check("ssh prod-db 'vendorctl status > /etc/app.conf'", [V({ effect: "write" })]);
-  assert.deepEqual([r.accepted, r.cause], ["ask", "remote_write"]);
+  assert.deepEqual([r.accepted, r.cause], ["allow", undefined]);
   const read = await check("ssh prod-db 'vendorctl status > /etc/app.conf'", [V({})]);
   assert.deepEqual([read.accepted, read.cause], ["ask", "remote_write"]);
 });

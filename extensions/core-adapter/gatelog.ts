@@ -157,6 +157,8 @@ export interface GateRecord {
   input?: string;
   /** The start of a judge reply that was not a valid verdict; written as the first `MAX_REASON` characters of its shape (credentials-only masking with `gate.log.fullCommand`). */
   raw?: string;
+  /** The stop reason of the judge's last model call when its reply was not a valid verdict (`length`: cut off). */
+  stopReason?: string;
   role?: string;
   kind?: GateKind;
   latencyMs?: number;
@@ -245,6 +247,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             ...(rec.reads?.length && typeof rec.readBytes === "number" ? { readBytes: Math.round(rec.readBytes) } : {}),
             ...(rec.reads?.length && typeof rec.rounds === "number" ? { rounds: Math.round(rec.rounds) } : {}),
             ...(rec.raw ? { raw: normalizeShape(rec.raw, opts.roots, full).slice(0, MAX_REASON) } : {}),
+            ...(rec.stopReason ? { stopReason: field(rec.stopReason) } : {}),
             ...(full && rec.input ? { input: normalizeShape(rec.input, opts.roots, true, MAX_FULL) } : {}),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,

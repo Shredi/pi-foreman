@@ -440,7 +440,7 @@ function withRealScratch(roots: GateRoots | undefined): GateRoots | undefined {
 export interface GateOutcome {
   /** floor / selfmod / rule / built-in decision; undefined = nothing decided (the dangerous class and the mode step follow). */
   result: GateResult;
-  /** Set only when `result` is undefined, the gate has roots and the call falls into the dangerous class. */
+  /** Set only when `result` is undefined (or a protected-target ask: the check runs first, then the judge for this danger), the gate has roots and the call falls into the dangerous class. */
   danger: DangerHit | null;
   /** The parse of a shell tool's line (the judge-first checks and the built-in allow read it). */
   segments?: ShellSegment[];
@@ -556,14 +556,15 @@ function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps):
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, fsegs);
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
       const denv = { roots, platform, cwd, facts, floor: env };
-      if (result) return { result, danger: null, segments: segs };
+      // a protected ask carries the line's judge-first danger too: after the protected check allows, the same line still meets the main judge (index.ts), so the fixed limits hold on a protected host
+      if (result && !("ask" in result && result.cause === "protected")) return { result, danger: null, segments: segs };
       const hits = JUDGE_FIRST.filter((r) => r.test(dcall, denv));
       const floorDanger = dangerOfFloor(h);
       const danger: DangerHit | null = floorDanger ?? (hits.length ? { name: hits[0].name, reason: hits[0].reasonOf?.(dcall, denv) ?? hits[0].reason } : null);
       const labels = [...new Set([...(floorDanger ? [floorDanger.name, ...(h?.also ?? [])] : []), ...hits.map((r) => r.name)])];
       // gate.unclassified = judge: nothing above named the line and no built-in allow covered it (`ruled` returned nothing)
-      if (!danger && deps.unclassified === "judge" && toolName !== "powershell") return { result: undefined, danger: UNCLASSIFIED, segments: segs, dangers: [UNCLASSIFIED.name] };
-      return { result: undefined, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
+      if (!result && !danger && deps.unclassified === "judge" && toolName !== "powershell") return { result: undefined, danger: UNCLASSIFIED, segments: segs, dangers: [UNCLASSIFIED.name] };
+      return { result, danger, segments: segs, ...(labels.length ? { dangers: labels } : {}) };
     }
     const readField = readFieldOf(readTools, toolName);
     if (PATH_TOOLS.has(toolName) || readField !== undefined) {

@@ -765,7 +765,7 @@ function doCommand(cmd: Command, sc: Scope): string | null {
 }
 
 /** Options of a wrapper: the leading `-x` words. A non-literal word ends them (it is the operand or command). */
-function parseOpts(args: W[], s: OptSpec): { rest: W[]; opts: Opt[] } | OpaqueReason {
+function parseOpts(args: W[], s: OptSpec, probe?: { unknownOption: boolean }): { rest: W[]; opts: Opt[] } | OpaqueReason {
   const opts: Opt[] = [];
   let i = 0;
   while (i < args.length) {
@@ -792,7 +792,11 @@ function parseOpts(args: W[], s: OptSpec): { rest: W[]; opts: Opt[] } | OpaqueRe
         }
         opts.push({ name: key, value: val });
       } else if (s.long?.includes(key)) opts.push({ name: key, value: eq >= 0 ? v.slice(eq + 1) : null });
-      else return "wrapper_option";
+      else {
+        // a literal option word the spec does not take (not a missing or non-literal value)
+        if (probe) probe.unknownOption = true;
+        return "wrapper_option";
+      }
       i++;
       continue;
     }
@@ -808,7 +812,10 @@ function parseOpts(args: W[], s: OptSpec): { rest: W[]; opts: Opt[] } | OpaqueRe
         opts.push({ name: `-${ch}`, value: val });
         break;
       }
-      if (!s.flags?.includes(ch)) return "wrapper_option";
+      if (!s.flags?.includes(ch)) {
+        if (probe) probe.unknownOption = true;
+        return "wrapper_option";
+      }
       opts.push({ name: `-${ch}`, value: null });
     }
     i++;
@@ -1227,7 +1234,12 @@ function runWord(words: W[], c: Cmd, cwd: string | null): string | null {
     }
     case "exec": {
       // `exec [-cl] [-a name] cmd args`: the command is the segment; the redirect-only form (no command) stays the opaque builtin
-      const o = opts({ flags: "cl", arg: "a" });
+      const probe = { unknownOption: false };
+      const o = parseOpts(rest, { flags: "cl", arg: "a" }, probe);
+      // A look-behind trial that starts at a word of an unmodelled program's operands (`rt exec --on h -- git clone ...`) reads that word as the shell builtin `exec`; the option words of the
+      // program (`--on`) are none of the builtin's. Such a trial is no unknown program: every later literal word starts a trial of its own, so what it would have run is walked there.
+      // Any other failure of the walk (a non-literal option value, the line's own `exec`, a trial of `npx` or `find -exec`) stays unknown.
+      if (typeof o === "string" && probe.unknownOption && sc.run.behind && !sc.run.behindRuns && sc.depth <= (sc.run.behindAt ?? 0)) return bad("shell_builtin", false);
       if (typeof o === "string" || !o.rest.length) return bad("shell_builtin", typeof o === "string");
       // a failed `exec cd` (execfail) leaves the shell where it was: the inner command's cwd is not taken over, as for `env`
       // `exec -l` and `exec -a -name` (argv0 starting with `-`) start the program as a login shell, which reads startup files like `bash -l`

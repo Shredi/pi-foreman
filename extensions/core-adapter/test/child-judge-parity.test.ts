@@ -82,7 +82,9 @@ async function rig(t: T, o: Opts = {}) {
   const registry = {
     find: () => (judge === "nomodel" ? undefined : { id: "m" }),
     getProviderAuthStatus: () => ({ configured: false }),
-    complete: async (_m: never, c: { messages: { content: string }[] }) => {
+    complete: async (_m: never, c: { systemPrompt?: string; messages: { content: string }[] }) => {
+      // remote-asks plan D10(b): a protected allow on an ssh line goes on to the main judge; this stub clears it for the protected-target tests (`reply` is the protected check's), `calls` holds the other calls only
+      if (o.perms && o.reply && c.systemPrompt?.includes("judge of pi-foreman's tool gate")) return text(CLEAR);
       calls.push(c.messages[0].content);
       if (judge === "error") throw new Error("provider down");
       if (judge === "timeout") return new Promise<never>(() => undefined);

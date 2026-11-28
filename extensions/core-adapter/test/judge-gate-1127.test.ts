@@ -85,16 +85,17 @@ test("no brief block for the main session, for a withheld call, or when the brie
   assert.equal(brief(judgeRequestText({ ...CALL, launchTask: "a 0123456789abcdef b" }, "0123456789abcdef")), "a  b");
 });
 
-test("through the adapter: a child's hc exec call carries the brief block; a withheld call (ssh) does not", async (t) => {
+test("through the adapter: a child's hc exec call carries the brief block; a remote call (ssh) carries it too", async (t) => {
   const r = await rig(t, true);
   await r.fire("before_agent_start", { prompt: "Check the machine m and report the disk use.", systemPrompt: "", systemPromptOptions: { sections: {} } });
   const before = r.calls.length;
+  // remote-asks: `hc exec --on m ls` is a read on the other machine and no longer reaches the judge; the ssh call does and carries the brief
   await r.call("bash", { command: "hc exec --on m ls" });
-  assert.equal(r.calls.length, before + 1);
-  assert.equal(brief(r.calls[r.calls.length - 1]), "Check the machine m and report the disk use.");
+  assert.equal(r.calls.length, before);
   await r.call("bash", { command: "ssh host uptime" });
-  assert.equal(r.calls.length, before + 2);
-  assert.equal(brief(r.calls[r.calls.length - 1]), undefined);
+  assert.equal(r.calls.length, before + 1);
+  // remote-asks: a call on another machine is no longer withheld; it carries the brief
+  assert.equal(brief(r.calls[r.calls.length - 1]), "Check the machine m and report the disk use.");
 });
 
 test("the judge text names the rebase, the stash, the stored logins and the brief as context", () => {

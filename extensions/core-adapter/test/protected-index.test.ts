@@ -29,7 +29,9 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: RigOpts = {}) {
   const registry = {
     find: () => ({ id: "m" }),
     getProviderAuthStatus: () => ({ configured: false }),
-    complete: async (_m: never, c: { messages: { content: string }[] }) => {
+    complete: async (_m: never, c: { messages: { content: string }[]; systemPrompt?: string }) => {
+      // remote-asks: a protected allow on a line with a judge-first danger (ssh) goes on to the main judge, which this stub clears; `calls` holds the protected checks only
+      if (c.systemPrompt?.includes("judge of pi-foreman's tool gate")) return { content: [{ type: "text", text: JSON.stringify({ verdict: "clear", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } };
       calls.push(c.messages[0].content);
       return { content: [{ type: "text", text: replies[Math.min(calls.length - 1, replies.length - 1)] }], stopReason: "stop", usage: { input: 1, output: 1 } };
     },

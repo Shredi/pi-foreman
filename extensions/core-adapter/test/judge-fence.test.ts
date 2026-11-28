@@ -35,10 +35,17 @@ test("fence: protected verdict parses with a stray fence", () => {
   }
 });
 
-test("fence: prose, a fence in the middle, two objects and prose after a fence stay invalid", () => {
+// remote-asks D5: prose BEFORE a trailing verdict object is read now (the "reply is not JSON" cause); text after the block, two objects and a fence in the middle stay invalid
+test("fence: prose before a trailing verdict object is read, with or without a closing fence", () => {
+  for (const ok of [`Here you go: ${CLEAR}`, `Here you go:\n${CLEAR}\n\`\`\``]) {
+    const j = parseJudgeVerdict(ok);
+    assert.ok(!("error" in j), ok);
+    assert.ok(!("error" in parseProtectedVerdict(ok.replace(CLEAR, PROT), [])), ok);
+  }
+});
+
+test("fence: a fence in the middle, two objects and prose after a fence stay invalid", () => {
   const bad = [
-    `Here you go: ${CLEAR}`,
-    `Here you go:\n${CLEAR}\n\`\`\``,
     `\`\`\`\n${CLEAR}\n\`\`\`\nthanks`,
     `${CLEAR}\n\`\`\`\nthanks`,
     `${CLEAR}\n\`\`\`\n${CLEAR}`,

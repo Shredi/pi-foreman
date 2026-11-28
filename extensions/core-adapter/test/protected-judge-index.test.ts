@@ -17,7 +17,9 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { replies?: string[]; per
   const registry = {
     find: () => ({ id: "m" }),
     getProviderAuthStatus: () => ({ configured: false }),
-    complete: async (_m: never, c: { messages: { content: string }[] }) => {
+    complete: async (_m: never, c: { messages: { content: string }[]; systemPrompt?: string }) => {
+      // remote-asks: a protected allow on a line with a judge-first danger (ssh) goes on to the main judge, which this stub clears; `calls` holds the protected checks only
+      if (c.systemPrompt?.includes("judge of pi-foreman's tool gate")) return { content: [{ type: "text", text: JSON.stringify({ verdict: "clear", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } };
       calls.push(c.messages[0].content);
       return { content: [{ type: "text", text: replies[Math.min(calls.length - 1, replies.length - 1)] }], stopReason: "stop", usage: { input: 1, output: 1 } };
     },
@@ -35,7 +37,8 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: { replies?: string[]; per
 const userFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "permissions.json");
 
 test("the trace names the cause and the effective mode when the table turns a verdict into an ask", async (t) => {
-  const r = await rig(t, { replies: [WRITE_ALLOW] });
+  // remote-asks: a write verdict on a visible remote write is allowed in mode model now; a read verdict on it asks with remote_write
+  const r = await rig(t, { replies: [READ_ALLOW] });
   const res = await r.call("bash", { command: "ssh prod-db 'vendorctl status > /etc/app.conf'" });
   assert.ok(res && res.block, "not run");
   const pc = r.events("protected_check");

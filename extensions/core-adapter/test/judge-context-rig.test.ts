@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
-import { WITHHELD } from "../classifier.ts";
+import { NO_READS, WITHHELD } from "../classifier.ts";
 import { LAUNCH_TASK_ENTRY } from "../judgecontext.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
@@ -138,34 +138,32 @@ test("no session passes a ledger: the owner session's judge request has no ledge
 
 // ------------------------------------------------------------------ withholding
 
-const WITHHELD_LINES: [string, string][] = [
+// remote-asks: a call on another machine (danger-remote, danger-remote-command) now sends the task text and only gets no file reads; the lines moved to REMOTE_LINES, the new test below pins them
+const REMOTE_LINES: [string, string][] = [
   ["danger-remote", "ssh host ls"],
   ["danger-remote-command", "docker exec c rm -rf /srv/x"],
+  ["danger-remote", "python3 -c 'print(1)'; ssh host 'rm -rf /srv/x'"],
+];
+const WITHHELD_LINES: [string, string][] = [
   ["danger-delete-unknown-target", 'rm -rf "$D"'],
   ["danger-unknown-write-target", 'printf x > "$T"'],
   // a later label is withheld too: the first label of the line is not a withheld one
-  ["danger-remote", "python3 -c 'print(1)'; ssh host 'rm -rf /srv/x'"],
   // guard gaps, item 4: a function body is walked at its call, so `f(){ rm -rf /srv/x; }; f` is a floor; a target the line cannot read keeps the label
   ["danger-delete-unknown-target", 'tmux send-keys -t x hi; f(){ rm -rf "$D"; }; f'],
   ["danger-unknown-write-target", 'tmux send-keys -t x hi; printf x > "$T"'],
 ];
 
-test("a call with any withheld label reaches the judge without the task or the ledger (owner session and child)", async (t) => {
-  for (const child of [true, false]) {
-    const r = await rig(t, { child });
-    await r.prompt(TASK);
-    // the foreman's own shell-write refusal comes before the judge for a delete or a write, so an owner session is tried with the remote lines only
-    for (const [, line] of child ? WITHHELD_LINES : WITHHELD_LINES.slice(0, 2)) {
-      const before = r.rec.requests.length;
-      await r.call("bash", { command: `${line} # ${++n}` });
-      assert.equal(r.rec.requests.length, before + 1, `${child}: ${line}`);
-      // a helper's launch task is withheld; an owner session shows its own prompt as the owner message
-      if (child) {
-        assert.ok(!r.last().includes(TASK), `${child}: ${line}`);
-        assert.equal(taskBlock(r.last()), "");
-        assert.ok(r.last().includes("(not shown for this kind of call)"), `${child}: ${line}`);
-      } else assert.equal(taskBlock(r.last()), TASK, `${child}: ${line}`);
-    }
+test("a call with any withheld label reaches the judge without the task or the ledger (child)", async (t) => {
+  // the foreman's own shell-write refusal comes before the judge for a delete or a write in an owner session, so only a child is tried
+  const r = await rig(t, { child: true });
+  await r.prompt(TASK);
+  for (const [, line] of WITHHELD_LINES) {
+    const before = r.rec.requests.length;
+    await r.call("bash", { command: `${line} # ${++n}` });
+    assert.equal(r.rec.requests.length, before + 1, line);
+    assert.ok(!r.last().includes(TASK), line);
+    assert.equal(taskBlock(r.last()), "");
+    assert.ok(r.last().includes("(not shown for this kind of call)"), line);
   }
 });
 
@@ -236,7 +234,7 @@ test("replay: each real shape reaches the judge with the task and its own judge-
 const READ_ALLOW = JSON.stringify({ verdict: "allow", effect: "read", confidence: "high", entry: null, reason: "only reads" });
 async function protectedRig(t: T, child: boolean) {
   const requests: string[] = [];
-  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async (_m: never, c: { messages: { content: string }[] }) => (requests.push(c.messages[0].content), { content: [{ type: "text", text: READ_ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async (_m: never, c: { messages: { content: string }[]; systemPrompt?: string }) => (c.systemPrompt?.includes("judge of pi-foreman's tool gate") ? undefined : requests.push(c.messages[0].content), { content: [{ type: "text", text: c.systemPrompt?.includes("judge of pi-foreman's tool gate") ? CLEAR : READ_ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   if (child) {
     const prev = process.env[BINDINGS_ENV];
     process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-s", workspace: "", role: "builder", launchId: "L9", kind: "first", model: null } });
@@ -259,11 +257,43 @@ test("protected check, owner session: no launch block, the first prompt stays th
   assert.equal(blockOf(r.requests[0], "LAUNCH TASK"), undefined);
 });
 
-test("protected check, child: the launch task is withheld for a host entry and the first prompt is not repeated as the task", async (t) => {
+// remote-asks: in mode model the launch task is sent to the protected check for a host entry too (it was withheld); the main judge's own request is not counted here
+test("protected check, child: the launch task is sent for a host entry in mode model, fenced as the launch block", async (t) => {
   const r = await protectedRig(t, true);
   await r.prompt(TASK);
   assert.equal(await r.call("bash", { command: "ssh prod-db uptime" }), undefined);
   assert.equal(r.requests.length, 1);
-  assert.ok(!r.requests[0].includes(TASK), r.requests[0]);
-  assert.ok(r.requests[0].includes("(not shown for this kind of call)"));
+  assert.equal(blockOf(r.requests[0], "LAUNCH TASK"), TASK);
+  assert.ok(!r.requests[0].includes("(not shown for this kind of call)"));
+});
+
+test("a call on another machine carries the task and gets no file reads (owner session and child)", async (t) => {
+  for (const child of [true, false]) {
+    const r = await rig(t, { child });
+    await r.prompt(TASK);
+    for (const [, line] of REMOTE_LINES) {
+      const before = r.rec.requests.length;
+      await r.call("bash", { command: `${line} # ${++n}` });
+      assert.equal(r.rec.requests.length, before + 1, `${child}: ${line}`);
+      // a helper's brief is fenced as agent-written; an owner session shows its own prompt as the owner message
+      assert.equal(taskBlock(r.last()), TASK, `${child}: ${line}`);
+      assert.ok(!r.last().includes("(not shown for this kind of call)"), `${child}: ${line}`);
+    }
+  }
+});
+
+test("gateEvaluate emits the remote labels the task rule keys on", { skip: posixOnly }, () => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR ?? "/tmp"), "pf-jcr-")));
+  try {
+    const wt = path.join(base, "wt");
+    fs.mkdirSync(wt, { recursive: true });
+    const roots = (): GateRoots => ({ worktree: wt, scratch: [], tmp: [], scratchBase: path.join(base, "scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false });
+    for (const [name, line] of REMOTE_LINES) {
+      const o = gateEvaluate("bash", { command: line }, wt, { env: (cwd) => baseFloorEnv(cwd, { child: true }), roots: () => roots() });
+      assert.ok(o.dangers?.includes(name), `${line}: ${JSON.stringify(o.dangers)}`);
+      assert.ok(!WITHHELD.has(name) && NO_READS.has(name), name);
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
 });
