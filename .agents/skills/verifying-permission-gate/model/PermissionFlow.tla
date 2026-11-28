@@ -97,6 +97,7 @@ JudgeReadAtCap(c) ==
   /\ UNCHANGED <<parent, tries, rounds, rule, askSt, askOf, nAsks, cur, age, runEnded, first, parked, runs>>
 
 \* the judge's final answer and what the gate does with it (index.ts tool_call, judgeRefusalText): only clear runs, owner asks, anything else refuses
+\* (remote-asks: a protected allow with a judge-first danger goes on to the main judge, and a model-mode write verdict no longer asks; both stay one answer here: run needs the judge's clear and, on call 2, the route; the judge's retry is one more attempt of the same call)
 JudgeAnswer(c, v) ==
   /\ phase[c] = "judging"
   /\ \/ /\ v = "clear"

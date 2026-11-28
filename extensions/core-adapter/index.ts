@@ -20,7 +20,7 @@ import { baseFloorEnv, unreadableWriteText, denialFragment, denialSentence, gate
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
-import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel, WITHHELD } from "./classifier.ts";
+import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText, judgeLevel, NO_READS, WITHHELD } from "./classifier.ts";
 import { autoClassifierModelText, classifierModelLine, noClassifierModelText } from "./reviewwarn.ts";
 import { PROTECTED_COUNTED_CAUSES, effectiveCheckMode } from "./protected.ts";
 import { PermStore, PROTECTED_CHECK_MODES, cleanProtected, protectedBlock, workFoldersBlock } from "./permconfig.ts";
@@ -4222,6 +4222,39 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
         if (shellWrite) return shellWrite;
       }
+      // the judge step of a judge-first danger: also the second look after a protected-target check allowed the call (`noReads`: a protected host match shows the command runs elsewhere)
+      const judgeDanger = async (danger: { name: string; reason: string }, dangers: string[] | undefined, noReads: boolean) => {
+        const cause = `${danger.name}: ${danger.reason}`;
+        const facts = reviewGitFacts(ctx.cwd);
+        const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
+        const launchTask = launchTaskOf(gs);
+        // the task text is not passed for the riskiest kinds: any judge-first label of the call decides (a structured field), never the first one alone
+        const labels = dangers ?? [danger.name];
+        const withhold = labels.some((n) => WITHHELD.has(n));
+        // the judge reads the call first: a clear runs it; an owner answer naming one of six classes asks the owner (a child asks its parent); a refuse, an
+        // unsure, an invalid answer and every failure refuse the call with the reason, nobody is asked
+        // file reads: not for the withheld kinds (the judge sees no task text for them on purpose), not for a call on another machine (its paths live there; `noReads`: a protected host matched); a child adds its own output and scratch dirs
+        const readScope = withhold || noReads || labels.some((n) => NO_READS.has(n)) ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never, ...(roots ? { readRoots: readRootsOfGate(roots), install: roots.install } : {}) });
+        const judged = await rt.classifier.judge(
+          { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, defaultBranch: facts.defaultBranch, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
+          {
+            registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
+            recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
+            trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
+            notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          },
+        );
+        if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}`);
+        if (judged.cause === "owner") return decideByDialog(gs, ctx, rt, resolved, { ...base, cause: `${cause} (judge: ${judged.class})`, classifierReason: judged.reason, dangerName: danger.name });
+        // a refusal: nobody is asked. The judge logged its own `deny` row; only a refuse or unsure answer counts towards a child's repeat stop (a timeout, an invalid answer and a missing model never do)
+        const count = judged.cause === "model" ? "judge-refused" : null;
+        // a child's write the gate cannot read (and no other judge-first label on the line): the refusal names the way out
+        if (gs.isChild && labels.includes("danger-write-outside") && labels.every((n) => n === "danger-write-outside" || n === "danger-unknown-write-target")) {
+          return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true, roots), judged.cause === "model" ? "write-outside" : null);
+        }
+        return refused(`judge:${danger.name}`, "classifier", judgeRefusalText(judged.cause, judged.reason), count);
+      };
       // a protected-target match: the check (a small model, capped by the deterministic classes) decides allow / ask / refuse / deny; the owner is asked only
       // for a line the code reads in full (see PROTECTED_ASK_CAUSES), every failure and every line it cannot read is a refusal with its reason
       if (r && "ask" in r && r.cause === "protected" && r.match) {
@@ -4246,7 +4279,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const facts = reviewGitFacts(ctx.cwd);
           const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
           const v = await rt.classifier.protectedCache.check(
-            { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(m.remoteClasses.length > 0 || m.kinds.includes("host") ? { withholdLaunch: true } : {}) },
+            { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...((m.remoteClasses.length > 0 || m.kinds.includes("host")) && checkMode !== "model" ? { withholdLaunch: true } : {}) },
             {
               registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
               recordUsage: (u) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, u as never)),
@@ -4262,7 +4295,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             ...denyFields(v.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
             ...(v.accepted === "deny" && v.entry ? { entry: v.entry } : {}),
           });
-          if (v.accepted === "allow") return allowed(rule, "protected", rule, false, v.reason);
+          if (v.accepted === "allow") {
+            // the line carries a judge-first danger (a program the code does not know, another machine, a delete...): the protected allow is one step, the main judge decides the rest with the fixed limits (reads off: a protected host shows the command runs elsewhere)
+            if (!out.danger) return allowed(rule, "protected", rule, false, v.reason);
+            note("protected", "allow", rule, v.reason);
+            return await judgeDanger(out.danger, out.dangers, true);
+          }
           if (v.accepted === "deny" && v.entry) return denied(`${rule};classifier.deny:${v.entry}`, "protected", denyText(v.entry, resolved.prose.deny.find((e) => e.id === v.entry)?.text ?? ""));
           if (v.accepted === "refuse") return refused(rule, "protected", `pi-foreman: refused: ${named} is protected and the check did not allow this call (${v.cause ?? "refused"}): ${v.reason || "no reason given"} Nobody is asked. Rewrite the call as plain commands the gate can read, or report it to the foreman.`, v.cause && PROTECTED_COUNTED_CAUSES.has(v.cause) ? "protected-refused" : null);
           askCause = `${named} is protected. The check rates this ${v.effect} with ${v.confidence} confidence: ${v.reason || v.cause || "no reason given"}.`;
@@ -4288,36 +4326,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const danger = out.danger;
       // nothing decided and nothing on the judge-first list: the call runs
       if (!danger) return allowed("no-rule", "mode", "mode:no-rule");
-      const cause = `${danger.name}: ${danger.reason}`;
-      const facts = reviewGitFacts(ctx.cwd);
-      const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
-      const launchTask = launchTaskOf(gs);
-      // the task text is not passed for the riskiest kinds: any judge-first label of the call decides (a structured field), never the first one alone
-      const withhold = (out.dangers ?? [danger.name]).some((n) => WITHHELD.has(n));
-      // the judge reads the call first: a clear runs it; an owner answer naming one of six classes asks the owner (a child asks its parent); a refuse, an
-      // unsure, an invalid answer and every failure refuse the call with the reason, nobody is asked
-      // file reads: not for the withheld kinds (the judge sees no task text for them on purpose); a child adds its own output and scratch dirs
-      const readScope = withhold ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never, ...(roots ? { readRoots: readRootsOfGate(roots), install: roots.install } : {}) });
-      const judged = await rt.classifier.judge(
-        { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, defaultBranch: facts.defaultBranch, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
-        {
-          registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
-          recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
-          trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
-          notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
-          ...(ctx.signal ? { signal: ctx.signal } : {}),
-        },
-      );
-      if (judged.clear) return allowed(danger.name, judged.cached ? "cache" : "classifier", `judge:${danger.name}`);
-      if (judged.cause === "owner") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: `${cause} (judge: ${judged.class})`, classifierReason: judged.reason, dangerName: danger.name });
-      // a refusal: nobody is asked. The judge logged its own `deny` row; only a refuse or unsure answer counts towards a child's repeat stop (a timeout, an invalid answer and a missing model never do)
-      const count = judged.cause === "model" ? "judge-refused" : null;
-      // a child's write the gate cannot read (and no other judge-first label on the line): the refusal names the way out
-      const labels = out.dangers ?? [danger.name];
-      if (gs.isChild && labels.includes("danger-write-outside") && labels.every((n) => n === "danger-write-outside" || n === "danger-unknown-write-target")) {
-        return refused("danger-write-outside", "rule", unreadableWriteText(judged.reason, role === "builder" && roots?.roundReadOnly !== true, roots), judged.cause === "model" ? "write-outside" : null);
-      }
-      return refused(`judge:${danger.name}`, "classifier", judgeRefusalText(judged.cause, judged.reason), count);
+      return await judgeDanger(danger, out.dangers, false);
     } catch (e) {
       const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
       note("floor", "deny", "gate-error", reason);

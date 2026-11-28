@@ -134,7 +134,9 @@ test("an unreadable verdict in round 2 repeats round 2's request once; a timeout
   const r = await new Classifier().judge(CALL, one.c);
   assert.equal(r.clear, true);
   assert.equal(one.reg.calls.length, 3);
-  assert.equal(one.reg.calls[1].text, one.reg.calls[2].text);
+  // remote-asks: round 2's request again, plus the problem note and the answer shape
+  assert.ok(one.reg.calls[2].text.startsWith(one.reg.calls[1].text));
+  assert.match(one.reg.calls[2].text, /Your last reply was not accepted/);
   const slow = rig([R("a.txt"), "hang"]);
   const t = await new Classifier().judge(CALL, slow.c);
   assert.equal(!t.clear && t.cause, "timeout");

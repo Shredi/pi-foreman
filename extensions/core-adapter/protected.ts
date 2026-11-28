@@ -92,9 +92,11 @@ export function judgeProtected(v: ProtectedVerdict, f: ProtectedFacts): { decisi
   if (f.classes.length === 0) return refuse("no_classes");
   if (v.verdict === "allow") {
     if (v.confidence !== "high") return refuse("low_confidence");
-    // a remote segment the harness sees as a write always asks, whatever the verdict says
-    if (f.remoteClasses.some((c) => WRITING.has(c))) return ask("remote_write");
-    if (v.effect === "read") return f.classes.some((c) => WRITING.has(c)) ? ask("local_write") : { decision: "allow" };
+    // a remote segment the harness sees as a write never clears on a `read` verdict (a model that rates a remote write as a read is wrong); a write verdict goes through the mode and the away flag below
+    if (v.effect === "read") {
+      if (f.remoteClasses.some((c) => WRITING.has(c))) return ask("remote_write");
+      return f.classes.some((c) => WRITING.has(c)) ? ask("local_write") : { decision: "allow" };
+    }
     if (v.effect === "write" || v.effect === "deploy" || v.effect === "network") {
       if (f.mode === "read-only") return ask("read_only");
       if (f.away) return ask("away");
@@ -333,6 +335,39 @@ function remoteClasses(argv: string[], env: ProtectedEnv): { classes: EffectClas
 }
 
 /**
+ * The host names a word of an unmodelled program's argv may carry, whole words only: the word (or the value after the first `=` of it: `--on=host`, `on=host`), as an operand host or a
+ * plain name, and the part before the first `:` or `/` (`host:path`, `host/logs`). An option word without `=` and a word with white space name none.
+ */
+function wordHosts(w: string): string[] {
+  const eq = w.indexOf("=");
+  const vals = eq >= 0 ? [w.slice(eq + 1), ...(w.startsWith("-") ? [] : [w])] : w.startsWith("-") ? [] : [w];
+  return vals.flatMap((v) => (v === "" || /\s/.test(v) ? [] : [operandHost(v) ?? stripUser(v), stripUser(v).replace(/[:/].*$/, "")])).filter((h) => h !== "");
+}
+
+/** The effect classes of the look-behind trials of a segment (the words behind a program no table models, read as commands of their own); `opaque`: a trial the code cannot see into (a remote class `opaque`). */
+function trialClasses(s: ShellSegment, env: ProtectedEnv, depth = 0): { classes: EffectClass[]; opaque: boolean } {
+  const classes: EffectClass[] = [];
+  let opaque = false;
+  for (const b of s.behind ?? []) {
+    for (const n of b.segments) {
+      const redirected = n.redirects.some(writesFile);
+      if (redirected) classes.push("write-out");
+      if (n.opaque !== null) {
+        const c = n.opaque === "unsupported" && !judgeOnly(n.program) ? "opaque" : remoteReasonClass(n.opaque);
+        if (c === "opaque") opaque = true;
+        if (!redirected || c !== "write-out") classes.push(c === "opaque" ? "unknown" : c);
+      } else if (!redirected) classes.push(segClass(env, n, null));
+      if (depth < 4 && n.behind?.length) {
+        const r = trialClasses(n, env, depth + 1);
+        classes.push(...r.classes);
+        opaque = opaque || r.opaque;
+      }
+    }
+  }
+  return { classes, opaque };
+}
+
+/**
  * The ssh segment's own stdin is not in the call text: a pipe, a heredoc or here-string, a `<` / `<>` from anything but /dev/null, or an fd dup onto
  * stdin (`<&3`; `>&2` reads the same, fail closed) means the harness cannot see what the remote shell reads. `ssh -n` and an input only from /dev/null send nothing.
  */
@@ -422,6 +457,18 @@ export function matchProtected(call: RuleCall, segments: ShellSegment[] | undefi
           if (hostOpaque) remoteOpaque = true;
         }
         if (hostOpaque && prog === "ssh") remoteOpaque = true;
+      }
+      // a program no table models (it carries look-behind trials) may run the words after it on another machine (`rt exec --on host -- CMD`): its words are searched for a protected host, whole words
+      // only. Known programs are not searched (a folder, a branch or a commit message named like the host is no host). Its remote classes are those of its trials.
+      if (s.behind?.length && !reading && !SHELL_PROGS.has(prog) && prog !== "curl" && prog !== "wget") {
+        const named = s.argv.flatMap(wordHosts);
+        const found = byKind("host").filter((e) => named.some((h) => hostMatch(e.glob, h)));
+        if (found.length) {
+          for (const e of found) add(e);
+          const r = trialClasses(s, env);
+          remote.push(...r.classes);
+          if (r.opaque || stdinOpaque(s, false)) remoteOpaque = true;
+        }
       }
     }
     if (hit.size && segments.some((s) => s.opaque !== null)) opaque = true;

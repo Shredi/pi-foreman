@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Classifier, ProtectedCache, WITHHELD, WITHHELD_TEXT, judgeRequestText, judgeSystemPrompt, protectedRequestText, protectedSystemPrompt } from "../classifier.ts";
+import { Classifier, NO_READS, ProtectedCache, WITHHELD, WITHHELD_TEXT, judgeRequestText, judgeSystemPrompt, protectedRequestText, protectedSystemPrompt } from "../classifier.ts";
 import type { ClassifierCtx, JudgeCall, ProtectedCall, ProtectedCheckCtx } from "../classifier.ts";
 import { LAUNCH_TASK_ENTRY, cutTask, ledgerTaskText, readBrief, restoreLaunchTask, stripBriefFooter } from "../judgecontext.ts";
 import type { ProtectedMatch } from "../protected.ts";
@@ -82,8 +82,10 @@ test("withhold: no launch task text in the request, the block says so, a model t
   assert.equal(WITHHELD_TEXT, "(not shown for this kind of call)");
 });
 
-test("the withheld labels are the four named in the plan", () => {
-  assert.deepEqual([...WITHHELD].sort(), ["danger-delete-unknown-target", "danger-remote", "danger-remote-command", "danger-unknown-write-target"]);
+test("the withheld labels are the two unknown-target labels; a remote call sends the task and gets no reads", () => {
+  // remote-asks: danger-remote and danger-remote-command left WITHHELD (the task text is sent for a call on another machine) and stay in NO_READS
+  assert.deepEqual([...WITHHELD].sort(), ["danger-delete-unknown-target", "danger-unknown-write-target"]);
+  assert.deepEqual([...NO_READS].sort(), ["danger-delete-unknown-target", "danger-remote", "danger-remote-command", "danger-unknown-write-target"]);
 });
 
 test("injection fencing: a task with an end marker and the nonce stays inside its fence; the system text carries the never-lifts sentence", () => {
@@ -123,7 +125,9 @@ test("retry: invalid then valid clears with two calls; invalid twice asks with t
   const a = ctx(["not json", V("clear")]);
   assert.equal((await new Classifier().judge(CALL, a.c)).clear, true);
   assert.equal(a.reg.calls.length, 2);
-  assert.equal(a.reg.calls[0].text, a.reg.calls[1].text, "the same request");
+  // remote-asks: the retry sends the same request plus the problem and the answer shape
+  assert.ok(a.reg.calls[1].text.startsWith(a.reg.calls[0].text), "the same request first");
+  assert.match(a.reg.calls[1].text, /Your last reply was not accepted/);
   const b = ctx(["not json", ""]);
   const r = await new Classifier().judge(CALL, b.c);
   assert.deepEqual([r.clear, "cause" in r ? r.cause : null, b.reg.calls.length], [false, "invalid_verdict", 2]);
