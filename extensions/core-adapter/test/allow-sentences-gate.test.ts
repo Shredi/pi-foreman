@@ -88,11 +88,11 @@ test("the permission files stay protected from agent writes with sentences confi
 });
 
 test("in the main session a plain overwrite outside the session's folders runs without a judge call, with and without sentences (today's default)", async (t) => {
-  const outside = path.join(os.homedir(), "pf-allow-sentences-outside.txt");
+  const outside = path.join(os.homedir(), "pf-allow-sentences-outside.txt").split(path.sep).join("/");
   for (const perms of [{}, { classifier: { allow: [SENTENCE] } }]) {
     const j = judge(JSON.stringify({ verdict: "refuse", reason: "never reached" }));
     const r = await r11Rig(t, {}, { ctx: { hasUI: false, modelRegistry: j.registry, [RIG_PERMISSIONS]: perms }, config });
-    const res = await r.call("bash", { command: `echo hi > ${outside}` });
+    const res = await r.call("bash", { command: `echo hi > '${outside}'` });
     assert.equal(res, undefined, JSON.stringify(perms));
     assert.equal(j.prompts.length, 0);
   }
