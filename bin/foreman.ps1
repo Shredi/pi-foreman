@@ -1,4 +1,4 @@
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` for PowerShell. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge|test-run [args]` for PowerShell. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = @(if ($args.Count -gt 1) { $args[1..($args.Count - 1)] })
 if (-not (Get-Command node -CommandType Application -ErrorAction SilentlyContinue)) {
@@ -32,6 +32,10 @@ if ($sub -eq 'pane-resume') {
 }
 if ($sub -eq 'features') {
     & node (Join-Path $PSScriptRoot '..\scripts\foreman_features.mjs') @rest
+    exit $LASTEXITCODE
+}
+if ($sub -eq 'test-run') {
+    & node (Join-Path $PSScriptRoot '..\scripts\foreman_test_run.mjs') --generic @rest
     exit $LASTEXITCODE
 }
 if ($sub -eq 'knowledge') {
@@ -80,7 +84,7 @@ switch ($sub) {
     'close' { $name = 'foreman_close.py' }
     'worktree' { $name = 'foreman_worktree.py' }
     'machine' { $name = 'foreman_session.py'; $rest = @('machine') + @($rest) }
-    default { if ("$sub" -eq 'backlog') { [Console]::Error.WriteLine('foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)'); exit 2 }; [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]'); exit 2 }
+    default { if ("$sub" -eq 'backlog') { [Console]::Error.WriteLine('foreman backlog is retired: use foreman reports (list|show|set|expire|migrate)'); exit 2 }; [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge|test-run [args]'); exit 2 }
 }
 $script = Join-Path $PSScriptRoot "..\scripts\$name"
 $py = $env:PI_FOREMAN_PYTHON

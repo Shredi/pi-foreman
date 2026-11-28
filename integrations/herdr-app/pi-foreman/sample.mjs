@@ -53,9 +53,12 @@ export const SAMPLE = {
     agent("t8", "sample fleet", "idle"),
     agent("t9", "sample review", "idle"),
     agent("t10", "sample three prs", "idle"),
+    // busy parents for the Needs-me filter: one with a blocked child session, one with an idle child session
+    agent("t11", "sample busy asks", "working"),
+    agent("t12", "sample busy calm", "working"),
   ],
   terminals: [
-    ...[303, 305, 306, 308, 309, 310].map((pid, i) => ({ address: ["t3", "t5", "t6", "t8", "t9", "t10"][i], state: "live", foreground: { pid } })),
+    ...[303, 305, 306, 308, 309, 310, 311, 312].map((pid, i) => ({ address: ["t3", "t5", "t6", "t8", "t9", "t10", "t11", "t12"][i], state: "live", foreground: { pid } })),
     // the live mirror of the ended remote session: its dimmed row stays while this terminal lives
     { address: "t20", state: "live", name: attachName("box1", ENDED), parent: "t8", agent: "pi", status: "done", argv: ["hc", "attach", "box1/t71"] },
   ],
@@ -77,6 +80,15 @@ export const SAMPLE = {
       session("s-lines", "sample three prs", {
         pid: 310, hcTerminal: "t10",
         dots: [113, 114, 115].map((n) => ({ n, state: n === 113 ? "fail" : "ok", label: `#${n}`, src: "pr", url: `https://example.test/acme/widgets/pull/${n}` })),
+      }),
+      // a working parent whose child session asks you, and one whose child session is idle
+      session("s-busy-asks", "sample busy asks", {
+        pid: 311, hcTerminal: "t11", state: "working", sym: "working",
+        children: [session("s-asks-child", "asks you", { hcTerminal: "t80", state: "ask", sym: "needs-you", parent: "s-busy-asks", asks: [{ q: "Merge it?" }] })],
+      }),
+      session("s-busy-calm", "sample busy calm", {
+        pid: 312, hcTerminal: "t12", state: "working", sym: "working",
+        children: [session("s-calm-child", "idle child", { hcTerminal: "t81", parent: "s-busy-calm" })],
       }),
       session("s-review", "sample review", {
         pid: 309, hcTerminal: "t9", repo: "acme/gadgets",

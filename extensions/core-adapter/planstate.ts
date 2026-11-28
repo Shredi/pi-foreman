@@ -226,7 +226,7 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     if (out.planPhase && d.planPhaseOrigin === "parent") out.planPhaseOrigin = "parent";
     out.reviews = reviewsOfEntry(d.reviews);
     const ls = d.loopStop as Record<string, unknown> | null | undefined;
-    if (ls && typeof ls === "object" && (ls.rule === "repeat" || ls.rule === "stalled") && (ls.kind === "plan" || ls.kind === "code") && Array.isArray(ls.sig) && ls.sig.every((x) => typeof x === "string")) out.loopStop = { rule: ls.rule, kind: ls.kind, sig: ls.sig as string[] };
+    if (ls && typeof ls === "object" && (ls.rule === "repeat" || ls.rule === "stalled") && (ls.kind === "plan" || ls.kind === "code") && Array.isArray(ls.sig) && ls.sig.every((x) => typeof x === "string")) out.loopStop = { rule: ls.rule, kind: ls.kind, sig: ls.sig as string[], ...(typeof ls.plan === "string" && ls.plan ? { plan: ls.plan } : {}) };
     const g = gateOfEntry(d.gate);
     if (g) out.gate = g;
     if (d.sentBack === true) out.sentBack = true;

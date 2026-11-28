@@ -195,11 +195,13 @@ const INSTALL_ROLES: readonly string[] = ["builder"];
  * them exists for single launches only (`group`): a group keeps the config defaults and `notes` says so. `error` is a refusal text for a
  * malformed value; the caller refuses only the foreman's own launches.
  */
-export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string; occasions: Map<Json, LaunchOccasion>; occasionError?: string; items: Map<Json, unknown> } {
+export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string; occasions: Map<Json, LaunchOccasion>; occasionError?: string; items: Map<Json, unknown>; diffBases: Map<Json, unknown> } {
   const entries = new Map<Json, LaunchFlags>();
   const occasions = new Map<Json, LaunchOccasion>();
   // `items` (the ledger items a review launch hands its reviewer, verdict.ts): the raw value of each agent entry, checked by the caller against the ledger
   const items = new Map<Json, unknown>();
+  // `diffBase` (a reviewer entry's diff base, a commit that is an ancestor of HEAD): the raw value, checked by the caller against git
+  const diffBases = new Map<Json, unknown>();
   let occasionError: string | undefined;
   const notes: string[] = [];
   let error: string | undefined;
@@ -259,7 +261,9 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
     else if (typeof e.agent === "string") occasions.set(e, v);
   }
   for (const e of list) if (e.items !== undefined && !filler(e.items) && typeof e.agent === "string") items.set(e, fromJsonText(e.items, "array"));
+  for (const e of list) if (e.diffBase !== undefined && !filler(e.diffBase) && typeof e.agent === "string") diffBases.set(e, e.diffBase);
   for (const e of list) {
+    delete e.diffBase;
     delete e.reads;
     delete e.install;
     delete e.occasion;
@@ -269,7 +273,8 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
   delete input.install;
   delete input.occasion;
   delete input.items;
-  return { entries, notes, group, occasions, items, ...(error ? { error } : {}), ...(occasionError ? { occasionError } : {}) };
+  delete input.diffBase;
+  return { entries, notes, group, occasions, items, diffBases, ...(error ? { error } : {}), ...(occasionError ? { occasionError } : {}) };
 }
 
 export interface Measured {

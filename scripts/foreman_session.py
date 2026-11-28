@@ -269,6 +269,75 @@ def check_brief_file(name):
         raise Refused("brief file not found: %s" % shown)
 
 
+BRIEF_PAGE_CLI = Path(__file__).resolve().parent.parent / "extensions" / "core-adapter" / "briefpage-cli.ts"
+BRIEF_PAGE_TIMEOUT = 60
+NODE_VERSION_CHECK = "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)"
+
+
+def is_brief_page(name):
+    """True when the brief's real path (after symlinks) ends in .html: such a brief is a page, every other one is text."""
+    try:
+        return os.path.realpath(str(name)).lower().endswith(".html")
+    except (OSError, ValueError):
+        return False
+
+
+def convert_brief_page(page):
+    """(text copy, rendered page, info) of a brief page, made by briefpage-cli.ts in a temp dir that is removed afterwards.
+    Needs Node >= 22.6 (--experimental-strip-types); without it the page is refused with `brief_needs_node`."""
+    node = shutil.which("node")
+    old = "a brief page needs Node >= 22.6 (--experimental-strip-types) to make its text copy; install it, or pass a markdown brief"
+    if not node:
+        raise Refused(old, "brief_needs_node")
+    try:
+        ok = subprocess.run([node, "-e", NODE_VERSION_CHECK], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            stdin=subprocess.DEVNULL, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        ok = False
+    if not ok:
+        raise Refused(old, "brief_needs_node")
+    tmp = tempfile.mkdtemp(prefix="pf-brief-")
+    try:
+        md, html = os.path.join(tmp, "brief.md"), os.path.join(tmp, "brief.html")
+        try:
+            r = subprocess.run([node, "--no-warnings", "--experimental-strip-types", str(BRIEF_PAGE_CLI), "convert",
+                                os.path.abspath(str(page)), "--md", md, "--html", html],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=BRIEF_PAGE_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise Refused("the brief page could not be converted: %s" % e, "brief_unconvertible") from e
+        lines = r.stdout.decode("utf-8", "replace").strip().splitlines()
+        try:
+            info = json.loads(lines[-1]) if lines else None
+        except ValueError:
+            info = None
+        if not isinstance(info, dict):
+            why = strip_control(r.stderr.decode("utf-8", "replace"))[-200:] or "no answer"
+            raise Refused("the brief page could not be converted: %s" % why, "brief_unconvertible")
+        if info.get("ok") is not True:
+            code = info.get("code")
+            raise Refused(strip_control(str(info.get("message") or "the brief page could not be converted"))[:300],
+                          code if isinstance(code, str) and re.match(r"^[a-z_]{1,40}\Z", code) else "brief_unconvertible")
+        try:
+            return Path(md).read_text("utf-8"), Path(html).read_text("utf-8"), info
+        except (OSError, UnicodeDecodeError) as e:
+            raise Refused("the converted brief page could not be read: %s" % e, "brief_unconvertible") from e
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def write_brief_page(target, html):
+    """Write the rendered page of a brief beside `brief-<n>.md` as `brief-<n>.html` (exclusive create, never overwritten)."""
+    page = Path(target).with_suffix(".html")
+    try:
+        with open(page, "xb") as f:
+            f.write(html.encode("utf-8"))
+    except FileExistsError:
+        raise Refused("%s appeared meanwhile; not overwritten" % page.name) from None
+    except OSError as e:
+        raise Refused("cannot write the brief page: %s" % e) from e
+    return page
+
+
 def parent_from_config(adir):
     try:
         cfg = json.loads((Path(adir) / "intercom" / "config.json").read_text("utf-8"))
@@ -1377,10 +1446,14 @@ def cmd_open(a):
     if not VALUE_RE.match(parent):
         raise Refused("parent intercom id may use only A-Z a-z 0-9 . _ : / @ -")
     check_path_text(cwd, "--cwd")
-    try:
-        text = brief.read_text("utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        raise Refused("cannot read the brief: %s" % e) from e
+    page_html = None
+    if is_brief_page(brief):  # a page: the child reads its text copy, the page is kept beside it
+        text, page_html, _ = convert_brief_page(brief)
+    else:
+        try:
+            text = brief.read_text("utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            raise Refused("cannot read the brief: %s" % e) from e
     wtree = None
     if wt:
         plan = plan_worktree(cwd, a.label, adir, a.base, fetch=not a.dry_run)
@@ -1398,7 +1471,7 @@ def cmd_open(a):
         cwd = Path(wtree["path"])
     params = {"adir": adir, "label": a.label, "text": text, "cwd": cwd, "model": a.model,
               "plan_first": a.plan_first, "parent": parent, "focus": a.focus, "dry_run": a.dry_run,
-              "print_all": a.print_all, "first": first, "worktree": wtree}
+              "print_all": a.print_all, "first": first, "worktree": wtree, "page": page_html}
     return open_session(params)[0]
 
 
@@ -1464,6 +1537,8 @@ def open_session(p, remote=None):
     else:
         brief_footer = footer(label, p["plan_first"])
     (handoff / "brief.md").write_text(text.rstrip("\n") + "\n" + brief_footer, "utf-8")
+    if p.get("page") is not None:
+        (handoff / "brief.html").write_text(p["page"], "utf-8")
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
@@ -2307,8 +2382,12 @@ def cmd_open_remote(a):
                       "sessions.machines.%s.parentName" % (parent_name, name), "no_return_path")
     address = "%s@%s" % (parent, parent_name)
     try:
-        raw = brief.read_bytes()
-        text = raw.decode("utf-8")
+        if is_brief_page(brief):  # only the text copy goes to the other machine; the page stays here
+            text = convert_brief_page(brief)[0]
+            raw = text.encode("utf-8")
+        else:
+            raw = brief.read_bytes()
+            text = raw.decode("utf-8")
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("cannot read the brief: %s" % e) from e
     if len(raw) > MAX_CONTENT_BYTES:
@@ -2545,7 +2624,7 @@ def brief_name(a_text, entry):
         for kind, rule in DELIVER_NAMES.items():
             if rule.match(given.name):
                 return kind, given.name, given.read_text("utf-8")
-        content = given.read_text("utf-8")
+        content = convert_brief_page(given)[0] if is_brief_page(given) else given.read_text("utf-8")
     else:
         content = a_text
     return "brief", "brief-%d.md" % (int(entry.get("briefs") or 0) + 1), content
@@ -3720,14 +3799,21 @@ def cmd_brief(a):
     if handoff is None:
         raise Refused("%s has no handoff dir to write the brief to (see: foreman session list)" % a.target)
     given = Path(a.text)
+    page_html = None
     if not re.search(r"\s", a.text) and given.is_file():  # a file argument: copied (same wording as /foreman session brief)
-        try:
-            data = given.read_bytes()
-        except OSError as e:
-            raise Refused("cannot read the brief file: %s" % e) from e
+        if is_brief_page(given):  # a page: brief-<n>.md is its text copy, brief-<n>.html the page
+            copy, page_html, _ = convert_brief_page(given)
+            data = copy.encode("utf-8")
+        else:
+            try:
+                data = given.read_bytes()
+            except OSError as e:
+                raise Refused("cannot read the brief file: %s" % e) from e
     else:
         data = (a.text + "\n").encode("utf-8")
     brief = new_brief(handoff, data).resolve()
+    if page_html is not None:
+        write_brief_page(brief, page_html)
     if getattr(a, "rework", False):
         new_rework(handoff)
     message = "Brief from %s: read %s and act on it" % (opener, brief.as_posix())

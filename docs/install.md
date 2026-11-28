@@ -62,13 +62,6 @@ branch, push it to the fork and run the fork's tests, then set the new commit in
 returns to the upstream `pi-intercom` at the first release that contains the transport: pin that version again in both
 files and delete the `pi-intercom` rule in `renovate.json`.
 
-**`@juicesharp/rpiv-ask-user-question` is a temporary fork pin.** It is the published 2.15.0 plus one commit that
-passes `blocked: { kind: "question", message }` to both dialog calls (inline and overlay), so Pi reports the session as
-blocked while a question is open (upstream request: https://github.com/juicesharp/rpiv-mono/issues/345).
-`/foreman update-check` prints the fork-pin line for it and Renovate is off for it. At the first upstream release with
-the fix, pin that version again in `package.json`, `package-lock.json` and `packages.lock.json`, restore the NOTICE
-line and delete its rule in `renovate.json`.
-
 Then run setup once:
 
 ```sh
@@ -105,9 +98,9 @@ Setup checks `pi --version` for up to 90 s and tries once more after a timeout. 
 
 ### npm stops with EALLOWGIT
 
-The install fails with `EALLOWGIT` ("Fetching non-root packages of type "git" have been disabled"), naming `pi-intercom` or `@juicesharp/rpiv-ask-user-question`. npm prints an `EBADENGINE` warning for pi-foreman just before it.
+The install fails with `EALLOWGIT` ("Fetching non-root packages of type "git" have been disabled"), naming `pi-intercom`. npm prints an `EBADENGINE` warning for pi-foreman just before it.
 
-Cause: npm 11.9 to 11.12 has a bug. The `.npmrc` line `allow-git=root` should allow git dependencies that this package names itself, and these two forks are such dependencies, but those npm versions refuse them anyway. npm 11.8 and older, and npm 11.13 and later (also npm 12), work.
+Cause: npm 11.9 to 11.12 has a bug. The `.npmrc` line `allow-git=root` should allow git dependencies that this package names itself, and the `pi-intercom` fork is such a dependency, but those npm versions refuse it anyway. npm 11.8 and older, and npm 11.13 and later (also npm 12), work.
 
 Node releases that ship an affected npm: 24.14 to 24.15, 25.6.1 to 25.9 and 26.0. Node 24.16+ and 26.1+ ship npm 11.13.
 
@@ -520,7 +513,7 @@ bin/foreman setup --develop   # checkout only
 ```
 
 After pulling a checkout that changed `package.json`, run `npm ci` again (setup keeps top-level bundled copies when a
-manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry). `bin/foreman setup` in a checkout also runs `npm ci` itself when `package-lock.json` is newer than `node_modules/.package-lock.json` (or `node_modules` is missing); after a merge that changes `package-lock.json`, run `npm ci` (or `bin/foreman setup`) in the main checkout. Setup stops instead of running `npm ci` when `node_modules` is a symlink or junction (the target would be emptied); remove the link and run it again.
+manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry). `bin/foreman setup` in a checkout also runs `npm ci` itself when `package-lock.json` is newer than `node_modules/.package-lock.json` (or `node_modules` is missing); after a merge that changes `package-lock.json`, run `npm ci` (or `bin/foreman setup`) in the main checkout. Setup stops instead of running `npm ci` when `node_modules` is a symlink or junction (the target would be emptied); remove the link and run it again. `/foreman doctor` FAILs for any live worktree whose `node_modules` links into the package root's `node_modules`.
 
 `--develop` writes `.pi/settings.json` inside the checkout with `".."` as a package plus an empty-filter override of
 the installed pi-foreman source. Project packages load before global ones and only after project trust (`pi -a` when

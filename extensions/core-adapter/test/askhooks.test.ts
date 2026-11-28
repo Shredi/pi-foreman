@@ -1,5 +1,5 @@
 // ask_user_question bookkeeping as hooks on the tool name (askhooks.ts), on the result shape captured from the bundled
-// @juicesharp/rpiv-ask-user-question 2.15.0 (fixtures/ask-user-question-2.15.0.json): no ruling-<n>.md for an open ask.md,
+// @juicesharp/rpiv-ask-user-question 2.16.0 (fixtures/ask-user-question-2.16.0.json): no ruling-<n>.md for an open ask.md,
 // the dialogs counter, and no ask_user_question registered by the harness.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,7 +10,7 @@ import { askAnswered } from "../askhooks.ts";
 import { ownerAnswered } from "../idlemodel.ts";
 import { r11Rig } from "./_r11rig.ts";
 
-const FIX = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "ask-user-question-2.15.0.json"), "utf8"));
+const FIX = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "ask-user-question-2.16.0.json"), "utf8"));
 type R = { content: unknown; details: Record<string, unknown> };
 const notes: R = FIX.answeredWithNotes;
 const plain: R = FIX.answeredPlain;

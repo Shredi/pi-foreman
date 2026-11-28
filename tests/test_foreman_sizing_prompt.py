@@ -155,6 +155,11 @@ class SizingPromptTest(unittest.TestCase):
             new_items = old_items + " A numbered item in `items` outside the current failed items is reviewed against the whole change."
             self.assertIn(old_items, want)
             want = want.replace(old_items, new_items)
+            # D224: the item-line limit is folded into the ledger line (no new line)
+            old_lim = "One line per requirement: `- [ ] N. item`. The last item"
+            new_lim = "One line per requirement: `- [ ] N. item`. A full line (text plus notes) holds at most 1000 characters; the tools and the write guard refuse a longer one, so keep evidence in a file and link it. The last item"
+            self.assertIn(old_lim, want)
+            want = want.replace(old_lim, new_lim)
             want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))

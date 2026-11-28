@@ -32,7 +32,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ledger_guard_stop import OPEN_ITEM_RE, _fence_mask  # noqa: E402
-from ledger_guard_write import _is_live_ledger_name, session_marker_path  # noqa: E402
+from ledger_guard_write import (  # noqa: E402
+    ITEM_LINE_MAX, _is_live_ledger_name, item_line_refusal, session_marker_path)
 
 # Any item line: indent, bullet, box, optional "deferred: <reason> — ",
 # then the id ("7." or "V.").
@@ -138,6 +139,12 @@ class Ledger:
             raise
 
 
+def _check_len(body, ident):
+    """Refuse an item line over the limit (text and notes together)."""
+    if len(body) > ITEM_LINE_MAX:
+        raise LedgerError(item_line_refusal(ident, len(body)))
+
+
 def _require_open(led, i, ident, verb):
     if not led.is_open(i):
         box = ITEM_RE.match(split_eol(led.lines[i])[0]).group("box")
@@ -164,6 +171,7 @@ def cmd_mark(led, args):
     body = split_eol(led.lines[i])[0].replace("[ ]", "[x]", 1)
     if args.note:
         body += f" — {args.note}"
+        _check_len(body, ident)
     led.set_line(i, body)
     return f"marked {ident}: {body.strip()}"
 
@@ -174,6 +182,7 @@ def cmd_defer(led, args):
     m = ID_RE.match(split_eol(led.lines[i])[0])
     pre = m.group("pre").replace("[ ]", "[~]", 1)
     body = f"{pre}deferred: {args.reason} — {m.group('rest')}"
+    _check_len(body, ident)
     led.set_line(i, body)
     return f"deferred {ident}: {body.strip()}"
 
@@ -190,6 +199,7 @@ def cmd_add(led, args):
     else:
         at, indent = len(led.lines), ""
     new = f"{indent}- [ ] {new_n}. {args.text}"
+    _check_len(new, new_n)
     if at == len(led.lines):
         # Appending at EOF: keep the file's trailing-newline state.
         if led.lines and not split_eol(led.lines[-1])[1]:
@@ -205,6 +215,7 @@ def cmd_add(led, args):
 def cmd_note(led, args):
     i, ident = led.find(args.n)
     body = split_eol(led.lines[i])[0] + f" — {args.text}"
+    _check_len(body, ident)
     led.set_line(i, body)
     return f"noted {ident}: {body.strip()}"
 

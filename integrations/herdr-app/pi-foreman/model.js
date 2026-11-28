@@ -1460,6 +1460,20 @@ export function nestedAgents(list, all) {
   return out;
 }
 
+/** Statuses that need the owner (idle, done, blocked) and the busy ones; any other status counts as needs-you (shown). */
+export const NEEDS_YOU = ["blocked", "idle", "done"];
+export const BUSY = ["working", "agents", "bg", "waiting"];
+
+/** True unless the status is busy; an unknown status is shown. */
+export const needsYou = (status) => !BUSY.includes(status);
+
+/** A top-level block needs you when its own status is not busy, or when an item below it (children, recursive) is itself `blocked`.
+ *  Reads each item's own `status`, not `urgent`: STATUS_RANK puts `hidden` above `blocked`, so `urgent` could mask a blocked sibling. */
+export function blockNeedsYou(status, items) {
+  const blocked = (list) => listOf(list).some((i) => isObj(i) && (i.status === "blocked" || blocked(i.children)));
+  return needsYou(status) || blocked(items);
+}
+
 /** The children of a paned agent that has no radar node: its record agents and hc child items, as siblings. */
 export function bareChildren(recs, extra) {
   return sortItems([...recItems(null, recs, new Set(), "rec"), ...listOf(extra)]);

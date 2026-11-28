@@ -65,6 +65,9 @@ export const remoteQuestionText = (label: string, ageMs: number): string => `Rem
 /** The quiet notice for a local child idle at its open plan phase: fixed words, the registry label, the age and planWait's fixed text. */
 export const planIdleText = (label: string, ageMs: number, waits: string): string => `Child session ${label}: idle at its plan for ${duration(ageMs)}; ${waits}.`;
 
+/** The quiet notice for a local child idle after it sent its result: fixed words, the registry label and the age; nothing the child wrote. */
+export const resultIdleText = (label: string, ageMs: number): string => `Child session ${label}: idle since it sent its result ${duration(ageMs)} ago; waits for: foreman:close from you.`;
+
 /** The owner's answers to a child's plan checkpoint, as the child's live file records them; the words are fixed. */
 const ANSWER_WORDS: Record<string, string> = { approve: "plan approved by the owner", revise: "plan sent back by the owner (revise)", reject: "plan rejected by the owner" };
 
@@ -85,14 +88,17 @@ export const clearedText = (label: string, waitedMs: number, how: Cleared = "non
 /** The information line for a checkpoint answer: fixed words and the registry label; approves nothing. */
 export const answerText = (label: string, answer: string): string => `Child session ${label}: ${ANSWER_WORDS[answer]}.`;
 
-type Obs = ({ blocked: false; plan?: { since: number; waits: string } } | { blocked: true; since: number; kind: unknown; plan?: undefined }) & { answer?: { decision: string; at: string }; lastAnswer?: { at: number; outcome: string }; startedAt?: number; remote?: true };
+type Obs = ({ blocked: false; /** The child is in its plan phase: the waits text (the state a plan notice is sent once for). */ plan?: { waits: string }; /** The registry's newest message is a result or update: its time. */ result?: { at: number }; /** Idle and not busy (no active run, no task): the last event time; absent while the child works. */ idleSince?: number } | { blocked: true; since: number; kind: unknown; plan?: undefined }) & { answer?: { decision: string; at: string }; lastAnswer?: { at: number; outcome: string }; startedAt?: number; remote?: true };
 interface Sent {
   child: string;
   label: string;
   /** The start of the owner episode (or of the idle-at-plan episode). */
   since: number;
-  /** An idle-at-plan episode: ends without an "answered" note. */
+  /** An idle-at-plan record: kept while the child stays in the same plan state (`waits`), ends without an "answered" note. */
   plan?: true;
+  waits?: string;
+  /** An idle-after-result record: `since` is the result's time; ends without an "answered" note. */
+  result?: true;
   /** The episode is a hold for the owner (`blockedKind` hold): its end says so. */
   hold?: true;
 }
@@ -190,10 +196,10 @@ export class ChildBlocked {
           }
         }
         for (const [key, rec] of [...this.sent]) {
-          if (rec.child !== e.child || (obs.blocked && obs.since === rec.since && !rec.plan) || (rec.plan && !obs.blocked && obs.plan?.since === rec.since)) continue;
+          if (rec.child !== e.child || (obs.blocked && obs.since === rec.since && !rec.plan && !rec.result) || (rec.plan && !obs.blocked && obs.plan !== undefined && obs.plan.waits === rec.waits) || (rec.result && !obs.blocked && obs.result?.at === rec.since)) continue;
           this.sent.delete(key); // the announced episode ended
           dirty = true;
-          if (rec.plan) continue;
+          if (rec.plan || rec.result) continue;
           const waitedMs = now - rec.since;
           const how = clearOf(rec, obs, answer);
           this.d.trace?.({ event: "child_blocked_cleared", label: rec.label, waitedMs });
@@ -206,13 +212,26 @@ export class ChildBlocked {
         }
         const label = cleanLabel(e.label);
         if (!obs.blocked) {
+          const idle = obs.idleSince;
+          if (idle === undefined || this.d.carry?.records.has(e.child)) continue; // working, or a child with an open Question waits for the parent: the reminder covers it
+          if (obs.result) {
+            // a child that sent its result waits for the close; that says more than its plan state
+            const since = Math.max(obs.result.at, idle);
+            const rkey = `${label}\nresult\n${obs.result.at}`;
+            if (this.sent.has(rkey) || now - since < secs * 1000) continue;
+            this.sent.set(rkey, { child: e.child, label, since: obs.result.at, result: true });
+            dirty = true;
+            this.d.trace?.({ event: "child_result_idle_notice", label, waitedMs: now - since });
+            this.d.send(resultIdleText(label, now - since), false);
+            continue;
+          }
           const pl = obs.plan;
-          const pkey = `${label}\nplan\n${pl?.since}`;
-          if (!pl || this.sent.has(pkey) || now - pl.since < secs * 1000 || this.d.carry?.records.has(e.child)) continue; // a child with an open Question waits for the parent: the reminder covers it
-          this.sent.set(pkey, { child: e.child, label, since: pl.since, plan: true });
+          const pkey = `${label}\nplan\n${pl?.waits}`;
+          if (!pl || this.sent.has(pkey) || now - idle < secs * 1000) continue;
+          this.sent.set(pkey, { child: e.child, label, since: idle, plan: true, waits: pl.waits });
           dirty = true;
-          this.d.trace?.({ event: "child_plan_idle_notice", label, waitedMs: now - pl.since });
-          this.d.send(planIdleText(label, now - pl.since, pl.waits), false);
+          this.d.trace?.({ event: "child_plan_idle_notice", label, waitedMs: now - idle });
+          this.d.send(planIdleText(label, now - idle, pl.waits), false);
           continue;
         }
         const key = `${label}\n${obs.since}`;
@@ -307,7 +326,7 @@ export class ChildBlocked {
     if (typeof e.handoff !== "string" || !e.handoff) return undefined;
     const id = readLive(e.handoff)?.piSessionId;
     if (!id || !SAFE_ID.test(id)) return undefined;
-    let f: { heartbeatAt?: unknown; state?: unknown; startedAt?: unknown; lastEventAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown; lastCheckpoint?: { decision?: unknown; at?: unknown }; lastAnswer?: { at?: unknown; outcome?: unknown } };
+    let f: { runs?: unknown; tasks?: unknown; heartbeatAt?: unknown; state?: unknown; startedAt?: unknown; lastEventAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown; lastCheckpoint?: { decision?: unknown; at?: unknown }; lastAnswer?: { at?: unknown; outcome?: unknown } };
     try {
       f = JSON.parse(fs.readFileSync(path.join(liveDir(this.d.agentDir), `${id}.json`), "utf8"));
     } catch {
@@ -322,10 +341,13 @@ export class ChildBlocked {
     const started = typeof f.startedAt === "string" ? Date.parse(f.startedAt) : NaN;
     const facts = { ...(answer ? { answer } : {}), ...(lastAnswer ? { lastAnswer } : {}), ...(Number.isFinite(started) ? { startedAt: started } : {}) };
     if (f.blockedOn !== "owner") {
-      const pw = f.state === "idle" ? planWait(e.handoff) : null;
+      const pw = planWait(e.handoff);
       const at = typeof f.lastEventAt === "string" ? Date.parse(f.lastEventAt) : NaN;
-      const plan = pw?.open && Number.isFinite(at) ? { since: at, waits: pw.text } : undefined;
-      return { blocked: false, ...(plan ? { plan } : {}), ...facts };
+      // a run that has not ended or any bg task is work, whatever the state word says
+      const busy = (Array.isArray(f.runs) && f.runs.some((r) => !r || typeof r !== "object" || (r as { endedAt?: unknown }).endedAt === null)) || (Array.isArray(f.tasks) && f.tasks.length > 0);
+      const idleSince = f.state === "idle" && !busy && Number.isFinite(at) ? at : undefined;
+      const lastAt = e.last && (e.last.kind === "result" || e.last.kind === "update") ? Date.parse(e.last.at) : NaN;
+      return { blocked: false, ...(pw.open ? { plan: { waits: pw.text } } : {}), ...(Number.isFinite(lastAt) ? { result: { at: lastAt } } : {}), ...(idleSince !== undefined ? { idleSince } : {}), ...facts };
     }
     const since = typeof f.ownerBlockedSince === "string" ? Date.parse(f.ownerBlockedSince) : NaN;
     return Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind, ...facts } : undefined;
@@ -348,7 +370,7 @@ export class ChildBlocked {
       if (Array.isArray(j.open)) for (const c of j.open) if (typeof c === "string") this.seenOpen.add(c);
       for (const [k, c] of Object.entries(j.answered ?? {})) if (typeof c === "string") this.answered.set(k, c);
       // an `ask: true` record of an older state file is dropped: it is no owner episode
-      for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since, ...(r.plan === true ? { plan: true as const } : {}), ...(r.hold === true ? { hold: true as const } : {}) });
+      for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since, ...(r.plan === true ? { plan: true as const } : {}), ...(typeof r.waits === "string" ? { waits: r.waits } : {}), ...(r.result === true ? { result: true as const } : {}), ...(r.hold === true ? { hold: true as const } : {}) });
       if (typeof j.startedMs === "number" && Number.isFinite(j.startedMs)) {
         this.startedMs = j.startedMs;
         return true;

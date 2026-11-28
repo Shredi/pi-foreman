@@ -1,4 +1,4 @@
-// pi-foreman core adapter: wires the vendored Python core into Pi (design §§5-7, 9).
+// pi-foreman core adapter: wires the Python core into Pi (design §§5-7, 9).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -86,7 +86,7 @@ import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, ro
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { gateMigrationLines } from "./gatemigrate.ts";
 import { userPromptOf } from "./review.ts";
-import { git, ReviewFacts } from "./diffscan.ts";
+import { git, resolveDiffBase, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { descendsFrom, routeFail, type HsRun, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, hsResumeRefusal, incompleteBlock, outputPathOf, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
@@ -104,7 +104,7 @@ import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./
 import { filler, fromJsonText } from "./jsontext.ts";
 import { allowedItems, checkVerdictCall, consumeRecord, failedItemIds, FINDING_CLASSES, FINDING_KINDS, ITEM_RESULTS, itemIdOf, launchItemsLine, launchItemsOf, MAX_SUITES, PRE_PR_SUITES_LINE, SUITE_COMMAND_MAX, SUITE_RESULTS, makeRecordDir, MAX_FINDINGS, MAX_ITEMS, noToolRecord, parseItemsField, readConsumed, readContextUse, readItemsSidecar, readRecordFile, recordDir, recordOf, recordSessionDir, sweepRecords, VERDICT_FILE, VERDICT_REMINDER, VERDICT_TOOL, VERDICT_VALUES, writeContextUse, writeItemsSidecar, writeRecord, type ItemId, type VerdictItem, type VerdictRecord } from "./verdict.ts";
 import { extendSubagentDeclaration } from "./launchschema.ts";
-import { absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText, withVItem } from "./ledgercall.ts";
+import { ITEM_LINE_MAX, absent, applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, itemLineLength, itemLineRefusal, LEDGER_TOOL, LEDGER_TOOL_ACTIONS, ledgerHelperMode, ledgerInitContent, marksVerifierCommand, mentionsLedger, planLedgerCall, planLedgerInit, retryLedgerRun, rewriteItemText, withVItem } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -234,7 +234,7 @@ const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
 const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
 import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, walkLaunch, type Verdict } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
-import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
+import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf, stopApplies } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
 import { applyBgAddonDefaults, bgBashNotice, resolveBgShell } from "./bgshell.ts";
@@ -2349,6 +2349,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       tier: s.ceremony.tier,
       reviewPassed: newest?.latest.verdict === "pass" && (!plan || newest.latest.hash === now),
       planOpen: plan?.status !== "approved" || now !== plan.hash, // approved only while the plan bytes are the approved bytes
+      planPhase: s.planPhase,
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
@@ -2363,7 +2364,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = restoreRoundState(dir, (topic) => { const p = readPlan(path.join(o.scratchDir, `plan-${topic}.md`), o); return "plan" in p ? { path: p.plan.path, hash: p.plan.hash } : null; });
     if (!r) {
       // discarded: the file now holds the fresh state, so nothing of the old one can come back later
-      if (fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s);
+      if (s.planPhase || fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s); // a plan-first start records its phase at once
       return;
     }
     s.round = r.round;
@@ -3220,7 +3221,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (instructionsCache === undefined) {
       try {
-        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", () => path.join(PKG_ROOT, "instructions", "plan-skeleton.html")); // fixed per installation: the same bytes every turn
+        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", () => path.join(PKG_ROOT, "instructions", "plan-skeleton.html")).replaceAll("{{briefSkeleton}}", () => path.join(PKG_ROOT, "instructions", "brief-skeleton.html")); // fixed per installation: the same bytes every turn
       } catch {
         instructionsCache = null;
       }
@@ -3862,17 +3863,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
+  /** The plan path a launch is about (reviewloop.ts `stopApplies`): the plan file of its `[plan-review]` entry, else the session's plan record; null = none known. */
+  function launchPlanKey(s: Session, ctx: ExtensionContext, occasions: Map<Record<string, unknown>, Occasion>): string | null {
+    for (const [e, occ] of occasions) {
+      if (occ !== "plan-review" || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
+      const rp = readPlansOnce(planPathsOf(planReviewFiles(strOf(e.task), null), editModeOfSession(s).scratchDir), planOpts(s, ctx))[0];
+      if (rp) return rp.plan.path;
+    }
+    return s.plan?.path ?? null;
+  }
+
   /** Loop guard (reviewloop.ts): the kind, state and finding set of a counting review round, for its ReviewRecord. */
   async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig" | "work">> {
     return { kind, state: (await state) ?? "", sig: r?.verdict === "fail" ? sigOf(r.items, r.findings) : [], work: s.work.builders + s.work.edits };
   }
 
   /** Loop guard: the round just recorded (last of its kind in `s.reviews`) against `prev`, the last round of that kind before the run; a trip sets the stop. One round per run. */
-  function loopCheck(s: Session, runId: string, prev: ReviewRecord | undefined, cur: ReviewRecord): void {
+  function loopCheck(s: Session, runId: string, prev: ReviewRecord | undefined, cur: ReviewRecord, plan: string | null = s.plan?.path ?? null): void {
     if (!cur.kind) return;
     const rule = loopVerdictOf(cur.kind, prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [], ...(prev.work !== undefined ? { work: prev.work } : {}) } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [], ...(cur.work !== undefined ? { work: cur.work } : {}) });
     if (!rule) return;
-    s.loopStop = { rule, kind: cur.kind, sig: cur.sig ?? [] };
+    s.loopStop = { rule, kind: cur.kind, sig: cur.sig ?? [], ...(plan ? { plan } : {}) };
     s.trace?.emit({ event: "review_loop", rule, kind: cur.kind, runId });
     persistCeremonyState(s);
   }
@@ -3930,7 +3941,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const prev = s.reviews.findLast((x) => x.kind === "plan");
           const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.items, r.findings) : [] };
           appendReview(s.reviews, rec);
-          loopCheck(s, runId, prev, rec);
+          loopCheck(s, runId, prev, rec, rp.plan.path);
         });
         const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
         saveStored(s.agentDir, hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds, ...(earlier.length ? { findings: earlier } : {}) } }); // survives /reload (checkpoint.ts)
@@ -4668,6 +4679,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       let takenItems = new Map<Record<string, unknown>, unknown>();
+      let takenDiffBases = new Map<Record<string, unknown>, unknown>();
       /** The `items` field of a resume call (takeLaunchFlags reads it for agent entries only): the resumed reviewer's allowed items, see resumeItems below. */
       let resumeItemsRaw: unknown;
       let resumeItems: ItemId[] | undefined; // the resumed reviewer's allowed items (computed after the launch checks, written at recordLaunchUsage)
@@ -4757,6 +4769,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         takenOccasions = flags.occasions;
         takenItems = flags.items;
+        takenDiffBases = flags.diffBases;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
         const flagRole = singleLaunchRole(input);
@@ -5057,7 +5070,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           // Loop guard (reviewloop.ts): a stop refuses a builder or a non-second-opinion reviewer launch until the owner clears it.
           await s.reviewSync; // a review round still being recorded lands (and may set the stop) before the gate reads it
-          if (s.loopStop && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
+          if (s.loopStop && stopApplies(s.loopStop, launchPlanKey(s, ctx, occasions)) && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
             return { block: true, reason: (process.env.PI_FOREMAN_HANDOFF_DIR?.trim() && process.env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
           }
@@ -5323,6 +5336,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         };
         await noteCheckouts(s, reviewFacts.builderDirs(input, ctx.cwd));
         await reviewFacts.noteBuilders(input, ctx.cwd);
+        // `diffBase` of a reviewer launch: an ancestor of HEAD, else the launch is refused with the reason; it pins the entry's diff base
+        for (const [e, raw] of takenDiffBases) {
+          if (typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
+          // a high-stakes or pre-pr review covers the whole change from the merge-base: a narrower base would contradict its task line
+          if (hsEntries.has(e) || occasions.get(e) === "pre-pr") {
+            s.trace?.emit({ event: "launch_refused", reason: "diff_base_whole_change", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: "pi-foreman: launch refused [diff_base_whole_change]: a [high-stakes] or [pre-pr] review covers the whole change, so `diffBase` is not allowed. Fix: leave diffBase out." };
+          }
+          const dir = path.resolve(ctx.cwd, typeof e.cwd === "string" && e.cwd ? e.cwd : typeof input.cwd === "string" && input.cwd ? input.cwd : ".");
+          const r = await resolveDiffBase(dir, raw);
+          if ("error" in r) {
+            s.trace?.emit({ event: "launch_refused", reason: "diff_base_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: launch refused [diff_base_invalid]: ${r.error}. Fix: name a commit that is an ancestor of HEAD, or leave diffBase out.` };
+          }
+          reviewFacts.setStepBase(e, r.sha);
+        }
         if (occasions.size > 0) {
           // Review bookkeeping to the run end (occasion.ts): occasion, shadow, model per entry; the files the findings are located in.
           const first = launchEntries(input).find((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
@@ -5454,6 +5483,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the items a launch names count as judged in its checkout once it started (the tool_result keeps them)
         const named: [string, string[]][] = [...givenItems].filter(([e]) => occasions.get(e) !== "high-stakes").map(([e, ids]): [string, string[]] => [checkoutOfEntry(e), ids.filter((x) => typeof x === "number").map(String)]).filter(([, ids]) => ids.length > 0);
         if (named.length > 0) capSet(s.namedItemsByCall, event.toolCallId, named);
+        // the hints of a review launch land on the items its `items` field names, not on every item its task text cites (D218)
+        const givenCited = [...new Set([...givenItems].filter(([e]) => occasions.get(e) !== "high-stakes").flatMap(([, ids]) => ids.map(String)))];
+        if (givenCited.length > 0) capSet(hsCited, event.toolCallId, givenCited);
         // A resumed review run keeps its first launch's binding, so its allowed items are made again here the way a fresh launch makes them (the resume's `items` field, else the open ledger items) and reach both sides: the child through the record folder, the parent through the route (tool_result).
         if (!s.isChild && actionOf(input) === "resume") {
           const target = resumeTarget(input) ?? "";
@@ -5983,7 +6015,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // and in their own chain, not behind the PASS snapshots (git) of the earlier runs; reviewSync still waits for them
     if (byFile.size > 0) {
       s.markSync = s.markSync.then(() => Promise.all([...byFile].map(async ([file, items]) => {
-        const r = await markPassItems(items, file, async (n) => (await runLedger(s, n === "V" ? ["mark", n, MARK_NOTE, "--verifier"] : ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
+        const r = await markPassItems(items, file, async (n) => {
+          const mr = await runLedger(s, n === "V" ? ["mark", n, MARK_NOTE, "--verifier"] : ["mark", n, MARK_NOTE], file);
+          if (mr.ok || !mr.text.includes("over the limit of")) return mr.ok;
+          // the harness note would take the item line over the limit: the mark goes through without it
+          s.trace?.emit({ event: "ledger_note_skipped", run: runId.slice(0, 8), item: n, reason: "item line limit" });
+          return (await runLedger(s, n === "V" ? ["mark", n, "--verifier"] : ["mark", n], file)).ok;
+        }, async (n, t) => {
+          const nr = await runLedger(s, ["note", n, `reviewer: ${t}`], file);
+          if (!nr.ok) s.trace?.emit({ event: "ledger_note_skipped", run: runId.slice(0, 8), item: n, reason: nr.text.slice(0, 120) });
+          return nr.ok;
+        });
         if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(","), noted: r.noted.join(",") });
       }))).then(() => undefined);
       const marked = s.markSync;
@@ -7488,6 +7530,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const fix = allowed.length === 0 && b.highStakes !== true && Array.isArray(params.items) && params.items.length > 0 ? " To mark ledger items, the parent launches the reviewer with items: [...] (the item numbers, and V when it is to be marked); otherwise leave items out." : "";
         return refuse(c.error + fix, "invalid");
       }
+      // a note that would take an item line over the limit is refused here, while the reviewer can still shorten it
+      // the reviewer child's own marker names no ledger: the parent's does
+      const bound = boundLedger(s.markerDir, b.foremanSession ?? s.usage.line.foremanSession);
+      let boundText: string | null = null;
+      try {
+        boundText = bound ? fs.readFileSync(bound, "utf8") : null;
+      } catch {
+        // unreadable: the harness mark skips and traces a note the ledger refuses
+      }
+      if (boundText !== null) {
+        for (const i of c.call.items) {
+          if (!i.note || i.result !== "open" || i.id === "V") continue;
+          const len = itemLineLength(boundText, String(i.id));
+          if (len !== null && len + ` — reviewer: ${i.note}`.length > ITEM_LINE_MAX) return refuse(`${VERDICT_TOOL}: the note of item ${i.id}: ${itemLineRefusal(String(i.id), len + ` — reviewer: ${i.note}`.length).replace(`${LEDGER_TOOL}: `, "")} Shorten the note or leave it out.`, "note_too_long");
+        }
+      }
       let replaced = false;
       try {
         replaced = writeRecord(b.verdictDir, recordOf(b.launchId, c.call)).replaced;
@@ -7780,7 +7838,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const coreDir = path.join(PKG_ROOT, "core", "scripts");
     const script = path.join(coreDir, "ledger.py");
     // The lock target is the file ledger.py will write: `-f`, else the bound ledger. ledger.py reads $LEDGER before the binding, so
-    // with it set the vendored resolver itself says which file that is (never a second resolver here); none resolves: unlocked.
+    // with it set the core resolver itself says which file that is (never a second resolver here); none resolves: unlocked.
     let lockFile = file ?? boundLedger(s.markerDir, s.id);
     if (!file && env.LEDGER) {
       const rr = await spawner(py, ["-I", "-c", RESOLVE_SNIPPET, coreDir, ...args], { cwd: s.cwd, env, timeoutMs: 30_000 });
@@ -8304,7 +8362,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.planPhase) s.planPhaseOrigin = "owner"; // the owner's phase, also inside a child: a plan-review PASS never ends it
         else delete process.env.PI_FOREMAN_PLAN_PHASE;
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
-        persistCeremonyState(s);
+        persistRounds(s); // also rewrites round-state.json: a parent reads the phase there
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");
         return;
       }
@@ -8497,12 +8555,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
 
     if (fs.existsSync(path.join(CORE_DIR, "scripts", "ledger_guard_write.py"))) ok(`core scripts at ${CORE_DIR}`);
-    else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ is vendored with the package).");
+    else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ ships with the package).");
     const unbundled = missingBundled(PKG_ROOT);
     if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm ci in a checkout), then restart.");
     else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
     const reg = await import("./registry.ts"); // doctor-only helpers; keeps the top-level import line untouched
-    out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform));
+    out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform, PKG_ROOT));
     out.push(...reg.noticeChannelsDoctor(s.agentDir));
     const doctorRoots = await piRootsOf(s);
     out.push(...worktreeRootDoctor(s.config.config, s.cwd, platform, { installRoot: doctorRoots.installRoot, npmRoot: doctorRoots.npmRoot }));

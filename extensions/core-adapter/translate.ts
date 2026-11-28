@@ -86,7 +86,7 @@ export function failureMessage(guard: GuardName, run: GuardRun, python: string |
   }
   const err = run.stderr.trim().split(/\r?\n/).slice(-1)[0] ?? "";
   if (run.code !== 0) return `${what} (exit ${run.code} without a decision${err ? `: ${err.slice(0, 200)}` : ""}). Check that core/scripts is complete (reinstall pi-foreman) and run /foreman doctor.`;
-  return `${what} (unreadable output). Check that core/scripts is the vendored core and run /foreman doctor.`;
+  return `${what} (unreadable output). Check that core/scripts is the package's own core and run /foreman doctor.`;
 }
 
 export function evaluateRun(guard: GuardName, run: GuardRun, python: string | null): GuardOutcome {

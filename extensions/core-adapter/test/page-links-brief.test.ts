@@ -33,18 +33,22 @@ function specOf(brief: string, over: Partial<SessionDeps> = {}): Promise<DialogS
 
 const URL_ = "http://127.0.0.1:47317/BrIeF/b.md";
 
-test("brief link: .md and .txt get the served URL (kind file); .html and a link to .html do not", async () => {
+test("brief link: .md and .txt get the served URL of the file (kind file); an .html brief, or a link to one, gets the URL of its rendered page", async () => {
   const calls: { path: string; kind: string }[] = [];
   pageLinks.url = async (p, kind) => (calls.push({ path: p, kind }), URL_);
   assert.equal((await specOf("b.md")).links![0].url, URL_);
   assert.equal((await specOf("b.txt")).links![0].url, URL_);
-  assert.equal((await specOf("link.md")).links![0].url, undefined, "the real path decides: a .md name linking an .html file");
-  const before = calls.length;
-  assert.equal((await specOf("b.html")).links![0].url, undefined);
-  assert.equal(calls.length, before, "no lookup for a brief that gets no link");
   assert.deepEqual(calls.map((c) => c.kind), ["file", "file"]);
   assert.equal(calls[0].path, path.join(root, "b.md"));
+  const pages = [await specOf("b.html"), await specOf("link.md")].map((s) => s.links![0]);
+  for (const l of pages) {
+    assert.equal(l.url, URL_);
+    assert.equal(l.kind, "page");
+    assert.equal(l.path, calls[calls.length - pages.length + pages.indexOf(l)].path);
+    assert.match(l.path.split(path.sep).join("/"), /\/agent\/pi-foreman\/state\/brief-pages\/[0-9a-f]{16}\/brief\.html$/, "the rendered page, not the brief file");
+  }
   assert.equal((await specOf("alias.html")).links![0].url, URL_, "an .html name linking a .md file: its real path is .md");
+  assert.equal(calls[calls.length - 1].path, path.join(root, "b.md"));
 });
 
 test("brief link: no served URL keeps today's link (no url field)", async () => {

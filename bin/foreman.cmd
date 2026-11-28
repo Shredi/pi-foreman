@@ -1,5 +1,5 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge [args]` for cmd. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|findings|close|worktree|machine|dialogs|prs|pages|rounds|reports|pane-resume|features|knowledge|test-run [args]` for cmd. reports takes list|show|set|expire|import|migrate (import: a session reports.jsonl; migrate: old backlog import).
 setlocal
 set "PF_HERE=%~dp0"
 rem a GUI app's PATH has no node: the Node of the last Pi session (nodepath.ts) joins PATH
@@ -14,6 +14,7 @@ if /i "%~1"=="reports" goto reports
 if /i "%~1"=="pane-resume" goto paneresume
 if /i "%~1"=="features" goto features
 if /i "%~1"=="knowledge" goto knowledge
+if /i "%~1"=="test-run" goto testrun
 set "PF_PY=%PI_FOREMAN_PYTHON%"
 set "PF_PYARGS="
 set "PF_SCRIPT="
@@ -31,7 +32,7 @@ if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
 set "PF_FIRST="
 if /i "%~1"=="machine" (set "PF_SCRIPT=foreman_session.py" & set "PF_FIRST= machine")
 if not defined PF_SCRIPT if /i "%~1" equ "backlog" (echo foreman backlog is retired: use foreman reports ^(list^|show^|set^|expire^|migrate^) 1>&2 & exit /b 2)
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|findings^|close^|worktree^|machine^|dialogs^|prs^|pages^|rounds^|reports^|pane-resume^|features^|knowledge [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|findings^|close^|worktree^|machine^|dialogs^|prs^|pages^|rounds^|reports^|pane-resume^|features^|knowledge^|test-run [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS=%PF_FIRST%"
 :collect
@@ -173,6 +174,17 @@ shift
 goto collectk
 :runknowledge
 node "%PF_HERE%..\scripts\foreman_knowledge.mjs" %PF_ARGS%
+exit /b %ERRORLEVEL%
+:testrun
+shift
+set "PF_ARGS="
+:collecttr
+if "%~1"=="" goto runtestrun
+set PF_ARGS=%PF_ARGS% %1
+shift
+goto collecttr
+:runtestrun
+node "%PF_HERE%..\scripts\foreman_test_run.mjs" --generic %PF_ARGS%
 exit /b %ERRORLEVEL%
 :run
 "%PF_PY%" %PF_PYARGS% -E -s "%PF_HERE%..\scripts\%PF_SCRIPT%" %PF_ARGS%
