@@ -58,10 +58,12 @@ test("C: a write outside the worktree through the usual tools is danger-write-ou
   const out: string[] = [
     `sed -i s/a/b/ ${OUT}/f`, `sed -i.bak s/a/b/ ${OUT}/f`, `sed --in-place s/a/b/ ${OUT}/f`, `sed -n 'w ${OUT}/f' a.txt`, `truncate -s 0 ${OUT}/f`,
     `dd if=a.txt of=${OUT}/f`, `sort -o ${OUT}/f a.txt`, `cp -t ${OUT} a.txt`, `install -m 644 a.txt ${OUT}/f`, `ln -sf a.txt ${OUT}/l`, `awk -i inplace '{print}' ${OUT}/f`,
-    `patch ${OUT}/f p.diff`, `git -C ${OUT} commit -m x`, `npm --prefix ${OUT} install`, `cd ${OUT} && git commit -m x`, `rm -r ${SIB}`,
+    `patch ${OUT}/f p.diff`, `npm --prefix ${OUT} install`, `cd ${OUT} && git commit -m x`, `rm -r ${SIB}`,
   ];
   // PR C: danger-write-outside is the child's unresolved write target only; a resolved outside path is the child deny set's job (not the danger list)
   for (const l of out) assert.equal(danger(l), null, l);
+  // D222: `git -C <dir outside the read roots>` is danger-git
+  assert.equal(danger(`git -C ${OUT} commit -m x`), "danger-git");
   const inside: string[] = [
     `sed -i s/a/b/ ${WT}/a.txt`, `sed -i s/a/b/ a.txt`, `sed -n 'w ${WT}/f' a.txt`, `truncate -s 0 ${WT}/f`, `perl -pi -e 's/a/b/' ${WT}/f`, `dd if=a.txt of=${WT}/f`, `sort -o ${WT}/f a.txt`,
     `cp -t ${WT}/src a.txt`, `install -m 644 a.txt ${WT}/f`, `ln -sf a.txt ${WT}/l`, `git -C ${WT} commit -m x`, `cd ${WT}/src && git commit -m x`, `sed -i s/a/b/ ${shPath(scr)}/f`,

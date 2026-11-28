@@ -56,7 +56,7 @@ test("any option other than the known-safe flags gives main's result (the real w
   }
 });
 
-// pinned as they were before the option whitelist: only an mv into work/ is an allow (a cp into the dir is judged by the write-effect check, as before)
+// D183: a plain cp into an existing dir is checked as dest/<name> like mv, so both are an allow in work/ (the option forms above keep their refusals)
 test("the plain into-dir forms keep their results", { skip: posixOnly }, () => {
   const want: Record<string, string> = { sub: "allow:default-write-in", own: "allow:default-write-in", parent: REFUSED.parent };
   for (const kind of Object.keys(KINDS)) {
@@ -65,7 +65,7 @@ test("the plain into-dir forms keep their results", { skip: posixOnly }, () => {
       mkSrc();
     }
     for (const l of [`cp ${wt}/a ${work(kind)}/`, `cp -f ${wt}/a ${wt}/b ${work(kind)}`]) {
-      assert.equal(seen(kind, l), REFUSED[kind], `${kind}: ${l}`);
+      assert.equal(seen(kind, l), want[kind], `${kind}: ${l}`);
       mkSrc();
     }
   }

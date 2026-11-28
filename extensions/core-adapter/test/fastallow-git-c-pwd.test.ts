@@ -21,19 +21,23 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const child = (command: string): { block?: boolean; rule?: string } | undefined =>
   gateEvaluate("bash", { command }, wt, {
-    env: (c) => baseFloorEnv(c, { child: true, home: path.join(root, "h"), platform: "linux", writeRoots: [c, root], scratch: [sc] }),
+    env: (c) => baseFloorEnv(c, { child: true, home: path.join(root, "h"), platform: process.platform, writeRoots: [c, root], scratch: [sc] }),
     roots: () => ({ worktree: wt, scratch: [sc], tmp: [], scratchBase: path.dirname(path.dirname(sc)), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false }),
   }).result as { block?: boolean; rule?: string } | undefined;
 
 test("child: git -C \"$PWD\" add x in the own worktree is allowed", () => {
-  for (const l of ['git -C "$PWD" add x', "git -C $PWD add x", 'git -C "${PWD}" add x']) assert.equal(child(l), undefined, l);
+  for (const l of ['git -C "$PWD" add x', "git -C $PWD add x", 'git -C "${PWD}" add x']) {
+    const res = child(l) as { allow?: boolean; rule?: string } | undefined;
+    assert.equal(res?.allow, true, l);
+    assert.equal(res?.rule, "default-git-add", l);
+  }
 });
 
 test("child: $PWD after a cd outside the worktree, or with PWD rebound, is not the own worktree", () => {
   assert.equal(child("cd /etc && git -C \"$PWD\" add x")?.rule, "child-write-outside");
-  for (const l of ['PWD=/etc; git -C "$PWD" add x', 'read PWD; git -C "$PWD" add x', 'eval "$X"; git -C "$PWD" add x']) assert.notEqual(child(l), undefined, l);
+  for (const l of ['PWD=/etc; git -C "$PWD" add x', 'read PWD; git -C "$PWD" add x', 'eval "$X"; git -C "$PWD" add x']) assert.equal(child(l)?.block, true, l);
 });
 
 test("child: another unreadable -C target of a git write is still refused", () => {
-  for (const l of ['git -C "$HOME" add x', "git -C $UNSET add x", 'git -C "$PWD/.." add x']) assert.notEqual(child(l), undefined, l);
+  for (const l of ['git -C "$HOME" add x', "git -C $UNSET add x", 'git -C "$PWD/.." add x']) assert.equal(child(l)?.block, true, l);
 });

@@ -78,6 +78,57 @@ export function skipOnlyOk(prog: string, argv: string[]): boolean {
   return Object.hasOwn(TABLE, prog) && TABLE[prog](argv);
 }
 
+const PS_PROGRAMS: ReadonlySet<string> = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
+/** The characters a `-Command` line may not hold: separators, pipes, redirects, grouping, variables, quotes, splatting and list commas. */
+const PS_BAD_LINE = /[;|&<>(){}$`'"@,\n\r]/;
+/** A FileSystem drive path (`X:\\…`, `X:/…`, no further `:`) or a relative path with no `:` that is no UNC path (`\\\\`, `//`). */
+const PS_DRIVE_PATH = /^[A-Za-z]:[\\/][^:]*$/;
+function psFileSystemPath(p: string): boolean {
+  if (p === "" || p.startsWith("-") || /^[\\/]{2}/.test(p)) return false;
+  return PS_DRIVE_PATH.test(p) || !p.includes(":");
+}
+
+/**
+ * Skip-only: `powershell|pwsh [.exe] -NoProfile [-NonInteractive] -Command <line>` where the line is one of `Get-Volume`, `Get-PSDrive [-PSProvider FileSystem]` or
+ * `Get-ChildItem` with `-File -Directory -Force` (never `-Recurse`: a whole-disk scan is judged like `ls -R /`) and one path without `*`, `?` or `[` (`-Path <p>` or positional): a drive path or a relative path of the FileSystem provider that
+ * `secret` does not name. Without `-NoProfile` PowerShell runs the user's profile script, so it is required. Anything else is no skip-only form (the judge looks).
+ * Reads no cmdlet knowledge from the line beyond this table; the segment must be the whole foreign-shell unit (no wrapper, assignment prefix, redirect or here-document).
+ */
+export function psSkipOnlyOk(seg: ShellSegment, secret: (path: string) => boolean): boolean {
+  if (seg.opaque !== "foreign_shell" || !PS_PROGRAMS.has(seg.program) || seg.wrappers.length > 0 || seg.assignPrefix || seg.redirects.length > 0 || seg.heredoc) return false;
+  const a = seg.argv;
+  const cmd = a.findIndex((w) => w.toLowerCase() === "-command");
+  if (cmd < 0 || cmd === a.length - 1) return false;
+  const opts = a.slice(0, cmd).map((w) => w.toLowerCase());
+  if (!opts.includes("-noprofile") || opts.some((w, i) => (w !== "-noprofile" && w !== "-noninteractive") || opts.indexOf(w) !== i)) return false;
+  const line = a.slice(cmd + 1).join(" ");
+  if (PS_BAD_LINE.test(line)) return false;
+  const words = line.split(/\s+/).filter(Boolean);
+  const name = words[0]?.toLowerCase();
+  const rest = words.slice(1);
+  if (name === "get-volume") return rest.length === 0;
+  if (name === "get-psdrive") return rest.length === 0 || (rest.length === 2 && rest[0].toLowerCase() === "-psprovider" && rest[1].toLowerCase() === "filesystem");
+  if (name !== "get-childitem") return false;
+  const seen = new Set<string>();
+  let target: string | null = null;
+  const take = (p: string): boolean => {
+    if (target !== null || /[*?[]/.test(p) || !psFileSystemPath(p) || secret(p) || secret(p.replace(/\\/g, "/"))) return false;
+    target = p;
+    return true;
+  };
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    const k = w.toLowerCase();
+    if (k === "-file" || k === "-directory" || k === "-force") {
+      if (seen.has(k)) return false;
+      seen.add(k);
+    } else if (k === "-path") {
+      if (i + 1 >= rest.length || !take(rest[++i])) return false;
+    } else if (w.startsWith("-") || !take(w)) return false;
+  }
+  return true;
+}
+
 /** Read programs whose options can write or run a program (a file named `-o` or `--pre=x` in the folder would be read as one): a glob that may expand to such a name is no operand of theirs. */
 const OPTION_PROGRAMS = new Set(["rg", "tree", "diff", "file", "find", "sort", "uniq"]);
 const GLOB_WORD = /^[A-Za-z0-9_.@%+,/*?[\]-]+$/;

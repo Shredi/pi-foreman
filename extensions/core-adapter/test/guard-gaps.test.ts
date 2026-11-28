@@ -126,8 +126,9 @@ const CASES: [string, X, X][] = [
   ["toybox -x rm -rf $HOME/x", "J", "J"],
   ["toybox ls", "A", "A"],
   // 8: assignment prefix
-  ["env X=1 git -C /outside stash push", "A", "R"],
-  ["X=1 git -C /outside stash push", "A", "R"],
+  // D222: `git -C <dir outside the read roots>` is danger-git (judged), prefix or not
+  ["env X=1 git -C /outside stash push", "J", "R"],
+  ["X=1 git -C /outside stash push", "J", "R"],
   ["env X=1 git push", "A", "R"],
   ["X=1 touch /outside/f", "A", "R"],
   ["FOREMAN_SCRATCH=/opt git rebase -x 'git push' main", "J", "J"],

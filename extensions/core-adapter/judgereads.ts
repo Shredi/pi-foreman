@@ -9,7 +9,7 @@ import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import { secretPath } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
-import { redactCommand } from "./trace.ts";
+import { SECRET_NAME_WORDS, redactCommand, redactFileTextLine } from "./trace.ts";
 
 /** Entries directly under the Pi agent dir that may be read (everything else there stays closed). */
 export const AGENT_ALLOW: readonly string[] = ["sessions", "agents", "skills", "prompts", "pi-foreman", "pi-subagents", "missions", "AGENTS.md", "foreman.json", "settings.json"];
@@ -32,6 +32,8 @@ export interface ReadRoot {
   label: string;
   real: string;
   lex: string;
+  /** A trusted install root (Pi, npm, the pi-foreman package): it wins over the agent dir when it lies inside it. */
+  install?: boolean;
 }
 
 export interface JudgeReadScope {
@@ -93,7 +95,7 @@ const realOf = (p: string): string | undefined => {
  * The read scope of one judge call; undefined when `gate.judgeReads` is false. A project root that does not exist is dropped. Every other absolute path lies
  * in the root of its own filesystem (drive or share), so the exclusions alone decide what is shown.
  */
-export function judgeReadScope(a: { cwd: string; worktree: string; out?: string; scratch?: string; agentDir: string; home?: string; platform?: string; config: Json | undefined }): JudgeReadScope | undefined {
+export function judgeReadScope(a: { cwd: string; worktree: string; out?: string; scratch?: string; agentDir: string; home?: string; platform?: string; config: Json | undefined; readRoots?: string[]; install?: string[] }): JudgeReadScope | undefined {
   if (get(a.config, "gate.judgeReads") === false) return undefined;
   const platform = a.platform ?? process.platform;
   const roots: ReadRoot[] = [];
@@ -103,6 +105,19 @@ export function judgeReadScope(a: { cwd: string; worktree: string; out?: string;
     if (!real) continue;
     if (roots.some((r) => fold(platform, r.real) === fold(platform, real))) continue;
     roots.push({ label, real, lex: path.resolve(p) });
+  }
+  // the session's read roots (pathrules.ts readRootsOfGate) and its install roots, as labelled roots like the worktree
+  for (const [label, list, install] of [["<root>", a.readRoots ?? [], false], ["<install>", a.install ?? [], true]] as const) {
+    for (const p of list) {
+      const real = realOf(p);
+      if (!real) continue;
+      const dup = roots.findIndex((r) => fold(platform, r.real) === fold(platform, real));
+      if (dup >= 0) {
+        if (install) roots[dup].install = true;
+        continue;
+      }
+      roots.push({ label, real, lex: path.resolve(p), ...(install ? { install: true } : {}) });
+    }
   }
   const agentReal = realOf(a.agentDir);
   return {
@@ -134,7 +149,8 @@ interface Place {
 /** Where a real path lies: the agent dir first, else the most specific project root, else the root of its filesystem (drive or share on Windows); null only for a path without a root. */
 function placeOf(real: string, scope: JudgeReadScope): Place | null {
   const pf = scope.platform;
-  if (scope.agent && inside(pf, real, scope.agent.real)) return { label: "<agent>", rel: segs(pf, scope.agent.real, real), agent: true };
+  const installRoot = scope.roots.some((r) => r.install && inside(pf, real, r.real));
+  if (scope.agent && !installRoot && inside(pf, real, scope.agent.real)) return { label: "<agent>", rel: segs(pf, scope.agent.real, real), agent: true };
   let best: ReadRoot | undefined;
   for (const r of scope.roots) if (inside(pf, real, r.real) && (!best || r.real.length > best.real.length)) best = r;
   if (best) return { label: best.label, rel: segs(pf, best.real, real), agent: false };
@@ -314,6 +330,154 @@ export function sameFileState(a: fs.BigIntStats, b: fs.BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
 
+const KEY_TOKEN = /\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{6,}|\bnpm_[A-Za-z0-9]{36}\b|\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b|\bAIza[A-Za-z0-9_-]{6,}/g;
+/** `sk-` keys: no lookahead (linear); a dashed all-lowercase body shorter than 20 word chars before the first dash is a CSS class and stays visible. */
+const KEY_SK = /\bsk-[A-Za-z0-9_-]{20,}/g;
+/** A private-key marker; `maskKeys` pairs it with the next END marker by index search (no backtracking, so linear). */
+const KEY_PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
+const KEY_PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
+/** A BEGIN marker with no matching END: only the marker and the key text on its own line are hidden. */
+const KEY_PEM_OPEN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=]*/y;
+/** A line of pure base64 key data (the body of a key whose BEGIN has no END). */
+const KEY_B64_LINE = /^[A-Za-z0-9+/=]{40,}\r?$/;
+const KEY_NAME = new RegExp(`${SECRET_NAME_WORDS}|(?:^|[_-])auth(?:$|[_-])`, "i");
+const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^\n]*?\\"|\\'[^\n]*?\\'|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|'[^'\n]*'|[^\s'",;&|<>]+)/g;
+
+/**
+ * File text as the judge sees it: only real key shapes are hidden (known token prefixes, PEM private-key blocks, the value of a secret-named key, URL passwords, bearer tokens). Code,
+ * identifiers and hashes pass. Newlines are kept, so the line numbers of a window stay true. (Trace and command masking is `redactCommand`, which also hides long runs.)
+ */
+export function maskKeys(text: string): string {
+  const R = "[redacted]";
+  return maskPem(text, R)
+    .replace(KEY_TOKEN, R)
+    .replace(KEY_SK, (m) => (!m.includes("-", 3) || /[\dA-Z]/.test(m.slice(3)) || /^sk-\w{20}/.test(m) ? R : m))
+    // the value of a secret-named key is masked whole, quoted or not
+    .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => (KEY_NAME.test(name) && value.replace(/^\\?["']|\\?["']$/g, "").length > 0 ? `${name}${sep}${R}` : m))
+    // base's per-line rules (URL userinfo, Authorization and Bearer values, secret-named values, command logins), without its long-run rules
+    .split("\n")
+    .map((l) => redactFileTextLine(l))
+    .join("\n");
+}
+
+const KEY_PEM_MARKER = /-----(?:BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[A-Za-z0-9+/=]|\\[nr])*|END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)/g;
+const KEY_HEADER_LINE = /^(?:Proc-Type|DEK-Info|Comment|Version):([^]*)$/;
+const KEY_HEADER_UNSAFE = /[$`();|&<>{}~]/;
+const KEY_B64_RUN = /[A-Za-z0-9+/=]+/g;
+/** Key data is never plain lowercase letters and slashes (a word or a path): it has an uppercase letter, digit, `+` or `=`. */
+const KEY_B64_MIX = /[A-Z0-9+=]/;
+const KEY_LEAD = /^[^A-Za-z0-9]*/;
+
+/** The wrapper of a key line: the text before and after its base64 run, digits collapsed so `cat -n` numbers match. */
+function keyWrapper(l: string, at: number, len: number): string {
+  return `${l.slice(0, at).replace(/\d+/g, "0")}\u0000${l.slice(at + len).replace(/\d+/g, "0")}`;
+}
+
+/**
+ * A BEGIN..END region: the markers are masked and only key data is hidden, whatever wraps the line (indent, comment, quotes, `+`, `\\`, `*`, `>`, numbers): every run of 40+
+ * base64 characters that is not a plain word or path; a shorter run (the last key line, the PGP checksum) when the line before had a masked run and both have the same text before
+ * and after the run; the standard headers directly after BEGIN (no shell syntax in the value). The rest of each line stays visible. Linear.
+ */
+function maskPemRegion(region: string, R: string): string {
+  const lines = region.split("\n");
+  let prevWrap: string | undefined; // wrapper of the previous line when it had a masked run
+  let headers = true; // still in the run directly after BEGIN
+  return lines
+    .map((l, i) => {
+      if (l.includes("-----")) {
+        KEY_PEM_MARKER.lastIndex = 0;
+        if (KEY_PEM_MARKER.test(l)) {
+          prevWrap = undefined;
+          return l.replace(KEY_PEM_MARKER, R);
+        }
+      }
+      let first: string | undefined;
+      const out = l.replace(/[A-Za-z0-9+/=]{40,}/g, (m: string, at: number) => {
+        if (!KEY_B64_MIX.test(m)) return m;
+        first ??= keyWrapper(l, at, m.length);
+        return R;
+      });
+      if (first !== undefined) {
+        headers = false;
+        prevWrap = first;
+        return out;
+      }
+      const lead = KEY_LEAD.exec(l)?.[0] ?? "";
+      if (headers && i > 0) {
+        const data = l.slice(lead.length);
+        if (data.length === 0) headers = false;
+        else {
+          const h = KEY_HEADER_LINE.exec(data);
+          if (h && !KEY_HEADER_UNSAFE.test(h[1] ?? "")) return lead;
+          headers = false;
+        }
+      }
+      if (prevWrap !== undefined) {
+        let best: RegExpExecArray | undefined;
+        KEY_B64_RUN.lastIndex = 0;
+        for (let m = KEY_B64_RUN.exec(l); m; m = KEY_B64_RUN.exec(l)) if (!best || m[0].length > best[0].length) best = m;
+        if (best && best[0].length >= 4 && KEY_B64_MIX.test(best[0]) && keyWrapper(l, best.index, best[0].length) === prevWrap) return l.slice(0, best.index) + R + l.slice(best.index + best[0].length);
+      }
+      prevWrap = undefined;
+      return l;
+    })
+    .join("\n");
+}
+
+/** PEM private-key blocks: BEGIN..END has its markers and key data hidden (newlines kept); a BEGIN with no END hides only its own marker and key text. One pass, each marker searched once. */
+function maskPem(text: string, R: string): string {
+  KEY_PEM_BEGIN.lastIndex = 0;
+  let out = "";
+  let at = 0;
+  let noEnd = false;
+  // memos: markers that share a line (or have no newline after them) must not rescan the same stretch, or many markers over one long line are quadratic
+  let nlFrom = 0;
+  let nlAt = -2;
+  const nextNl = (from: number): number => {
+    if (nlAt !== -2 && from >= nlFrom && (nlAt < 0 || from <= nlAt)) return nlAt;
+    nlFrom = from;
+    nlAt = text.indexOf("\n", from);
+    return nlAt;
+  };
+  let memo = { ls: -1, b64: false, le: -1 };
+  const lineAt = (ls: number): { b64: boolean; le: number } => {
+    if (memo.ls !== ls) {
+      const le = text.indexOf("\n", ls);
+      memo = { ls, b64: KEY_B64_LINE.test(text.slice(ls, le < 0 ? text.length : le)), le };
+    }
+    return memo;
+  };
+  for (let b = KEY_PEM_BEGIN.exec(text); b; b = KEY_PEM_BEGIN.exec(text)) {
+    if (b.index < at) continue;
+    let end = -1;
+    if (!noEnd) {
+      KEY_PEM_END.lastIndex = b.index + b[0].length;
+      const e = KEY_PEM_END.exec(text);
+      if (e) end = e.index + e[0].length;
+      else noEnd = true;
+    }
+    if (end < 0) {
+      KEY_PEM_OPEN.lastIndex = b.index;
+      const open = KEY_PEM_OPEN.exec(text);
+      end = b.index + (open ? open[0].length : b[0].length);
+      out += text.slice(at, b.index) + R;
+      // the key data below the marker (pure base64 lines) is hidden up to the first other line, so a truncated key does not show and an `rm` line does
+      let nl = nextNl(end);
+      while (nl >= 0) {
+        const ls = nl + 1;
+        const line = lineAt(ls);
+        if (!line.b64) break;
+        out += text.slice(end, ls) + R;
+        end = line.le < 0 ? text.length : line.le;
+        nl = line.le;
+      }
+    } else out += text.slice(at, b.index) + maskPemRegion(text.slice(b.index, end), R);
+    at = end;
+    KEY_PEM_BEGIN.lastIndex = end;
+  }
+  return at === 0 ? text : out + text.slice(at);
+}
+
 function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, asked: string, scope: JudgeReadScope, budget: { left: number }): { outcome: ReadOutcome; body: string } {
   const win32 = scope.platform === "win32";
   const flags = fs.constants.O_RDONLY | (win32 ? 0 : (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
@@ -330,7 +494,7 @@ function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, a
     const data = buf.subarray(0, n);
     if (data.subarray(0, 8192).includes(0)) return { outcome: "binary", body: "binary file, not shown" };
     const partial = size > MAX_SCAN_BYTES;
-    const text = data.toString("utf8");
+    const text = maskKeys(data.toString("utf8"));
     const lines = text.split("\n");
     if (text.endsWith("\n")) lines.pop();
     const jsonl = /\.jsonl$/i.test(res.real);
@@ -338,12 +502,12 @@ function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, a
     const wanted = res.window ? Math.max(1, res.window.to - from + 1) : MAX_FILE_LINES;
     const count = Math.min(MAX_FILE_LINES, wanted, jsonl ? MAX_JSONL_LINES : MAX_FILE_LINES);
     if (from > lines.length) return { outcome: "ok", body: `(no lines from ${from}: the file has ${lines.length} lines${partial ? " in its first 1 MiB" : ""})` };
-    // A line is masked before any cut, so a cut never leaves half a secret; the last line of a file the scan stopped inside carries `[cut]`.
+    // The text is masked as a whole before any window or cut, so a cut never leaves half a secret; the last line of a file the scan stopped inside carries `[cut]`.
     const scanCut = partial && !text.endsWith("\n");
     const slice = lines.slice(from - 1, from - 1 + count).map((l, i) => {
       const lastOfScan = scanCut && from - 1 + i === lines.length - 1;
       if (!jsonl && !lastOfScan) return l;
-      let masked = redactCommand(l);
+      let masked = l;
       if (jsonl && masked.length > MAX_JSONL_LINE_CHARS) masked = `${masked.slice(0, MAX_JSONL_LINE_CHARS)} [cut]`;
       return lastOfScan && !masked.endsWith(" [cut]") ? `${masked} [cut]` : masked;
     });
@@ -353,13 +517,13 @@ function readFileBlock(res: Resolution & { real: string; st: fs.BigIntStats }, a
     const cap = Math.min(MAX_FILE_BYTES, budget.left);
     // The cut falls on a line boundary; `last` is the last line shown whole. When not even the first line fits, that line is shown cut and the hint
     // continues at the next line (the rest of the long line is not offered again).
-    // Each line is masked on its own and the walk stops at the first line that does not fit, so a line masking shrinks never hides the ones after it.
+    // The walk stops at the first line that does not fit.
     const shownLines: string[] = [];
     let used = 0;
     let k = 0;
     let first = "";
     for (; k < slice.length; k++) {
-      const masked = redactCommand(slice[k]);
+      const masked = slice[k];
       if (k === 0) first = masked;
       if (used + (k ? 1 : 0) + masked.length > cap) break;
       used += (k ? 1 : 0) + masked.length;
@@ -456,6 +620,7 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
     }
     const rec: ReadRecord = { asked: a, outcome: res.outcome };
     let body = "";
+    let fileText = false; // file text is masked by `maskKeys` already
     if (res.outcome === "not-found") {
       rec.real = res.real;
       rec.ancestor = res.ancestor;
@@ -485,10 +650,11 @@ export function readPaths(asked: string[], scope: JudgeReadScope, budget: { left
         const r = readFileBlock(res as Resolution & { real: string; st: fs.BigIntStats }, a, scope, budget);
         rec.outcome = r.outcome;
         body = r.body;
+        fileText = true;
       }
     }
     records.push(rec);
-    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]}${res.literal ? "; read by its literal name, no line window" : ""})`, body: body.split("\n").map(redactCommand).join("\n") });
+    blocks.push({ header: `${redactCommand(escapeControl(a))} -> ${rec.real ? redactCommand(escapeControl(askable(rec.real, scope))) : "-"} (${HEADER_NOTE[rec.outcome]}${res.literal ? "; read by its literal name, no line window" : ""})`, body: fileText ? body : body.split("\n").map((l) => redactCommand(l)).join("\n") });
   }
   return { blocks, records };
 }

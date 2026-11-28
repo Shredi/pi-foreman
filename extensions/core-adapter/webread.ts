@@ -13,6 +13,9 @@ import { sameOrUnder, tildeWord } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { strRaw } from "./strof.ts";
+import { CURL_VALUE_LONG, CURL_VALUE_SHORT, WGET_VALUE_LONG, WGET_VALUE_SHORT, webOutputWords } from "./weboutput.ts";
+
+export { webOutputWords };
 
 export interface WebReadCtx {
   cwd: string;
@@ -94,8 +97,6 @@ function outputCheck(seg: ShellSegment, ctx: WebReadCtx, cwd: string, files: str
   return null;
 }
 
-const CURL_VALUE_SHORT = new Set("AbcCdDeEFHKmoPQrTuUwxXyYz".split(""));
-const CURL_VALUE_LONG = new Set(["--output", "--output-dir", "--user-agent", "--max-time", "--connect-timeout", "--retry", "--retry-delay", "--retry-max-time", "--referer", "--range", "--write-out", "--proxy", "--header", "--data", "--data-raw", "--data-binary", "--data-ascii", "--data-urlencode", "--json", "--form", "--form-string", "--upload-file", "--request", "--user", "--cookie", "--cookie-jar", "--netrc-file", "--config", "--oauth2-bearer", "--proxy-user", "--aws-sigv4", "--cacert", "--cert", "--key", "--resolve", "--limit-rate", "--max-filesize", "--max-redirs", "--url", "--dump-header"]);
 const CURL_BODY_LONG = new Set(["--data", "--data-raw", "--data-binary", "--data-ascii", "--data-urlencode", "--json", "--form", "--form-string", "--upload-file", "--post301", "--post302", "--post303"]);
 const CURL_AUTH_LONG = new Set(["--user", "--cookie", "--cookie-jar", "--netrc", "--netrc-file", "--netrc-optional", "--oauth2-bearer", "--proxy-user", "--aws-sigv4", "--digest", "--basic", "--ntlm", "--negotiate", "--anyauth"]);
 
@@ -173,8 +174,6 @@ function curlCheck(seg: ShellSegment, ctx: WebReadCtx, piped: boolean, otherRead
   return out ?? { ok: true, method, url: u.url };
 }
 
-const WGET_VALUE_SHORT = new Set(["O", "P", "o", "a", "i", "e", "t", "T", "w", "U", "Q", "l", "A", "R", "D", "I", "X", "B"]);
-const WGET_VALUE_LONG = new Set(["--output-document", "--directory-prefix", "--output-file", "--append-output", "--input-file", "--execute", "--tries", "--timeout", "--wait", "--user-agent", "--quota", "--level", "--accept", "--reject", "--header", "--method", "--post-data", "--post-file", "--body-data", "--body-file", "--user", "--password", "--http-user", "--http-password", "--ftp-user", "--ftp-password", "--load-cookies", "--save-cookies", "--referer", "--read-timeout", "--connect-timeout", "--dns-timeout", "--limit-rate", "--bind-address", "--config", "--use-askpass", "--certificate", "--private-key", "--ca-certificate", "--proxy-user", "--proxy-password"]);
 const WGET_BODY_LONG = new Set(["--post-data", "--post-file", "--body-data", "--body-file"]);
 const WGET_AUTH_LONG = new Set(["--user", "--password", "--http-user", "--http-password", "--ftp-user", "--ftp-password", "--load-cookies", "--save-cookies", "--use-askpass", "--proxy-user", "--proxy-password"]);
 

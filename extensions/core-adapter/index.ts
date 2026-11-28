@@ -38,7 +38,7 @@ import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { CHILD_ASK_TIMEOUT_TEXT, CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
-import { HANDOFF_CHILD_NAMES, PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
+import { HANDOFF_CHILD_NAMES, PATH_TOOL_NAMES, readRootsOfGate, tmpRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
@@ -4069,7 +4069,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       scratchBase: s.owned.childScratchRoot,
       scratchBases: [s.owned.tmpScratchRoot],
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
-      install: [pi.installRoot, pi.npmRoot, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
+      readDirs: extraReadDirs,
+      readOnlyRoots: [...owned.read, ...extraReadDirs],
+      install: [pi.installRoot, pi.npmRoot, PKG_ROOT, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       ...(s.isChild && launchBinding?.handoffDir ? { childHandoff: launchBinding.handoffDir } : {}),
@@ -4087,6 +4089,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
       workFolders,
       pkgRoot: PKG_ROOT,
+      ...(!s.isChild ? { state } : {}),
     };
   }
 
@@ -4294,7 +4297,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // the judge reads the call first: a clear runs it; an owner answer naming one of six classes asks the owner (a child asks its parent); a refuse, an
       // unsure, an invalid answer and every failure refuse the call with the reason, nobody is asked
       // file reads: not for the withheld kinds (the judge sees no task text for them on purpose); a child adds its own output and scratch dirs
-      const readScope = withhold ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never });
+      const readScope = withhold ? undefined : judgeReadScope({ cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, ...(gs.isChild && roots?.out ? { out: roots.out } : {}), ...(gs.isChild && roots?.scratch[0] ? { scratch: roots.scratch[0] } : {}), agentDir: gs.agentDir, home: os.homedir(), platform, config: gs.config.config as never, ...(roots ? { readRoots: readRootsOfGate(roots), install: roots.install } : {}) });
       const judged = await rt.classifier.judge(
         { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, defaultBranch: facts.defaultBranch, ...(ownerMessage ? { ownerMessage } : {}), ...(gs.isChild && roots ? { childDirs: { ...(roots.out ? { out: roots.out } : {}), ...(roots.scratch[0] ? { scratch: roots.scratch[0] } : {}) } } : {}), ...(launchTask !== undefined ? { launchTask } : {}), ...(withhold ? { withhold } : {}), ...(readScope ? { readScope } : {}) },
         {

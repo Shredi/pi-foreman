@@ -51,9 +51,16 @@ test("a refused subagent cp names the destination, not the worktree root", { ski
   const s = run(`cp ${wt}/a ${dest}`, r);
   assert.equal(s.block, "child-write-outside");
   assert.ok(s.reason?.includes(`Refused: ${dest},`), s.reason);
-  // a cp into an existing dir refused by the write-effect check names the destination dir too
+  // D183: a cp into an existing dir is checked as dest/<name> like mv, so a cp into the handoff work/ dir is an allow
   const t = run(`cp ${wt}/a ${H}/work`, r);
+  assert.equal(t.block, undefined);
+  assert.ok(t.allow?.endsWith("default-write-in"), String(t.allow));
+});
+
+test("a subagent cp into a handoff dir that is not its work/ is refused and names that dir", { skip: posixOnly }, () => {
+  const r: GateRoots = { worktree: wt, scratch: [scr], tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false, childHandoff: H };
+  const t = run(`cp ${wt}/a ${H}`, r);
   assert.equal(t.block, "child-write-outside");
-  assert.ok(t.reason?.includes(`Refused: ${H}/work,`), t.reason);
+  assert.ok(t.reason?.includes(`Refused: ${H}/a,`), t.reason);
   assert.ok(!t.reason?.includes(`Refused: ${wt},`), t.reason);
 });
