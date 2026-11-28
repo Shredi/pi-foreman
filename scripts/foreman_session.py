@@ -6,7 +6,7 @@
                                       [--first-command CMD]... [--plan-mode]
                                       [--parent-id ID] [--profile NAME] [--agent-dir D]
     python scripts/foreman_session.py open <label> <brief-file> --worktree [--base REF] [--cwd DIR] [...]
-    python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
+    python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [--start-model ID] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
     python scripts/foreman_session.py prune [--dry-run] [--all] [--parent-id ID] [--agent-dir D]
     python scripts/foreman_session.py restart <label|child id|label@machine> [--json] [--dry-run] [--agent-dir D]
@@ -129,6 +129,7 @@ ENV_PARENT = "PI_FOREMAN_PARENT_INTERCOM"
 ENV_STABLE = "PI_INTERCOM_STABLE_ID"
 ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
 ENV_MODEL = "PI_FOREMAN_SESSION_MODEL"
+ENV_START_MODEL = "PI_FOREMAN_START_MODEL"
 ENV_PLAN_PHASE = "PI_FOREMAN_PLAN_PHASE"  # --plan-first: the child's adapter starts in the plan phase (.workflow-only writes, no builders)
 ENV_PUBLISHED = "PI_INTERCOM_SESSION_ID"
 ENV_BG_PREFIX = "PI_BG_"
@@ -1010,7 +1011,7 @@ def addon_env(environ=None):
     return sorted(out, key=lambda kv: (kv[0] != ENV_BG_FEATURES, kv[0]))
 
 
-def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, agent_dir=None):
+def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, agent_dir=None, start_model=None):
     env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
     if plan_phase:
         env.append((ENV_PLAN_PHASE, "1"))
@@ -1019,6 +1020,8 @@ def child_env(handoff, parent, child, parent_slug, model=None, environ=None, rem
     # the child's Pi keeps this model instead of applying the overlay/preset foreman role model
     if model:
         env.append((ENV_MODEL, model))
+    elif start_model:  # the opener's model as a start model: not pinned, the child's role map for that provider still applies
+        env.append((ENV_START_MODEL, start_model))
     # the add-on reads its features at load: the child pane starts a fresh Pi, so pass the opener's along
     # a local child keeps the opener's agent dir when the opener has the variable set (the handoff dir lives in it)
     out = env + addon_env(environ)
@@ -1430,6 +1433,8 @@ def cmd_open(a):
         return cmd_open_remote(a)
     if getattr(a, "trust", False):
         raise Refused("--trust needs --machine")
+    if getattr(a, "start_model", None):
+        raise Refused("--start-model needs --machine")
     adir = agent_dir(a.agent_dir)
     if not LABEL_RE.match(a.label):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
@@ -1499,11 +1504,12 @@ def open_session(p, remote=None):
     else:
         here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
         parent_slug = opener_slug(here, git_top(here))
-    env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]), agent_dir=adir)
+    launch = model or p.get("start_model") or None  # the model on the pi command line: the explicit one, else the opener's start model
+    env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]), agent_dir=adir, start_model=p.get("start_model"))
     prompt = prompt_text(handoff)
     first = p.get("first") or []
-    banner = start_banner(label, model, short_hostname() if remote else None, handoff / "brief.md")
-    command = posix_command(env, model, prompt, first, banner)
+    banner = start_banner(label, launch, short_hostname() if remote else None, handoff / "brief.md")
+    command = posix_command(env, launch, prompt, first, banner)
     scfg = {}
     if remote:
         backend, binary = "hc", hc_bin()
@@ -1513,15 +1519,15 @@ def open_session(p, remote=None):
         scfg = sessions_config(adir)
         backend, binary = backend_of(scfg, os.environ)
     platform = host_platform()
-    child_argv = (hc_child_argv(env, model, prompt, first, platform, os.environ.get("PATH", ""),
+    child_argv = (hc_child_argv(env, launch, prompt, first, platform, os.environ.get("PATH", ""),
                                 "pi.cmd" if remote and platform == "win32" else "pi", banner) if backend == "hc" else None)
     outlive = False if remote else hc_outlive_parent(scfg)
     space = remote.get("space") if remote else None
     labels = [("fm.child", child), ("fm.parent", parent.split("@", 1)[0])] if remote else ()
     say("handoff: %s" % handoff)
     say("child intercom id: %s" % child)
-    if model:
-        say("session model: %s" % model)
+    if launch:
+        say("session model: %s" % launch)
     info = {"handoff": str(handoff), "child": child}
     if p.get("worktree"):
         info["worktree"] = p["worktree"]
@@ -1532,7 +1538,7 @@ def open_session(p, remote=None):
         elif backend == "herdr":
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
-            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
+            say("dry run: " + fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
         return 0, dict(info, status="dryRun")
     handoff.mkdir(parents=True, exist_ok=False)
     if remote:
@@ -1545,7 +1551,7 @@ def open_session(p, remote=None):
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, model, prompt, first, banner=banner)
+    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, launch, prompt, first, banner=banner)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
@@ -1574,7 +1580,7 @@ def open_session(p, remote=None):
         except HcError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
+            say(fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     elif backend == "herdr":
         try:
@@ -1596,10 +1602,10 @@ def open_session(p, remote=None):
         except HerdrError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
+            say(fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     else:
-        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
+        say(fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
     with registry_lock(adir):
         reg = read_registry(adir)
         reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
@@ -1724,6 +1730,7 @@ def hc_status(deadline=None):
 
 
 REMOTE_VERBS = ["probe", "open", "deliver", "close", "restart"]
+REMOTE_FEATURES = ["startModel"]  # optional `open` fields this side accepts; an older remote has no such key
 
 
 def remote_probe(adir, params):
@@ -1733,7 +1740,8 @@ def remote_probe(adir, params):
     version, why = pi_version_result(deadline)
     reply = {"protocol": REMOTE_PROTOCOL, "foremanVersion": package_version(Path(__file__).resolve().parent.parent),
              "piVersion": version, "intercomMachineName": intercom_machine_name(adir), "platform": host_platform(),
-             "hc": hc_status(deadline), "agentDir": str(adir), "addons": installed_addon_ids(adir), "verbs": list(REMOTE_VERBS)}
+             "hc": hc_status(deadline), "agentDir": str(adir), "addons": installed_addon_ids(adir), "verbs": list(REMOTE_VERBS),
+             "features": list(REMOTE_FEATURES)}
     if why:
         reply["piVersionError"] = why
     return reply
@@ -1790,8 +1798,46 @@ def check_trust(adir, cwd, trust, dry_run):
     return os.path.realpath(str(cwd)) if added else None
 
 
+LIST_MODELS_TIMEOUT = 20  # seconds for `pi --list-models <id>` before an open goes on without the check
+
+
+def list_models_rows(model):
+    """The (provider, id) rows `pi --list-models <model>` prints on this machine; None when the list could not be read
+    (pi missing, timeout, nonzero exit, no table). `shutil.which` resolves `pi.cmd` on Windows as the probe does."""
+    exe = shutil.which("pi")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "--list-models", model], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=LIST_MODELS_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    text = r.stdout.decode("utf-8", "replace") + "\n" + r.stderr.decode("utf-8", "replace")
+    rows = [(w[0], w[1]) for w in (ln.split() for ln in text.splitlines()) if len(w) >= 2]
+    return rows if ("provider", "model") in rows else None
+
+
+def check_launch_model(model, say):
+    """Refuse `model_unavailable` when this machine's Pi lists no exact provider+id row for `model` (`provider/id`;
+    a bare id matches any provider). A check that cannot run goes on with a say line."""
+    rows = list_models_rows(model)
+    host = short_hostname()
+    if rows is None:
+        say("model not checked: `pi --list-models` gave no usable answer on %s" % host)
+        return
+    provider, _, ident = model.partition("/")
+    if not ident:
+        provider, ident = None, model
+    if any(rid == ident and (provider is None or rp == provider) for rp, rid in rows):
+        return
+    raise Refused("the Pi on %s has no model %s; pass --model with a model it has, or set up that provider there "
+                  "(`pi --list-models` on %s)" % (host, model, host), "model_unavailable")
+
+
 def remote_open(adir, params):
-    spec = {"label": str, "brief": str, "cwd": str, "model": (str, type(None)),
+    spec = {"label": str, "brief": str, "cwd": str, "model": (str, type(None)), "startModel": (str, type(None)),
             "planFirst": bool, "parentAddress": str, "parentName": str, "trust": bool, "dryRun": bool,
             "firstCommands": list, "space": str}
     check_fields(params, spec, ("label", "brief", "cwd", "parentAddress", "parentName"))
@@ -1810,6 +1856,9 @@ def remote_open(adir, params):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit", "bad_request")
     if model and not VALUE_RE.match(model):
         raise Refused("model may use only A-Z a-z 0-9 . _ : / @ -", "bad_request")
+    start_model = params.get("startModel")
+    if start_model and not VALUE_RE.match(start_model):
+        raise Refused("startModel may use only A-Z a-z 0-9 . _ : / @ -", "bad_request")
     check_parent_address(params)
     if len(params["brief"].encode("utf-8")) > MAX_CONTENT_BYTES:
         raise Refused("the brief is larger than %d bytes" % MAX_CONTENT_BYTES, "too_large")
@@ -1822,11 +1871,14 @@ def remote_open(adir, params):
     if not hc_bin():
         raise Refused("hc was not found on this machine (PATH or HC_BIN): the child is launched with its hc", "remote_launcher")
     dry = params.get("dryRun") is True
-    trusted = check_trust(adir, cwd, params.get("trust") is True, dry)
     lines = []
+    launch_model = model or start_model or None
+    if launch_model:
+        check_launch_model(launch_model, lines.append)
+    trusted = check_trust(adir, cwd, params.get("trust") is True, dry)
     remote = {"parentName": params["parentName"], "say": lines.append, "trusted": trusted, "space": space}
     p = {"adir": adir, "label": label, "text": params["brief"], "cwd": cwd, "model": model,
-         "plan_first": params.get("planFirst") is True, "parent": params["parentAddress"], "focus": False,
+         "start_model": None if model else start_model or None, "plan_first": params.get("planFirst") is True, "parent": params["parentAddress"], "focus": False,
          "dry_run": dry, "print_all": False, "first": first}
     _, info = open_session(p, remote)
     reply = {k: v for k, v in info.items() if v is not None}
@@ -2374,6 +2426,9 @@ def cmd_open_remote(a):
     check_first_commands(first)
     if a.model and not VALUE_RE.match(a.model):
         raise Refused("--model may use only A-Z a-z 0-9 . _ : / @ -")
+    start_model = getattr(a, "start_model", None)
+    if start_model and not VALUE_RE.match(start_model):
+        raise Refused("--start-model may use only A-Z a-z 0-9 . _ : / @ -")
     parent = opener_id(a.parent_id, adir)
     if not parent:
         raise Refused("no opener intercom id; pass --parent-id", "no_return_path")
@@ -2435,6 +2490,11 @@ def cmd_open_remote(a):
         payload["firstCommands"] = first
     if space:
         payload["space"] = space
+    if start_model and not a.model:
+        if "startModel" in (probe.get("features") if isinstance(probe.get("features"), list) else []):
+            payload["startModel"] = start_model
+        else:  # an older remote refuses unknown fields: never send it blind
+            infos.append("start model not passed: update pi-foreman on %s" % name)
     try:
         reply = hc_exec_verb(binary, name, argv, "open", payload, OPEN_TIMEOUT)
         handoff_name, child, status = reply.get("handoffName"), reply.get("child"), reply.get("status")
@@ -3908,6 +3968,7 @@ def main(argv=None):
     o.add_argument("brief")
     o.add_argument("--cwd")
     o.add_argument("--model")
+    o.add_argument("--start-model")
     o.add_argument("--parent-id")
     o.add_argument("--plan-first", action="store_true")
     o.add_argument("--profile")

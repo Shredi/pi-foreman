@@ -247,7 +247,7 @@ import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, 
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { samePath, selfFinish, spawnDetached, verifiedMergeFor, worktreeRoot as containingWorktree } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
-import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
+import { foremanModelSpec, userCliModelOf, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
 import { OwnAsk } from "./ownask.ts";
 import { SteerReader } from "./steer.ts";
@@ -2450,7 +2450,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (userPickedModel) return;
     // `foreman session open --model X` wins over the overlay/preset role model (model and thinking) for this session
-    const spec = restoredModel ? (cliModelOf(process.argv) ? null : restoredModel) : foremanModelSpec(role!.model as string, sessionModelOf(process.env), cliModelOf(process.argv));
+    const spec = restoredModel ? (userCliModelOf(process.argv, process.env) ? null : restoredModel) : foremanModelSpec(role!.model as string, sessionModelOf(process.env), userCliModelOf(process.argv, process.env));
     if (spec === null) return;
     const slash = spec.indexOf("/");
     const provider = slash > 0 ? spec.slice(0, slash) : ctx.model?.provider ?? "";

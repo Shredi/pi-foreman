@@ -493,6 +493,21 @@ export function sessionModelOf(env: Record<string, string | undefined>): string 
   return v ? v : undefined;
 }
 
+/** Env var the remote `open` sets in the child when it launched on the opener's model (a start model, not a pinned one). */
+export const START_MODEL_ENV = "PI_FOREMAN_START_MODEL";
+
+/** The start model the opener passed to this remote session, or undefined. */
+export function startModelOf(env: Record<string, string | undefined>): string | undefined {
+  const v = env[START_MODEL_ENV]?.trim();
+  return v ? v : undefined;
+}
+
+/** The CLI `--model` the user picked: a `--model` equal to the start model is the launch's own and does not count. */
+export function userCliModelOf(argv: readonly string[], env: Record<string, string | undefined>): string | undefined {
+  const cli = cliModelOf(argv);
+  return cli !== undefined && cli === startModelOf(env) ? undefined : cli;
+}
+
 /** The mapped foreman role model to apply at start; null when the session was opened on its own model (Pi already runs it). */
 export function foremanModelSpec(roleModel: string, sessionModel: string | undefined, cliModel?: string): string | null {
   return sessionModel || cliModel ? null : roleModel;
@@ -694,6 +709,8 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   if (c.trust) argv.push("--trust");
   // only an explicit choice (--model or the session-foreman mapping) sets PI_FOREMAN_SESSION_MODEL in the child; the opener's own model is just displayed
   if (explicit) argv.push("--model", explicit);
+  // a remote open without an explicit model passes the opener's model as a start model (the remote applies its own role map for that provider)
+  else if (c.machine && d.model) argv.push("--start-model", d.model);
   if (c.planFirst) argv.push("--plan-first");
   if (c.planMode) argv.push("--plan-mode");
   for (const f of c.firstCommands ?? []) argv.push("--first-command", f);
