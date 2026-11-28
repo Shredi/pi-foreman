@@ -22,7 +22,7 @@ A seeded generator test on the real entry point `gateEvaluate`: the question is 
 - Files and functions: `extensions/core-adapter/shellast.ts`, `extensions/core-adapter/effects.ts`, `extensions/core-adapter/floors.ts`, `extensions/core-adapter/classifier.ts`, `extensions/core-adapter/gate.ts` (`gateEvaluate`), `extensions/core-adapter/defaults.ts`, `extensions/core-adapter/index.ts` (the `tool_call` handler)
 - Check files: `extensions/core-adapter/test/gate-generator.test.ts` (the properties) and `extensions/core-adapter/test/_gate-gen.ts` (payloads, constructs, generator, checker, `KNOWN_GAPS`, `TWIN_PINS`, `LEFT_OUT`); sweep script `scripts/gate_sweep.mjs`
 - Bounds and assumptions: 7 dangerous and 3 harmless payloads, 55 constructs (52 wrappers); every construct alone (734 gate calls), every ordered pair a `KNOWN_GAPS` entry names, and per seed 120 chains of depth 2 and 60 of depth 3; roles builder and reviewer; default seed 1; the fast oracle is cross-checked against the real `tool_call` handler on about 20 lines (judge stubbed). Whole file about 12 s.
-- Last confirmed at: `c95d99c4e348294b2158820ef0235c25dc52dd49`
+- Last confirmed at: `c4735249b35b27551239966d0df946dfb37f18a2`
 
 ## Marks
 
