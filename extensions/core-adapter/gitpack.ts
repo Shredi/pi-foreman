@@ -465,7 +465,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (o.kind !== "ran" || attachFiles.length === 0) return "";
           const why = typeof o.result.attach_degraded === "string" ? o.result.attach_degraded : "";
           s.trace({ event: "pr_attach", tool: t.name, attach: attachFiles.length, attach_outcome: why ? `degraded:${why}` : "uploaded" });
-          const partial = typeof o.result.attach_partial === "string" && o.result.attach_partial ? `\nattach_partial: ${o.result.attach_partial} (the ${t.op === "pr_attach" ? "comment was posted" : "pull request was created"} with the attachments that uploaded; do not retry)` : "";
+          const partial = typeof o.result.attach_partial === "string" && o.result.attach_partial ? `\nattach_partial: ${o.result.attach_partial} (${typeof o.result.attach_requested === "number" ? `${o.result.attach_requested} requested, some failed; ` : ""}the ${t.op === "pr_attach" ? "comment was posted" : "pull request was created"} with the attachments that uploaded; do not retry)` : "";
           return (why ? `\nattachments not uploaded: ${why} (needs gh 2.99.0+ on github.com or GHE Cloud); ${t.op === "pr_attach" ? "nothing was posted" : "the body names the files"}` : "") + partial;
         };
         // the files again, right before the host call: a file changed since the first check (after the review's hash) is refused, so no --attach goes out for it
@@ -569,6 +569,8 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         if (draftAsked && outcome.kind !== "ran" && draftRefused(outcome)) {
           draftAsked = false;
           refusedDraft = true;
+          const changedAgain = attachChanged();
+          if (changedAgain) return changedRefusal(changedAgain, "pr_create");
           outcome = await run("pr_create", { ...sent, draft: false });
         }
         const res0 = report(t.op === "pr_status" ? await withReview(s, outcome, dir ?? ctx.cwd) : t.op === "pr_checks" ? await withPhases(s, outcome, params, dir ?? ctx.cwd) : outcome);

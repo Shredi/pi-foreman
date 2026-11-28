@@ -1,6 +1,5 @@
 """`attach` of pr_create and the op pr_attach of scripts/pr_ops.py: gh `--attach=<path>[#caption]` per file, the one-line degrade for an old gh or a non-GitHub host
 (the PR opens without images and the body names the files), later attach to an open PR as one comment."""
-import json
 import sys
 import unittest
 from pathlib import Path
