@@ -381,11 +381,31 @@ export interface BenchArgs {
   concurrency: number;
   json: string;
   validate: boolean;
+  /** `--with-sentences <file>`: a file with one allow sentence per line, sent with every row that has no `allow` of its own (the regression run of seed (f)). */
+  withSentences: string;
 }
 
-/** Parses the bench flags (`--model` repeated, `--limit`, `--corpus`, `--thinking`, `--timeout-ms`, `--concurrency`, `--json`, `--validate`); throws on anything else. */
+/** The sentences of a `--with-sentences` file: one per line, blank lines skipped; each must pass the same row check as an `allow` entry. */
+export function readSentenceFile(file: string): string[] {
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) throw new Error(`${file}: no sentences`);
+  const bad = validateRow({ id: "x", command: "x", cwdKind: "worktree", role: "builder", kind: "child", expected: "no-run", source: "synthetic", allow: lines });
+  if (bad.length) throw new Error(`${file}: ${bad.join("; ")}`);
+  return lines;
+}
+
+/** Gives every row without sentences of its own the same set. Rows that carry `allow` keep theirs, so the seeds of the sentence feature are not changed. */
+export const withSentenceSet = (rows: readonly CorpusRow[], sentences: readonly string[]): CorpusRow[] => rows.map((r) => (r.allow ? r : { ...r, allow: [...sentences] }));
+
+/** The ids whose outcome moved from a clear (in `base`) to anything else (in `withSet`): the check of seed (f), that an unrelated sentence set moves no row toward ask or refuse. */
+export function stopMoves(base: readonly RowResult[], withSet: readonly RowResult[]): string[] {
+  const after = new Map(withSet.map((r) => [r.id, r.outcome]));
+  return base.filter((r) => r.outcome === "clear" && after.has(r.id) && after.get(r.id) !== "clear").map((r) => r.id);
+}
+
+/** Parses the bench flags (`--model` repeated, `--limit`, `--corpus`, `--thinking`, `--timeout-ms`, `--concurrency`, `--json`, `--validate`, `--with-sentences`); throws on anything else. */
 export function parseBenchArgs(argv: readonly string[], defaultCorpus: string): BenchArgs {
-  const a: BenchArgs = { models: [], limit: 0, corpus: defaultCorpus, thinking: "low", timeoutMs: 60000, concurrency: 4, json: "", validate: false };
+  const a: BenchArgs = { models: [], limit: 0, corpus: defaultCorpus, thinking: "low", timeoutMs: 60000, concurrency: 4, json: "", validate: false, withSentences: "" };
   const positive = (v: string, name: string): number => {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} needs a positive number`);
@@ -405,6 +425,7 @@ export function parseBenchArgs(argv: readonly string[], defaultCorpus: string): 
     else if (k === "--concurrency") a.concurrency = positive(v(), k);
     else if (k === "--json") a.json = path.resolve(v());
     else if (k === "--validate") a.validate = true;
+    else if (k === "--with-sentences") a.withSentences = path.resolve(v());
     else throw new Error(`unknown argument ${k}`);
   }
   return a;
@@ -436,6 +457,7 @@ export async function runBench(r: BenchRun): Promise<string> {
   const { args } = r;
   let rows = loadCorpus(args.corpus, r.agentDir);
   if (args.limit) rows = rows.slice(0, args.limit);
+  if (args.withSentences) rows = withSentenceSet(rows, readSentenceFile(args.withSentences));
   if (args.validate) {
     r.log(`corpus ok: ${rows.length} rows`);
     return "";

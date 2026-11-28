@@ -5,7 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { judgeRequestText } from "../classifier.ts";
-import { formatTable, judgeCallOf, parseCorpus, readVerdict, runModel, summarize, validateRow } from "../judgebench.ts";
+import * as os from "node:os";
+import { formatTable, judgeCallOf, parseBenchArgs, parseCorpus, readSentenceFile, readVerdict, runModel, stopMoves, summarize, validateRow, withSentenceSet } from "../judgebench.ts";
 import type { CorpusRow, RowResult } from "../judgebench.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -70,4 +71,23 @@ test("corpus seeds (a)-(e): the covering sentence row expects run:A1, every limi
   for (const need of ["danger-remote", "danger-net-write", "danger-login-file", "danger-git-config", "danger-git", "danger-delete-unknown-target", "danger-policy-file", "danger-config-keys", "danger-inject", "danger-unclassified"]) assert.ok(reasons.has(need), need);
   assert.ok(corpus.some((r) => r.expected === "no-run" && !r.allow), "(b) the same call without a sentence");
   for (const r of sentenceRows) assert.doesNotMatch(JSON.stringify(r), /\/(Users|home)\/(?!dev\b)[a-z]|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/i, r.id);
+});
+
+test("seed (f): --with-sentences gives every row without its own sentences one unrelated set; rows with allow keep theirs; stopMoves names clear-to-stop moves only", () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ws-")), "s.txt");
+  fs.writeFileSync(file, "Restarting the demo service on host.example.net is fine.\n\nCopying build output into <x> is fine.\n");
+  const sentences = readSentenceFile(file);
+  assert.equal(sentences.length, 2);
+  const rows = withSentenceSet(corpus, sentences);
+  assert.equal(rows.length, corpus.length);
+  assert.deepEqual(rows.find((r) => r.id === "c500")!.allow, corpus.find((r) => r.id === "c500")!.allow);
+  assert.deepEqual(rows.find((r) => r.id === corpus[0].id)!.allow, sentences);
+  assert.ok(rows.every((r) => (r.allow?.length ?? 0) >= 1));
+  assert.ok(rows.every((r) => validateRow(r).length === 0));
+  assert.equal(judgeCallOf(rows[0]).allow?.length, 2);
+  assert.equal(parseBenchArgs(["--model", "a/b", "--with-sentences", file], "/c.jsonl").withSentences, file);
+  assert.equal(parseBenchArgs(["--model", "a/b"], "/c.jsonl").withSentences, "");
+  fs.writeFileSync(file, "\n\n");
+  assert.throws(() => readSentenceFile(file), /no sentences/);
+  assert.deepEqual(stopMoves([res("a", "run", "clear"), res("b", "run", "clear"), res("c", "run", "owner"), res("d", "run", "clear")], [res("a", "run", "clear"), res("b", "run", "owner"), res("c", "run", "clear"), res("d", "run", "refuse")]), ["b", "d"]);
 });

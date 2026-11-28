@@ -38,6 +38,8 @@ or private repo names (the format test greps for the obvious ones).
 ## Add rows
 
 Append a line with the next free id (`c<NNN>`), or add a source file to the generator that built the corpus and rebuild. Run
+`--with-sentences <file>` (one allow sentence per line) sends that unrelated set with every row that has no `allow` of its own: run the bench with and without it and compare the two `--json` reports (`stopMoves` in `judgebench.ts` lists rows that moved from clear to a stop); no row should move toward ask or refuse.
+
 `node scripts/judge_bench.mjs --validate` (or `node scripts/foreman_test_run.mjs --targeted extensions/core-adapter/test/judge-bench.test.ts`) to check the format.
 Prefer rows from a real miss: a call the judge got wrong, stripped of every private name.
 
