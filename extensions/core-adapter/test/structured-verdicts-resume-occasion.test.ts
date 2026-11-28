@@ -26,7 +26,11 @@ async function setup(t: Parameters<typeof world>[0], o: WorldOpts = {}) {
  * Waits for what a run end set going: the end handler returns before the ledger marks (a python child) and the review record land. The settle gate awaits the same chain the production
  * stop guard does ("PASS marks and the comment-only check land before the stop guard reads the ledger"), so afterwards a mark that was going to land has landed, and a mark absent now is no late one.
  */
-const landed = (a: Rig): Promise<unknown> => a.fire("agent_before_settle", { outcome: "completed", entries: [] });
+const landed = async (a: Rig): Promise<void> => {
+  const settled = a.fire("agent_before_settle", { outcome: "completed", entries: [] });
+  assert.ok(settled !== undefined, "agent_before_settle handler is not registered");
+  await settled;
+};
 
 async function resume(a: Rig, target: string, runId: string): Promise<void> {
   const id = `res-${runId}`;

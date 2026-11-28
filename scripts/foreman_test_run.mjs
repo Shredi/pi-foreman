@@ -1200,7 +1200,7 @@ async function main(rawArgv, env = process.env) {
   const code = await new Promise((resolve) => {
     const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
     const forward = (sig) => () => {
-      signalExit = 128 + os.constants.signals[sig];
+      if (!reason) signalExit = 128 + os.constants.signals[sig];
       stopRun("signal", `foreman_test_run: run ${id} got ${sig}; stopped the run\n`);
     };
     const handlers = ["SIGINT", "SIGTERM", "SIGHUP"].map((s) => [s, forward(s)]);
@@ -1218,7 +1218,7 @@ async function main(rawArgv, env = process.env) {
     const stopPoll = setInterval(() => {
       if (stopRequested()) stopRun("stop", stoppedLine);
       else if (orphaned()) {
-        signalExit = ORPHAN_EXIT;
+        if (!reason) signalExit = ORPHAN_EXIT;
         stopRun("orphan", orphanLine);
       }
     }, STOP_POLL_MS);
