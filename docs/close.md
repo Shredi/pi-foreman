@@ -29,7 +29,7 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   replaces that link with a plain copy (or runs `npm ci` when the main checkout has none), so a builder's `npm ci`
   does not rewrite the main checkout. That holds once the hook has replaced the link; `foreman setup` and
   `foreman session open --worktree` refuse to run `npm ci` through a linked `node_modules`. The hook is global for the user: it runs for every pi-subagents worktree and is a
-  no-op without the symlink and lockfile. `/foreman doctor` warns about a symlinked `node_modules` in any live worktree.
+  no-op without the symlink and lockfile. `/foreman doctor` lists every live worktree whose `node_modules` is a symlink or junction or resolves outside the worktree: a FAIL when it resolves into the package root's own `node_modules` (an `npm ci` there empties pi-foreman; remove the link, then run `npm ci` in that worktree), a WARN otherwise.
 - Notice channels: the same file (`<agent dir>/extensions/subagent/config.json`) also gets `control.notifyChannels: ["event"]` from `foreman setup` on every platform, other keys kept (`foreman setup --remove` deletes only that key). Without it pi-subagents delivers a child's attention notice twice for an async run (the native notice and a pi-intercom message); `/foreman doctor` warns when the key is not `["event"]`. A foreground run would get no attention notice with this setting; the harness starts every child in the background, so none arises.
 - Scratch: `<state>/scratch/<session>/` (an implicit private entry, no recording needed) and topic dirs
   `.workflow/scratch/<topic>/`. Files directly in `.workflow/scratch/` are never recorded and never removed.
