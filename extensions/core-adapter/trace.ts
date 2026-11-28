@@ -44,18 +44,28 @@ const NEVER = /(?!)/g;
 const SECRET_VALUE = String.raw`(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)`;
 /** The words that make a name secret in file text (no bare `key`); `maskKeys` tests a whole name against them. */
 export const SECRET_NAME_WORDS = String.raw`token|password|passwd|secret|pwd|[_-]key|api-?key|access-?key|private-?key`;
+/** File text: an unquoted value also ends at a shell operator (`|<>`), so the command after it stays visible. */
+const SECRET_VALUE_TEXT = String.raw`(?:"[^"]*"?|'[^']*'?|[^\s'"&;|<>]+)`;
 const SECRET_NAME_TEXT = String.raw`[A-Za-z0-9_-]*(?:${SECRET_NAME_WORDS})`;
 const SECRET_ASSIGN = new RegExp(String.raw`(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)${SECRET_VALUE}`, "gi");
-const SECRET_ASSIGN_TEXT = new RegExp(String.raw`(?<![A-Za-z0-9_-])((?:${SECRET_NAME_TEXT})\s*[=:]\s*)${SECRET_VALUE}`, "gi");
+const SECRET_ASSIGN_TEXT = new RegExp(String.raw`(?<![A-Za-z0-9_-])((?:${SECRET_NAME_TEXT})\s*[=:]\s*)${SECRET_VALUE_TEXT}`, "gi");
 
 /**
  * A denied command with secret-shaped tokens removed (before the 200-char cut):
  * auth headers, `token=` / `key=` / `password=` / `secret=` values, URL userinfo, `AKIA…` / `AIza…` / `ghp_` / `npm_` / `glpat-` / `sk-` style keys,
  * and base64 / hex runs of 24+ characters; the home directory becomes `~`.
  */
-export function redactCommand(cmd: string, opts?: { fileText?: boolean }): string {
+export function redactCommand(cmd: string): string {
+  return redactWith(cmd, false);
+}
+
+/** The per-line rules of file text (`maskKeys`): `redactCommand`'s secret-name and login rules only; a bare `key=` and a camelCase `...Key=` stay visible. */
+export function redactFileTextLine(line: string): string {
+  return redactWith(line, true);
+}
+
+function redactWith(cmd: string, fileText: boolean): string {
   const R = "[redacted]";
-  const fileText = opts?.fileText === true;
   // a run of few distinct characters ("xxxx…") is padding, not a key
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd

@@ -24,6 +24,8 @@ export interface GateRoots {
   owned: string[];
   /** The user's `additionalDirectories` (permconfig.ts, real dirs): read roots of main and child sessions alike, never written. */
   readDirs?: string[];
+  /** The roots the main session only reads: `additionalDirectories` and the owned read roots (hub `.workflow`, npm root, async-run folders; sessionOwnedSplit `read`). The gate defaults cut git writes there. */
+  readOnlyRoots?: string[];
   /** The Pi install root, the global npm root, the pi-foreman package root and the bundled package roots (reads only). */
   install: string[];
   /** The registered round-parent `.workflow` dirs of this session (reads only). */

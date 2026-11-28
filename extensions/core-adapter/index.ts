@@ -4059,6 +4059,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       scratchBases: [s.owned.tmpScratchRoot],
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
       readDirs: extraReadDirs,
+      readOnlyRoots: [...owned.read, ...extraReadDirs],
       install: [pi.installRoot, pi.npmRoot, PKG_ROOT, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),

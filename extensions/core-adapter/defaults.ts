@@ -272,12 +272,12 @@ function ownGitRoot(c: DefaultCtx, cwd: string): boolean {
   return [c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree));
 }
 
-/** `cwd` lies in an `additionalDirectories` root or the state dir and in none of the session's own places (worktree, own round worktree, scratch, install root). The `owned` list is no exclusion: a real session lists every `additionalDirectories` folder in `owned` as well. */
+/** `cwd` lies in a read-only root (`readOnlyRoots`: `additionalDirectories` and the owned read roots; also the state dir) and in none of the session's own places (worktree, own round worktree, scratch, handoffs, install root). The `owned` list is no exclusion: it holds the read roots as well. */
 function foreignReadRoot(c: DefaultCtx, cwd: string): boolean {
   const r = c.roots;
   const holds = (d: string): boolean => rootHolds(d, cwd, c.platform, r.realpath, r.worktree);
-  if (![...(r.readDirs ?? []), ...(r.state ? [r.state] : [])].some(holds)) return false;
-  return !([r.worktree, ...r.scratch, ...r.install].some(holds) || c.facts.isOwnWorktree?.(cwd));
+  if (![...(r.readOnlyRoots ?? []), ...(r.readDirs ?? []), ...(r.state ? [r.state] : [])].some(holds)) return false;
+  return !([r.worktree, ...r.scratch, ...r.handoffs, ...r.install].some(holds) || c.facts.isOwnWorktree?.(cwd));
 }
 
 function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec: EffectCtx, chain: Segment): string | null {
