@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.13+.
 
-Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo, pr_find and
+Loaded by scripts/safe_ops.py for the ops pr_create, pr_attach, pr_status, pr_checks, pr_comments, pr_repo, pr_find and
 pr_batch (needs no work tree, nor do pr_status, pr_checks and pr_comments with top-level `repoless: true` and `args.repo`; the PR tracker polls through them); the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object
 plus `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object) and, when valid,
@@ -39,6 +39,9 @@ HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,
 GITHUB_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$")
 AUTHOR_RE = re.compile(r"^(?:@me|[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?)$")
 HTTPS_RE = re.compile(r"^https://[\x21-\x7e]+$")
+GH_VERSION_RE = re.compile(r"gh version (\d+)\.(\d+)\.(\d+)")
+ATTACH_MIN_GH = (2, 99, 0)
+ATTACH_MAX = 10
 FAILED_CONCLUSIONS = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
 CMD_SAFE = re.compile(r"^[A-Za-z0-9 ._/:@+,=#~-]*$")
 SINCE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
@@ -903,8 +906,60 @@ def _resolve_base(root, head, arg, cfg):
     return None
 
 
+def _attach_arg(args):
+    """The `attach` list (`<path relative to the checkout>[#caption]` strings, at most ATTACH_MAX) or []; the TS side has checked the files, this is the
+    shape check of a value that goes to `gh --attach=`: no absolute path, no `..`, no line break or control character."""
+    v = args.get("attach")
+    if v is None:
+        return []
+    if not isinstance(v, list) or not 1 <= len(v) <= ATTACH_MAX:
+        raise _bad("attach must be a list of 1 to %d entries" % ATTACH_MAX)
+    for x in v:
+        if not isinstance(x, str) or not 1 <= len(x) <= 1500 or CONTROL_RX.search(x) or "\n" in x or "\r" in x or "\t" in x:
+            raise _bad("attach entries must be one-line strings of at most 1500 characters")
+        p = x.split("#", 1)[0].replace("\\", "/")
+        if not p or p.startswith("/") or re.match(r"^[A-Za-z]:", p) or ".." in p.split("/"):
+            raise _bad("attach paths must be relative to the checkout, without ..")
+    return list(v)
+
+
+def _attach_degrade_arg(args):
+    v = args.get("attach_degrade")
+    if v is None:
+        return None
+    if not isinstance(v, str) or not 1 <= len(v) <= 200 or CONTROL_RX.search(v) or "\n" in v or "\r" in v:
+        raise _bad("attach_degrade must be a one-line string of at most 200 characters")
+    return v
+
+
+def _gh_attach_reason(host, root):
+    """Why `gh --attach` cannot be used with this very gh (None: it can): the version must be ATTACH_MIN_GH or newer."""
+    try:
+        code, out, _ = run_host([host.program, "--version"], root)
+    except ActionError:
+        return "the gh version could not be read"
+    m = GH_VERSION_RE.search(out or "")
+    if code != 0 or not m:
+        return "the gh version could not be read"
+    ver = tuple(int(x) for x in m.groups())
+    if ver < ATTACH_MIN_GH:
+        return "gh %d.%d.%d is older than %d.%d.%d" % (ver + ATTACH_MIN_GH)
+    return None
+
+
+def _kept_locally(body, attach):
+    """The body with a `Screenshots (kept locally, not uploaded)` line for the attach paths it does not name (nothing to add: as it is; over the cap: as it is)."""
+    paths = [x.split("#", 1)[0] for x in attach]
+    missing = [p for p in paths if p not in body]
+    if not missing:
+        return body
+    lead = "" if body == "" else ("" if body.endswith("\n") else "\n") + "\n"
+    new = body + lead + "Screenshots (kept locally, not uploaded): " + ", ".join("`%s`" % p for p in missing) + "\n"
+    return new if len(new.encode("utf-8")) <= 65536 else body
+
+
 def op_pr_create(req):
-    args, cfg, pr_host = _setup(req, ("title", "body", "base", "head", "draft"))
+    args, cfg, pr_host = _setup(req, ("title", "body", "base", "head", "draft", "attach", "attach_degrade"))
     title = arg_text(args, "title", 1, 256, True)
     body = arg_text(args, "body", 0, 65536, False)
     if len(body.encode("utf-8")) > 65536:
@@ -944,6 +999,14 @@ def op_pr_create(req):
         differing = next((names[r] for r in remote if r != sha.strip()), "origin/" + head)
         raise Precondition("unpushed", "%s differs from its same-named remote branch %s; push first" % (head, differing))
     host = resolve_host(pr_host, "create", root)
+    attach = _attach_arg(args)
+    degrade = _attach_degrade_arg(args)
+    reason = None
+    if attach:
+        reason = degrade or ("not GitHub" if host.kind != "gh" else _gh_attach_reason(host, root))
+        if reason:
+            body = _kept_locally(body, attach)
+    note = {} if not attach else {"attach_degraded": reason} if reason else {"attached": len(attach)}
     path = None
     try:
         if host.kind == "template":
@@ -952,7 +1015,7 @@ def op_pr_create(req):
             values = _values(root, base=base, head=head, title=title, draft=draft,
                              bodyFile=_argpath(path) if path else None)
             out = run_template(host, "create", values, root)
-            return _create_answer(out, head, base, True)
+            return {**_create_answer(out, head, base, True), **note}
         if host.kind == "gh":
             path = _body_file(body)
             argv = [host.program, "pr", "create", "--title", title, "--body-file", _argpath(path), "--head", head]
@@ -962,10 +1025,13 @@ def op_pr_create(req):
                 subst.append(base)
             if draft:
                 argv.append("--draft")
+            if attach and not reason:
+                argv += ["--attach=" + a for a in attach]
+                subst += attach
             code, out, err = run_host(argv, root, subst)
             if code != 0:
                 host_error(host, "create", code, err)
-            return _create_answer(out, head, base, False)
+            return {**_create_answer(out, head, base, False), **note}
         if not base:
             raise Precondition("base_branch_unknown", "no base branch: pass base or set safety.ops.baseBranch")
         payload = {"source_branch": head, "target_branch": base, "title": ("Draft: " + title) if draft else title,
@@ -979,7 +1045,7 @@ def op_pr_create(req):
             raise ActionError("pr_host_failed", "glab: printed no merge request")
         return {"action": "pr_create", "number": d["iid"], "url": s_or_none(d["web_url"], 1024),
                 "head": s_or_none(d.get("source_branch"), 200) or head,
-                "base": s_or_none(d.get("target_branch"), 200) or base}
+                "base": s_or_none(d.get("target_branch"), 200) or base, **note}
     finally:
         if path:
             _unlink(path)
@@ -1748,5 +1814,41 @@ def op_pr_body(req):
     return {**answer, "changed": True}
 
 
+def op_pr_attach(req):
+    """Post images as one comment on a pull request: `gh pr comment [<number>] --body-file <caption> --attach=<path>[#caption]...` (gh 2.99.0 or newer, github.com or GitHub
+    Enterprise Cloud). `attach` entries are paths relative to the checkout (the TS side checked the files against the review). A host that is not gh, a gh older than
+    ATTACH_MIN_GH or an `attach_degrade` reason from the TS side posts nothing and answers `attach_degraded: <reason>` (no error). `number` defaults to the current branch's PR."""
+    args, cfg, pr_host = _setup(req, ("number", "attach", "attach_degrade", "caption"))
+    number = arg_number(args)
+    attach = _attach_arg(args)
+    if not attach:
+        raise _bad("attach is required")
+    caption = args.get("caption", "Screenshots")
+    if not isinstance(caption, str) or not 1 <= len(caption) <= 200 or CONTROL_RX.search(caption) or "\n" in caption or "\r" in caption:
+        raise _bad("caption must be one line of 1 to 200 characters")
+    degrade = _attach_degrade_arg(args)
+    root = workspace_root(req.get("cwd"))
+    try:
+        host = _gh_only(pr_host, root, "pr_attach")
+    except Precondition as exc:
+        if exc.name != "pr_unsupported":
+            raise
+        return {"action": "pr_attach", "attach_degraded": "not GitHub"}
+    reason = degrade or _gh_attach_reason(host, root)
+    if reason:
+        return {"action": "pr_attach", "attach_degraded": reason}
+    path = _body_file(caption)
+    try:
+        argv = [host.program, "pr", "comment"] + ([str(number)] if number is not None else []) + ["--body-file", _argpath(path)] + ["--attach=" + a for a in attach]
+        code, out, err = run_host(argv, root, [_argpath(path)] + attach)
+        if code != 0:
+            host_error(host, "attach", code, err)
+    finally:
+        _unlink(path)
+    lines = [x.strip() for x in out.splitlines() if x.strip()]
+    url = lines[-1] if lines and re.match(r"^https?://", lines[-1]) else None
+    return {"action": "pr_attach", "number": number, "attached": len(attach), "url": s_or_none(url, 1024)}
+
+
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
-       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft, "pr_label": op_pr_label, "pr_body": op_pr_body}
+       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft, "pr_label": op_pr_label, "pr_body": op_pr_body, "pr_attach": op_pr_attach}

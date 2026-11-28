@@ -136,6 +136,8 @@ import { ADDON_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { reviewFactsFor } from "./prbody.ts";
+import { attachRefsOf, attachTaskBlock, checkAttach, parseAttachPaths, rehashAttach } from "./prattach.ts";
+import type { AttachFile, AttachRef } from "./prattach.ts";
 import { appendHeadLine, suitesLine, appendReview, capSet, startValueOf, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, reviewedTree, toplevelOf, treesAt, reviewsWithOutput, commitOf, prBranchRefs } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
@@ -340,7 +342,7 @@ const SESSION_FOLDER_ENTRY = "pi-foreman-session-folder";
 interface LedgerRoute {
   paths: (string | null)[];
   cited: string[][];
-  review?: { launch: string; items: ItemId[]; occasion: Occasion; shadow: boolean; failed?: boolean };
+  review?: { launch: string; items: ItemId[]; occasion: Occasion; shadow: boolean; failed?: boolean; attach?: AttachRef[] };
 }
 
 interface Session {
@@ -502,6 +504,8 @@ interface Session {
   mem: ReviewMemory;
   /** Foreman only: the items a launch named in `items`, by tool call id, as [checkout, ids] (kept as judged once the launch started). */
   namedItemsByCall: Map<string, [string, string[]][]>;
+  /** Foreman only: the images a `[pre-pr]` reviewer launch names in `attach` (prattach.ts), checked and hashed at the launch, by tool call id; they join the run's route at the tool result. */
+  attachByCall: Map<string, AttachFile[]>;
   /** Foreman only: critique raised and applied per review round (retro counter, rounds.ts CritiqueCounter). */
   critique: CritiqueCounter;
   /** Foreman only: the 80 % budget warning was given (ceremony.budgetUsd). */
@@ -1247,6 +1251,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       primaryNoted: false,
       mem: new ReviewMemory(),
       namedItemsByCall: new Map(),
+      attachByCall: new Map(),
       critique: new CritiqueCounter(),
       budgetWarned: false,
       reviewRuns: { byCall: new Map(), byRun: new Map(), blocks: new Map(), findings: new Map(), sync: Promise.resolve() },
@@ -2004,11 +2009,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The `review` part of a route entry read back from a session file; undefined when it is not well formed. */
   function reviewRouteOf(raw: unknown): LedgerRoute["review"] {
     if (!raw || typeof raw !== "object") return undefined;
-    const r = raw as { launch?: unknown; items?: unknown; occasion?: unknown; shadow?: unknown; failed?: unknown };
+    const r = raw as { launch?: unknown; items?: unknown; occasion?: unknown; shadow?: unknown; failed?: unknown; attach?: unknown };
     if (typeof r.launch !== "string" || !r.launch || !Array.isArray(r.items) || !(OCCASIONS as readonly unknown[]).includes(r.occasion) && r.occasion !== "high-stakes") return undefined;
     const items = r.items.map(itemIdOf);
     if (items.some((i) => i === null)) return undefined;
-    return { launch: r.launch, items: items as ItemId[], occasion: r.occasion as Occasion, shadow: r.shadow === true, ...(r.failed === true ? { failed: true } : {}) };
+    const attach = attachRefsOf(r.attach);
+    return { launch: r.launch, items: items as ItemId[], occasion: r.occasion as Occasion, shadow: r.shadow === true, ...(r.failed === true ? { failed: true } : {}), ...(attach ? { attach } : {}) };
   }
 
   /** The route of a run into the session file (so it survives a reload); a session file that is not writable keeps it in memory only. */
@@ -3788,7 +3794,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const top = await rootOf(cwd);
               const endTree = await worktreeTree(cwd, true);
               const tree = reviewedTree(startTreesWf, cwd, endTree);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}), run: runId, ...(full?.suites.length ? { suites: full.suites } : {}) };
+              // the images the launch named (route): the ones still unchanged are released by a [pre-pr] PASS; the verdict file names the others
+              const launched = s.ledgerByRun.get(runId)?.review?.attach;
+              const released = launched && top && r.verdict === "pass" && full?.occasion === "pre-pr" ? rehashAttach(launched, top) : null;
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", Promise.resolve(endTree))), ...(tree ? { tree } : {}), ...(startAt !== undefined ? { at: startAt } : {}), run: runId, ...(full?.suites.length ? { suites: full.suites } : {}), ...(released?.kept.length ? { attach: released.kept } : {}) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "fail") s.mem.setFailHead(factsRoot, rec.head ?? null); // the head the next re-review there starts from
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
@@ -3798,7 +3807,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               s.live?.flush(); // the pill's review facts
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
-              if (r.outputPath) appendHeadLine(r.outputPath, h, suitesLine(rec.suites, rec.verdict === "pass" && rec.occasion === "pre-pr"));
+              if (r.outputPath) appendHeadLine(r.outputPath, h, [suitesLine(rec.suites, rec.verdict === "pass" && rec.occasion === "pre-pr"), ...(launched ? [released ? `attach: released ${released.kept.map((a) => a.path).join(", ") || "none"}${released.dropped.length ? `; not released (changed, missing or no longer inside the checkout since the launch): ${released.dropped.join(", ")}` : ""}` : "attach: none released (the verdict is not a [pre-pr] PASS)"] : [])].filter((x): x is string => !!x).join("\n") || null);
               s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why, ...(h.via ? { via: h.via } : {}) });
               persistCeremonyState(s);
             });
@@ -4679,6 +4688,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let launchFlags: { reads?: number; install?: boolean } = {};
       let takenOccasions = new Map<Record<string, unknown>, LaunchOccasion>();
       let takenItems = new Map<Record<string, unknown>, unknown>();
+      let takenAttach = new Map<Record<string, unknown>, unknown>();
       let takenDiffBases = new Map<Record<string, unknown>, unknown>();
       /** The `items` field of a resume call (takeLaunchFlags reads it for agent entries only): the resumed reviewer's allowed items, see resumeItems below. */
       let resumeItemsRaw: unknown;
@@ -4769,6 +4779,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         takenOccasions = flags.occasions;
         takenItems = flags.items;
+        takenAttach = flags.attach;
         takenDiffBases = flags.diffBases;
         mcpNotes.push(...flags.notes);
         launchFlags = flags.entries.get(input) ?? {};
@@ -5507,6 +5518,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               return { block: true, reason: `pi-foreman: items ${r.unknown.join(", ")} ${r.unknown.length === 1 ? "is" : "are"} not open on the ledger. Open items: ${r.open}. Only a [pre-pr] launch may name closed items.` };
             }
             resumeItems = r.items;
+          }
+        }
+        // `attach` of a reviewer launch (prattach.ts): the images a `[pre-pr]` reviewer must look at. Checked and hashed here against the entry's own checkout; the task gets the absolute paths,
+        // the route (tool result) keeps path and sha256, the verdict records the ones still unchanged.
+        if (!s.isChild && actionOf(input) === null && takenAttach.size > 0) {
+          for (const [e, raw] of takenAttach) {
+            const refuse = (reason: string, text: string): { block: true; reason: string } => {
+              s.trace?.emit({ event: "launch_refused", reason, tier: s.ceremony.tier, ...launchDeny(input) });
+              return { block: true, reason: `pi-foreman: launch refused [${reason}]: ${text}` };
+            };
+            if (typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
+            if (occasions.get(e) !== "pre-pr") return refuse("attach_needs_pre_pr", "attach is for a [pre-pr] reviewer launch (set occasion: \"pre-pr\" or start the task with [pre-pr]); only that PASS can release images into a pull request.");
+            if (launchEntries(input).length !== 1) return refuse("attach_needs_single_launch", "attach is for a single reviewer launch, not a tasks or chain group.");
+            const parsed = parseAttachPaths(raw);
+            if ("reason" in parsed) return refuse(parsed.reason, parsed.message.replace(/^attach refused \[[a-z_]+\]: /, ""));
+            const top = await rootOf(hsDirOf(ctx, input, e));
+            if (!top) return refuse("attach_outside", "the reviewer's directory is not inside a git checkout.");
+            const checked = checkAttach(parsed.entries, top);
+            if ("reason" in checked) return refuse(checked.reason, checked.message.replace(/^attach refused \[[a-z_]+\]: /, ""));
+            if (typeof e.task === "string") e.task = `${e.task.replace(/\s+$/, "")}\n\n${attachTaskBlock(checked.files)}\n`;
+            capSet(s.attachByCall, event.toolCallId, checked.files);
           }
         }
         // T13: a reviewer whose record folder cannot be made could never give a verdict; made after the last refusal above, so a refused launch leaves no folder
@@ -6758,7 +6790,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // a review launch's route carries its launch id, the ids its verdict tool accepts and its occasion (the notice after a reload reads them)
         const reviewEntry = rl?.entries.find((e) => REVIEW_ROLES.includes(e.role));
-        const routeReview: LedgerRoute["review"] = reviewEntry && boundId && !event.isError ? { launch: boundId, items: s.launches.get(boundId)?.items ?? [], occasion: reviewEntry.occasion, shadow: reviewEntry.shadow !== null } : undefined;
+        const attached = s.attachByCall.get(event.toolCallId);
+        s.attachByCall.delete(event.toolCallId);
+        const routeReview: LedgerRoute["review"] = reviewEntry && boundId && !event.isError ? { launch: boundId, items: s.launches.get(boundId)?.items ?? [], occasion: reviewEntry.occasion, shadow: reviewEntry.shadow !== null, ...(attached?.length ? { attach: attached.map((f) => ({ path: f.path, sha256: f.sha256 })) } : {}) } : undefined;
         if (namedLedger && runId) {
           const route = routeReview ? { ...namedLedger, review: routeReview } : namedLedger;
           capSet(s.ledgerByRun, runId, route);

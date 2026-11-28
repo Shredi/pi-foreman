@@ -21,7 +21,7 @@ import { workspaceOf } from "./python.ts";
 export const TRIAGE_TOOL = "foreman_triage";
 export const GATED_TOOLS = new Set(["write", "edit", "foreman_move", "foreman_copy"]);
 /** Tools that act outward (no workspace path): refused untriaged. */
-export const OUTWARD_TOOLS = new Set(["pr_create"]);
+export const OUTWARD_TOOLS = new Set(["pr_create", "pr_attach"]);
 const RANK: Record<Tier, number> = { trivial: 0, standard: 1, heavy: 2 };
 
 /** A tier counts as triaged once the foreman, the user or a ledger header recorded one (a later escalation keeps it). */

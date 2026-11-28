@@ -114,10 +114,10 @@ export function misplacedHint(errorText: string): string | null {
 }
 
 /** The launch keys read from a call's top level; `liftSizing` moves these (not `mcp`, which stays refused inside `options`). */
-const LIFTED_KEYS = ["size", "risk", "reason", "occasion", "items", "reads", "install"] as const;
+const LIFTED_KEYS = ["size", "risk", "reason", "occasion", "items", "attach", "reads", "install"] as const;
 
 /**
- * Move a misplaced `size`/`risk`/`reason`/`occasion`/`items`/`reads`/`install` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
+ * Move a misplaced `size`/`risk`/`reason`/`occasion`/`items`/`attach`/`reads`/`install` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
  * a value already at the top level wins and the misplaced one is dropped. Covers the call and every tasks/chain/parallel entry.
  * `from` lists where values were found and moved; `left` is true when one stays where pi-subagents reads it (args with a workflow).
  */
@@ -195,13 +195,15 @@ const INSTALL_ROLES: readonly string[] = ["builder"];
  * them exists for single launches only (`group`): a group keeps the config defaults and `notes` says so. `error` is a refusal text for a
  * malformed value; the caller refuses only the foreman's own launches.
  */
-export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string; occasions: Map<Json, LaunchOccasion>; occasionError?: string; items: Map<Json, unknown>; diffBases: Map<Json, unknown> } {
+export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>; notes: string[]; group: boolean; error?: string; occasions: Map<Json, LaunchOccasion>; occasionError?: string; items: Map<Json, unknown>; attach: Map<Json, unknown>; diffBases: Map<Json, unknown> } {
   const entries = new Map<Json, LaunchFlags>();
   const occasions = new Map<Json, LaunchOccasion>();
   // `items` (the ledger items a review launch hands its reviewer, verdict.ts): the raw value of each agent entry, checked by the caller against the ledger
   const items = new Map<Json, unknown>();
   // `diffBase` (a reviewer entry's diff base, a commit that is an ancestor of HEAD): the raw value, checked by the caller against git
   const diffBases = new Map<Json, unknown>();
+  // `attach` (the images a `[pre-pr]` reviewer must look at, prattach.ts): the raw value of each agent entry, checked by the caller
+  const attach = new Map<Json, unknown>();
   let occasionError: string | undefined;
   const notes: string[] = [];
   let error: string | undefined;
@@ -262,7 +264,9 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
   }
   for (const e of list) if (e.items !== undefined && !filler(e.items) && typeof e.agent === "string") items.set(e, fromJsonText(e.items, "array"));
   for (const e of list) if (e.diffBase !== undefined && !filler(e.diffBase) && typeof e.agent === "string") diffBases.set(e, e.diffBase);
+  for (const e of list) if (e.attach !== undefined && !filler(e.attach) && typeof e.agent === "string") attach.set(e, fromJsonText(e.attach, "array"));
   for (const e of list) {
+    delete e.attach;
     delete e.diffBase;
     delete e.reads;
     delete e.install;
@@ -273,8 +277,9 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
   delete input.install;
   delete input.occasion;
   delete input.items;
+  delete input.attach;
   delete input.diffBase;
-  return { entries, notes, group, occasions, items, diffBases, ...(error ? { error } : {}), ...(occasionError ? { occasionError } : {}) };
+  return { entries, notes, group, occasions, items, attach, diffBases, ...(error ? { error } : {}), ...(occasionError ? { occasionError } : {}) };
 }
 
 export interface Measured {

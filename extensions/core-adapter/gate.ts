@@ -217,7 +217,7 @@ function installRootWrite(tool: string, input: unknown, segments: ShellSegment[]
 function childDenied(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): GateResult {
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
   if (tool === "foreman_protect") return deny("child-protect", "Children never change the protected targets; the owner does, with /foreman perms protect.");
-  if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
+  if (tool === "pr_create" || tool === "pr_attach" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
   if (segments && mergesPullRequest(segments)) return deny("child-pr-merge", "Children never merge a pull or merge request; the foreman or the owner does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", `Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree${boundDirs(env.roots).scratch ? " and your scratch dir ($FOREMAN_SCRATCH)" : ""}.`);
