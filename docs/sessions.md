@@ -212,7 +212,7 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
 - **Open is recomputed from the files**, never a sticky flag (the rule is under [ask by file](#ask-by-file-parent-that-is-not-a-pi-session)). Session start, a message or wake, writes by the write/edit tools and a `bash` result recompute it; typed input closes the open version; shutdown releases it.
 - **A stale ruling is ignored.** A `ruling-<n>.md` whose mtime is older than `ask.md` does not wake the wait (it keeps waiting).
 - **A file wait on a ruling is a plain file wait.** A file wait on `ruling.md` or `ruling-<n>.md` ends only when that
-  file arrives; a newer `brief-<x>.md` does not end it.
+  file appears or changes after the wait started (see **File waits** below); a newer `brief-<x>.md` does not end it.
 - **A parent ruling never satisfies the finish gate.** A `ruling.md` or `ruling-<n>.md` (first line `APPROVED` or `SHIP`)
   from the parent does not close the reviewer step: only a reviewer verdict does. After a FAIL the finish refusal names
   the newer ruling and says the chair runs `/ceremony <tier>` to override; `/foreman close` lists what is still open and
@@ -258,6 +258,13 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
   and the run's turn cause stays as it was. With no run in progress an idle session is started by the wake; a session that is not idle (a compaction) gets the wake
   as a follow-up only when the last turn cause is intercom, otherwise the wake is held until the session settles. On Pi before 1.2 the intercom message starts its run
   only after the adapter saw it, so the doubled turn stays there.
+- **File waits.** `foreman_wait` `kind: file` resolves when the file appears or changes after the wait started. The wait takes a stat
+  signature (size, mtime, ctime, inode; the contents are never read) when it is armed, and a poll resolves only on a file whose signature
+  differs from that one: a file absent at arm fires once it exists; a file already there fires once one of the four changes; a file a poll saw
+  absent (deleted, even when re-created with an identical stat) fires once it is back. A file already there that never changes does not wake the
+  wait, so re-arming a wait on a marker that is still there waits for a new write (a marker removed before the re-arm fires on the next write).
+  Limit: a rewrite that keeps size, mtime, ctime and inode identical (coarse mtime on some filesystems) is not seen; the wait then
+  ends at its timeout. A ruling file (`ruling-<n>.md`) keeps the freshness rule above.
 - **A restart loses the waits.** `foreman_wait` waits live in the process, so a restart (`pi --continue`,
   `--session <id>`, `/reload`) ends them without a wake. The active set is stored in the session file (`pi-foreman-waits`
   entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
