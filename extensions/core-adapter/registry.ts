@@ -248,11 +248,11 @@ export function linkedNodeModules(cwd: string): { worktree: string; target: stri
       const link = fs.lstatSync(nm).isSymbolicLink();
       let target: string | null = null;
       try {
-        target = fs.realpathSync(nm);
+        target = fs.realpathSync.native(nm);
       } catch {
         target = null;
       }
-      if (link || (target !== null && !insidePath(fs.realpathSync(wt), target))) out.push({ worktree: wt, target, link });
+      if (link || (target !== null && !insidePath(fs.realpathSync.native(wt), target))) out.push({ worktree: wt, target, link });
     } catch {
       // no node_modules or an unreadable worktree
     }
@@ -281,7 +281,7 @@ export function worktreeDoctor(agentDir: string, cwd: string, platform: string, 
   let pkgModules: string | null = null;
   if (pkgRoot) {
     try {
-      pkgModules = fs.realpathSync(path.join(pkgRoot, "node_modules"));
+      pkgModules = fs.realpathSync.native(path.join(pkgRoot, "node_modules"));
     } catch {
       pkgModules = null;
     }

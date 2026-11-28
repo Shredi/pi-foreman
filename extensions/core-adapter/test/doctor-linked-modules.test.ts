@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { linkedNodeModules, worktreeDoctor } from "../registry.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-doctor-lnm-")));
+const tmp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-doctor-lnm-")));
 process.on("exit", () => rmTestTmp(tmp));
 
 // git for Windows rejects `\\.\nul` as a config file, so win32 gets an empty file inside this test's tmp dir (as _submodules.ts emptyConfig does)
@@ -49,10 +49,10 @@ test("linked: a link into the package root's node_modules is a FAIL with the fix
   const lines = doctor(pkgRoot).filter((l) => mentions(l, wt));
   assert.equal(lines.length, 1, lines.join("\n"));
   assert.match(lines[0], /^FAIL node_modules in .* resolves into the package root's node_modules/);
-  assert.ok(lines[0].includes(fs.realpathSync(path.join(pkgRoot, "node_modules"))));
+  assert.ok(lines[0].includes(fs.realpathSync.native(path.join(pkgRoot, "node_modules"))));
   assert.match(lines[0], /empties pi-foreman's own modules/);
   assert.match(lines[0], /fix: remove the link in that worktree \(POSIX: rm node_modules; Windows: rmdir node_modules\), then run npm ci there/);
-  assert.deepEqual(linkedNodeModules(repo).filter((e) => fwd(e.worktree) === fwd(wt)).map((e) => ({ ...e, worktree: fwd(e.worktree) })), [{ worktree: fwd(wt), target: fs.realpathSync(path.join(pkgRoot, "node_modules")), link: true }]);
+  assert.deepEqual(linkedNodeModules(repo).filter((e) => fwd(e.worktree) === fwd(wt)).map((e) => ({ ...e, worktree: fwd(e.worktree) })), [{ worktree: fwd(wt), target: fs.realpathSync.native(path.join(pkgRoot, "node_modules")), link: true }]);
   // no package root given: no FAIL, the symlink WARN stays
   const noRoot = doctor().filter((l) => mentions(l, wt));
   assert.deepEqual(noRoot.map((l) => l.slice(0, 5)), ["WARN "]);
@@ -89,4 +89,13 @@ test("linked: a relative link target into the package root is a FAIL", { skip: p
 test("linked: outside a git repository nothing is reported", () => {
   assert.deepEqual(linkedNodeModules(agent), []);
   assert.deepEqual(worktreeDoctor(agent, agent, "win32", pkgRoot), []);
+});
+
+test("linked: an equivalent spelling of the package root (trailing separator, .. segment) still FAILs", () => {
+  const wt = wtree("spelling");
+  link(path.join(pkgRoot, "node_modules"), path.join(wt, "node_modules"));
+  for (const spelled of [pkgRoot + path.sep, path.join(pkgRoot, "node_modules", "..")]) {
+    const lines = doctor(spelled).filter((l) => mentions(l, wt));
+    assert.deepEqual(lines.map((l) => l.slice(0, 5)), ["FAIL "], lines.join("\n"));
+  }
 });
