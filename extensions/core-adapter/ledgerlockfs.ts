@@ -42,7 +42,7 @@ export class LedgerLockedError extends Error {
 }
 
 /**
- * Python source that prints the ledger file `ledger.py` would write for these arguments, by calling the vendored
+ * Python source that prints the ledger file `ledger.py` would write for these arguments, by calling the
  * parser and resolver read-only (never a second resolver); prints nothing when none resolves.
  * Run as `python -I -c SNIPPET <core/scripts dir> <ledger.py args...>` with the env of the run.
  */

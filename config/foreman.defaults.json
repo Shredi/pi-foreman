@@ -22,7 +22,7 @@
     "session-foreman": { "tools": [], "skills": [], "codemode": false },
     "explorer": { "tools": ["read", "ls", "grep", "find", "bash", "foreman_report"], "skills": [], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20, "strongAbove": 200000 },
     "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_report"], "searchable": ["foreman_move", "foreman_copy"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
-    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash", "write", "foreman_report"], "skills": ["security-review"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 30, "childMaxTurns": 100 }
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash", "write", "foreman_copy", "foreman_report"], "skills": ["security-review"], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 30, "childMaxTurns": 100 }
   },
   "providers": {},
   "fanout": { "max": 3 },

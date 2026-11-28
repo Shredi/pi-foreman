@@ -1,6 +1,6 @@
 // Ledger hints (item 11): one indented, dated line under a ledger item per foreman_ledger action,
 // child launch and reviewer verdict: `  > YYYY-MM-DD <text>`, at most HINT_MAX per item (oldest
-// dropped). The vendored core ledger.py ignores such lines (no box, no id), so status, mark, defer,
+// dropped). The core ledger.py ignores such lines (no box, no id), so status, mark, defer,
 // add and note keep counting items as before. Pure text logic here; index.ts reads and writes the
 // file and keeps the session's recent hints for the compaction digest (retrodigest.ts).
 import * as fs from "node:fs";

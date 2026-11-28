@@ -157,7 +157,7 @@ class TestWriteGate(ReplayCase):
 
 class TestDestructiveGuard(ReplayCase):
     """A floor deny (`rm -rf /`, `floor-rm-system`) on `bash`, and on the same call made from inside `codemode`.
-    Pi no longer runs the vendored destructive guard; the gate's floors refuse the call."""
+    Pi no longer runs the legacy destructive guard; the gate's floors refuse the call."""
 
     def test_bash_and_codemode_denied(self):
         rig = self.rig("destructive", load_fixture("destructive"))
