@@ -1,6 +1,6 @@
 // Long wait with a batching governor (plan D9, ledger items 13-15, 22, 23, 39).
 //
-// `foreman_wait` (foreman only) starts a model-free wait on a timer, a file appearing, a process
+// `foreman_wait` (foreman only) starts a model-free wait on a timer, a file appearing or changing, a process
 // ending or a GitHub Actions run completing, and returns at once with a wait id. Polling is
 // plain unref'd one-shot timers, started with the first wait and all cleared at
 // session_shutdown; no model turn runs while waiting. The first resolved outcome is delivered at
@@ -293,6 +293,8 @@ export interface RuntimeDeps {
   limits: () => WaitLimits;
   /** Size of an existing file, else null (never reads contents). */
   stat: (p: string) => number | null;
+  /** Stat signature of a file (size, mtime, ctime, inode), else null; a file wait fires when it differs from its arm-time one. Absent = built from stat and mtime. */
+  signature?: (p: string) => string | null;
   /** False once the process is gone (ESRCH). */
   alive: (pid: number) => boolean;
   gh: (runId: string) => Promise<CiStatus>;
@@ -326,6 +328,8 @@ interface Entry {
   log?: string;
   /** pid waits: the watched process (a second wait on it dedupes). */
   pid?: number;
+  /** file waits: the signature taken when the wait started (null = absent); a poll resolves only on a different one. */
+  baseline?: string | null;
   started: number;
   deadline: number;
   handles: unknown[];
@@ -388,6 +392,7 @@ export class WaitRuntime {
     if (spec.kind === "child") e.label = spec.label;
     else if ((spec.kind === "pid" || spec.kind === "ci") && spec.log) e.log = spec.log;
     if (spec.kind === "pid") e.pid = spec.pid;
+    if (spec.kind === "file") e.baseline = this.sign(spec.path);
     if (spec.kind === "pressure") e.press = { mode: spec.mode, args: spec.args };
     this.waits.set(id, e);
     if (spec.kind === "pressure") {
@@ -417,12 +422,23 @@ export class WaitRuntime {
     }, spec.pollMs);
   }
 
+  /** The file's signature now, else null (absent). */
+  private sign(p: string): string | null {
+    if (this.d.signature) return this.d.signature(p);
+    const size = this.d.stat(p);
+    return size === null ? null : `${size}:${this.d.mtime?.(p) ?? ""}`;
+  }
+
   private poll(e: Entry, spec: Exclude<ValidSpec, { kind: "child" | "pressure" }>, delay: number): void {
     e.pollHandle = this.d.timers.set(() => {
         if (!this.waits.has(e.id)) return;
         if (spec.kind === "file") {
+          // Fires on a file that is there and differs from the arm-time signature. A poll that finds it absent resets the baseline,
+          // so a re-created file fires even when its stat matches the old one.
           const size = this.d.stat(spec.path);
-          if (size !== null && (!this.d.mtime || rulingFresh(spec.path, this.d.mtime))) {
+          const sig = size === null ? null : this.sign(spec.path);
+          if (sig === null) e.baseline = null;
+          else if (sig !== e.baseline && (!this.d.mtime || rulingFresh(spec.path, this.d.mtime))) {
             return this.resolve(e.id, `exists, ${size} bytes`);
           }
         } else if (spec.kind === "pid") {
@@ -614,6 +630,16 @@ function fileSize(p: string): number | null {
   }
 }
 
+/** Size, mtime, ctime and inode of a file as one string, else null (never reads contents). */
+function fileSignature(p: string): string | null {
+  try {
+    const s = fs.statSync(p);
+    return `${s.size}:${s.mtimeMs}:${s.ctimeMs}:${s.ino}`;
+  } catch {
+    return null;
+  }
+}
+
 export interface WaitSession {
   id: string;
   isChild: boolean;
@@ -650,7 +676,7 @@ const PARAMS = {
     action: { type: "string", enum: ["start", "list", "cancel"] },
     kind: { type: "string", enum: [...TOOL_WAIT_KINDS], description: "start: what to wait for." },
     seconds: { type: "integer", minimum: 1, description: "timer: seconds to wait." },
-    path: { type: "string", description: "file: resolves when this file exists (inside the workspace, its .workflow/ or <agentDir>/pi-foreman/state/wait/)." },
+    path: { type: "string", description: "file: resolves when this file appears or changes after the wait started (its size, mtime, ctime or inode differs from the arm-time one); a file already there that never changes does not wake it. Inside the workspace, its .workflow/ or <agentDir>/pi-foreman/state/wait/." },
     pid: { type: "integer", minimum: 2, description: "pid: resolves when this process has exited." },
     runId: { type: "string", description: "ci: GitHub Actions run id (digits); resolves when the run completes." },
     label: { type: "string", description: "child: the label of a session opened by `foreman session open`, or any; resolves on its next plan, result, update, ask or closed notice (a remote child's wake names its mirror path; a notice that came before the wait started is not replayed)." },
@@ -753,6 +779,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       now: () => Date.now(),
       limits: limitsOf(s),
       stat: fileSize,
+      signature: fileSignature,
       mtime: fileMtime,
       alive: processAlive,
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
@@ -807,7 +834,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     name: WAIT_TOOL,
     label: "Long wait",
     description:
-      "Wait without model turns for a timer, a file to appear, a process to exit, a GitHub Actions run to complete or a child session to report (kind child + label; one wait per label). Returns at once with a wait id; you are woken later by ONE message listing every outcome (triggers that resolve close together are batched). action start (kind + its argument, optional note), list, or cancel {id}.",
+      "Wait without model turns for a timer, a file to appear or change after the wait started (a file already there that never changes does not wake it), a process to exit, a GitHub Actions run to complete or a child session to report (kind child + label; one wait per label). Returns at once with a wait id; you are woken later by ONE message listing every outcome (triggers that resolve close together are batched). action start (kind + its argument, optional note), list, or cancel {id}.",
     parameters: PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
