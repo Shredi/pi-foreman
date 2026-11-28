@@ -1,4 +1,4 @@
-// pr_attach and pr_create attach with no PR tracker: the upload-host check reads the checkout's git remote (the pr_repo op).
+// pr_attach attaches with no PR tracker: the upload-host check reads the checkout's git remote (the pr_repo op).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -9,7 +9,6 @@ import { createHash } from "node:crypto";
 import { registerPrPack } from "../gitpack.ts";
 import type { PrPackSession } from "../gitpack.ts";
 import { PrWatches } from "../prwatch.ts";
-import { ATTACH_MAX, attachRefusal, checkAttach, githubUploadHost, parseAttachEntries, stillImageProblem } from "../prattach.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import type { Spawner } from "../spawn.ts";
 

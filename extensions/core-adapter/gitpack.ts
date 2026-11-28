@@ -456,7 +456,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           let at = await s.tracker?.repoFor?.(dir ?? ctx.cwd).catch(() => null);
           if (!at) {
             const o = await run("pr_repo", {}).catch(() => null);
-            if (o && o.kind === "ran" && typeof o.result.host === "string" && o.result.host) at = { host: o.result.host, repo: String(o.result.repo ?? "") };
+            if (o && o.kind === "ran" && typeof o.result.host === "string" && o.result.host) at = { host: o.result.host, repo: typeof o.result.repo === "string" ? o.result.repo : "" };
           }
           if (!at) return "the remote host could not be read";
           return githubUploadHost(at.host) ? undefined : `host ${at.host} is not github.com or GitHub Enterprise Cloud`;

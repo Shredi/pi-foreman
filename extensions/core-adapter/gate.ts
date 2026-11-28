@@ -397,6 +397,14 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
       const h = typeof v === "string" && v ? secretPath(v, env) : null;
       if (h) return h;
     }
+    // the upload paths of pr_create / pr_attach are structured fields: only their free text (title, body, caption) is exempt
+    if (tool === "pr_create" || tool === "pr_attach") {
+      for (const e of Array.isArray(inp.attach) ? inp.attach : []) {
+        const v = e && typeof e === "object" ? (e as Record<string, unknown>).path : undefined;
+        const h = typeof v === "string" && v ? secretPath(v, env) : null;
+        if (h) return h;
+      }
+    }
     return null;
   }
   // each string leaf read as a command (leafFloors): prose and code that does not parse as a command line is not floored. Segment floors (secret paths)
