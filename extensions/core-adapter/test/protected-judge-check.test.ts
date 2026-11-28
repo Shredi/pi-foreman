@@ -103,7 +103,7 @@ test("a transport-opaque remote command asks with remote_opaque, an away write v
   assert.deepEqual([away.accepted, away.cause], ["ask", "away"]);
 });
 
-test("remote write that the harness sees: the owner present, mode model, write verdict still asks", async () => {
+test("remote write that the harness sees: the owner present, mode model, write verdict allows, read verdict asks", async () => {
   // remote-asks: the model's write verdict decides in mode model; only a read verdict on a visible remote write asks (remote_write)
   const r = await check("ssh prod-db 'vendorctl status > /etc/app.conf'", [V({ effect: "write" })]);
   assert.deepEqual([r.accepted, r.cause], ["allow", undefined]);
