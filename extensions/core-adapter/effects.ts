@@ -211,10 +211,21 @@ function readExcluded(c: EffectCtx, abs: string): boolean {
   return c.readExclude.some((e) => within(c, e, abs, false) || (alt !== null && within(c, e, alt, false)));
 }
 
+/**
+ * `resolveWord` gave no path for `word` (a `..` part, a drive-relative word) yet it may still name a withheld part: a `..` word is resolved lexically, and on win32 the
+ * word bash makes of a backslash path (it eats the backslashes: `C:\\s\\pages\\roots` -> `C:spagesroots`) is compared with the withheld path in that spelling.
+ */
+function unresolvedExcluded(c: EffectCtx, cwd: string, word: string): boolean {
+  const x = px(c);
+  const win = plat(c) === "win32";
+  if (!(win && /^[A-Za-z]:(?![\\/])/.test(word)) && word.split(/[\\/]/).includes("..") && readExcluded(c, x.resolve(cwd, word))) return true;
+  return win && (c.readExclude ?? []).some((e) => fold(c, word).startsWith(fold(c, e.replace(/\\/g, ""))));
+}
+
 function containedIn(c: EffectCtx, cwd: string | null, word: string, write: boolean, only: string[] | undefined, link: boolean, rootSelf: boolean): boolean {
   if (!write && c.readAny && !only && cwd !== null && word && !word.startsWith("~") && !/[=:]~/.test(word)) {
     const abs = resolveWord(c, cwd, word);
-    if (!abs || !readExcluded(c, abs)) return true;
+    if (abs ? !readExcluded(c, abs) : !unresolvedExcluded(c, cwd, word)) return true;
   }
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
