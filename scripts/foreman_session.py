@@ -1504,12 +1504,12 @@ def open_session(p, remote=None):
     else:
         here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
         parent_slug = opener_slug(here, git_top(here))
-    launch = model or p.get("start_model") or None  # the model on the pi command line: the explicit one, else the opener's start model
+    launch_model = model or p.get("start_model") or None  # the model on the pi command line: the explicit one, else the opener's start model
     env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]), agent_dir=adir, start_model=p.get("start_model"))
     prompt = prompt_text(handoff)
     first = p.get("first") or []
-    banner = start_banner(label, launch, short_hostname() if remote else None, handoff / "brief.md")
-    command = posix_command(env, launch, prompt, first, banner)
+    banner = start_banner(label, launch_model, short_hostname() if remote else None, handoff / "brief.md")
+    command = posix_command(env, launch_model, prompt, first, banner)
     scfg = {}
     if remote:
         backend, binary = "hc", hc_bin()
@@ -1519,15 +1519,15 @@ def open_session(p, remote=None):
         scfg = sessions_config(adir)
         backend, binary = backend_of(scfg, os.environ)
     platform = host_platform()
-    child_argv = (hc_child_argv(env, launch, prompt, first, platform, os.environ.get("PATH", ""),
+    child_argv = (hc_child_argv(env, launch_model, prompt, first, platform, os.environ.get("PATH", ""),
                                 "pi.cmd" if remote and platform == "win32" else "pi", banner) if backend == "hc" else None)
     outlive = False if remote else hc_outlive_parent(scfg)
     space = remote.get("space") if remote else None
     labels = [("fm.child", child), ("fm.parent", parent.split("@", 1)[0])] if remote else ()
     say("handoff: %s" % handoff)
     say("child intercom id: %s" % child)
-    if launch:
-        say("session model: %s" % launch)
+    if launch_model:
+        say("session model: %s" % launch_model)
     info = {"handoff": str(handoff), "child": child}
     if p.get("worktree"):
         info["worktree"] = p["worktree"]
@@ -1538,7 +1538,7 @@ def open_session(p, remote=None):
         elif backend == "herdr":
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
-            say("dry run: " + fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
+            say("dry run: " + fallback_text(env, launch_model, prompt, cwd, host_platform(), p["print_all"], first, banner))
         return 0, dict(info, status="dryRun")
     handoff.mkdir(parents=True, exist_ok=False)
     if remote:
@@ -1551,7 +1551,7 @@ def open_session(p, remote=None):
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, launch, prompt, first, banner=banner)
+    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, launch_model, prompt, first, banner=banner)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
@@ -1580,7 +1580,7 @@ def open_session(p, remote=None):
         except HcError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
+            say(fallback_text(env, launch_model, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     elif backend == "herdr":
         try:
@@ -1602,10 +1602,10 @@ def open_session(p, remote=None):
         except HerdrError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
+            say(fallback_text(env, launch_model, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     else:
-        say(fallback_text(env, launch, prompt, cwd, host_platform(), p["print_all"], first, banner))
+        say(fallback_text(env, launch_model, prompt, cwd, host_platform(), p["print_all"], first, banner))
     with registry_lock(adir):
         reg = read_registry(adir)
         reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
