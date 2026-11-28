@@ -12,6 +12,7 @@ Write a document a fresh agent can pick up and continue, without this conversati
 3. Reference existing artifacts (plan, ledger, spec, ADR, issue, PR, commit, diff, earlier brief) by path, URL or hash; do not restate them. Link `AGENTS.md` for the shared repo rules instead of copying them.
 4. Redact secrets (keys, tokens, passwords) and personal data the next agent does not need. Text bound for a public place (PR, issue, commit) follows the repo's public rules.
 5. A result for a parent or owner opens with 2-4 plain sentences (the owner-text rule: short sentences, active voice, one fact each); the dense part follows below.
-6. Save to the path the harness names (the session handoff dir: `brief.md`, `brief-<n>.md`, `result.md`; the close result file). Otherwise save to the OS temp dir (`$TMPDIR`, else `/tmp`; `%TEMP%` on Windows), never the workspace.
+6. A brief for a new session may be a page the owner reads in the browser: write it from the brief skeleton named in the foreman rules, save it with the name `<anything>.html`, and pass that file. The harness generates a text copy (`brief.md`, `brief-<n>.md`) that the session reads, so keep every part plain text there. Any other brief stays markdown or text.
+7. Save to the path the harness names (the session handoff dir: `brief.md`, `brief-<n>.md`, `result.md`; the close result file). Otherwise save to the OS temp dir (`$TMPDIR`, else `/tmp`; `%TEMP%` on Windows), never the workspace.
 
 Source: https://github.com/mattpocock/skills/tree/main/skills/productivity/handoff (MIT, adapted; see NOTICE).

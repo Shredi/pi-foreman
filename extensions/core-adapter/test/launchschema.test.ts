@@ -15,7 +15,7 @@ type Json = Record<string, unknown>;
 const ON = { sizing: true, mcp: true };
 const source = (): Json => createSubagentParamsSchema() as unknown as Json;
 const props = (s: Json): Json => s.properties as Json;
-const FIELDS = ["reason", "items", "occasion", "reads", "install", "size", "risk", "mcp"];
+const FIELDS = ["reason", "items", "diffBase", "occasion", "reads", "install", "size", "risk", "mcp"];
 
 /** Pi's argument check of the live tool: what the model's call becomes before `tool_call` runs. */
 const validated = (parameters: Json, args: Json): Json => validateToolArguments({ name: "subagent", description: "d", parameters } as never, { type: "toolCall", id: "c", name: "subagent", arguments: args } as never) as Json;
@@ -57,9 +57,9 @@ test("the source schema is not mutated; the same source and flags give the same 
 test("flags: sizing off leaves out size and risk, no MCP role leaves out mcp; the other fields are always declared", () => {
   const names = (flags: { sizing: boolean; mcp: boolean }): string[] => Object.keys(launchFieldSchemas(flags)).sort();
   assert.deepEqual(names({ sizing: true, mcp: true }), [...FIELDS].sort());
-  assert.deepEqual(names({ sizing: false, mcp: true }), ["install", "items", "mcp", "occasion", "reads", "reason"]);
-  assert.deepEqual(names({ sizing: true, mcp: false }), ["install", "items", "occasion", "reads", "reason", "risk", "size"]);
-  assert.deepEqual(names({ sizing: false, mcp: false }), ["install", "items", "occasion", "reads", "reason"]);
+  assert.deepEqual(names({ sizing: false, mcp: true }), ["diffBase", "install", "items", "mcp", "occasion", "reads", "reason"]);
+  assert.deepEqual(names({ sizing: true, mcp: false }), ["diffBase", "install", "items", "occasion", "reads", "reason", "risk", "size"]);
+  assert.deepEqual(names({ sizing: false, mcp: false }), ["diffBase", "install", "items", "occasion", "reads", "reason"]);
   const src = source();
   const lean = extendedParameters(src, { sizing: false, mcp: false });
   assert.equal(props(lean).size, undefined);

@@ -173,7 +173,7 @@ test("model map checks: registry gaps, auth gaps and the reviewer family warning
 });
 
 test("H4 pin: the reviewer role has a shell and the write tool (no edit); the gate limits write to scratch and out (gate-reviewer-write.test.ts)", () => {
-  const base = ["read", "ls", "grep", "find", "bash", "write", "foreman_report"];
+  const base = ["read", "ls", "grep", "find", "bash", "write", "foreman_copy", "foreman_report"];
   const wants: Record<string, string[]> = { reviewer: base };
   const defaults = JSON.parse(fs.readFileSync(path.join(PKG, "config", "foreman.defaults.json"), "utf8"));
   for (const [role, want] of Object.entries(wants)) {

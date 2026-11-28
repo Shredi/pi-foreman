@@ -223,6 +223,43 @@ export function symlinkedNodeModules(cwd: string): string[] {
   });
 }
 
+/** Is `target` equal to or inside `root`? A different drive counts as outside; win32 compares case-insensitively. */
+function insidePath(root: string, target: string): boolean {
+  const norm = (p: string): string => (process.platform === "win32" ? p.toLowerCase() : p);
+  const rel = path.relative(norm(root), norm(target));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * Live worktrees of the repository at `cwd` whose node_modules exists and is a symlink/junction (`link`) or resolves
+ * outside its worktree. `target` is the real path, null when the link dangles. Never throws; empty outside a git repository.
+ */
+export function linkedNodeModules(cwd: string): { worktree: string; target: string | null; link: boolean }[] {
+  let listing = "";
+  try {
+    listing = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return [];
+  }
+  const out: { worktree: string; target: string | null; link: boolean }[] = [];
+  for (const wt of worktreePaths(listing)) {
+    try {
+      const nm = path.join(wt, "node_modules");
+      const link = fs.lstatSync(nm).isSymbolicLink();
+      let target: string | null = null;
+      try {
+        target = fs.realpathSync.native(nm);
+      } catch {
+        target = null;
+      }
+      if (link || (target !== null && !insidePath(fs.realpathSync.native(wt), target))) out.push({ worktree: wt, target, link });
+    } catch {
+      // no node_modules or an unreadable worktree
+    }
+  }
+  return out;
+}
+
 /** Is `worktreeSetupHook` set in pi-subagents' config (`<agentDir>/extensions/subagent/config.json`)? */
 export function worktreeHookConfigured(agentDir: string): { file: string; configured: boolean } {
   const file = path.join(agentDir, "extensions", "subagent", "config.json");
@@ -235,13 +272,25 @@ export function worktreeHookConfigured(agentDir: string): { file: string; config
 }
 
 /** Doctor lines for the worktree node_modules problem (symlinked node_modules: a builder's `npm ci` rewrites the main checkout). */
-export function worktreeDoctor(agentDir: string, cwd: string, platform: string): string[] {
+export function worktreeDoctor(agentDir: string, cwd: string, platform: string, pkgRoot?: string): string[] {
   const out: string[] = [];
   if (platform !== "win32") {
     const h = worktreeHookConfigured(agentDir);
     if (!h.configured) out.push(`WARN worktreeSetupHook is not set in ${h.file}: pi-subagents symlinks node_modules into managed worktrees, so a builder's npm ci rewrites the main checkout — fix: run /foreman setup (registers bin/foreman-worktree-setup)`);
   }
-  for (const wt of symlinkedNodeModules(cwd)) out.push(`WARN node_modules is a symlink in ${wt} — fix: in that worktree run rm node_modules && npm ci (never npm ci through the link)`);
+  let pkgModules: string | null = null;
+  if (pkgRoot) {
+    try {
+      pkgModules = fs.realpathSync.native(path.join(pkgRoot, "node_modules"));
+    } catch {
+      pkgModules = null;
+    }
+  }
+  for (const { worktree: wt, target, link } of linkedNodeModules(cwd)) {
+    if (pkgModules && target && insidePath(pkgModules, target)) out.push(`FAIL node_modules in ${wt} resolves into the package root's node_modules (${target}): an npm ci or npm install there empties pi-foreman's own modules \u2014 fix: remove the link in that worktree (POSIX: rm node_modules; Windows: rmdir node_modules), then run npm ci there`);
+    else if (link && target) out.push(`WARN node_modules is a symlink in ${wt} \u2014 fix: in that worktree run rm node_modules && npm ci (never npm ci through the link)`);
+    else out.push(`WARN node_modules in ${wt} ${target ? `resolves outside the worktree (${target})` : "is a dangling link"} \u2014 fix: in that worktree run rm node_modules && npm ci (never npm ci through the link)`);
+  }
   return out;
 }
 

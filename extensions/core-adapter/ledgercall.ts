@@ -306,6 +306,10 @@ export function planLedgerInit(params: Record<string, unknown>): { topic: string
     if (typeof t !== "string" || !t.trim() || /[\r\n\x0b\x0c\x1c\x1d\x1e\x85\p{Zl}\p{Zp}]/u.test(t)) return { error: `${LEDGER_TOOL}: each text is a non-empty single line.` };
     texts.push(t.trim());
   }
+  for (const [i, t] of texts.entries()) {
+    const line = `- [ ] ${i + 1}. ${t}`;
+    if (line.length > ITEM_LINE_MAX) return { error: itemLineRefusal(String(i + 1), line.length) };
+  }
   return { topic, texts };
 }
 
@@ -352,6 +356,21 @@ export function findItemByText(file: string, text: string): string | null {
   return h ? h.m[2] : null;
 }
 
+/** An item's full line (text plus notes) holds at most this many characters. */
+export const ITEM_LINE_MAX = 1000;
+
+/** The refusal for an item line that would be `length` characters long. */
+export function itemLineRefusal(id: string, length: number): string {
+  return `${LEDGER_TOOL}: item ${id} would be ${length} characters, over the limit of ${ITEM_LINE_MAX} for an item line (text and notes); keep evidence in a file and link it.`;
+}
+
+/** Length of the line of item `id` (without its line break); null when the ledger has no single such item. */
+export function itemLineLength(file: string, id: string): number | null {
+  const mine = itemLines(file).hits.filter(({ m }) => m[2] === id);
+  if (mine.length !== 1) return null;
+  return itemLines(file).lines[mine[0].i].replace(/\r?\n$/, "").length;
+}
+
 /** Replace the text after `N. ` of item `id` ("V" or digits), keeping the state marker. */
 export function rewriteItemText(file: string, id: string, text: string): { error: string } | { file: string; changed: boolean } {
   const { lines, hits } = itemLines(file);
@@ -361,7 +380,10 @@ export function rewriteItemText(file: string, id: string, text: string): { error
   const { i, m } = mine[0];
   if (m[3].trimEnd() === text) return { file, changed: false };
   const eol = /\r?\n$/.exec(lines[i])?.[0] ?? "";
-  lines[i] = `${m[1]} ${text}${eol}`;
+  const next = `${m[1]} ${text}`;
+  // only growth is refused: an item already over the limit may be shortened or kept
+  if (next.length > ITEM_LINE_MAX && next.length > lines[i].replace(/\r?\n$/, "").length) return { error: itemLineRefusal(id, next.length) };
+  lines[i] = `${next}${eol}`;
   return { file: lines.join(""), changed: true };
 }
 

@@ -266,7 +266,7 @@ jobs:
           retention-days: 7
   fresh-install:
     # A new user's install: plain `npm ci` in a clone, then the managed form (`pi install git:` runs `npm install --omit=dev --legacy-peer-deps`).
-    # npm 11.9 to 11.12 refuses the two forked git dependencies (EALLOWGIT); that cell must fail, with the engines warning first.
+    # npm 11.9 to 11.12 refuses the forked git dependency pi-intercom (EALLOWGIT); that cell must fail, with the engines warning first.
     strategy:
       fail-fast: false
       matrix:

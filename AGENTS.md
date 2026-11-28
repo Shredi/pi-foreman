@@ -18,7 +18,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
 ## Constraints
 
 - Must run on Linux, macOS and Windows.
-- Python (standard library only, 3.13+) runs the existing scripts; new harness code is TypeScript, and the goal is Node only. Existing Python may be changed. A new `.py` file is allowed only as a test (`tests/**/test_*.py`), bench task data or vendored `core/`; `python-files.test.ts` enforces this.
+- Python (standard library only, 3.13+) runs the existing scripts; new harness code is TypeScript, and the goal is Node only. Existing Python may be changed. A new `.py` file is allowed only as a test (`tests/**/test_*.py`), bench task data or the own legacy `core/` (changed only for important fixes; it moves to TypeScript later); `python-files.test.ts` enforces this.
 - Pi's file formats are the single source: `AGENTS.md`, skills under `.agents/skills/`,
   role definitions in the package's `agents/` folder. `.claude/agents/` exists only for the
   Claude Code sessions that build this repo. Checked 2026-10-03 (Claude Code 2.1.288): Claude

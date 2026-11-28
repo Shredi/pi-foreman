@@ -54,9 +54,59 @@ Configuration:
 """
 import json
 import os
+import re
 import sys
 import tempfile
 import time
+
+# A ledger item's full line (text and notes) holds at most this many characters.
+ITEM_LINE_MAX = 1000
+_ITEM_LINE_RE = re.compile(r"^\s*[-*] \[.\]\s+(?:deferred:.*? — )?(?P<id>\d+|V)\.(?:\s|$)")
+
+
+def item_line_refusal(ident, length):
+    """The refusal text for an item line of `length` characters."""
+    return (f"item {ident} would be {length} characters, over the limit of "
+            f"{ITEM_LINE_MAX} for an item line (text and notes); keep "
+            "evidence in a file and link it")
+
+
+def _item_lengths(text):
+    """{id: [line length, ...]} of the item lines outside ``` fences."""
+    out = {}
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        m = None if fenced else _ITEM_LINE_RE.match(line)
+        if m:
+            out.setdefault(m.group("id"), []).append(len(line))
+    return out
+
+
+def over_limit(old_text, new_text):
+    """(id, length) of the first item line of `new_text` that is longer than
+    ITEM_LINE_MAX and is new or longer than the line of that id in
+    `old_text`; None when every long line is unchanged or shorter (a
+    checkbox flip on an item already over the limit passes)."""
+    old = _item_lengths(old_text or "")
+    seen = {}
+    fenced = False
+    for line in new_text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        m = None if fenced else _ITEM_LINE_RE.match(line)
+        if not m or len(line) <= ITEM_LINE_MAX:
+            continue
+        ident = m.group("id")
+        k = seen.get(ident, 0)
+        seen[ident] = k + 1
+        before = old.get(ident, [])
+        if k >= len(before) or len(line) > before[k]:
+            return ident, len(line)
+    return None
 
 
 def session_marker_path(session_id):
@@ -154,8 +204,7 @@ def _guard(data):
         return
 
     real = os.path.realpath(file_path)
-    if not os.path.isfile(real):
-        return  # brand-new file: this IS how a ledger gets created
+    exists = os.path.isfile(real)
 
     if not _is_live_ledger_name(os.path.basename(real)):
         return
@@ -167,6 +216,35 @@ def _guard(data):
     real_parent = os.path.basename(os.path.dirname(real)).lower()
     if raw_parent != ".workflow" and real_parent != ".workflow":
         return
+
+    # The item-line limit applies to every Write of a live ledger, new or
+    # existing, bound or not: a line over the limit that is new or longer
+    # than before is refused.
+    content = tool_input.get("content")
+    if isinstance(content, str):
+        old = ""
+        if exists:
+            try:
+                with open(real, encoding="utf-8", errors="replace") as f:
+                    old = f.read()
+            except OSError:
+                old = ""
+        hit = over_limit(old, content)
+        if hit:
+            _metric("write_deny_item_limit", data.get("session_id"),
+                    path=os.path.basename(real), item=hit[0])
+            print(json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason":
+                        "LEDGER GUARD: " + item_line_refusal(*hit) + ".",
+                }
+            }))
+            return
+
+    if not exists:
+        return  # brand-new file: this IS how a ledger gets created
 
     session_id = data.get("session_id")
     cache = session_marker_path(session_id)

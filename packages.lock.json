@@ -11,7 +11,7 @@
     { "name": "pi-background-tasks", "version": "2.6.10", "mode": "bundled", "notes": "https://github.com/ismailsaleekh/pi-background-tasks/releases/tag/v{version}" },
     { "name": "pi-subagents", "version": "0.89.1", "mode": "bundled", "notes": "https://github.com/nicobailon/pi-subagents/releases/tag/v{version}" },
     { "name": "pi-intercom", "version": "git+https://github.com/Shredi/pi-intercom.git#c623a082dbf93575f57d99b6656cc96fd89c7227", "mode": "bundled", "notes": "fork pin, branch hc-transport-2 on upstream main 4b387e8, carries the hc transport commit and the outbox noWake commit (https://github.com/Shredi/pi-intercom/tree/hc-transport-2); upstream releases: https://github.com/nicobailon/pi-intercom/releases/tag/v{version}" },
-    { "name": "@juicesharp/rpiv-ask-user-question", "version": "git+https://github.com/Shredi/rpiv-ask-user-question.git#62ad77de8ba3b7dc1b407bfab7be4fac8a69fa41", "mode": "bundled", "notes": "fork pin, one commit on the unchanged 2.15.0 import (https://github.com/Shredi/rpiv-ask-user-question), temporary until upstream releases the fix (https://github.com/juicesharp/rpiv-mono/issues/345); upstream releases: https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question/v/{version}" },
+    { "name": "@juicesharp/rpiv-ask-user-question", "version": "2.16.0", "mode": "bundled", "notes": "https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question/v/{version}" },
     { "name": "@inquirer/prompts", "version": "8.8.0", "mode": "bundled", "notes": "https://github.com/SBoudrias/Inquirer.js/releases/tag/%40inquirer%2Fprompts%40{version}" },
     { "name": "unbash", "version": "6.0.4", "mode": "bundled", "notes": "https://github.com/webpro-nl/unbash/releases/tag/{version}" }
   ]

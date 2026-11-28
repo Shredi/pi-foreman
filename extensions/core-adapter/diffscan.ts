@@ -236,6 +236,15 @@ export function writeFactsFile(cwd: string, facts: readonly DiffFact[]): string 
 const GIT_TIMEOUT_MS = 8000;
 const MAX_DIFF = 12 * 1024 * 1024;
 
+/** A reviewer launch's `diffBase`: the full sha of a commit that is an ancestor of (or equal to) HEAD in `dir`, else the reason it is not. */
+export async function resolveDiffBase(dir: string, ref: unknown): Promise<{ sha: string } | { error: string }> {
+  if (typeof ref !== "string" || !ref.trim() || ref.startsWith("-")) return { error: "diffBase is a commit (sha, branch or tag), one line" };
+  const sha = ((await git(dir, ["rev-parse", "--verify", "--quiet", `${ref.trim()}^{commit}`])) ?? "").trim();
+  if (!sha) return { error: `diffBase ${JSON.stringify(ref)} is not a commit in this checkout` };
+  if ((await git(dir, ["merge-base", "--is-ancestor", sha, "HEAD"])) === null) return { error: `diffBase ${JSON.stringify(ref)} is not an ancestor of HEAD` };
+  return { sha };
+}
+
 /** `git <args>` in `cwd`: stdout, or null on any error. */
 export function git(cwd: string, args: string[]): Promise<string | null> {
   return new Promise((resolve) => {

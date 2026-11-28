@@ -33,6 +33,8 @@ export interface PersistedRounds {
   tier?: string;
   reviewPassed?: boolean;
   planOpen?: boolean;
+  /** Whether the session is in its plan phase (s.planPhase); the parent's idle-at-plan notice needs it. A file without it is not in a plan phase. */
+  planPhase?: boolean;
   /** Watermark of the last caps reset by a parent brief (index.ts capsReset); absent = none. */
   capsResetAt?: number;
 }
@@ -99,7 +101,7 @@ const WAIT_UNKNOWN = "waits for: unknown (no state); nothing from you is require
 
 /**
  * What a child waits for at its plan, from its own `<dir>/round-state.json` (fixed words only; nothing the child wrote). `open`: the plan phase is open
- * (nothing built, plan not approved); false when the state is unreadable. The text carries no label and no closing period.
+ * (the session is in its plan phase, nothing built, plan not approved); false when the state is unreadable. The text carries no label and no closing period.
  */
 export function planWait(dir: unknown): { open: boolean; text: string } {
   let raw: Record<string, unknown>;
@@ -113,7 +115,7 @@ export function planWait(dir: unknown): { open: boolean; text: string } {
   }
   const round = raw.round && typeof raw.round === "object" && !Array.isArray(raw.round) ? (raw.round as Record<string, unknown>) : {};
   const approved = raw.planOpen === false;
-  const open = round.built !== true && !approved;
+  const open = raw.planPhase === true && round.built !== true && !approved;
   const tier = raw.tier;
   if (typeof tier !== "string" || !tier) return { open, text: WAIT_UNKNOWN };
   const passed = raw.reviewPassed === true;

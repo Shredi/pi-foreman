@@ -4,6 +4,11 @@
 //        node scripts/foreman_test_run.mjs [--timeout <s>] --exec -- <command> [args...]  -> the command, lock only (no concurrency flag)
 //        FOREMAN_TEST_DETACH=1 <any form above> (or a leading --detach)  -> background run, returns the run id; node scripts/foreman_test_run.mjs --wait <id> [--max <s>] collects it
 //        node scripts/foreman_test_run.mjs --history [--days N]  -> wait and run figures of the last N days
+// Generic mode (`foreman test-run [--detach] [--targeted] [--timeout <s>] -- <cmd...>`, or `--targeted <node args and files...>` for the node-mode shared-slot run, `foreman test-run --wait <id>`, `--stop <id>`; the bin dispatcher
+// passes a leading `--generic`): the command runs as `--exec` (`--targeted` = shared slot) in the caller's directory, usable in any repository. One log per run,
+// output tee'd to it: $FOREMAN_OUT/test-runs/<id>.log when set (a child session can read it), else <tmpdir>/pi-foreman-test-runs/<id>.log; the path is printed in
+// foreground and detached mode. The command's env carries FOREMAN_TEST_OUTER_RUN=<run id> while the run holds the lock: an inner runner that sees the marker of
+// a live holder runs its command without the lock and without a history entry (a repo whose `npm test` calls the runner no longer waits on itself).
 // Time limit: a leading `--timeout <s>` or env FOREMAN_TEST_TIMEOUT=<s> (flag wins; positive number, fractions allowed) is one deadline
 // for the lock wait plus the run, also with the lock off. When it passes, the run and its descendants are stopped (SIGTERM, after 5 s
 // SIGKILL; Windows taskkill /T /F), the lock is released, one stderr line names limit, elapsed time and the holder waited on; exit 124.
@@ -564,6 +569,42 @@ const runsDirOf = (env) => path.join(path.dirname(lockPath(env)), "test-runs");
 /** History, archives, done files and detached-run logs: next to test-runs, which keeps only live records and stop files. */
 const historyDirOf = (env) => path.join(path.dirname(lockPath(env)), "test-history");
 const RUN_ID = /^[a-z0-9-]+$/;
+/** Generic mode logs: $FOREMAN_OUT/test-runs (readable by a child session), else <tmpdir>/pi-foreman-test-runs. */
+const genericLogDirOf = (env) => (env.FOREMAN_OUT ? path.join(env.FOREMAN_OUT, "test-runs") : path.join(os.tmpdir(), "pi-foreman-test-runs"));
+/** The log of run `id`: the generic log when it exists, else the one in the history dir. */
+const logFileOf = (env, id) => {
+  const g = path.join(genericLogDirOf(env), `${id}.log`);
+  return fs.existsSync(g) ? g : path.join(historyDirOf(env), `${id}.log`);
+};
+const CONTROL_FLAGS = new Set(["--wait", "--stop", "--stop-cwd", "--list", "--history"]);
+
+/** The internal argv for the arguments after `--generic`: `[--detach] [--timeout <s>] [--targeted] -- <cmd...>` becomes `[--detach] [--timeout <s>] [--targeted] --exec -- <cmd...>`; `--targeted <node args and files...>` (no `--`) stays the node-mode targeted run; control flags pass through; undefined on a usage error. */
+export function genericArgs(a) {
+  if (CONTROL_FLAGS.has(a[0])) return a;
+  let detach = false;
+  let targeted = false;
+  let timeout;
+  let i = 0;
+  for (; i < a.length; i++) {
+    if (a[i] === "--detach") detach = true;
+    else if (a[i] === "--targeted") targeted = true;
+    else if (a[i] === "--timeout" && i + 1 < a.length) timeout = a[++i];
+    else break;
+  }
+  const rest = a.slice(i + 1);
+  const lead = [...(detach ? ["--detach"] : []), ...(timeout !== undefined ? ["--timeout", timeout] : []), ...(targeted ? ["--targeted"] : [])];
+  if (a[i] === "--") return rest.length ? [...lead, "--exec", "--", ...rest] : undefined;
+  return targeted && i < a.length ? [...lead, ...a.slice(i)] : undefined;
+}
+
+/** Whether a live run with id `outer` holds the lock or a slot. */
+function outerHolds(outer, env) {
+  if (!RUN_ID.test(outer ?? "")) return false;
+  return [lockPath(env), ...slotPaths(env)].some((f) => {
+    const h = readLock(f);
+    return h?.id === outer && pidAlive(h.pid);
+  });
+}
 const trunc = (t, n = 120) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 const commandHashOf = (cmd, args) => createHash("sha256").update(JSON.stringify([cmd, ...args])).digest("hex");
 
@@ -755,8 +796,8 @@ export function historyLines(entries) {
 }
 
 /** Prints the reuse line of the run `src`, appends the reuse history line `entry` and returns 0. */
-function reportReuse(historyDir, src, entry) {
-  const log = path.join(historyDir, `${src.id}.log`);
+function reportReuse(historyDir, src, entry, env = process.env) {
+  const log = logFileOf(env, src.id);
   process.stdout.write(`foreman_test_run: reused run ${src.id} (passed, same code, ended ${src.ended})\n`);
   if (fs.existsSync(log)) process.stdout.write(`foreman_test_run: log ${log}\n`);
   appendHistory(historyDir, { ...entry, ended: new Date().toISOString(), exit: 0, reusedFrom: src.id });
@@ -830,7 +871,7 @@ async function waitRun(argv, env) {
   const hdir = historyDirOf(env);
   const doneFile = path.join(hdir, `${id}.done.json`);
   const recFile = path.join(runsDirOf(env), `${id}.json`);
-  const logFile = path.join(hdir, `${id}.log`);
+  const logFile = logFileOf(env, id);
   const say = (state) => process.stdout.write(`foreman_test_run: run ${id} ${state}\n`);
   const end = Date.now() + maxS * 1000;
   for (;;) {
@@ -971,21 +1012,23 @@ function reuseCheck(argv, env) {
 }
 
 /** Starts this script again in the background with the same arguments (argv without the detach flag); prints the run id, the log path and the --wait command. */
-function detachRun(argv, env, started) {
+function detachRun(argv, env, started, generic = false) {
   const id = `${started.toString(36)}-${process.pid}`;
   const dir = historyDirOf(env);
   const reuse = reuseCheck(argv, env);
   if (reuse?.src && fs.existsSync(path.join(dir, `${reuse.src.id}.done.json`))) {
-    const code = reportReuse(dir, reuse.src, { id, mode: "suite", kind: reuse.kind, detached: true, command: reuse.command, commandHash: reuse.want.commandHash, cwd: process.cwd(), treeStart: reuse.want.tree, tree: reuse.want.tree, enqueued: new Date(started).toISOString(), acquired: null });
-    process.stdout.write(`foreman_test_run: collect with: node scripts/foreman_test_run.mjs --wait ${reuse.src.id}\n`);
+    const code = reportReuse(dir, reuse.src, { id, mode: "suite", kind: reuse.kind, detached: true, command: reuse.command, commandHash: reuse.want.commandHash, cwd: process.cwd(), treeStart: reuse.want.tree, tree: reuse.want.tree, enqueued: new Date(started).toISOString(), acquired: null }, env);
+    process.stdout.write(`foreman_test_run: collect with: ${generic ? "foreman test-run" : "node scripts/foreman_test_run.mjs"} --wait ${reuse.src.id}\n`);
     return code;
   }
-  const logFile = path.join(dir, `${id}.log`);
+  const logDir = generic ? genericLogDirOf(env) : dir;
+  const logFile = path.join(logDir, `${id}.log`);
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    sweepRunsDir(dir);
+    fs.mkdirSync(logDir, { recursive: true });
+    sweepRunsDir(logDir);
     const fd = fs.openSync(logFile, "a");
     const childEnv = { ...env, FOREMAN_TEST_RUN_ID: id, FOREMAN_TEST_DETACHED: "1" };
+    if (generic) childEnv.FOREMAN_TEST_GENERIC = "1";
     delete childEnv.FOREMAN_TEST_DETACH;
     const child = spawn(process.execPath, [fileURLToPath(import.meta.url), ...argv], { detached: true, stdio: ["ignore", fd, fd], windowsHide: true, env: childEnv, cwd: process.cwd() });
     child.unref();
@@ -994,18 +1037,60 @@ function detachRun(argv, env, started) {
     process.stderr.write(`foreman_test_run: could not start the detached run: ${e.message}\n`);
     return 1;
   }
-  process.stdout.write(`foreman_test_run: run ${id} detached; log ${logFile}; collect with: node scripts/foreman_test_run.mjs --wait ${id}\n`);
+  process.stdout.write(`foreman_test_run: run ${id} detached; log ${logFile}; collect with: ${generic ? "foreman test-run" : "node scripts/foreman_test_run.mjs"} --wait ${id}\n`);
   return 0;
+}
+
+/** A run started under a live outer run that holds the lock (env FOREMAN_TEST_OUTER_RUN): the command runs at once, with no lock, record or history line. */
+function runInner(argv, env) {
+  let a = argv[0] === "--detach" ? argv.slice(1) : argv;
+  if (a[0] === "--timeout") a = a.slice(2);
+  const targeted = a[0] === "--targeted";
+  if (targeted) a = a.slice(1);
+  let cmd;
+  let args;
+  if (a[0] === "--exec") {
+    const rest = a[1] === "--" ? a.slice(2) : a.slice(1);
+    if (!rest.length) {
+      process.stderr.write("usage: foreman_test_run.mjs [--timeout <s>] --exec -- <command> [args...]\n");
+      return Promise.resolve(2);
+    }
+    [cmd, ...args] = rest;
+  } else {
+    cmd = process.execPath;
+    args = nodeTestArgs(a, targeted ? targetedSettings({ env }).concurrency : testConcurrency({ env }));
+  }
+  process.stderr.write(`foreman_test_run: inside run ${env.FOREMAN_TEST_OUTER_RUN}, which holds the lock; running without the lock\n`);
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: "inherit", env: withoutSessionEnv(env), shell: false });
+    child.on("error", (e) => {
+      process.stderr.write(`foreman_test_run: ${e.message}\n`);
+      resolve(127);
+    });
+    child.on("close", (code, signal) => resolve(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1)));
+  });
 }
 
 async function main(rawArgv, env = process.env) {
   const started = Date.now();
   let argv = rawArgv;
+  let generic = env.FOREMAN_TEST_GENERIC === "1";
+  if (argv[0] === "--generic") {
+    generic = true;
+    const g = genericArgs(argv.slice(1));
+    if (!g) {
+      process.stderr.write("usage: foreman test-run [--detach] [--targeted] [--timeout <s>] -- <cmd> [args...] | --wait <id> [--max <s>] | --stop <id>\n");
+      return 2;
+    }
+    argv = g;
+  }
   const controlled = await control(argv, env);
   if (controlled !== undefined) return controlled;
+  const outer = env.FOREMAN_TEST_OUTER_RUN;
+  if (outer && outerHolds(outer, env)) return runInner(argv, env);
   const detach = argv[0] === "--detach" || env.FOREMAN_TEST_DETACH === "1";
   if (argv[0] === "--detach") argv = argv.slice(1);
-  if (detach) return detachRun(argv, env, started);
+  if (detach) return detachRun(argv, env, started, generic);
   // a detached child ignores the time limit (FOREMAN_TEST_TIMEOUT and --timeout); its caller returned long ago
   const detachedRun = env.FOREMAN_TEST_DETACHED === "1";
   // A caller that is gone has closed our stdout/stderr pipes: a write then raises an asynchronous EPIPE that would crash the wrapper before the stop path (kill, lock release) ends.
@@ -1055,13 +1140,14 @@ async function main(rawArgv, env = process.env) {
     const src = findReusable(historyDirOf(env), { commandHash, cwd: process.cwd(), mode: "suite", kind, tree: treeStart }, { hours: reuseHours(env) });
     if (src) {
       const shown = trunc(argv[0] === "--exec" ? [cmd, ...args].join(" ") : ["node", ...args].join(" "));
-      return reportReuse(historyDirOf(env), src, { id: `${started.toString(36)}-${process.pid}`, mode: "suite", kind, detached: false, command: shown, commandHash, cwd: process.cwd(), treeStart, tree: treeStart, enqueued: new Date(started).toISOString(), acquired: null });
+      return reportReuse(historyDirOf(env), src, { id: `${started.toString(36)}-${process.pid}`, mode: "suite", kind, detached: false, command: shown, commandHash, cwd: process.cwd(), treeStart, tree: treeStart, enqueued: new Date(started).toISOString(), acquired: null }, env);
     }
   }
   const id = detachedRun && RUN_ID.test(env.FOREMAN_TEST_RUN_ID ?? "") ? env.FOREMAN_TEST_RUN_ID : `${started.toString(36)}-${process.pid}`;
   // the started command must not see this run's detach settings (a nested wrapper run gets its own id)
   let runEnv = { ...env };
-  for (const k of ["FOREMAN_TEST_RUN_ID", "FOREMAN_TEST_DETACHED", "FOREMAN_TEST_DETACH"]) delete runEnv[k];
+  for (const k of ["FOREMAN_TEST_RUN_ID", "FOREMAN_TEST_DETACHED", "FOREMAN_TEST_DETACH", "FOREMAN_TEST_GENERIC", "FOREMAN_TEST_OUTER_RUN"]) delete runEnv[k];
+  if (generic) runEnv.FOREMAN_TEST_OUTER_RUN = id;
   const runsDir = runsDirOf(env);
   const historyDir = historyDirOf(env);
   const record = {
@@ -1150,7 +1236,19 @@ async function main(rawArgv, env = process.env) {
   const orphanLine = `foreman_test_run: run ${id} caller gone (parent pid ${parentPid} ended); stopped the run\n`;
   const stopRequested = () => fs.existsSync(stopFile);
   const stoppedLine = `foreman_test_run: run ${id} stopped on request\n`;
-  process.stderr.write(`foreman_test_run: run ${id} (pid ${process.pid}, cwd ${process.cwd()}); stop it with: node scripts/foreman_test_run.mjs --stop ${id}\n`);
+  process.stderr.write(`foreman_test_run: run ${id} (pid ${process.pid}, cwd ${process.cwd()}); stop it with: ${generic ? "foreman test-run" : "node scripts/foreman_test_run.mjs"} --stop ${id}\n`);
+  // generic foreground run: the output is tee'd to one log per run
+  let teeLog;
+  if (generic && !detachedRun) {
+    try {
+      const logFile = path.join(genericLogDirOf(env), `${id}.log`);
+      fs.mkdirSync(path.dirname(logFile), { recursive: true });
+      teeLog = fs.createWriteStream(logFile, { flags: "a" });
+      process.stderr.write(`foreman_test_run: log ${logFile}\n`);
+    } catch (e) {
+      process.stderr.write(`foreman_test_run: no log file (${e.message})\n`);
+    }
+  }
   let release = () => {};
   let holder; // the holder waited on, or the list of slot holders in targeted mode
   const maxMinutes = Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) > 0 ? Number(env.FOREMAN_TEST_LOCK_MAX_MINUTES) : 30;
@@ -1198,7 +1296,15 @@ async function main(rawArgv, env = process.env) {
   const countDir = argv[0] === "--exec" ? undefined : fs.mkdtempSync(path.join(runRoot ?? os.tmpdir(), "pf-spawn-count-"));
   let signalExit; // 128+signo of the signal that stopped the run, or ORPHAN_EXIT
   const code = await new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
+    const child = spawn(cmd, args, { stdio: teeLog ? ["inherit", "pipe", "pipe"] : "inherit", env: countDir ? nodeRunEnv(runEnv, countDir) : withoutSessionEnv(runEnv), shell: false });
+    if (teeLog) {
+      for (const [src, dst] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) {
+        src.on("data", (d) => {
+          dst.write(d);
+          teeLog.write(d);
+        });
+      }
+    }
     const forward = (sig) => () => {
       if (!reason) signalExit = 128 + os.constants.signals[sig];
       stopRun("signal", `foreman_test_run: run ${id} got ${sig}; stopped the run\n`);
@@ -1241,7 +1347,11 @@ async function main(rawArgv, env = process.env) {
       process.stderr.write(`foreman_test_run: ${e.message}\n`);
       done(127);
     });
-    child.on("close", (code, signal) => done(signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1)));
+    child.on("close", (code, signal) => {
+      const exit = signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1);
+      if (teeLog) teeLog.end(() => done(exit));
+      else done(exit);
+    });
   });
   if (!countDir || signalExit !== undefined) {
     if (countDir) fs.rmSync(countDir, { recursive: true, force: true });

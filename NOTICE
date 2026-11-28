@@ -1,13 +1,12 @@
 pi-foreman
 
-The Python core vendored under core/, and instruction text derived from
-it, come from the project "fable5-opus5-orchestrator",
+The Python core under core/, and its instruction text, were derived from
+the project "fable5-opus5-orchestrator",
 Copyright (c) 2026 Yusuf Demirkoparan, released under the MIT License:
 https://github.com/Rylaa/fable5-opus5-orchestrator
 
-The vendored code is taken from the fork "Shredi/fable5-opus5-orchestrator"
-(https://github.com/Shredi/fable5-opus5-orchestrator, also MIT), pinned in
-core/VERSION; its LICENSE file carries the same notice as below.
+The code was derived from the fork "Shredi/fable5-opus5-orchestrator"
+(https://github.com/Shredi/fable5-opus5-orchestrator, also MIT); core/LICENSE carries the same notice as below.
 
 Its licence text follows verbatim.
 
@@ -37,9 +36,6 @@ SOFTWARE.
 
 The bundled dependency @juicesharp/rpiv-ask-user-question (the structured ask_user_question tool),
 Copyright (c) 2026 juicesharp, is released under the MIT License (its LICENSE ships in node_modules).
-The bundled copy is a temporary fork (https://github.com/Shredi/rpiv-ask-user-question) with one change
-(the question dialog reports the session as blocked); the pin returns to the npm package when upstream
-releases the fix.
 
 The idea for skills/creating-verify-skills comes from the pstack skills create-formal-verification-skill and
 statechart (MIT License, Copyright (c) 2026 Lauren Tan, github.com/cursor/plugins, folder pstack); no text was taken.
