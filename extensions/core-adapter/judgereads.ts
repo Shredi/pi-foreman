@@ -362,65 +362,63 @@ export function maskKeys(text: string): string {
 
 const KEY_PEM_MARKER = /-----(?:BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[A-Za-z0-9+/=]|\\[nr])*|END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)/g;
 const KEY_HEADER_LINE = /^(?:Proc-Type|DEK-Info|Comment|Version):([^]*)$/;
-const KEY_HEADER_UNSAFE = /[$`();|&<>]/;
-const KEY_PGP_SUM = /^=[A-Za-z0-9+/]{4}$/;
-const KEY_B64_ONLY = /^[A-Za-z0-9+/=]+$/;
-/** Leading whitespace, one comment marker and one quote char: kept visible when a key line is hidden. */
-const KEY_LINE_PREFIX = /^[ \t]*(?:(?:#|\/\/|;)[ \t]*)?["']?/;
+const KEY_HEADER_UNSAFE = /[$`();|&<>{}~]/;
+const KEY_B64_RUN = /[A-Za-z0-9+/=]+/g;
+/** Key data is never plain lowercase letters and slashes (a word or a path): it has an uppercase letter, digit, `+` or `=`. */
+const KEY_B64_MIX = /[A-Z0-9+=]/;
+const KEY_LEAD = /^[^A-Za-z0-9]*/;
 
-/** One line split into its prefix and the data between the prefix and the trailing whitespace, quote, comma or `\n`/`\r` escapes. Linear. */
-function splitKeyLine(l: string): { prefix: string; data: string } {
-  const prefix = KEY_LINE_PREFIX.exec(l)?.[0] ?? "";
-  let end = l.length;
-  for (;;) {
-    const c = l.charCodeAt(end - 1);
-    // space, tab, CR, LF, quote, comma
-    if (end > prefix.length && (c === 32 || c === 9 || c === 13 || c === 10 || c === 34 || c === 39 || c === 44)) end--;
-    else if (end - 2 >= prefix.length && l[end - 2] === "\\" && (l[end - 1] === "n" || l[end - 1] === "r")) end -= 2;
-    else break;
-  }
-  return { prefix, data: l.slice(prefix.length, end) };
+/** The wrapper of a key line: the text before and after its base64 run, digits collapsed so `cat -n` numbers match. */
+function keyWrapper(l: string, at: number, len: number): string {
+  return `${l.slice(0, at).replace(/\d+/g, "0")}\u0000${l.slice(at + len).replace(/\d+/g, "0")}`;
 }
 
 /**
- * A BEGIN..END region: the markers are masked and only key data is blanked, whatever the indent or comment marker: base64 lines of 40+ chars, the short last key line and the PGP
- * checksum directly after a hidden line with the same prefix, and the standard headers directly after BEGIN (no shell syntax in the value). Any other line stays visible. Linear.
+ * A BEGIN..END region: the markers are masked and only key data is hidden, whatever wraps the line (indent, comment, quotes, `+`, `\\`, `*`, `>`, numbers): every run of 40+
+ * base64 characters that is not a plain word or path; a shorter run (the last key line, the PGP checksum) when the line before had a masked run and both have the same text before
+ * and after the run; the standard headers directly after BEGIN (no shell syntax in the value). The rest of each line stays visible. Linear.
  */
 function maskPemRegion(region: string, R: string): string {
   const lines = region.split("\n");
-  let prevPrefix: string | undefined; // prefix of the previous line when it was hidden as key data (or a short key line)
-  let prevKey = false; // the previous hidden line was full key data
+  let prevWrap: string | undefined; // wrapper of the previous line when it had a masked run
   let headers = true; // still in the run directly after BEGIN
   return lines
     .map((l, i) => {
       if (l.includes("-----")) {
         KEY_PEM_MARKER.lastIndex = 0;
         if (KEY_PEM_MARKER.test(l)) {
-          prevPrefix = undefined;
+          prevWrap = undefined;
           return l.replace(KEY_PEM_MARKER, R);
         }
       }
-      const { prefix, data } = splitKeyLine(l);
-      const pure = data.length > 0 && KEY_B64_ONLY.test(data);
-      if (pure && data.length >= 40) {
+      let first: string | undefined;
+      const out = l.replace(/[A-Za-z0-9+/=]{40,}/g, (m: string, at: number) => {
+        if (!KEY_B64_MIX.test(m)) return m;
+        first ??= keyWrapper(l, at, m.length);
+        return R;
+      });
+      if (first !== undefined) {
         headers = false;
-        prevPrefix = prefix;
-        prevKey = true;
-        return prefix;
+        prevWrap = first;
+        return out;
       }
+      const lead = KEY_LEAD.exec(l)?.[0] ?? "";
       if (headers && i > 0) {
+        const data = l.slice(lead.length);
         if (data.length === 0) headers = false;
         else {
           const h = KEY_HEADER_LINE.exec(data);
-          if (h && !KEY_HEADER_UNSAFE.test(h[1] ?? "")) return prefix;
+          if (h && !KEY_HEADER_UNSAFE.test(h[1] ?? "")) return lead;
           headers = false;
         }
       }
-      if (pure && prevPrefix === prefix && (prevKey || KEY_PGP_SUM.test(data))) {
-        prevKey = false;
-        return prefix;
+      if (prevWrap !== undefined) {
+        let best: RegExpExecArray | undefined;
+        KEY_B64_RUN.lastIndex = 0;
+        for (let m = KEY_B64_RUN.exec(l); m; m = KEY_B64_RUN.exec(l)) if (!best || m[0].length > best[0].length) best = m;
+        if (best && best[0].length >= 4 && KEY_B64_MIX.test(best[0]) && keyWrapper(l, best.index, best[0].length) === prevWrap) return l.slice(0, best.index) + R + l.slice(best.index + best[0].length);
       }
-      prevPrefix = undefined;
+      prevWrap = undefined;
       return l;
     })
     .join("\n");
