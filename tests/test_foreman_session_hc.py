@@ -73,7 +73,7 @@ class HcSessionTest(unittest.TestCase):
         self.hc_log, self.herdr_log = self.tmp / "hc.log", self.tmp / "herdr.log"
         self.hc = self.fake("hc", FAKE_HC)
         self.herdr = self.fake("herdr", FAKE_HERDR)
-        self.env = {"PATH": CALLER_PATH, "PI_CODING_AGENT_DIR": str(self.agent), "FAKE_HC_LOG": str(self.hc_log),
+        self.env = {"PATH": CALLER_PATH, "PI_CODING_AGENT_DIR": str(self.agent), "PI_FOREMAN_START_CONFIRM_SECONDS": "0", "FAKE_HC_LOG": str(self.hc_log),
                     "FAKE_HERDR_LOG": str(self.herdr_log), "HC_TERMINAL_ID": "t1", "HC_BIN": str(self.hc)}
         for k in ("HERDR_PANE_ID", "HERDR_BIN", "HC_SCOPE", "HC_TERMINAL_SOCKET", "PI_INTERCOM_STABLE_ID",
                   "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR", "FAKE_HC_FAIL", "FAKE_HC_RAW", "FAKE_HC_PARENT",

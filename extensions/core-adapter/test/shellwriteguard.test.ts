@@ -28,7 +28,7 @@ test("payload carries the command, cwd and workspace root; runner spawns <pkg>/s
   const calls: string[][] = [];
   const spawner: Spawner = async (cmd, args) => (calls.push([cmd, ...args]), { code: 0, stdout: "", stderr: "", timedOut: false });
   await runShellWriteGuard({ python: "py", pkgRoot: "/pkg", payload: p, env: {}, cwd: "/", spawner });
-  assert.deepEqual(calls[0], ["py", "-E", "-s", path.join("/pkg", "scripts", "shell_write_guard.py")]);
+  assert.deepEqual(calls[0], ["py", "-X", "utf8", "-E", "-s", path.join("/pkg", "scripts", "shell_write_guard.py")]);
   assert.equal(FAIL_POLICY.shell_write_guard, "closed");
 });
 

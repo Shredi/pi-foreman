@@ -89,7 +89,7 @@ test("a stale entry and a tracker error keep the watch armed with a status", asy
   await x.tick();
   assert.match(x.list()[0].event, /^not found/);
   assert.equal(x.pending(), 1);
-  assert.equal(x.sent.length, 0);
+  assert.equal(x.sent.length, 1, "the new error text is reported once; a not-found PR is not");
 });
 
 test("a throwing store reader counts as no tracker", async () => {

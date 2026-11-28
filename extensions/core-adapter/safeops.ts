@@ -39,7 +39,7 @@ export interface RunSafeOpInput {
 export async function runSafeOp(input: RunSafeOpInput): Promise<SafeOpOutcome> {
   if (!input.python) return { kind: "error", message: "no Python >= 3.13 found; nothing was done. Set python.path or PI_FOREMAN_PYTHON and run /foreman doctor." };
   const timeoutMs = input.timeoutMs ?? SAFE_OP_TIMEOUT_MS;
-  const r = await input.spawner(input.python, ["-E", "-s", input.script], {
+  const r = await input.spawner(input.python, ["-X", "utf8", "-E", "-s", input.script], {
     input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {}, ...(input.op === "copy" && input.srcRoots?.length ? { srcRoots: input.srcRoots } : {}), ...((input.op === "pr_comments" || input.op === "pr_status" || input.op === "pr_checks") && input.repoless === true ? { repoless: true } : {}), ...(input.op === "worktree_remove" && input.verifiedMerged && input.verifiedBranch ? { verifiedMerged: input.verifiedMerged, verifiedBranch: input.verifiedBranch } : {}) }),
     env: input.env,
     cwd: input.cwd,

@@ -147,7 +147,7 @@ const REMOTE_RUN_TIMEOUT_MS = 120_000;
 export function remoteRunner(o: { python: string | null; spawner: Spawner; pkgRoot: string; agentDir: string }): RunRemote {
   return async (args) =>
     o.python
-      ? o.spawner(o.python, ["-E", "-s", path.join(o.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", o.agentDir, ...args], { timeoutMs: REMOTE_RUN_TIMEOUT_MS })
+      ? o.spawner(o.python, ["-X", "utf8", "-E", "-s", path.join(o.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", o.agentDir, ...args], { timeoutMs: REMOTE_RUN_TIMEOUT_MS })
       : { code: null, stdout: "", stderr: "", error: new Error("foreman_session.py: no usable Python (run /foreman doctor)."), timedOut: false };
 }
 export interface Registry {
@@ -374,7 +374,7 @@ export function markOwnError(agentDir: string, env: Record<string, string | unde
 export function remoteReplier(o: { python: string | null; spawner: Spawner; pkgRoot: string; agentDir: string; cwd: string; env: Record<string, string | undefined> }): (kind: "closed" | "refused", arg?: string) => Promise<void> {
   return async (kind, arg) => {
     if (!o.python) return;
-    const r = await o.spawner(o.python, ["-E", "-s", path.join(o.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", o.agentDir, ...remoteNoticeArgs(kind, arg)], { timeoutMs: 60_000, cwd: o.cwd });
+    const r = await o.spawner(o.python, ["-X", "utf8", "-E", "-s", path.join(o.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", o.agentDir, ...remoteNoticeArgs(kind, arg)], { timeoutMs: 60_000, cwd: o.cwd });
     if (r.code === 0 && !r.error) return;
     let why = r.error?.message ?? (r.stderr.trim() || `exit ${String(r.code)}`);
     try {
@@ -788,7 +788,7 @@ function openEnv(): Record<string, string> {
 
 /** The spawn of `foreman_session.py open` (never killed by an abort: it ends with the registry entry or a message) and its result. */
 async function spawnOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined): Promise<OpenOutcome> {
-  const r = await d.spawner(d.python!, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd, env: openEnv() });
+  const r = await d.spawner(d.python!, ["-X", "utf8", "-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd, env: openEnv() });
   const out = r.stdout.trim();
   const ok = !r.error && !r.timedOut && r.code === 0;
   if (c.worktree && !c.dryRun && ok) await noteWorktree(d, c.label, out);
@@ -862,7 +862,7 @@ export async function sessionBrief(d: SessionDeps, target: string, body: string,
     // a remote child is briefed over hc exec by the script (`remote deliver`), not over the local intercom
     if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
     const file = /\s/.test(body) ? body : path.resolve(d.cwd, body);
-    const r = await d.spawner(d.python, ["-E", "-s", path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "brief", ...(rework ? ["--rework"] : []), target, fs.existsSync(file) ? file : body], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
+    const r = await d.spawner(d.python, ["-X", "utf8", "-E", "-s", path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "brief", ...(rework ? ["--rework"] : []), target, fs.existsSync(file) ? file : body], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
     return { text, ok: !r.error && !r.timedOut && r.code === 0 };
   }

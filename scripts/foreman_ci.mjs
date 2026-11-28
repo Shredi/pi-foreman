@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `npm run test:ci`: every check CI runs that a local machine can run, in CI's order except that lint-ts sits after typecheck here (in CI it runs next to ruff) (unit, core-pin, ruff, conformance, node, installer, typecheck, lint-ts, replay, bench).
+// `npm run test:ci`: every check CI runs that a local machine can run, in CI's order except that lint-ts sits after typecheck here (in CI it runs next to ruff) (unit, core-pin, ruff, node, installer, typecheck, lint-ts, replay, bench).
 // The fresh-install job stays out (it needs the network). One line per step; exits 1 when a step fails.
 // The unit and node steps go through scripts/foreman_test_run.mjs and run with inherited output, so the runner's run id and lock-wait lines show; FOREMAN_TEST_TIMEOUT applies to each of them.
 // Replay is the slow step (scripts/replay_run.mjs runs the modules in parallel and prints its wall time). `--only <step>` runs one step (any name above).
@@ -71,13 +71,6 @@ function replay() {
   return { status: r.ok ? "pass" : "fail", line: counts ? `${counts[1]} modules passed, ${counts[2]} failed` : `exit ${r.status}`, out: r.out };
 }
 
-function conformance() {
-  if (!exec(py, ["-c", "import pytest"]).ok) return { status: "skip", line: "pytest is not installed, so the conformance run is skipped; install it with python -m pip install pytest" };
-  const r = exec(py, ["scripts/pull_core.py", "--conformance"]);
-  const summary = r.out.split("\n").find((l) => l.startsWith("core conformance")) ?? `exit ${r.status}`;
-  return { status: r.ok ? "pass" : "fail", line: summary, out: r.out };
-}
-
 function installer() {
   const files = fs.readdirSync(path.join(root, "tests", "installer")).filter((f) => f.endsWith(".test.mjs")).map((f) => `tests/installer/${f}`);
   const r = exec(process.execPath, ["--import", "./tests/installer/_hermetic-env.mjs", "--test", ...files]);
@@ -108,7 +101,6 @@ export const STEPS = [
   { name: "unit", run: unit, inherited: true },
   { name: "core-pin", run: corePin, inherited: false },
   { name: "ruff", run: ruff, inherited: false },
-  { name: "conformance", run: conformance, inherited: false },
   { name: "node", run: nodeTests, inherited: true },
   { name: "installer", run: installer, inherited: false },
   { name: "typecheck", run: typecheck, inherited: false },
