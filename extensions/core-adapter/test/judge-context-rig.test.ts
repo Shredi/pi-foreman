@@ -153,22 +153,17 @@ const WITHHELD_LINES: [string, string][] = [
   ["danger-unknown-write-target", 'tmux send-keys -t x hi; printf x > "$T"'],
 ];
 
-test("a call with any withheld label reaches the judge without the task or the ledger (owner session and child)", async (t) => {
-  for (const child of [true, false]) {
-    const r = await rig(t, { child });
-    await r.prompt(TASK);
-    // the foreman's own shell-write refusal comes before the judge for a delete or a write, so an owner session is tried with the remote lines only
-    for (const [, line] of child ? WITHHELD_LINES : []) {
-      const before = r.rec.requests.length;
-      await r.call("bash", { command: `${line} # ${++n}` });
-      assert.equal(r.rec.requests.length, before + 1, `${child}: ${line}`);
-      // a helper's launch task is withheld; an owner session shows its own prompt as the owner message
-      if (child) {
-        assert.ok(!r.last().includes(TASK), `${child}: ${line}`);
-        assert.equal(taskBlock(r.last()), "");
-        assert.ok(r.last().includes("(not shown for this kind of call)"), `${child}: ${line}`);
-      } else assert.equal(taskBlock(r.last()), TASK, `${child}: ${line}`);
-    }
+test("a call with any withheld label reaches the judge without the task or the ledger (child)", async (t) => {
+  // the foreman's own shell-write refusal comes before the judge for a delete or a write in an owner session, so only a child is tried
+  const r = await rig(t, { child: true });
+  await r.prompt(TASK);
+  for (const [, line] of WITHHELD_LINES) {
+    const before = r.rec.requests.length;
+    await r.call("bash", { command: `${line} # ${++n}` });
+    assert.equal(r.rec.requests.length, before + 1, line);
+    assert.ok(!r.last().includes(TASK), line);
+    assert.equal(taskBlock(r.last()), "");
+    assert.ok(r.last().includes("(not shown for this kind of call)"), line);
   }
 });
 
@@ -272,15 +267,18 @@ test("protected check, child: the launch task is sent for a host entry in mode m
   assert.ok(!r.requests[0].includes("(not shown for this kind of call)"));
 });
 
-test("a call on another machine carries the task (a helper's brief fenced as agent-written) and gets no file reads", async (t) => {
-  const r = await rig(t, { child: true });
-  await r.prompt(TASK);
-  for (const [, line] of REMOTE_LINES) {
-    const before = r.rec.requests.length;
-    await r.call("bash", { command: `${line} # ${++n}` });
-    assert.equal(r.rec.requests.length, before + 1, line);
-    assert.equal(taskBlock(r.last()), TASK, line);
-    assert.ok(!r.last().includes("(not shown for this kind of call)"), line);
+test("a call on another machine carries the task and gets no file reads (owner session and child)", async (t) => {
+  for (const child of [true, false]) {
+    const r = await rig(t, { child });
+    await r.prompt(TASK);
+    for (const [, line] of REMOTE_LINES) {
+      const before = r.rec.requests.length;
+      await r.call("bash", { command: `${line} # ${++n}` });
+      assert.equal(r.rec.requests.length, before + 1, `${child}: ${line}`);
+      // a helper's brief is fenced as agent-written; an owner session shows its own prompt as the owner message
+      assert.equal(taskBlock(r.last()), TASK, `${child}: ${line}`);
+      assert.ok(!r.last().includes("(not shown for this kind of call)"), `${child}: ${line}`);
+    }
   }
 });
 
