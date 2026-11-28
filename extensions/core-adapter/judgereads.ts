@@ -361,23 +361,67 @@ export function maskKeys(text: string): string {
 }
 
 const KEY_PEM_MARKER = /-----(?:BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:[A-Za-z0-9+/=]|\\[nr])*|END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----)/g;
-const KEY_HEADER_LINE = /^(?:Proc-Type|DEK-Info|Comment):/;
-const KEY_PGP_SUM = /^=[A-Za-z0-9+/]{4}\r?$/;
-const KEY_B64_ANY = /^[A-Za-z0-9+/=]+\r?$/;
+const KEY_HEADER_LINE = /^(?:Proc-Type|DEK-Info|Comment|Version):([^]*)$/;
+const KEY_HEADER_UNSAFE = /[$`();|&<>]/;
+const KEY_PGP_SUM = /^=[A-Za-z0-9+/]{4}$/;
+const KEY_B64_ONLY = /^[A-Za-z0-9+/=]+$/;
+/** Leading whitespace, one comment marker and one quote char: kept visible when a key line is hidden. */
+const KEY_LINE_PREFIX = /^[ \t]*(?:(?:#|\/\/|;)[ \t]*)?["']?/;
 
-/** A BEGIN..END region: the markers are masked and only key data (base64 lines, the standard key headers) is blanked; any other line stays visible. Linear in the region. */
+/** One line split into its prefix and the data between the prefix and the trailing whitespace, quote, comma or `\n`/`\r` escapes. Linear. */
+function splitKeyLine(l: string): { prefix: string; data: string } {
+  const prefix = KEY_LINE_PREFIX.exec(l)?.[0] ?? "";
+  let end = l.length;
+  for (;;) {
+    const c = l.charCodeAt(end - 1);
+    // space, tab, CR, LF, quote, comma
+    if (end > prefix.length && (c === 32 || c === 9 || c === 13 || c === 10 || c === 34 || c === 39 || c === 44)) end--;
+    else if (end - 2 >= prefix.length && l[end - 2] === "\\" && (l[end - 1] === "n" || l[end - 1] === "r")) end -= 2;
+    else break;
+  }
+  return { prefix, data: l.slice(prefix.length, end) };
+}
+
+/**
+ * A BEGIN..END region: the markers are masked and only key data is blanked, whatever the indent or comment marker: base64 lines of 40+ chars, the short last key line and the PGP
+ * checksum directly after a hidden line with the same prefix, and the standard headers directly after BEGIN (no shell syntax in the value). Any other line stays visible. Linear.
+ */
 function maskPemRegion(region: string, R: string): string {
   const lines = region.split("\n");
+  let prevPrefix: string | undefined; // prefix of the previous line when it was hidden as key data (or a short key line)
+  let prevKey = false; // the previous hidden line was full key data
+  let headers = true; // still in the run directly after BEGIN
   return lines
     .map((l, i) => {
       if (l.includes("-----")) {
         KEY_PEM_MARKER.lastIndex = 0;
-        if (KEY_PEM_MARKER.test(l)) return l.replace(KEY_PEM_MARKER, R);
+        if (KEY_PEM_MARKER.test(l)) {
+          prevPrefix = undefined;
+          return l.replace(KEY_PEM_MARKER, R);
+        }
       }
-      if (KEY_HEADER_LINE.test(l) || KEY_B64_LINE.test(l)) return "";
-      // a short last key line (and the PGP checksum) sits directly above the END marker or the PGP checksum line; elsewhere a short word is code
-      const next = lines[i + 1] ?? "";
-      return KEY_B64_ANY.test(l) && (i + 1 === lines.length - 1 || KEY_PGP_SUM.test(next)) ? "" : l;
+      const { prefix, data } = splitKeyLine(l);
+      const pure = data.length > 0 && KEY_B64_ONLY.test(data);
+      if (pure && data.length >= 40) {
+        headers = false;
+        prevPrefix = prefix;
+        prevKey = true;
+        return prefix;
+      }
+      if (headers && i > 0) {
+        if (data.length === 0) headers = false;
+        else {
+          const h = KEY_HEADER_LINE.exec(data);
+          if (h && !KEY_HEADER_UNSAFE.test(h[1] ?? "")) return prefix;
+          headers = false;
+        }
+      }
+      if (pure && prevPrefix === prefix && (prevKey || KEY_PGP_SUM.test(data))) {
+        prevKey = false;
+        return prefix;
+      }
+      prevPrefix = undefined;
+      return l;
     })
     .join("\n");
 }
