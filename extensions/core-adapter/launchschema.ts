@@ -1,4 +1,4 @@
-// The launch fields the adapter's gates read (`reason`, `items`, `occasion`, `reads`, `install`, `size`, `risk`, `mcp`) are top-level keys of the foreman's
+// The launch fields the adapter's gates read (`reason`, `items`, `attach`, `occasion`, `reads`, `install`, `size`, `risk`, `mcp`) are top-level keys of the foreman's
 // `subagent` call, but pi-subagents' schema does not declare them, and a model that fills in only declared parameters never sends them.
 // The triage tool's `prepareLoadout` (index.ts) therefore sets an extended copy of the schema on Pi's per-refresh wrapper of the declared tool.
 //
@@ -31,6 +31,7 @@ const RISK_TAGS = RISKS.join(", ");
 const ALWAYS: Record<string, Schema> = {
   reason: loose("Why a launch with `model: \"strong\"` or `model: \"top\"`, or with a `model` below the rung that `size` and `risk` measure, is needed: one line of text, required for such a launch.", STRING),
   items: loose("Reviewer launches: the ledger items this reviewer checks, a list of item numbers and \"V\" such as [2, 5, \"V\"], each open on the ledger, except on a `[pre-pr]` launch, which may also name closed items and records their results without changing the ledger; without it a `[pre-pr]` takes the items reviews of its own checkout judged, and any other reviewer takes the open items except V that no other checkout judged, and after a FAIL in the same checkout the failed items still open; after a FAIL, items beyond the failed ones are reviewed against the whole change.", { type: "array", items: { anyOf: [NUMBER, STRING, ANY] } }, NUMBER, STRING),
+  attach: loose("`[pre-pr]` reviewer launches: the images to attach to the pull request, a list of paths inside the checkout, for example [\".workflow/screenshots/result.png\"]; still images only (png, jpg, jpeg, webp). The reviewer is told to open each image and to FAIL on private data; only the files that PASS (and are unchanged) can go into pr_create or pr_attach.", { type: "array", items: { anyOf: [STRING, ANY] } }),
   diffBase: loose("Reviewer launches: the commit the review diff is taken against (a sha, branch or tag that is an ancestor of HEAD), for a change that sits on top of earlier commits; without it the base is the recorded builder base or the merge-base.", STRING),
   occasion: loose(`Reviewer launches: the kind of review, one of ${OCCASIONS}; without it the launch is the review of the items.`, STRING),
   reads: loose("Builder and reviewer launches: the child's read allowance as a positive integer, capped by the configured maximum.", NUMBER, STRING),

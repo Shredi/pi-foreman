@@ -218,7 +218,7 @@ function installRootWrite(tool: string, input: unknown, segments: ShellSegment[]
 function childDenied(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): GateResult {
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
   if (tool === "foreman_protect") return deny("child-protect", "Children never change the protected targets; the owner does, with /foreman perms protect.");
-  if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
+  if (tool === "pr_create" || tool === "pr_attach" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
   if (segments && mergesPullRequest(segments)) return deny("child-pr-merge", "Children never merge a pull or merge request; the foreman or the owner does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", `Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree${boundDirs(env.roots).scratch ? " and your scratch dir ($FOREMAN_SCRATCH)" : ""}.`);
@@ -298,7 +298,7 @@ function powershellWordSegment(words: string[], cwd: string): ShellSegment {
  * Tools whose payload is prose for another agent or the user (a builder brief may say "never use sudo"): the raw-text floors do NOT run
  * on their prose fields, only the structured fields below are floored.
  */
-const PROSE_TOOLS = new Set(["subagent", "intercom", "contact_supervisor", "subagent_supervisor", "ask_user_question", "pr_create"]);
+const PROSE_TOOLS = new Set(["subagent", "intercom", "contact_supervisor", "subagent_supervisor", "ask_user_question", "pr_create", "pr_attach"]);
 const STRUCTURED_PATH_KEYS = ["cwd", "worktree", "output", "outputPath", "output_path", "outputFile"];
 
 /** Every string leaf of a JSON value, one per line (so a floor regex sees `rm -rf /` as the line it is, not as JSON); `skipProse`: leaves under a prose field are left out. */
@@ -397,6 +397,14 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
       const v = inp[k];
       const h = typeof v === "string" && v ? secretPath(v, env) : null;
       if (h) return h;
+    }
+    // the upload paths of pr_create / pr_attach are structured fields: only their free text (title, body, caption) is exempt
+    if (tool === "pr_create" || tool === "pr_attach") {
+      for (const e of Array.isArray(inp.attach) ? inp.attach : []) {
+        const v = typeof e === "string" ? e : e && typeof e === "object" ? (e as Record<string, unknown>).path : undefined;
+        const h = typeof v === "string" && v ? secretPath(v, env) : null;
+        if (h) return h;
+      }
     }
     return null;
   }

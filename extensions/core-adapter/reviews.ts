@@ -12,6 +12,8 @@ import type { Verdict } from "./rounds.ts";
 import type { ReviewKind } from "./reviewloop.ts";
 import { checkVerdictCall } from "./verdict.ts";
 import type { VerdictSuite } from "./verdict.ts";
+import { attachRefsOf } from "./prattach.ts";
+import type { AttachRef } from "./prattach.ts";
 
 export interface ReviewRecord {
   role: string;
@@ -42,6 +44,8 @@ export interface ReviewRecord {
   run?: string;
   /** The test suites the reviewer named in its verdict (verdict.ts); absent without the field. */
   suites?: VerdictSuite[];
+  /** The images a `[pre-pr]` PASS released (prattach.ts): path relative to the checkout and sha256 of each file the reviewer was told to open and that still had that hash at the verdict. A same-tree alias copies it. Absent: none. */
+  attach?: AttachRef[];
 }
 
 export const MAX_REVIEWS = 50;
@@ -328,6 +332,7 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
     const sig = Array.isArray(r.sig) && r.sig.every((x) => typeof x === "string") ? (r.sig as string[]).slice(0, MAX_SIG) : null;
     const checked = r.suites === undefined ? null : checkVerdictCall({ verdict: "pass", suites: r.suites }, []); // the tool's own check; a bad list is dropped
     const suites = checked && "call" in checked ? checked.call.suites : undefined;
+    const attach = attachRefsOf(r.attach);
     out.push({
       role: r.role,
       verdict: r.verdict,
@@ -344,13 +349,14 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(typeof r.at === "number" && Number.isFinite(r.at) ? { at: r.at } : {}),
       ...(typeof r.run === "string" && r.run && r.run.length <= 200 ? { run: r.run } : {}),
       ...(suites && suites.length > 0 ? { suites } : {}),
+      ...(attach ? { attach } : {}),
     });
   }
   return out.slice(-MAX_REVIEWS);
 }
 
 /** Every `[pr_refused:<reason>]` a PR gate can name; `pr_alias`, `pr_compound`, `pr_config`, `checks_failed`, `repo_unmatched` and `repo_ambiguous` were only emitted by the removed shell gate and are kept for old traces. */
-export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed", "cwd_unreviewed", "cwd_stale", "repo_unmatched", "repo_ambiguous", "high_stakes_required", "high_stakes_failed"] as const;
+export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed", "cwd_unreviewed", "cwd_stale", "repo_unmatched", "repo_ambiguous", "high_stakes_required", "high_stakes_failed", "attach_unreviewed", "attach_head_moved"] as const;
 /** The reasons of the branch test; `cwd_unreviewed`, `cwd_stale` (pr_create {cwd}) come from the sibling-checkout rules. */
 export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 

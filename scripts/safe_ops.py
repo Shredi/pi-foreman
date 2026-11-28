@@ -5,7 +5,7 @@ CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
 
     request  {"op": "worktree_remove" | "move" | "copy" | "status" | "log" | "diff_stat" |
               "branch_state" (the last four are read-only, capped to 200 entries / 16 KB),
-              "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" |
+              "pr_create" | "pr_attach" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" |
               "pr_batch" (scripts/pr_ops.py, run a host CLI; pr_batch needs no work tree, `cwd` only the process cwd; nor does pr_comments with top-level `repoless: true` and `args.repo`), "args": {...}, "cwd": "<dir>",
               "config": {"copyMaxBytes": ..., "worktreeDisposable": [...], "baseBranch": ...}}
     answer   {"ok": true, "action": "<what was done>", ...}
@@ -1139,7 +1139,7 @@ OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove, 
        "log": op_log, "diff_stat": op_diff_stat, "branch_state": op_branch_state}
 
 
-PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch", "pr_draft", "pr_label", "pr_body")
+PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch", "pr_draft", "pr_label", "pr_body", "pr_attach")
 
 
 def handle(req):
