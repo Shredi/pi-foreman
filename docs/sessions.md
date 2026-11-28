@@ -270,7 +270,8 @@ The session's own `ask.md` (`ownask.ts`) is open while the same handoff dir hold
   entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
   `foreman_wait lost on restart: …` listing the lost ids, kinds and notes, and starts again what it still needs (trace `wait`
   decision `lost`). A wait that had already finished but whose wake was not delivered yet (batched in the window, or held while
-  the agent was busy) stays in the stored set with its outcome until the wake is sent; the notice names it too (`finished before
+  the agent was busy) stays in the stored set with its outcome until the wake is sent, and `foreman_wait list` shows it as
+  `resolved, wake pending: <outcome>` until then; after a restart the notice delivers it with its outcome and triggers a turn when idle; the notice names it too (`finished before
   the restart, result not delivered: <outcome>`). Nothing is reattached; a pid is not reattached because the process may be gone or reused. `pr_watch`
   watches do resume, without a deadline (see [tools](tools.md#watch)).
 

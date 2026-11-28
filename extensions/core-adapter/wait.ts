@@ -855,7 +855,13 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       };
       if (params.action === "list") {
         const list = slot?.rt.list() ?? [];
-        return text(list.length ? list.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}: ${w.ageSeconds}s waited, times out in ${w.leftSeconds}s`).join("\n") : "No active waits.", { decision: "list", waits: list });
+        // Resolved waits whose wake is not sent yet (batch window or held during a run) stay visible until the wake goes out.
+        const pending = slot?.rt.pendingOutcomes() ?? [];
+        const lines = [
+          ...list.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}: ${w.ageSeconds}s waited, times out in ${w.leftSeconds}s`),
+          ...pending.map((o) => `${o.id} ${o.kind}${o.note ? ` "${o.note}"` : ""} resolved, wake pending: ${o.outcome}`),
+        ];
+        return text(lines.length ? lines.join("\n") : "No active waits.", { decision: "list", waits: list, pending });
       }
       if (params.action === "cancel") {
         const id = typeof params.id === "string" ? params.id : "";
