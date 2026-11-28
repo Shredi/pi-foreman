@@ -1320,6 +1320,23 @@ async function main(rawArgv, env = process.env) {
       reason = why;
       process.stderr.write(line);
       killing = killTree(child.pid);
+      // A detached descendant may hold the pipes open: end the run after the kill step.
+      if (teeLog) killing.then(() => drainThenFinish(1), () => drainThenFinish(1));
+    };
+    let finished = false;
+    let drainTimer;
+    const finish = (exit) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(drainTimer);
+      for (const s of [child.stdout, child.stderr]) s?.destroy();
+      if (teeLog) teeLog.end(() => done(exit));
+      else done(exit);
+    };
+    // The child exited but the pipes may stay open (detached descendant): give buffered output a short moment, then end.
+    const drainThenFinish = (exit) => {
+      if (finished || drainTimer) return;
+      drainTimer = setTimeout(() => finish(exit), TEE_DRAIN_MS);
     };
     const stopPoll = setInterval(() => {
       if (stopRequested()) stopRun("stop", stoppedLine);
@@ -1345,13 +1362,11 @@ async function main(rawArgv, env = process.env) {
     }
     child.on("error", (e) => {
       process.stderr.write(`foreman_test_run: ${e.message}\n`);
-      done(127);
+      finish(127);
     });
-    child.on("close", (code, signal) => {
-      const exit = signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1);
-      if (teeLog) teeLog.end(() => done(exit));
-      else done(exit);
-    });
+    const exitOf = (code, signal) => (signal ? 128 + (os.constants.signals[signal] ?? 0) : (code ?? 1));
+    if (teeLog) child.on("exit", (code, signal) => drainThenFinish(exitOf(code, signal)));
+    child.on("close", (code, signal) => finish(exitOf(code, signal)));
   });
   if (!countDir || signalExit !== undefined) {
     if (countDir) fs.rmSync(countDir, { recursive: true, force: true });
@@ -1369,6 +1384,8 @@ async function main(rawArgv, env = process.env) {
     fs.rmSync(countDir, { recursive: true, force: true });
   }
 }
+
+const TEE_DRAIN_MS = 300;
 
 function realPath(p) {
   let r;
