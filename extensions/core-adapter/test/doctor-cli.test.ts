@@ -107,6 +107,9 @@ test("usage: --help prints the usage and exits 0; warm and any other argument ex
 });
 
 test("parity: every line the shell form prints for the same agent dir and project is a line of /foreman doctor, in the same order", async (t: T) => {
+  // The Python input both forms get: the env as the process had it before a session started. index.ts captures PI_FOREMAN_PYTHON at import,
+  // and its session_start writes the resolved interpreter into process.env (patchShellEnv), which the shell form would then read as its hint.
+  const startEnv = { ...process.env };
   const commands = new Map<string, Cmd>();
   const notes: string[] = [];
   const c = await r11Rig(t, {}, {
@@ -115,7 +118,7 @@ test("parity: every line the shell form prints for the same agent dir and projec
   });
   await commands.get("foreman")!.handler("doctor", c.ctx);
   const slash = notes[notes.length - 1].split("\n");
-  const base = realDeps({ ...process.env, HOME: path.dirname(c.agentDir), PI_CODING_AGENT_DIR: c.agentDir });
+  const base = realDeps({ ...startEnv, HOME: path.dirname(c.agentDir), PI_CODING_AGENT_DIR: c.agentDir });
   const shell = await doctorLines({ ...base, agentDir: c.agentDir, cwd: c.project, npmRoot: async () => null, pressureRun: async () => undefined, now: Date.now });
   // the shell form's own lines, and the two that depend on a session: the running Pi's version and the provider's roles (what is dormant)
   const own = (l: string): boolean => l.includes(NEEDS_PI) || l.startsWith("INFO config read without a provider") || l.startsWith("INFO pi-background-tasks peer range") || l.startsWith("INFO dormant:");
