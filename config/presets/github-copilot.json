@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below" } },
+  "compaction": { "maxTokens": 200000 },
+  "ceremony": {
+    "reviewModel": {
+      "github-copilot/claude-opus-5.5": "github-copilot/gpt-6.1-sol:high",
+      "github-copilot/claude-sonnet-5.5": "github-copilot/claude-opus-5.5:high"
+    },
+    "highStakes": { "model": "github-copilot/claude-fable-5.2:high" }
+  },
+  "providers": {
+    "github-copilot": {
+      "ranks": [
+        { "match": "claude-fable-*", "tier": 0 },
+        { "match": "gpt-*-astra*", "tier": 0 },
+        { "match": "claude-opus-*", "tier": 1 },
+        { "match": "claude-sonnet-*", "tier": 2 },
+        { "match": "gpt-*-sol*", "tier": 2 },
+        { "match": "claude-haiku-*", "tier": 3 },
+        { "match": "gpt-*-terra*", "tier": 3 },
+        { "match": "gpt-*-luna*", "tier": 4 }
+      ],
+      "roles": {
+        "foreman": { "model": "github-copilot/claude-opus-5.5", "thinking": "high" },
+        "session-foreman": { "model": "github-copilot/claude-opus-5.5", "thinking": "high" },
+        "explorer": { "model": "github-copilot/gpt-6-luna", "thinking": "low", "strong": { "model": "github-copilot/gpt-6.1-terra", "thinking": "low" } },
+        "builder": { "model": "github-copilot/gpt-6-luna", "thinking": "medium", "strong": { "model": "github-copilot/gpt-6.1-terra", "thinking": "medium" } },
+        "reviewer": { "model": "github-copilot/gpt-6.1-sol", "thinking": "high" }
+      }
+    }
+  }
+}

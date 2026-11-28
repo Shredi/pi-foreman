@@ -15,13 +15,34 @@ foreman config apply-preset <name> [--foreman <provider>/<model id>] [--dry-run]
 The preset wins over equal keys in your file; the old file is backed up first (`foreman.json.bak-<date>`). The merged
 result is validated against the schema and nothing is written when it fails. `--dry-run` writes nothing.
 `--foreman` sets the foreman model of the preset's provider. Shipped presets: `claude-bridge`,
-`claude-bridge-sonnet-reviewer`, `google`, `openai` (fixed model maps) and `inexpensive` (rank tiers, below).
+`claude-bridge-sonnet-reviewer`, `github-copilot`, `openai-codex`, `google`, `openai` (fixed model maps) and `inexpensive` (rank tiers, below).
+Of these, `claude-bridge`, `github-copilot` and `openai-codex` are the subscription presets below.
 
 A fresh install has no rank rules, so a builder launch that names a model outside the builder's own models is refused until a preset sets `providers.<p>.ranks`; the session start says so. Apply a preset (`foreman config apply-preset`) to name explicit builder models.
 
 `claude-bridge` and `claude-bridge-sonnet-reviewer` need an Opus or stronger foreman. Their explorer, builder and reviewer run on Sonnet, and a role's normal model must rank below the foreman's (the reviewer: at or below): under a Sonnet foreman the explorer and the builder are refused, under a Haiku foreman all three are. The refusal names the cause and `/foreman doctor` reports it as a `FAIL` line ([roles](roles.md#role-ladder-rank-policy-and-presets)).
 
 `claude-bridge` and `claude-bridge-sonnet-reviewer` set `ladder.equalOnStrongRisk: true`: for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial, so only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung ([roles](roles.md#role-ladder-rank-policy-and-presets)). Under an Opus foreman a builder launch without a risk tag at tier heavy skips its climb to the strong rung: the builder launches on its normal model and the launch result says so.
+
+## Subscription presets
+
+| preset | subscription | login | role map |
+|---|---|---|---|
+| `claude-bridge` | Claude Pro or Max | install `pi install npm:pi-claude-bridge@0.11.0` or later, then the Claude login in [install](install.md#claude-bridge-log-in-once) | foreman Opus 5.5; explorer, builder and reviewer Sonnet 5.5 with a strong Opus 5.5 rung |
+| `github-copilot` | GitHub Copilot | `/login` in Pi, pick GitHub Copilot | foreman and session-foreman Claude Opus 5.5; reviewer GPT-6.1 Sol; builder and explorer GPT-6 Luna with a strong GPT-6.1 Terra rung |
+| `openai-codex` | ChatGPT Plus or Pro | `/login` in Pi, pick the ChatGPT subscription entry of OpenAI | foreman GPT-6 Astra; reviewer GPT-6.1 Sol; builder and explorer GPT-6 Luna with a strong GPT-6.1 Terra rung |
+
+`openai`, `google` and `inexpensive` use API keys and are pay per use.
+
+`github-copilot` is applied the same way as the others, for example `foreman config apply-preset github-copilot`, then `/foreman setup`. `--foreman github-copilot/claude-sonnet-5.5` gives a cheaper foreman; it moves only the foreman role, so `session-foreman` stays Opus. The reviewer always differs from the foreman through `ceremony.reviewModel` pairs ([reviewer pairs](review.md#reviewer-pairs)): Opus foreman gets GPT-6.1 Sol, Sonnet foreman gets Opus 5.5. The high-stakes reviewer ([high stakes](review.md#high-stakes)) is Fable 5.2 at `high` for `github-copilot` and `claude-bridge`, and GPT-6.2 Astra at `high` for `openai-codex`. The explorer thinks at `low`.
+
+The Copilot models have a context window of about 1M tokens. The `github-copilot` preset sets `compaction.maxTokens` to 200000 (the default too), so sessions compact at or below 200k tokens after `/foreman setup`. A preset cannot change a model's window; the compaction point is described in [install](install.md#what-setup-writes-for-compaction).
+
+In every shipped preset GPT Sol runs only as the reviewer: never as foreman, session-foreman, builder or explorer, and not as a `strong` rung of those. So `openai` uses GPT-6.1 Terra as the strong rung of builder and explorer.
+
+Ranks: `openai-codex` and `openai` rank astra 0, sol 2, terra 3, luna 4. `github-copilot` ranks the same GPT families and the Claude families (fable 0, opus 1, sonnet 2, haiku 3).
+
+If your plan lacks a model, edit the ids in `foreman.json` after applying, or pass `--foreman`.
 
 ## claude-bridge cache values
 

@@ -16,7 +16,7 @@
       "purpose": "`foreman setup` migrates the keys of the removed permission package to `gate.*`, writes the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages.",
       "doc": "docs/install.md#install",
       "keys": ["version"],
-      "commands": ["/foreman", "/foreman setup", "foreman setup", "/foreman doctor", "/foreman update-check", "foreman update-check", "foreman config", "foreman config validate", "/foreman config validate"],
+      "commands": ["/foreman", "/foreman setup", "foreman setup", "/foreman doctor", "foreman doctor", "/foreman update-check", "foreman update-check", "foreman config", "foreman config validate", "/foreman config validate"],
       "switch": null,
       "state": "on",
       "enable": ""

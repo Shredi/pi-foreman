@@ -26,6 +26,7 @@ const PLAN = "# Widget\n\n## For the owner\n\nGoal: ship the widget.\n\n## Goal\
 type Opts = { tier?: string; key?: boolean; builder?: string };
 async function rig(t: Parameters<typeof r11Rig>[0], preset: string, foreman: string, o: Opts = {}): Promise<Rig> {
   const config = PRESET(preset);
+  delete config.ceremony; // r11Rig spreads opts.config shallowly: a preset ceremony key would replace the rig's tier
   if (o.builder) config.providers["claude-bridge"].roles.builder.model = o.builder;
   if (o.key !== undefined) config.ladder.equalOnStrongRisk = o.key;
   const tools = new Map<string, { execute: (...a: unknown[]) => Promise<{ details: { decision: string } }> }>();

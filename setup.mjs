@@ -1994,7 +1994,7 @@ async function main(argv) {
       for (const e of v.errors || []) say(`  foreman.json error: ${e}`);
       const providers = v.config && v.config.providers;
       if (isObj(providers) && Object.keys(providers).length === 0) {
-        say(`  no provider mapped yet: add one under "providers" in ${foremanFile} (README, section Install), then re-run.`);
+        say(`  no provider mapped yet: add one under "providers" in ${foremanFile} (README, section Quickstart), then re-run.`);
       }
     }
     if (errors.length) say(`  some roles are unresolved; only the resolvable part was written. Edit ${foremanFile}.`);

@@ -9,13 +9,14 @@ import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initia
 import { checkTrivial, checkoutBaseline, cleanTreeStatus, effectiveRequired, escalationNote, skipper, trivialBuilderPath } from "./trivial.ts";
 import { baselineAt, dirtyPaths, memoCheckout, nearestDirectory, resolveCheckout, takeBaseline, unchangedSince, type CheckoutMemo, type DirtyBase, type DirtyEntry } from "./dirtybase.ts";
 import type { CeremonyState } from "./ceremony.ts";
-import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
+import { get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
-import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
+import { loadRegister, registrationPathLabel, requiredChildExtensions } from "./childext.ts";
+import { addonHeadLines, addonTailLines, bridgeLines, childExtensionFileLines, compactionLines, configLines, installLines, permissionLines, pressureLines, prFeedOnConfig, profileLines, subagentsLines, trackerLine, unusedKeyLines } from "./doctorlines.ts";
 import { childHandoffDirs, isSelfHost, openedHandoffDirs, literalOwnedDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { launchNeedsNestedRefusal, sessionRootInputs, sessionScratchRoot, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
+import { launchNeedsNestedRefusal, sessionRootInputs, sessionScratchRoot, treeCeilingOf, treeRootOf } from "./worktreeroot.ts";
 import { baseFloorEnv, unreadableWriteText, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
@@ -28,7 +29,7 @@ import { mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { Resolved } from "./permconfig.ts";
 import { readToolsOf, warnUnknownReadTools } from "./readtools.ts";
-import { gateLogFile, openGateLog } from "./gatelog.ts";
+import { openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
 import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, inputHash, writeChildAsk } from "./childask.ts";
 import { ChildAskPark, parkKey } from "./childaskpark.ts";
@@ -57,8 +58,6 @@ import { dormantDoctorLine, withBuiltinKeepalive } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { withNudge } from "./knowledge.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
-import { profileDoctorLines } from "./profiledoctor.ts";
-import { doctorAppHome, modsDoctorLines } from "./profiles.mjs";
 import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
 import type { PiRoots } from "./orient.ts";
 import { applyRootsBlock } from "./childbrief.ts";
@@ -81,10 +80,9 @@ import type { GitRunner, StartEntry } from "./readonlystate.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
-import { BRIDGE_PROVIDER, BridgeIsolation, bridgeAuthNotice, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
+import { BRIDGE_PROVIDER, BridgeIsolation, bridgeAuthNotice, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, rowModelOf, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
-import { gateMigrationLines } from "./gatemigrate.ts";
 import { userPromptOf } from "./review.ts";
 import { git, resolveDiffBase, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
@@ -119,7 +117,7 @@ import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
 import { pageServerDoctorLine } from "./pageserver.ts";
-import { addTracked, lastPollAgeMs, readStoreEntry, trackedHostOf, trackerDoctorLine } from "./prstore.ts";
+import { addTracked, readStoreEntry, trackedHostOf } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
 import { parsePhases, tagChecks } from "./prphases.ts";
@@ -177,11 +175,10 @@ import { isPlanNotice, NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLineOf, planPageL
 import { pageLinks } from "./pagelinks.ts";
 import { cleanDialogText, shapedConfirm, shapedSelect } from "./ownerdialog.ts";
 import type { DialogSpec } from "./ownerdialog.ts";
-import { OpenPrsRefresher, ReloadingConfig, openPrsConfig, realGh } from "./openprs.ts";
+import { OpenPrsRefresher, ReloadingConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
-import { piModelDataDir } from "./pi-model-data.mjs";
 import { resolveCachePolicy, resolveWarmPolicy } from "./cachepolicy.ts";
 import { bridgeTtlDoctorLines, cacheDoctorLines, deprecatedKeepaliveLines, retiredHighStakesLines } from "./doctorcache.ts";
 import { BridgeCacheTtl, bridgeTtlSetting, derivedBridgeTtlS, type BridgeTtlSetting } from "./bridgettl.ts";
@@ -224,7 +221,7 @@ import type { PlanFile } from "./checkpoint.ts";
 import { hiddenFactsLine } from "./htmlmd.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
-import { claimCore, emitReady, installInert, markCoreStarted, missingBundled, setupInvocation } from "./registry.ts";
+import { claimCore, emitReady, installInert, markCoreStarted, setupInvocation } from "./registry.ts";
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
@@ -242,9 +239,9 @@ import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-ag
 import { applyBgAddonDefaults, bgBashNotice, resolveBgShell } from "./bgshell.ts";
 import { shellPathSetting } from "./bg.ts";
 import type { ShellConfigFn } from "./bg.ts";
-import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
+import { addonPresent, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overrideAvailability, overrideDeclinedReason, overrideHint, overrideShape, overrideSpec, overrideUnavailableReason, takePressureOverride, taskHash, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
+import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, overrideAvailability, overrideDeclinedReason, overrideHint, overrideShape, overrideSpec, overrideUnavailableReason, takePressureOverride, taskHash, PRESSURE_FIXTURE_ENV, PressureSampler, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_KEY_PREFIX, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeNotifier, outboxSend, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
@@ -279,7 +276,7 @@ import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSiz
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncRunDirs, bashOutputLogs, recordBashOutputLog, childSurface, hubWorkflowDirs, mainWorkflowReadable, ownTaskReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
-import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender, remoteChildAddress } from "./intercomguard.ts";
+import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomInbound, intercomSender, remoteChildAddress } from "./intercomguard.ts";
 import { strOf, strRaw } from "./strof.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -306,9 +303,6 @@ function launchDeny(input: Record<string, unknown>): { role: string; command: st
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
 }
-const ADAPTER_ID = "pi-foreman-core-adapter";
-/** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
-const REMOVED_GIT_GUARD_ID = "pi-foreman-git-guard";
 const ORIGINAL_PI_FOREMAN_PYTHON = process.env.PI_FOREMAN_PYTHON;
 
 /** A ledger hint that failed after the rename retries: a `hint_write_failed` trace record, not a silent drop. */
@@ -2477,10 +2471,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   async function registerChildExtensions(s: Session, ctx: ExtensionContext): Promise<void> {
-    const extra = normaliseChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir);
+    const extra = requiredChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir, ENTRY);
     s.childExtensionErrors = extra.errors;
     for (const e of extra.errors) ctx.ui.notify(`pi-foreman: ${e}`, "error");
-    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== REMOVED_GIT_GUARD_ID)];
+    s.childExtensions = extra.list;
     try {
       const { fn, via } = await loadRegister();
       s.registration = fn({ sessionId: s.id, extensions: s.childExtensions, requireForAllRunners: true });
@@ -2568,8 +2562,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The PR feed is on: radar.openPrs.enabled is not false and tools.prHost is auto or gh (what the search refresher and `foreman prs poll` require). */
   function prFeedOn(s: Session): boolean {
-    const h = get(s.config.config, "tools.prHost") ?? "auto";
-    return openPrsConfig(get(s.config.config, "radar.openPrs")).enabled && (h === "auto" || h === "gh");
+    return prFeedOnConfig(s.config.config);
   }
 
   /** Draft handling (tools.prDraft, default true; docs/review.md): needs the review gate and the PR feed, which the readiness rule and the draft state's host facts come from. */
@@ -8587,92 +8580,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ok = (m: string): void => void out.push(`OK   ${m}`);
     const fail = (m: string, fix: string): void => void out.push(`FAIL ${m} — fix: ${fix}`);
 
-    if (s.python.ok) ok(`Python ${s.python.info.version.join(".")} at ${s.python.info.executable} (${s.python.info.source})`);
-    else fail(`no Python ≥ 3.13 (tried: ${s.python.rejected.join("; ") || "nothing"})`, NO_PYTHON_FIX.replace(/; run \/foreman doctor\.$/, "."));
-    for (const r of s.python.rejected) if (r.includes("inside the workspace")) out.push(`INFO Python candidate ${r}: the guards never run on an interpreter or venv a child can write; use one outside the project (python.path in your user foreman.json or PI_FOREMAN_PYTHON).`);
-
-    if (fs.existsSync(path.join(CORE_DIR, "scripts", "ledger_guard_write.py"))) ok(`core scripts at ${CORE_DIR}`);
-    else fail(`core scripts missing under ${CORE_DIR}`, "reinstall pi-foreman (core/ ships with the package).");
-    const unbundled = missingBundled(PKG_ROOT);
-    if (unbundled.length) fail(`bundled packages missing under ${path.join(PKG_ROOT, "node_modules")}: ${unbundled.join(", ")}`, "run pi update --extensions (or npm ci in a checkout), then restart.");
-    else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
     const reg = await import("./registry.ts"); // doctor-only helpers; keeps the top-level import line untouched
-    out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform, PKG_ROOT));
-    out.push(...reg.noticeChannelsDoctor(s.agentDir));
     const doctorRoots = await piRootsOf(s);
-    out.push(...worktreeRootDoctor(s.config.config, s.cwd, platform, { installRoot: doctorRoots.installRoot, npmRoot: doctorRoots.npmRoot }));
+    out.push(...installLines({ python: s.python, coreDir: CORE_DIR, pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, platform, config: s.config.config, roots: { installRoot: doctorRoots.installRoot, npmRoot: doctorRoots.npmRoot } }));
 
-    if (s.config.source === "defaults") fail("config CLI did not run; L1 defaults in use", "fix Python first, then check scripts/foreman_config.py.");
-    else if (s.config.errors.length) fail(`config errors: ${s.config.errors.join("; ")}`, "correct the named keys in your foreman.json.");
-    else ok(`config loaded (${s.config.warnings.length} warning(s)${s.config.warnings.length ? ": " + s.config.warnings.join("; ") : ""})`);
+    out.push(...configLines(s.config));
 
-    const generated = await generateSubagents({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.cwd, trusted: safeTrusted(ctx), spawner });
-    let settings: Record<string, unknown> | null = null;
-    try {
-      settings = JSON.parse(fs.readFileSync(path.join(s.agentDir, "settings.json"), "utf8"));
-    } catch {
-      settings = null;
-    }
-    if (!generated) fail("could not generate the subagents block", "fix Python/config first.");
-    else {
-      const have = (settings?.subagents ?? {}) as Record<string, unknown>;
-      const keys = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"];
-      const same = keys.every((k) => canonical(have[k] ?? null) === canonical((generated as Record<string, unknown>)[k] ?? null));
-      if (same) ok("generated subagents block in settings.json is in sync");
-      else fail("subagents block in settings.json differs from generate-subagents", "run /foreman setup or the installer to regenerate it.");
-    }
+    const sub = await subagentsLines({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, trusted: safeTrusted(ctx), spawner });
+    const settings = sub.settings;
+    out.push(...sub.lines);
+    out.push(...compactionLines(s.agentDir));
 
-    // compaction overrides setup wrote: for every settings file with a record, the recorded value must still be the one in the file
-    try {
-      const managed = JSON.parse(fs.readFileSync(path.join(s.agentDir, "pi-foreman", "managed.json"), "utf8")) as { entries?: Record<string, { compactionDerived?: Record<string, number> }> };
-      for (const [file, entry] of Object.entries(managed.entries ?? {})) {
-        const derived = entry?.compactionDerived;
-        if (!derived || !Object.keys(derived).length) continue;
-        let fileSettings: Record<string, unknown> | null = null;
-        try {
-          fileSettings = JSON.parse(fs.readFileSync(file, "utf8"));
-        } catch {
-          fileSettings = null;
-        }
-        const overrides = ((fileSettings?.compaction as { modelOverrides?: Record<string, { reserveTokens?: number }> } | undefined)?.modelOverrides) ?? {};
-        const drifted = Object.keys(derived).filter((k) => overrides[k]?.reserveTokens !== derived[k]);
-        if (drifted.length) fail(`compaction override in ${file} differs from what setup wrote: ${drifted.join(", ")}`, "run /foreman setup; it keeps a value you set yourself and records it as yours.");
-        else ok(`compaction overrides written by setup in ${file} are in sync (${Object.keys(derived).length})`);
-      }
-    } catch {
-      // no managed state yet: nothing to compare
-    }
-    if (piModelDataDir().error) out.push("INFO compaction: Pi model data not found; registry-derived overrides skipped (set PI_FOREMAN_PI_AI_DATA or PI_FOREMAN_PI_BIN)");
-
-    for (const e of s.childExtensions) {
-      if (fs.existsSync(e.path) && fs.statSync(e.path).isFile()) ok(`required child extension ${e.id}: ${e.path}`);
-      else fail(`required child extension ${e.id} not found at ${e.path}`, "install the package or correct safety.requiredChildExtensions.");
-    }
+    out.push(...childExtensionFileLines(s.childExtensions));
     if (s.registration) ok(`required child extensions registered (${s.registrationVia}, requireForAllRunners)`);
     else fail(`required child extensions not registered${s.registrationError ? `: ${s.registrationError}` : ""}`, "check the paths above and restart the session.");
     out.push(`INFO required child extension registration path: ${registrationPathLabel(s.registrationVia)}`);
-    // The only reader of safety.git.commit.*: the keys are accepted so old configs load, nothing else may read them. Set means a non-blank string or a list with one.
-    const commitKeySet = ["messagePattern", "requiredTrailers", "forbiddenTrailers", "checkCommand"].some((k) => {
-      const v = get(s.config.config, `safety.git.commit.${k}`);
-      return Array.isArray(v) ? v.some((x) => typeof x === "string" && x.trim() !== "") : typeof v === "string" && v.trim() !== "";
-    });
-    if (commitKeySet) out.push("INFO safety.git.commit.* is no longer used; commit messages are checked by the project's commit hooks");
-    // Keys the schema still accepts so old configs load; the shipped defaults no longer set them, so a value here comes from a user or project layer.
-    for (const k of ["gate.mode", "gate.askTimeoutMs", "gate.readClear", "gate.readonlyClear", "retro.proposalMinReviews"]) {
-      if (get(s.config.config, k) !== undefined) out.push(`INFO ${k} is no longer used and has no effect`);
-    }
+    out.push(...unusedKeyLines(s.config.config));
 
-    // Host pressure: a fresh sample (the sampler timer's call); a missing probe is never a FAIL.
-    try {
-      const file = pressurePath(s.agentDir);
-      const args = ["sample", "--workspace", s.cwd, "--state", file, "--limits", JSON.stringify(limitsOf(s.config.config))];
-      const fx = process.env[PRESSURE_FIXTURE_ENV]?.trim();
-      if (fx) args.push("--fixture", fx);
-      await (deps.pressureRun ?? ((a) => runScript(s, "foreman_pressure.py", a, 20_000)))(args);
-    } catch {
-      // fall through to the stored file
-    }
-    out.push(pressureDoctorLine(readPressure(pressurePath(s.agentDir), sampleSecondsOf(s.config.config), pressureNow())));
+    out.push(...(await pressureLines({ agentDir: s.agentDir, cwd: s.cwd, config: s.config.config, env: process.env, now: pressureNow, run: deps.pressureRun ?? ((a) => runScript(s, "foreman_pressure.py", a, 20_000)) })));
 
     if (!s.isChild && ctx.model) {
       // the base model, never the idle-downshift one: children and the rank policy keep the base
@@ -8707,46 +8632,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
       else ok("no project Claude Code hooks, command helpers or .mcp.json");
     }
-    const bridgeTrust = bridgeTrusted(s.agentDir, s.cwd);
-    const bridgeCfg = bridgeTrust ? [] : projectBridgeConfigRisks(s.cwd);
-    if (bridgeTrust) ok("project .pi/claude-bridge.json is trusted by the owner (bridge-trust.json, hash matches)");
-    else if (bridgeCfg.length) fail(`project claude-bridge config: ${bridgeCfg.join(", ")}`, PROJECT_BRIDGE_FIX);
-    else ok("no executable path, AskClaude or strictMcpConfig false in .pi/claude-bridge.json");
-    const userBridge = userBridgeConfigRisks(s.agentDir);
-    const userBridgeFile = path.join(s.agentDir, "claude-bridge.json");
-    if (userBridge.fail.length) fail(`user claude-bridge config ${userBridgeFile}: ${userBridge.fail.join(", ")}`, "remove them unless you meant them: AskClaude runs Claude Code with the project's settings and bypassPermissions, and strictMcpConfig false loads project MCP servers in every bridge turn.");
-    if (userBridge.warn.length) out.push(`WARN user claude-bridge config ${userBridgeFile} sets ${userBridge.warn.join(", ")}: claude-bridge starts that program for every turn and summary. Fine if you set it on purpose; pi-foreman asks before bridge use when this file changes.`);
-    if (!userBridge.fail.length && !userBridge.warn.length) ok("no executable path, AskClaude or strictMcpConfig false in the user claude-bridge config");
-    let projectSettings: Record<string, unknown> | null = null;
-    try {
-      projectSettings = JSON.parse(fs.readFileSync(path.join(s.cwd, ".pi", "settings.json"), "utf8"));
-    } catch {
-      projectSettings = null;
-    }
-    const order = bridgeLoadOrder(projectSettings?.packages, settings?.packages, PKG_ROOT, path.join(s.cwd, ".pi"), s.agentDir);
-    if (order === "bridge-first") fail("pi-claude-bridge loads before pi-foreman, so its compaction and branch-summary takeover runs before pi-foreman's config-drift check", "list pi-foreman before pi-claude-bridge in settings.json packages.");
-    else if (order === "foreman-first") ok("pi-foreman loads before pi-claude-bridge (the drift check precedes the bridge's summaries)");
-    else if (order === "unknown") out.push("INFO load order of pi-foreman and pi-claude-bridge not found in settings.json packages");
-    out.push(...intercomDoctor(s.agentDir, [settings?.packages, projectSettings?.packages], process.env, PKG_ROOT));
+    out.push(...bridgeLines({ agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT, settings, env: process.env }));
     const ct = classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
     if (!ct) out.push(`WARN ${noClassifierModelText(ctx.model?.provider)}`);
     else if (!ctx.modelRegistry.find(ct.provider, ct.modelId)) fail(`classifier model ${ct.provider}/${ct.modelId} not in the model registry; dangerous-class calls are refused`, "correct providers.<p>.roles.review.model.");
     else if (ct.auto) out.push(`WARN ${autoClassifierModelText(ctx.model?.provider, `${ct.provider}/${ct.modelId}`)} (thinking ${judgeLevel(s.config.config, ct)}, timeout ${ct.timeoutMs} ms)`);
     else ok(classifierModelLine(ct, judgeLevel(s.config.config, ct)));
-    const gp = gateRuntimeOf(s);
-    const pr = gp.store.resolve();
-    out.push(`INFO permissions: ${pr.protected.length} protected targets, ${pr.prose.deny.length} deny sentences; decision log ${gateLogFile(s.agentDir)}`);
-    for (const k of pr.ignored) out.push(`INFO permissions: ${k} is no longer used and is ignored (the judge-first list replaces modes, profiles and rule lists)`);
-    const profileSet = get(s.config.config, "permissions.profile");
-    if (typeof profileSet === "string" && profileSet.trim() !== "") out.push("INFO permissions: permissions.profile is no longer used and is ignored (the judge-first list replaces modes, profiles and rule lists)");
-    if (fs.existsSync(gp.store.filePath("project"))) {
-      const why = gp.store.projectDistrust();
-      if (why) out.push(`WARN ${gp.store.filePath("project")}: ${why}; its widening keys (allow, additionalDirectories, classifier.allow) are ignored`);
-    }
-    out.push(...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }));
-    out.push(...gateMigrationLines({ agentDir: s.agentDir, config: s.config.config }));
-    out.push(...modsDoctorLines({ packageRoot: PKG_ROOT, appHome: doctorAppHome(process.env, os.homedir()) }));
-    for (const sh of shadowedRoles(s.cwd, childRoleIds(get(s.config.config, "roles")))) out.push(`WARN project agent shadows a role (${sh}) — fix: ${SHADOW_FIX}`);
+    out.push(...permissionLines({ store: gateRuntimeOf(s).store, agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT, config: s.config.config, env: process.env, homedir: os.homedir() }));
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
@@ -8754,8 +8646,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
     if (s.prPack && !s.isChild) {
-      const hosts = resolveGithubHosts(s.config.config);
-      out.push(trackerDoctorLine(prFeedOn(s), "error" in hosts ? hosts.error : undefined, lastPollAgeMs(s.agentDir, Date.now())));
+      out.push(trackerLine(s.config.config, s.agentDir, Date.now()));
     }
     if (!s.isChild) out.push(await pageServerDoctorLine(s.config.config, s.agentDir));
     // The cache lines judge the base model: while downshifted the live model is the idle rung, which the idle-rung line below covers.
@@ -8784,17 +8675,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }));
     }
     if (!s.isChild) out.push("INFO /foreman doctor warm proves the idle warm live on this model (two small requests; it states the cost and asks first)");
-    const addonOn = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd });
-    out.push(`INFO background-tasks: ${addonOn ? "present" : "absent"}`);
-    out.push(...bgFeaturesDoctor(addonOn, s.agentDir, process.env));
+    out.push(...addonHeadLines({ toolNames: pi.getAllTools().map((t) => t.name), agentDir: s.agentDir, cwd: s.cwd, env: process.env }));
     if (!s.isChild) out.push(...deferredDoctorLines(addedPatterns(deferred.patterns, shippedDeferred()), pi.getAllTools().map((t) => t.name)));
-    const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd, bundledRoot: PKG_ROOT }, await (deps.piVersion ?? runningPiVersion)());
-    if (peerLine) out.push(peerLine);
-    out.push(...optionalAddonsDoctor({ agentDir: s.agentDir, cwd: s.cwd }, pi.getAllTools().map((t) => t.name), process.env));
+    out.push(...addonTailLines({ toolNames: pi.getAllTools().map((t) => t.name), agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT, env: process.env, piVersion: await (deps.piVersion ?? runningPiVersion)() }));
     out.push(dormantDoctorLine(PKG_ROOT, withBuiltinKeepalive(s.config.config, dm?.provider, cache.active)));
-    // The profile and its deviations are read without the project layer (the agent dir has no .pi/foreman.json), so project tightening is not noise.
-    const userOnly = s.python.ok ? await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.agentDir, trusted: false, spawner }) : null;
-    out.push(...profileDoctorLines(userOnly && userOnly.source === "cli" ? userOnly.config : s.config.config, s.config.config, PKG_ROOT));
+    out.push(...(await profileLines({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, config: s.config, spawner })));
     return out;
   }
 }

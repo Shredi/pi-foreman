@@ -6,7 +6,7 @@
 
 ## Install
 
-Setting up with an agent: point it at [features.md](features.md).
+Setting up with an agent: give it the prompt in the README ([Let your agent do it](../README.md#let-your-agent-do-it)). The feature list for agents is [features.md](features.md).
 
 Install the prerequisites first, then Pi (the version range is the one setup checks):
 
@@ -322,6 +322,8 @@ These run in a terminal. `foreman` is not on `PATH` after a package install: use
 <name> unknown (valid: ...)`), `INFO profile deviations: <id> is <state>, profile says <state>; ...` (or `none`), and `WARN
 safety relaxations on: <ids>` whenever a relaxation is on, with or without a profile.
 
+The shell form `foreman doctor` prints the same lines (see [Checks inside Pi](#checks-inside-pi)).
+
 ## What setup writes
 
 Setup does not install pi-foreman or the bundled packages: the package brings them. It migrates a setup from before
@@ -344,7 +346,11 @@ backups ([migration](permissions.md#from-the-permission-package)). Setup writes 
 every other key and never touches `allowRemote`. `--no-intercom` is a package filter: it adds
 `!node_modules/pi-intercom/**` to the pi-foreman package entry and writes no intercom config (delete those filter
 lines from `settings.json` to undo). When the Claude bridge is in use, setup prints a login hint (see
-[below](#claude-bridge-log-in-once)). Map each provider you use to models in `foreman.json`:
+[below](#claude-bridge-log-in-once)).
+
+### Your own model map
+
+Map each provider you use to models in `foreman.json`:
 
 ```json
 {
@@ -353,12 +359,25 @@ lines from `settings.json` to undo). When the Claude bridge is in use, setup pri
     "my-provider": {
       "roles": {
         "foreman": { "model": "my-provider/big-model", "thinking": "high" },
-        "builder": { "model": "my-provider/mid-model", "thinking": "medium" }
+        "explorer": { "model": "my-provider/small-model" },
+        "builder": { "model": "my-provider/mid-model", "thinking": "medium" },
+        "reviewer": { "model": "my-provider/mid-model" }
       }
     }
-  }
+  },
+  "ceremony": { "reviewModel": "my-provider/other-model" }
 }
 ```
+
+Save it as `foreman.json` in Pi's agent folder (`~/.pi/agent`, `%USERPROFILE%\.pi\agent` on Windows, or the folder in `PI_CODING_AGENT_DIR`), with your own provider and model ids instead of the placeholders. For a built-in provider, log in first: type `/login` in Pi to connect a subscription or API key.
+
+A role is a job with its own model: the foreman is the session you talk to, the explorer reads and searches, the builder makes one scoped change, the reviewer checks it. Give the foreman your strongest model and the helpers cheaper ones. When you start a session, the foreman switches to its mapped model (and `thinking` level, if you set one), unless you started Pi with `--model` or picked a model yourself. A reviewer never reviews on the foreman's own model: when the mapped reviewer would be the same model, `ceremony.reviewModel` names the model that reviews instead. Check the file with:
+
+```
+/foreman config validate
+```
+
+Setup must run again after a map change. Setup is what writes the mapped models and Pi's compaction points into Pi's settings, so run `/foreman setup` again.
 
 Or apply a shipped preset: `/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` merges
 `config/presets/<name>.json` into that file (preset values win, every other key is kept), validates the result
@@ -595,6 +614,7 @@ CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude auth login
 
 ## Checks inside Pi
 
+- `foreman doctor` runs the file, config and environment checks of `/foreman doctor` from a terminal, without a running Pi: `bin/foreman doctor` in a checkout, `<agentDir>/git/github.com/Shredi/pi-foreman/bin/foreman doctor` in a package install, `bin\foreman.cmd doctor` on Windows. It prints the same `OK`, `INFO`, `WARN` and `FAIL` lines from the same code, and reads the config without a provider and without the project layer. The checks that need the session (models, login and rank policy, the classifier model, the idle cache, child extension registration, marker, tier, sidebar, loaded tools) print an `INFO … needs a running Pi: run /foreman doctor` line, never `FAIL`. Exit code 0: no `FAIL` line; 1: at least one; 2: a usage error (`foreman doctor warm` is slash-only). Without Python 3.13 or newer it still prints the Python `FAIL` line and the checks that need no Python, and exits 1.
 - `/foreman doctor` checks Python, that the generated block is in sync, required child extensions and auth per
   provider, and reports permission-config drift and the bridge folder state. Its last lines include
   `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).

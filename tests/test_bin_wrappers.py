@@ -133,3 +133,39 @@ class RoundsDispatch(unittest.TestCase):
             env = dict(os.environ, PI_CODING_AGENT_DIR=agent)
             r = subprocess.run([str(ROOT / "bin" / "foreman"), "rounds", "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
             self.assertEqual((r.returncode, r.stdout.strip()), (0, "[]"), r.stderr)
+
+
+class DoctorDispatch(unittest.TestCase):
+    """`foreman doctor` runs extensions/core-adapter/doctor-cli.ts behind the Node >= 22.6 gate in all three wrappers."""
+
+    def test_posix_wrapper(self):
+        src = text("foreman")
+        self.assertRegex(src, r'if \[ "\$sub" = "doctor" \]')
+        self.assertIn("extensions/core-adapter/doctor-cli.ts", src)
+        self.assertIn("foreman doctor needs Node >= 22.6", src)
+        # the Node PATH fallback of the Node subcommands covers it
+        self.assertRegex(src, r"case \"\$sub\" in [^)]*\bdoctor\b[^)]*\)")
+
+    def test_cmd_wrapper_passes_every_argument(self):
+        src = text("foreman.cmd")
+        self.assertIn('if /i "%~1"=="doctor" goto doctor', src)
+        body = src.split(":doctor\n", 1)[1].split(":reports\n", 1)[0]
+        self.assertIn("doctor-cli.ts", body)
+        self.assertIn("set PF_ARGS=%PF_ARGS% %1", body)
+        self.assertNotIn('"%~2"', body)
+
+    def test_ps1_wrapper(self):
+        src = text("foreman.ps1")
+        self.assertIn("$sub -eq 'doctor'", src)
+        body = src.split("$sub -eq 'doctor'", 1)[1].split("$sub -eq 'reports'", 1)[0]
+        self.assertIn("doctor-cli.ts", body)
+        self.assertIn("@rest", body)
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("node"), "needs sh and node")
+    def test_posix_usage_exit_codes(self):
+        for args in ("warm", "nope", "--json"):
+            r = subprocess.run([str(ROOT / "bin" / "foreman"), "doctor", args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("usage: foreman doctor", r.stderr)
+        r = subprocess.run([str(ROOT / "bin" / "foreman"), "doctor", "--help"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "usage: foreman doctor"), r.stderr)

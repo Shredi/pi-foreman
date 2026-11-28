@@ -67,7 +67,7 @@ no ranks anywhere the policy does nothing. A refused launch is traced `launch_re
 
 When the refused model is a role's own normal (mapped default) model and both it and the foreman's model are ranked, the refusal adds the cause and the way out: `<model> is the <role>'s normal model: run the foreman on a model ranked above it.` (`ranked at or above it` for a role under `at-or-below`). The sentence names the first role of the launch whose own policy refuses; it is left out for a strong rung and when either model is unranked. This is why the `claude-bridge` presets need an Opus or stronger foreman: under a Sonnet foreman the explorer's and the builder's Sonnet tie and are refused, under a Haiku foreman all three roles are refused. `/foreman doctor` says so before a launch does (`FAIL <role>'s normal model <m> is not launchable under the foreman model <f>`). Every other refusal keeps its text.
 
-**Session model.** A session opened from Pi needs the owner's confirmation, whatever model it runs on (see [sessions](sessions.md)); there is no rank rule for sessions. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
+**Session model.** A session opened from Pi needs the owner's confirmation, whatever model it runs on (see [sessions](sessions.md)); there is no rank rule for sessions. The `claude-bridge` and `github-copilot` presets map `session-foreman` to Opus 5.5; `openai-codex`, `openai` and `google` map it to their foreman model.
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
 `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (`foreman config …` means `/foreman config …` in Pi or `bin/foreman config …` in a checkout; merges into `<agent dir>/foreman.json`,
@@ -77,11 +77,12 @@ keeps your other keys, backs up the old file; see [install](install.md)), or cop
   reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier (`review.model`) on Sonnet 5.5 (the judge bench: Haiku cleared owner rows at every thinking level, Sonnet at low did not; Haiku stays an explicit opt-in);
   `childPolicy: below` with `rolePolicy` reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
-  `rolePolicy.<role>: at-or-below` (under an Opus foreman the builder's FAIL climb is skipped unless its risk tag calls for the strong rung); `ladder.equalOnStrongRisk: true`, because for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial: only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
+  `rolePolicy.<role>: at-or-below` (under an Opus foreman the builder's FAIL climb is skipped unless its risk tag calls for the strong rung); `ladder.equalOnStrongRisk: true`, because for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial: only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium); the high-stakes reviewer (`ceremony.highStakes.model`) on Fable 5.2 (high), which switches the high-stakes review on ([review](review.md#high-stakes)); and the
   1-hour cache values ([presets](presets.md#claude-bridge-cache-values)).
 - `claude-bridge-sonnet-reviewer.json`: the same with the reviewer on Sonnet 5.5 (medium) and no strong rung;
   explorer, builder and auto-review unchanged. Opt-in, not the default: the bench rows decide whether it pays.
-- `openai.json` (astra > sol > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-luna`) and `google.json`
+- `github-copilot.json` and `openai-codex.json`: the subscription presets (GitHub Copilot and ChatGPT login); ranks, role maps and the Sol-only-reviews rule are in [presets](presets.md#subscription-presets).
+- `openai.json` (astra > sol > terra > luna: `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-luna`; Sol only as the reviewer's strong rung) and `google.json`
   (`gemini-*-pro*` > `gemini-*-flash*`; `at-or-below`, because the strong rung is the foreman's own pro model). Ids
   are from Pi's model registry; tiers follow capability class so cross-provider comparisons hold.
 
