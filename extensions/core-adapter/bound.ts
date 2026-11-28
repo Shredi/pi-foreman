@@ -260,7 +260,9 @@ export interface ReviewGate {
 /** The hint for a gate entry whose review record was rejected ("" otherwise): the run, the reason, the likely cause and the way out. */
 export function rejectedNote(g: ReviewGate): string {
   if (!g.rejected || g.last !== "none") return "";
-  return `record of run ${g.rejected.runId.slice(0, 8)} rejected: ${g.rejected.reason}; the session may run older harness code than its reviewer: reload it (/reload) and run the reviewer again`;
+  const { runId, reason } = g.rejected;
+  const hint = reason === "schema" ? "the session may run older harness code than its reviewer: reload it (/reload) and run the reviewer again" : "run the reviewer again";
+  return `record of run ${runId.slice(0, 8)} rejected: ${reason}; ${hint}`;
 }
 
 export function reviewGateMode(v: unknown): ReviewGateMode {
