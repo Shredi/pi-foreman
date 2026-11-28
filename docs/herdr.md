@@ -737,12 +737,30 @@ that option, the call is repeated once without it and the mod stops passing it (
 A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure. A missing `foreman` (the program does not start: "cannot start ...: program not found" or "cannot run ...: No such file or directory") is a setup state, not a failed poll: the PR poll posts no notice for it, and the radar shows its hint.
 
 Herdr 0.1.14 runs a mod's top level once per source version, shared by all copies of the mod, so per-copy state lives in
-`init`. Three things stay app-global on purpose: the keys `pi-foreman.radar`, `pi-foreman.show` and `pi-foreman.show-pending`, and the Agents order.
+`init`. Four things stay app-global on purpose: the keys `pi-foreman.radar`, `pi-foreman.show`, `pi-foreman.show-pending` and `pi-foreman.filter`, and the Agents order.
 
 ### Agent row labels
 
 A row is labelled with its tab name. When two or more agents of a space share a tab name, each uses its own terminal title instead
 (falling back to the tab name when it has none), so the rows stay distinguishable.
+
+### Needs-me filter
+
+The Agents list has a "○ Needs me" chip in its title bar, next to the "?" and Plan; the three share one outlined look. Off, it shows
+every session. On ("● Needs me"), it hides the busy ones and keeps those that need you:
+
+- **Needs you** (shown): blocked (an ask, a dialog, a checkpoint, a blocked child or agent), idle, done (the turn ended and you have not looked), and any status the mod does not know.
+- **Busy** (hidden): working, own agents still running (`agents`), background task (`bg`), waiting (`waiting`).
+
+A busy session stays when something in its tree is blocked: a child session or an agent row that asks you or waits on you (`blockNeedsYou`
+in model.js). An idle or done child does not keep a busy parent, because it usually waits for that parent. Hidden sessions keep their PRs,
+so Open PRs and the status strip do not change.
+
+The footer counts the hidden top-level sessions: `6 agents · 1 need you · 3 busy hidden`. A space header is drawn only for a space with a
+shown session. When nothing needs you, the list has one line: `Nothing needs you · 3 busy hidden`.
+
+A click on the chip flips the filter. The choice is stored app-wide under the key `pi-foreman.filter` (`{"needsMe": true}`), not per
+window, so it survives a restart of herdr-app. The Herdr sidebar plugin has no such filter ([known limits](#known-limits)).
 
 ### Detached processes
 
@@ -784,7 +802,7 @@ Every marker the herdr-app sidebar draws, with the one thing it means. The first
 | `pr-not-reviewed` | badge | still | blue | checks green, the head is not reviewed, or the session's watch reports the head past its last reviewer PASS (`unreviewed`); the words "unreviewed head" are in the tooltip and the hover card, not on the line |
 | `pr-ready` | ✓ inside the green badge of its PR line | still | green | ready to merge: checks settled green, mergeable, merge state fine, and reviewed when a session reviews (the tooltip says "ready to merge") |
 | `pr-ci-passing` | badge | still | green | checks settled green and nothing more known: an older feed, or the merge is not known to be mergeable (the tooltip says "CI passing"); with waiting required checks the outlined badge `pr-required-wait` replaces it |
-| `pr-legend` | "?" in the Agents title bar, next to Plan | still | muted | resting on it lists every PR badge with its words (`PR_LEGEND` in model.js); always visible, its content is built only while the pointer rests there |
+| `pr-legend` | "?" (outlined round button) in the Agents title bar, next to Plan | still | muted | resting on it lists every PR badge with its words (`PR_LEGEND` in model.js); always visible, its content is built only while the pointer rests there |
 | `pr-conflict` | small disc with "!" beside the badge | still | red | the PR conflicts with its base; the badge keeps its colour |
 | `pr-no-checks` | badge | still | grey | no check data |
 
@@ -983,6 +1001,7 @@ Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.
 - Subagent runs inside a Pi session are text on that session's row, not rows: Herdr has rows only for real panes.
   Nested sessions opened in their own panes (`foreman session open`) are rows of their own, indented under the parent.
 - Row templates are static config: the plugin cannot add or remove rows; empty tokens leave their cells empty.
+- The Needs-me filter ([herdr-app](#needs-me-filter)) exists only in the herdr-app mod: the plugin cannot remove a row, so it has no such filter and shows every session.
 - Herdr does not restore tokens or the Agents view after a server restart: a daemon that kept running republishes the
   tokens within 5 s and the view within 60 s; after a full restart the startup hook starts a new daemon.
 
