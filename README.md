@@ -62,7 +62,7 @@ Type the first command in a terminal. Then start `pi` and type the others inside
 | Command | What it does |
 |---|---|
 | `pi install git:github.com/Shredi/pi-foreman` | Downloads pi-foreman and registers it as a Pi package. |
-| `/foreman setup --profile standard` | Writes the pi-foreman settings into Pi's agent folder, installs three add-on packages and adds a resume block to your shell profile. Add `--dry-run` to see every change first; it writes nothing. |
+| `/foreman setup --profile standard` | Writes the pi-foreman settings into Pi's agent folder, installs three add-on packages and adds a resume block to your shell profile. Add `--dry-run` to see every change first. It writes nothing then. |
 | `/foreman config apply-preset <preset>` | Writes the model map for your subscription. Log in first. The presets are in part 3. |
 | `/foreman setup` | Run setup again. It writes the mapped models and their compaction points into Pi's settings. |
 | `/foreman doctor` | Checks the install. A line that starts with `FAIL` names what to fix. |
@@ -71,7 +71,7 @@ Other profiles, flags, add-ons and what setup writes are in [docs/install.md](do
 
 ### 3. Pick the preset for your subscription
 
-A preset is a ready model map: it says which model does which job. Log in, then apply the preset with the two commands from part 2.
+A preset is a ready model map: it says which model does which job. Log in, then type `/foreman config apply-preset <preset>` and `/foreman setup`.
 
 | You have | Preset | Log in with | Models |
 |---|---|---|---|
@@ -103,7 +103,7 @@ Install and set up pi-foreman (https://github.com/Shredi/pi-foreman) on this mac
 
 Done means: pi-foreman is installed, setup has run, a model map fits my subscription, and I know what changed.
 
-1. Check what is installed: Node (22.19 or later), npm (not 11.9 to 11.12), Python (3.13 or later; `python3`, on Windows `py -3`), git, and `pi --version` (1.7.x). Also check the optional tools: `gh` and `herdr-app`. Show me the result as a short table.
+1. Check what is installed: Node (22.19 or later), npm (not 11.9 to 11.12), Python (3.13 or later, as `python3` or on Windows `py -3`), git, and `pi --version` (1.7.x). Also check the optional tools: `gh` and `herdr-app`. Show me the result as a short table.
 2. If a required tool is missing or too old, show me the install command for my system from the README and ask before you run it.
 3. Run `pi install git:github.com/Shredi/pi-foreman`.
 4. Find Pi's agent folder: the folder in PI_CODING_AGENT_DIR, else `~/.pi/agent` (on Windows `%USERPROFILE%\.pi\agent`). The package is in `<agent folder>/git/github.com/Shredi/pi-foreman`.
@@ -127,11 +127,11 @@ Finish with a short report: what you installed, each file you changed and where 
 pi-foreman works without it. Then the foreman prints the command for a new session, and you start it in a new terminal yourself. There is no sidebar. Sessions on other machines need the `hc` command, which comes with the app. Pull-request watches get reports only when you run `foreman prs poll` on a timer.
 
 ```sh
-curl -fsSL https://releases.herdr.dev/app/install.sh | sh    # Linux and macOS (Apple Silicon); also: brew install --cask herdr-app
+curl -fsSL https://releases.herdr.dev/app/install.sh | sh    # Linux and macOS (Apple Silicon). Also: brew install --cask herdr-app
 irm https://releases.herdr.dev/app/install.ps1 | iex         # Windows (PowerShell)
 ```
 
-The installers download and run a script, and they also install [herdr-core](https://github.com/herdrdev/herdr-core) (the `hc` command) when it is missing. pi-foreman needs app 0.1.13 with core 0.1.18 or later. The sidebar is a mod that you copy once; the steps are in [docs/herdr.md](docs/herdr.md#herdr-app-and-herdr-core), and `foreman setup --mods` updates it later. The integration is experimental. The older Herdr terminal UI still works ([docs/herdr.md](docs/herdr.md#install)).
+The installers download and run a script, and they also install [herdr-core](https://github.com/herdrdev/herdr-core) (the `hc` command) when it is missing. pi-foreman needs app 0.1.13 with core 0.1.18 or later. The sidebar is a mod that you copy once. The steps are in [docs/herdr.md](docs/herdr.md#herdr-app-and-herdr-core), and `foreman setup --mods` updates it later. The integration is experimental. The older Herdr terminal UI still works ([docs/herdr.md](docs/herdr.md#install)).
 
 ## Recommended settings
 

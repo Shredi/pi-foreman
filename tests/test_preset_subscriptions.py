@@ -29,7 +29,9 @@ def run(argv):
 
 def role_models(prov):
     """Yield (role, model id, thinking) for every model a provider block maps, strong rungs included."""
-    for role, spec in prov["roles"].items():
+    for role, spec in prov.get("roles", {}).items():
+        if "model" not in spec:
+            continue
         yield role, spec["model"], spec.get("thinking")
         if "strong" in spec:
             yield role + ".strong", spec["strong"]["model"], spec["strong"].get("thinking")
@@ -37,8 +39,9 @@ def role_models(prov):
 
 class SubscriptionPresetsTest(unittest.TestCase):
     def test_sol_only_reviews(self):
-        for name in PRESETS:
-            for prov_name, prov in preset(name)["providers"].items():
+        for path in sorted((ROOT / "config" / "presets").glob("*.json")):
+            name = path.stem
+            for prov in preset(name).get("providers", {}).values():
                 for role, model, _th in role_models(prov):
                     if role.split(".")[0] == "reviewer":
                         continue
