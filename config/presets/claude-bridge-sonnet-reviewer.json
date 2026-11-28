@@ -1,6 +1,7 @@
 {
   "version": 1,
   "childMaxThinking": "high",
+  "ceremony": { "highStakes": { "model": "claude-bridge/claude-fable-5-2:high" } },
   "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below", "builder": "below" }, "strongAbove": 100000, "childMaxTurns": 60, "equalOnStrongRisk": true, "reviewerClimb": { "enabled": true, "securityRung": "claude-bridge/claude-opus-5-5:high" } },
   "providers": {
     "claude-bridge": {

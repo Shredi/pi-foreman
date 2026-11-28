@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "ladder": { "childPolicy": "below" },
+  "ceremony": {
+    "highStakes": { "model": "openai-codex/gpt-6.2-astra:high" }
+  },
+  "providers": {
+    "openai-codex": {
+      "ranks": [
+        { "match": "gpt-*-astra*", "tier": 0 },
+        { "match": "gpt-*-sol*", "tier": 2 },
+        { "match": "gpt-*-terra*", "tier": 3 },
+        { "match": "gpt-*-luna*", "tier": 4 }
+      ],
+      "roles": {
+        "foreman": { "model": "openai-codex/gpt-6-astra", "thinking": "high" },
+        "session-foreman": { "model": "openai-codex/gpt-6-astra", "thinking": "high" },
+        "explorer": { "model": "openai-codex/gpt-6-luna", "thinking": "low", "strong": { "model": "openai-codex/gpt-6.1-terra", "thinking": "low" } },
+        "builder": { "model": "openai-codex/gpt-6-luna", "thinking": "medium", "strong": { "model": "openai-codex/gpt-6.1-terra", "thinking": "medium" } },
+        "reviewer": { "model": "openai-codex/gpt-6.1-sol", "thinking": "high" }
+      }
+    }
+  }
+}
