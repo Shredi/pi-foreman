@@ -987,7 +987,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 
 | Feature | Commands |
 |---|---|
-| [setup](#setup) | `/foreman`, `/foreman setup`, `foreman setup`, `/foreman doctor`, `/foreman update-check`, `foreman update-check`, `foreman config`, `foreman config validate`, `/foreman config validate` |
+| [setup](#setup) | `/foreman`, `/foreman setup`, `foreman setup`, `/foreman doctor`, `foreman doctor`, `/foreman update-check`, `foreman update-check`, `foreman config`, `foreman config validate`, `/foreman config validate` |
 | [profiles](#profiles) | `foreman setup --profile`, `foreman setup --pick`, `foreman features` |
 | [presets](#presets) | `/foreman config`, `/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]`, `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` |
 | [findings](#findings) | `foreman findings`, `foreman rounds`, `foreman retro models` |

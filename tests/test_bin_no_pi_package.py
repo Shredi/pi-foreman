@@ -77,6 +77,9 @@ class NoPiPackage(unittest.TestCase):
     def test_knowledge(self):
         self.check("knowledge", 2)
 
+    def test_doctor(self):
+        self.check("doctor", 0)
+
 
 if __name__ == "__main__":
     unittest.main()

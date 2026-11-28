@@ -24,6 +24,16 @@ type RegisterFn = (input: { sessionId: string; extensions: ChildExtension[]; req
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REGISTRY_KEY = Symbol.for("pi-subagents.required-child-extensions.v1");
 
+export const ADAPTER_ID = "pi-foreman-core-adapter";
+/** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
+export const REMOVED_GIT_GUARD_ID = "pi-foreman-git-guard";
+
+/** The extensions every child must load: the core adapter at `entry`, then the configured ones (the removed git guard filtered out); with the config's errors. */
+export function requiredChildExtensions(entries: unknown, baseDir: string, entry: string): { list: ChildExtension[]; errors: string[] } {
+  const extra = normaliseChildExtensions(entries, baseDir);
+  return { list: [{ id: ADAPTER_ID, path: entry }, ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== REMOVED_GIT_GUARD_ID)], errors: extra.errors };
+}
+
 /** Normalise config entries: `{id, path}` objects or plain path strings (id from the file name). */
 export function normaliseChildExtensions(entries: unknown, baseDir: string): { list: ChildExtension[]; errors: string[] } {
   const list: ChildExtension[] = [];

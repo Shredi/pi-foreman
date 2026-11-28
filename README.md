@@ -65,7 +65,7 @@ Type the first command in a terminal. Then start `pi` and type the others inside
 | `/foreman setup --profile standard` | Writes the pi-foreman settings into Pi's agent folder, installs three add-on packages and adds a resume block to your shell profile. Add `--dry-run` to see every change first. It writes nothing then. |
 | `/foreman config apply-preset <preset>` | Writes the model map for your subscription. Log in first. The presets are in part 3. |
 | `/foreman setup` | Run setup again. It writes the mapped models and their compaction points into Pi's settings. |
-| `/foreman doctor` | Checks the install. A line that starts with `FAIL` names what to fix. |
+| `/foreman doctor` | Checks the install. A line that starts with `FAIL` names what to fix. From a terminal: `bin/foreman doctor` in the package folder. |
 
 Other profiles, flags, add-ons and what setup writes are in [docs/install.md](docs/install.md).
 
@@ -110,14 +110,15 @@ Done means: pi-foreman is installed, setup has run, a model map fits my subscrip
 5. Run `node <package>/setup.mjs --profile standard --dry-run`. It writes nothing. Tell me in a few lines what it would change: the files in the agent folder, the add-on packages, the block in my shell profile. Ask me, then run it again without `--dry-run`.
 6. Ask me which subscription or API key I use. Pick the preset: `claude-bridge` (Claude Pro or Max), `github-copilot`, `openai-codex` (ChatGPT Plus or Pro), `openai` or `google` (API keys). Run `<package>/bin/foreman config apply-preset <preset>` (on Windows `bin\foreman.cmd`), then `node <package>/setup.mjs` again. If no preset fits, leave the model map and show me the part of the README about writing my own map.
 7. Check your work: run `node <package>/setup.mjs` once more. Its last line must say "up to date, nothing to change".
-8. If herdr-app is missing, tell me in two sentences what it adds and ask whether I want it. Its installer downloads a script and runs it, so run it only after I say yes.
+8. Run `<package>/bin/foreman doctor` (on Windows `bin\foreman.cmd doctor`). Fix every line that starts with FAIL, or tell me why you cannot.
+9. If herdr-app is missing, tell me in two sentences what it adds and ask whether I want it. Its installer downloads a script and runs it, so run it only after I say yes.
 
 Rules, because this is my machine and my accounts:
 - Ask before any change outside Pi's agent folder, before any command that needs sudo or administrator rights, and before any command that pipes a download into a shell.
 - Do the logins with me, not for me: tell me which login is needed (`/login` inside Pi, or the Claude login from docs/install.md). Do not read or print tokens or keys.
 - If a step fails, stop. Show me the error and what you would try next.
 
-Finish with a short report: what you installed, each file you changed and where its backup is, and what I must still do myself. The last step is mine: I start `pi`, type `/foreman doctor` and fix every line that starts with FAIL.
+Finish with a short report: what you installed, each file you changed and where its backup is, and what I must still do myself. The last step is mine: I start `pi`, log in and type `/foreman doctor`. It also checks the login and the models.
 ```
 
 ### herdr-app (recommended)

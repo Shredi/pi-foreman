@@ -322,6 +322,8 @@ These run in a terminal. `foreman` is not on `PATH` after a package install: use
 <name> unknown (valid: ...)`), `INFO profile deviations: <id> is <state>, profile says <state>; ...` (or `none`), and `WARN
 safety relaxations on: <ids>` whenever a relaxation is on, with or without a profile.
 
+The shell form `foreman doctor` prints the same lines (see [Checks inside Pi](#checks-inside-pi)).
+
 ## What setup writes
 
 Setup does not install pi-foreman or the bundled packages: the package brings them. It migrates a setup from before
@@ -612,6 +614,7 @@ CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude auth login
 
 ## Checks inside Pi
 
+- `foreman doctor` runs the file, config and environment checks of `/foreman doctor` from a terminal, without a running Pi: `bin/foreman doctor` in a checkout, `<agentDir>/git/github.com/Shredi/pi-foreman/bin/foreman doctor` in a package install, `bin\foreman.cmd doctor` on Windows. It prints the same `OK`, `INFO`, `WARN` and `FAIL` lines from the same code, and reads the config without a provider and without the project layer. The checks that need the session (models, login and rank policy, the classifier model, the idle cache, child extension registration, marker, tier, sidebar, loaded tools) print an `INFO … needs a running Pi: run /foreman doctor` line, never `FAIL`. Exit code 0: no `FAIL` line; 1: at least one; 2: a usage error (`foreman doctor warm` is slash-only). Without Python 3.13 or newer it still prints the Python `FAIL` line and the checks that need no Python, and exits 1.
 - `/foreman doctor` checks Python, that the generated block is in sync, required child extensions and auth per
   provider, and reports permission-config drift and the bridge folder state. Its last lines include
   `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).
