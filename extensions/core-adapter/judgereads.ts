@@ -9,7 +9,7 @@ import type { Json } from "./config.ts";
 import { get } from "./config.ts";
 import { secretPath } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
-import { redactCommand } from "./trace.ts";
+import { SECRET_NAME_WORDS, redactCommand } from "./trace.ts";
 
 /** Entries directly under the Pi agent dir that may be read (everything else there stays closed). */
 export const AGENT_ALLOW: readonly string[] = ["sessions", "agents", "skills", "prompts", "pi-foreman", "pi-subagents", "missions", "AGENTS.md", "foreman.json", "settings.json"];
@@ -338,10 +338,12 @@ const KEY_PEM_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
 const KEY_PEM_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
 /** A BEGIN marker with no matching END: only the marker and the key text on its own line are hidden. */
 const KEY_PEM_OPEN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[A-Za-z0-9+/=]*/y;
+/** A line of pure base64 key data (the body of a key whose BEGIN has no END). */
+const KEY_B64_LINE = /^[A-Za-z0-9+/=]{40,}\r?$/;
 /** The password of URL userinfo; anchored on `://` (linear), an empty user `://:pass@` included. */
 const KEY_URL_PASS = /(:\/\/[^\s:@/'"]*:)[^\s@/'"]+(?=@)/g;
 const KEY_BEARER = /\b(Authorization\s*[:=]\s*["']?(?:Bearer|Basic|Token)\s+)([^\s"',;]+)|\bBearer\s+([A-Za-z0-9._~+/=-]{16,})/gi;
-const KEY_NAME = /password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|(?:^|[_-])auth(?:$|[_-])/i;
+const KEY_NAME = new RegExp(`${SECRET_NAME_WORDS}|(?:^|[_-])auth(?:$|[_-])`, "i");
 const KEY_ASSIGN = /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]+)(\\?["']?\s*[:=]\s*)(\\"[^\n]*?\\"|\\'[^\n]*?\\'|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|'[^'\n]*'|[^\s'",;]+)/g;
 
 /**
@@ -357,7 +359,11 @@ export function maskKeys(text: string): string {
     .replace(KEY_TOKEN, R)
     .replace(KEY_SK, (m) => (!m.includes("-", 3) || /[\dA-Z]/.test(m.slice(3)) || /^sk-\w{20}/.test(m) ? R : m))
     // the value of a secret-named key is masked whole, quoted or not
-    .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => (KEY_NAME.test(name) && value.replace(/^\\?["']|\\?["']$/g, "").length > 0 ? `${name}${sep}${R}` : m));
+    .replace(KEY_ASSIGN, (m: string, name: string, sep: string, value: string) => (KEY_NAME.test(name) && value.replace(/^\\?["']|\\?["']$/g, "").length > 0 ? `${name}${sep}${R}` : m))
+    // base's per-line rules for secret-named values and command logins (`curl -u user:pass`, `wget --password x`), without its long-run rules
+    .split("\n")
+    .map((l) => redactCommand(l, { fileText: true }))
+    .join("\n");
 }
 
 /** PEM private-key blocks: BEGIN..END is hidden (newlines kept); a BEGIN with no END hides only its own marker and key text. One pass, each marker searched once. */
@@ -380,6 +386,17 @@ function maskPem(text: string, R: string): string {
       const open = KEY_PEM_OPEN.exec(text);
       end = b.index + (open ? open[0].length : b[0].length);
       out += text.slice(at, b.index) + R;
+      // the key data below the marker (pure base64 lines) is hidden up to the first other line, so a truncated key does not show and an `rm` line does
+      let nl = text.indexOf("\n", end);
+      while (nl >= 0) {
+        const ls = nl + 1;
+        const le = text.indexOf("\n", ls);
+        const line = text.slice(ls, le < 0 ? text.length : le);
+        if (!KEY_B64_LINE.test(line)) break;
+        out += text.slice(end, ls) + R;
+        end = le < 0 ? text.length : le;
+        nl = le;
+      }
     } else out += text.slice(at, b.index) + R + text.slice(b.index, end).replace(/[^\n]/g, "");
     at = end;
     KEY_PEM_BEGIN.lastIndex = end;

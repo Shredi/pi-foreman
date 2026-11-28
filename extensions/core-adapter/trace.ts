@@ -39,22 +39,35 @@ const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(Strin
 const fullCommand = (rec: Record<string, unknown>): boolean => rec.event === "ask_flag" || rec.event === "dialog" || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-"));
 const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits after the lead-in
 
+/** The value of a secret-named `name=value` / `name: value`; `$1` is the name and separator. File text (`fileText`: only the secret-name and login rules, URL, bearer, token-shape and long-run rules are `maskKeys`' own) keeps a bare `key=` and a camelCase `...Key=` visible. */
+const NEVER = /(?!)/g;
+const SECRET_VALUE = String.raw`(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)`;
+/** The words that make a name secret in file text (no bare `key`); `maskKeys` tests a whole name against them. */
+export const SECRET_NAME_WORDS = String.raw`token|password|passwd|secret|pwd|[_-]key|api-?key|access-?key|private-?key`;
+const SECRET_NAME_TEXT = String.raw`[A-Za-z0-9_-]*(?:${SECRET_NAME_WORDS})`;
+const SECRET_ASSIGN = new RegExp(String.raw`(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)${SECRET_VALUE}`, "gi");
+const SECRET_ASSIGN_TEXT = new RegExp(String.raw`(?<![A-Za-z0-9_-])((?:${SECRET_NAME_TEXT})\s*[=:]\s*)${SECRET_VALUE}`, "gi");
+
 /**
  * A denied command with secret-shaped tokens removed (before the 200-char cut):
  * auth headers, `token=` / `key=` / `password=` / `secret=` values, URL userinfo, `AKIA…` / `AIza…` / `ghp_` / `npm_` / `glpat-` / `sk-` style keys,
  * and base64 / hex runs of 24+ characters; the home directory becomes `~`.
  */
-export function redactCommand(cmd: string): string {
+export function redactCommand(cmd: string, opts?: { fileText?: boolean }): string {
   const R = "[redacted]";
+  const fileText = opts?.fileText === true;
   // a run of few distinct characters ("xxxx…") is padding, not a key
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd
-    .replace(/(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s*)?[^\s'"]+/gi, `$1${R}`)
-    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`)
-    .replace(/(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
-    .replace(/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
+    .replace(fileText ? NEVER : /(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s*)?[^\s'"]+/gi, `$1${R}`)
+    .replace(fileText ? NEVER : /\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, `Bearer ${R}`)
+    .replace(fileText ? SECRET_ASSIGN_TEXT : SECRET_ASSIGN, `$1${R}`)
+    .replace(fileText ? NEVER : /(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
     .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
-    .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`) // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
+    .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`); // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
+  // file text: the token shapes and the long-run rules are `maskKeys`' own (a long run is no key by its length)
+  if (fileText) return out;
+  out = out
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
     .replace(/\b(?:gh[pousr]_|github_pat_|npm_|glpat-|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)
     .replace(/\bAIza[A-Za-z0-9_-]{6,}/g, R)
