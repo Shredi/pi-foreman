@@ -18,7 +18,7 @@ test("a reviewer PASS closes a 990-character item: the mark goes through without
   const a = await r11Rig(t, { default: "standard" }, {
     ...base,
     ctx: { ...base.ctx, sessionManager },
-    piExtra: { appendEntry: (customType: string, data: unknown) => void (customType === "pi-foreman-ledger-route" && entries.push({ type: "custom", customType, data: JSON.parse(JSON.stringify(data)) })) },
+    piExtra: { appendEntry: (customType: string, data: unknown) => { if (customType === "pi-foreman-ledger-route") entries.push({ type: "custom", customType, data: JSON.parse(JSON.stringify(data)) }); } },
   });
   const ledger = path.join(a.project, ".workflow", "LEDGER-long.md");
   const item = "L".repeat(990 - "- [ ] 1. ".length);
