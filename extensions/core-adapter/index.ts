@@ -3759,9 +3759,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const verdicts = reviewVerdictsOfRunEnd(reviewResults);
           const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
           s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
-          const rejectedReason = s.isChild ? undefined : s.rejectedRecords.get(runId);
+          const rejectedReason = s.isChild || verdicts.length === 0 ? undefined : s.rejectedRecords.get(runId); // only a completed run: a failed run's stale record puts no note on an older entry
           if (rejectedReason !== undefined) {
-            s.reviewGates = gatesRejected(s.reviewGates, roots ?? [SESSION_WIDE], { runId, reason: rejectedReason });
+            s.reviewGates = gatesRejected(s.reviewGates, roots, { runId, reason: rejectedReason });
             const note = rejectedNote({ last: "none", revised: false, rejected: { runId, reason: rejectedReason } });
             pi.sendMessage({ customType: "pi-foreman-review-record-rejected", content: `pi-foreman: review run ${runId.slice(0, 8)} counts as no verdict: ${note}.`, display: true }, { triggerTurn: false });
           }

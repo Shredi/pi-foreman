@@ -309,7 +309,13 @@ function oneGate(rg: unknown): ReviewGate | null {
   const r = rg as Record<string, unknown> | null | undefined;
   if (!r || typeof r !== "object") return null;
   if (!(r.last === null || r.last === "pass" || r.last === "fail" || r.last === "none") || typeof r.revised !== "boolean") return null;
-  return { last: r.last as ReviewGate["last"], revised: r.revised, ...(typeof r.failAt === "number" && Number.isFinite(r.failAt) ? { failAt: r.failAt } : {}), ...(r.stoodAtFail === true ? { stoodAtFail: true } : {}), ...(typeof r.passRun === "string" ? { passRun: r.passRun } : {}), ...(r.failed === true ? { failed: true } : {}) };
+  return { last: r.last as ReviewGate["last"], revised: r.revised, ...(typeof r.failAt === "number" && Number.isFinite(r.failAt) ? { failAt: r.failAt } : {}), ...(r.stoodAtFail === true ? { stoodAtFail: true } : {}), ...(typeof r.passRun === "string" ? { passRun: r.passRun } : {}), ...(r.failed === true ? { failed: true } : {}), ...rejectedOf(r.rejected) };
+}
+
+/** The persisted rejected-record note, `{}` when absent or malformed. */
+function rejectedOf(v: unknown): { rejected?: { runId: string; reason: string } } {
+  const x = v as Record<string, unknown> | null | undefined;
+  return x && typeof x === "object" && typeof x.runId === "string" && typeof x.reason === "string" ? { rejected: { runId: x.runId, reason: x.reason } } : {};
 }
 
 /** One pass mark, shape-checked; null when absent or off. */
