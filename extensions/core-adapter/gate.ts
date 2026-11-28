@@ -400,7 +400,7 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
     // the upload paths of pr_create / pr_attach are structured fields: only their free text (title, body, caption) is exempt
     if (tool === "pr_create" || tool === "pr_attach") {
       for (const e of Array.isArray(inp.attach) ? inp.attach : []) {
-        const v = e && typeof e === "object" ? (e as Record<string, unknown>).path : undefined;
+        const v = typeof e === "string" ? e : e && typeof e === "object" ? (e as Record<string, unknown>).path : undefined;
         const h = typeof v === "string" && v ? secretPath(v, env) : null;
         if (h) return h;
       }

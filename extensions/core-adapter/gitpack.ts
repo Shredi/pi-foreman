@@ -18,7 +18,7 @@ import { isTrackedKey, parsePrUrl, remoteReposOf, validHost, validNumber, validR
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { bodyWithReviews, markOf, reviewFactsFor } from "./prbody.ts";
 import { commitOf, headOf, prGateRefusal, toplevelOf } from "./reviews.ts";
-import { ATTACH_MAX, CAPTION_MAX, attachArg, attachRefusal, checkAttach, githubUploadHost, parseAttachEntries } from "./prattach.ts";
+import { ATTACH_MAX, CAPTION_MAX, attachArg, attachRefusal, checkAttach, githubUploadHost, parseAttachEntries, rehashAttach } from "./prattach.ts";
 import type { AttachFile } from "./prattach.ts";
 import { currentBranch } from "./workspacekey.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
@@ -192,7 +192,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     description: "Open a pull request for a branch that is already pushed (never pushes). Needs a reviewer PASS on the head. Arms a watch of the new PR in this session (see pr_watch). The PR opens as a draft and the watch takes it out of draft once a `[pre-pr]` reviewer PASS stands on its head (even while CI runs); holdDraft keeps it a draft for good (CI and comments are still reported). Body order: a plain `## Summary` for the owner (with one small mermaid diagram when the change has a flow), then `## Changelog`, then the dense part. `attach` puts still images (png, jpg, jpeg, webp) from the checkout into the PR (gh uploads them; gh 2.99.0+ on github.com or GitHub Enterprise Cloud; else the PR opens without them and the answer says so): the files must have passed a `[pre-pr]` reviewer launched with the same `attach` list and be unchanged since. Answer: number, url, head, base.",
     parameters: {
       type: "object",
-      properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown): `## Summary` first, then `## Changelog`, then the rest. Name an attached image by its path relative to the checkout (for example `.workflow/screenshots/result.png`) where it belongs, usually in `## Verification`: gh puts the uploaded image in place of that text, else it appends the image." }, attach: ATTACH_SCHEMA, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." }, holdDraft: { type: "boolean", description: "Open as a draft and keep it one: the watch reports CI and comments but never changes the draft state and sets no ready label; take it out of draft by hand. Ignores tools.prDraft." }, cwd: str(1000, "Checkout to open the pull request from (default: the session's). Head, base and remote are resolved there. Another checkout than the session's needs a reviewer PASS recorded for it at its current HEAD (run the reviewer with that cwd).") },
+      properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown): `## Summary` first, then `## Changelog`, then the rest. Name each attached image as a markdown image reference `![<alt>](<checkout-relative path>)` (for example `![result](.workflow/screenshots/result.png)`), usually in `## Verification`: gh rewrites it to the uploaded image; an image the body does not name gh appends." }, attach: ATTACH_SCHEMA, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." }, holdDraft: { type: "boolean", description: "Open as a draft and keep it one: the watch reports CI and comments but never changes the draft state and sets no ready label; take it out of draft by hand. Ignores tools.prDraft." }, cwd: str(1000, "Checkout to open the pull request from (default: the session's). Head, base and remote are resolved there. Another checkout than the session's needs a reviewer PASS recorded for it at its current HEAD (run the reviewer with that cwd).") },
       required: ["title", "body"],
       additionalProperties: false,
     },
@@ -465,7 +465,19 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (o.kind !== "ran" || attachFiles.length === 0) return "";
           const why = typeof o.result.attach_degraded === "string" ? o.result.attach_degraded : "";
           s.trace({ event: "pr_attach", tool: t.name, attach: attachFiles.length, attach_outcome: why ? `degraded:${why}` : "uploaded" });
-          return why ? `\nattachments not uploaded: ${why} (needs gh 2.99.0+ on github.com or GHE Cloud); ${t.op === "pr_attach" ? "nothing was posted" : "the body names the files"}` : "";
+          const partial = typeof o.result.attach_partial === "string" && o.result.attach_partial ? `\nattach_partial: ${o.result.attach_partial} (the ${t.op === "pr_attach" ? "comment was posted" : "pull request was created"} with the attachments that uploaded; do not retry)` : "";
+          return (why ? `\nattachments not uploaded: ${why} (needs gh 2.99.0+ on github.com or GHE Cloud); ${t.op === "pr_attach" ? "nothing was posted" : "the body names the files"}` : "") + partial;
+        };
+        // the files again, right before the host call: a file changed since the first check (after the review's hash) is refused, so no --attach goes out for it
+        const attachChanged = (): string | null => {
+          if (attachFiles.length === 0) return null;
+          const { dropped } = rehashAttach(attachFiles, attachTop);
+          return dropped.length > 0 ? dropped.join(", ") : null;
+        };
+        const changedRefusal = (changed: string, family: string) => {
+          s.trace({ event: "pr_refused", reason: "attach_unreviewed", toolFamily: family });
+          s.trace({ event: "pr_attach", tool: t.name, attach: attachFiles.length, attach_outcome: "refused" });
+          return failure(`pi-foreman: ${t.name} refused [pr_refused:attach_unreviewed] ${changed}: the file changed after it was checked; run a [pre-pr] reviewer with attach naming it again. Nothing was done.`, { decision: "pr_refused", reason: "attach_unreviewed" });
         };
         const withNote = <R extends { content: { type: "text"; text: string }[] }>(res: R, note: string): R => (note ? { ...res, content: [{ type: "text" as const, text: res.content[0].text + note }] } : res);
         if (t.op === "pr_attach") {
@@ -486,7 +498,15 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           await s.cover?.(dir ?? ctx.cwd, hostHead).catch(() => undefined);
           const refusal = attachRefusal("pr_attach", (await s.records?.()) ?? [], attachTop, hostHead, attachFiles);
           if (refusal) return refuse(refusal.reason, refusal.message);
+          // an uncleared high-stakes FAIL holds the images back like the pull request itself (the same test as pr_create's gate)
+          if (s.gateOn && !s.isChild && s.highStakes) {
+            const own = await toplevelOf(ctx.cwd);
+            const hs = await s.highStakes(attachTop && attachTop !== own ? attachTop : null, [hostHead]);
+            if (hs) return refuse(hs.reason, hs.message);
+          }
           const degrade = await attachDegrade();
+          const changed = attachChanged();
+          if (changed) return changedRefusal(changed, "pr_attach");
           const out = await run("pr_attach", { number, attach: attachFiles.map(attachArg), ...(typeof params.caption === "string" ? { caption: params.caption } : {}), ...(degrade ? { attach_degrade: degrade } : {}) });
           const posted = report(out);
           if (out.kind !== "ran") s.trace({ event: "pr_attach", tool: t.name, attach: attachFiles.length, attach_outcome: "failed" });
@@ -541,6 +561,10 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const asked = t.op === "pr_create" ? (hold ? "yes" : await askDraft(s, ctx, dir)) : "no";
         let draftAsked = asked === "yes";
         let refusedDraft = false;
+        if (t.op === "pr_create") {
+          const changed = attachChanged();
+          if (changed) return changedRefusal(changed, "pr_create");
+        }
         let outcome = await run(t.op as PrOp, draftAsked ? { ...sent, draft: true } : sent);
         if (draftAsked && outcome.kind !== "ran" && draftRefused(outcome)) {
           draftAsked = false;

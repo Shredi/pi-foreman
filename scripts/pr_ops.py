@@ -950,6 +950,7 @@ def _gh_attach_reason(host, root):
 def _kept_locally(body, attach):
     """The body with a `Screenshots (kept locally, not uploaded)` line for the attach paths it does not name (nothing to add: as it is; over the cap: as it is)."""
     paths = [x.split("#", 1)[0] for x in attach]
+    # a path inside a markdown image reference `![alt](path)` is contained in the body as a plain substring too
     missing = [p for p in paths if p not in body]
     if not missing:
         return body
@@ -1028,9 +1029,14 @@ def op_pr_create(req):
             if attach and not reason:
                 argv += ["--attach=" + a for a in attach]
                 subst += attach
+            # gh's cwd is the checkout: the body goes by a temp --body-file, so a relative `![alt](path)` resolves by gh's working-directory fallback
             code, out, err = run_host(argv, root, subst)
             if code != 0:
-                host_error(host, "create", code, err)
+                partial = _partial_attach(out, err) if attach and not reason else None
+                if partial is None:
+                    host_error(host, "create", code, err)
+                # some uploads failed but the PR exists: report it as created (a failure would invite a retry that opens a second PR)
+                return {**_create_answer(out, head, base, False), **note, "attach_partial": partial}
             return {**_create_answer(out, head, base, False), **note}
         if not base:
             raise Precondition("base_branch_unknown", "no base branch: pass base or set safety.ops.baseBranch")
@@ -1049,6 +1055,14 @@ def op_pr_create(req):
     finally:
         if path:
             _unlink(path)
+
+
+def _partial_attach(out, err):
+    """The stderr summary of a gh call that exited non-zero after it printed a pull request or comment URL (None: no URL on stdout, a real failure)."""
+    lines = [x.strip() for x in (out or "").splitlines() if x.strip()]
+    if not lines or not re.match(r"^https?://\S+$", lines[-1]):
+        return None
+    return s_or_none(" ".join((err or "").split()), 300) or "some attachments were not uploaded"
 
 
 def _create_answer(out, head, base, template):
@@ -1841,13 +1855,16 @@ def op_pr_attach(req):
     try:
         argv = [host.program, "pr", "comment"] + ([str(number)] if number is not None else []) + ["--body-file", _argpath(path)] + ["--attach=" + a for a in attach]
         code, out, err = run_host(argv, root, [_argpath(path)] + attach)
+        partial = None
         if code != 0:
-            host_error(host, "attach", code, err)
+            partial = _partial_attach(out, err)
+            if partial is None:
+                host_error(host, "attach", code, err)
     finally:
         _unlink(path)
     lines = [x.strip() for x in out.splitlines() if x.strip()]
     url = lines[-1] if lines and re.match(r"^https?://", lines[-1]) else None
-    return {"action": "pr_attach", "number": number, "attached": len(attach), "url": s_or_none(url, 1024)}
+    return {"action": "pr_attach", "number": number, "attached": len(attach), "url": s_or_none(url, 1024), **({"attach_partial": partial} if partial else {})}
 
 
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
