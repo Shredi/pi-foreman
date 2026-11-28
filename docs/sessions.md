@@ -24,6 +24,7 @@ again. All four subcommands are yours to type; a subagent child refuses every on
   Example: `/foreman session brief docs ./more-context.md`, `/foreman session brief docs also cover the CLI flags`
   `/foreman session brief <target> --rework <file|text…>` also [sends the work back](#send-work-back). The flag counts only directly after the target; the same word inside the brief text is text.
   Briefs, rulings and `result.md` follow the package's `handoff` skill (`skills/handoff`).
+  A brief file whose real path ends in `.html` is a [brief page](#brief-pages): the new session reads a generated text copy, saved as `brief-<n>.md` with the page beside it as `brief-<n>.html`.
 - `/foreman session close <target> [result-path]` sends `foreman:close [result-path]` (see the contract below)
   and marks the registry entry `closing` once the send went out. The result path may use only `A-Z a-z 0-9 . _ / -`,
   at most 200 characters, and must end in `.md`. Example: `/foreman session close docs .workflow/result-docs.md`
@@ -74,11 +75,24 @@ The tool does not block on the owner. It waits `sessions.confirmWaitSeconds` (de
 
 A label that already has a registry entry that is not closed or failed is not opened again: the answer is `session <label> is already open in <terminal>, handoff dir <dir>`, with the intercom id and whether `live.json` shows it live, and no window is shown. If the worktree path of a `worktree: true` open already exists, the refusal `the worktree path exists: <path>` stays and names the registry session whose cwd is that path (open or closed), or says that no session is registered for it.
 
+### Brief pages
+
+A brief may be a web page in the plan-page style: write it from `instructions/brief-skeleton.html` (goal, numbered steps, an optional diagram and boxes, then Task, Artifacts, Constraints, Suggested skills) and pass the `.html` file to `open` or `brief`. A brief whose real path (after symlinks) ends in `.html` is a page; every other brief works as before.
+
+- The harness converts the page with the converter of plan copies (`htmlmd.ts`). The copy starts with the line `<!-- generated from the brief page <name>; the page is the source -->`. `open` writes it as `brief.md` (copy plus the report-back footer) and the rendered page as `brief.html` in the handoff dir; `brief` writes `brief-<n>.md` and `brief-<n>.html` with the same `n`. The new session reads the copy, as for any brief; it is told no more.
+- The open dialog links the rendered page, a second copy kept in `<agent dir>/pi-foreman/state/brief-pages/<random>/brief.html` for up to 7 days, also when you answer No. The link is served by the [page server](pages.md) when it runs, else a file link. The dialog heading is the page's title. When the page hides text (the hidden-style spots plan review counts), the dialog adds `Hidden text on the page: <n> spots (the session reads the text copy)`.
+- A page or a copy over 256 KiB is refused: `brief_too_large`; a page that cannot be read or converted: `brief_unreadable`, `brief_unconvertible`. The refusal comes before the dialog.
+- Diagrams are drawn when the diagram engine runs (2 s per diagram, 10 s per page); otherwise the page shows the source.
+- The shell commands (`foreman session open|brief`) need Node 22.6 or newer for a page; without it they refuse with `brief_needs_node`.
+- A session on another machine (`--machine`, or a remote `brief` target) gets only the text copy; the 64 KiB limit applies to the copy and the page stays here.
+- A page may hold scripts, and they may reach the network; see [pages](pages.md#what-is-served).
+
 ### Handoff dir and registry
 
 `open` creates `<agent dir>/pi-foreman/handoffs/<YYYYmmdd-HHMMSS>-<slug>/` with:
 
 - `brief.md`: your brief plus a footer telling the child how to report back (below).
+- `brief.html`: only for a [brief page](#brief-pages): the rendered page, kept beside `brief.md`.
 - `parent`: the opener's intercom id, one line. The child's routing, close check and replies read it every time ([re-point an orphaned child](#safety)). The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
 - later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md` and files below `work/`; no dialog for the write tool, `cp` and an `echo >`, `printf >` or heredoc redirect to these names. A subagent of a child session may write the same names.

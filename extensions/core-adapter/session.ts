@@ -21,9 +21,11 @@
 // (else `session open refused [plan_mode_unavailable]`).
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CLOSE_START_FAILED_REASON, CLOSE_TEXT, CLOSED_TEXT, PR_WATCHED_REASON, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
+import { convertBriefPage, isBriefPage } from "./briefpage.ts";
 import { get } from "./config.ts";
 import type { Json } from "./config.ts";
 import { WAKE_MESSAGE_TYPE } from "./usage.ts";
@@ -233,6 +235,11 @@ export function writeBrief(dir: string, data: string | Uint8Array): string {
   const file = path.join(dir, `brief-${n}.md`);
   fs.writeFileSync(file, data, { flag: "wx" });
   return file.split(path.sep).join("/");
+}
+
+/** Writes the page of a brief as `brief-<n>.html` beside its `brief-<n>.md` (same n; flag "wx": never overwritten). */
+function writeBriefPageBeside(briefMd: string, html: string): void {
+  fs.writeFileSync(briefMd.replace(/\.md$/, ".html"), html, { flag: "wx" });
 }
 
 /**
@@ -529,19 +536,87 @@ export function ownerConfirmShaped(ctx: ExtensionContext, events: EventBus | und
   };
 }
 
+/** A dialog heading from raw heading text: markdown signs and a leading `Brief:` removed, first letter capitalised; null when nothing is left. */
+function headingOf(raw: string): string | null {
+  const h = cleanDialogText(raw.replace(/[`*_]/g, "").replace(/^brief:\s*/i, ""));
+  return h === "" ? null : h.charAt(0).toUpperCase() + h.slice(1);
+}
+
 /** The brief's first `#` heading with markdown signs and a leading `Brief:` removed, its first letter capitalised, or null. */
 function briefHeading(file: string): string | null {
   try {
     for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
       const m = /^#\s+(.*)$/.exec(line);
-      if (!m) continue;
-      const h = cleanDialogText(m[1].replace(/[`*_]/g, "").replace(/^brief:\s*/i, ""));
-      return h === "" ? null : h.charAt(0).toUpperCase() + h.slice(1);
+      if (m) return headingOf(m[1]);
     }
   } catch {
     // unreadable: no heading
   }
   return null;
+}
+
+const BRIEF_PAGES_DIR = "brief-pages";
+/** How long a rendered brief page stays in the state folder (the page-root lifetime). */
+const BRIEF_PAGE_KEEP_MS = 7 * 24 * 3600 * 1000;
+
+/** Writes the rendered page of a brief to `<agent dir>/pi-foreman/state/brief-pages/<random>/brief.html` (folder 0700, file 0600) and sweeps folders older than 7 days. */
+function writeBriefPage(agentDir: string, html: string): string {
+  const base = path.join(agentDir, "pi-foreman", "state", BRIEF_PAGES_DIR);
+  fs.mkdirSync(base, { recursive: true, mode: 0o700 });
+  const cutoff = Date.now() - BRIEF_PAGE_KEEP_MS;
+  try {
+    for (const name of fs.readdirSync(base)) {
+      if (!/^[0-9a-f]{16}$/.test(name)) continue;
+      const dir = path.join(base, name);
+      if (fs.statSync(dir).mtimeMs < cutoff) fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch {
+    // a sweep never stops an open
+  }
+  const dir = path.join(base, randomBytes(8).toString("hex"));
+  fs.mkdirSync(dir, { mode: 0o700 });
+  const file = path.join(dir, "brief.html");
+  fs.writeFileSync(file, html, { flag: "wx", mode: 0o600 });
+  return file;
+}
+
+/** What the dialog shows of a brief page: its rendered copy in the state folder and what the page says about itself. */
+interface PageBrief {
+  page: string;
+  url: string | null;
+  heading: string | null;
+  hidden: number;
+}
+
+/** The real path of `file` when it names a brief page, else null. */
+function briefPageOf(file: string): string | null {
+  try {
+    const real = fs.realpathSync(file);
+    return isBriefPage(real) ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Converts the brief page for the dialog; a refusal text (`session open refused [code]: ...`) when it cannot be converted. */
+async function pageBrief(d: SessionDeps, real: string): Promise<PageBrief | string> {
+  const r = await convertBriefPage(real);
+  if ("error" in r) return `session open refused [${r.error}]: ${r.message}`;
+  let page: string;
+  try {
+    page = writeBriefPage(d.agentDir, r.page);
+  } catch (err) {
+    return `session open refused [brief_unreadable]: the rendered brief page could not be written (${(err as NodeJS.ErrnoException).code ?? "error"})`;
+  }
+  let url: string | null = null;
+  try {
+    url = await pageLinks.url(page, "file", d.config);
+  } catch {
+    url = null;
+  }
+  const own = r.title ? headingOf(r.title) : null;
+  const copyHeading = own ?? r.markdown.split(/\r?\n/).map((l) => /^#\s+(.*)$/.exec(l)?.[1]).filter((h): h is string => h !== undefined).map(headingOf)[0] ?? null;
+  return { page, url, heading: copyHeading, hidden: r.hiddenTotal };
 }
 
 /** The served URL of a brief whose real path ends in .md or .txt (the file-link rule of ownerdialog.ts), else null: other files keep today's link rule. */
@@ -555,10 +630,10 @@ async function briefUrl(d: SessionDeps, file: string): Promise<string | null> {
 }
 
 /** What the owner confirms: what opens and why (the asking session's `summary`, else the brief's heading), the facts, the brief's link and heading. */
-async function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string): Promise<DialogSpec> {
+async function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string, page: PageBrief | null): Promise<DialogSpec> {
   const file = path.resolve(d.cwd, c.brief);
-  const url = await briefUrl(d, file);
-  const heading = briefHeading(file);
+  const url = page ? page.url : await briefUrl(d, file);
+  const heading = page ? page.heading : briefHeading(file);
   const given = c.summary === undefined ? "" : cleanDialogText(c.summary).slice(0, 300);
   return {
     ask: `Open a new session ${c.label}?`,
@@ -570,8 +645,10 @@ async function openSpec(d: SessionDeps, c: Extract<SessionCommand, { sub: "open"
       ["Model", model ?? "(default)"],
       ["Machine", c.machine ?? "this one"],
     ],
-    links: [{ label: "Brief", path: file, text: "open the brief", kind: "text" as const, ...(url ? { url } : {}) }],
-    ...(heading ? { detail: [`Brief heading: ${heading}`] } : {}),
+    links: [page ? { label: "Brief", path: page.page, text: "open the brief", kind: "page" as const, ...(url ? { url } : {}) } : { label: "Brief", path: file, text: "open the brief", kind: "text" as const, ...(url ? { url } : {}) }],
+    ...(heading || (page && page.hidden > 0)
+      ? { detail: [...(heading ? [`Brief heading: ${heading}`] : []), ...(page && page.hidden > 0 ? [`Hidden text on the page: ${page.hidden} spots (the session reads the text copy)`] : [])] }
+      : {}),
     answers: "Yes: the session starts   No: nothing opens",
   };
 }
@@ -628,7 +705,10 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const open = openEntryOf(d, c.label);
   if (open) return { text: describeEntry(open, `session ${c.label} is already open`), ok: false };
   if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
-  const spec = await openSpec(d, c, model, cwdArg);
+  const real = briefPageOf(briefFile);
+  const page = real ? await pageBrief(d, real) : null;
+  if (typeof page === "string") return { text: page, ok: false };
+  const spec = await openSpec(d, c, model, cwdArg, page);
   const ask = (signal?: AbortSignal): Promise<boolean> => {
     if (d.confirmShaped) return d.confirmShaped(spec, signal);
     const { ask: title, body } = ownerDialog(spec, null);
@@ -872,7 +952,15 @@ export async function sessionBrief(d: SessionDeps, target: string, body: string,
   const isFile = file !== null && fs.existsSync(file) && fs.statSync(file).isFile();
   let brief: string;
   try {
-    brief = writeBrief(handoff, isFile ? fs.readFileSync(file!) : `${body}\n`);
+    const real = isFile ? briefPageOf(file!) : null;
+    if (real) {
+      const r = await convertBriefPage(real);
+      if ("error" in r) return { text: `pi-foreman session: brief to ${target} refused [${r.error}]: ${r.message}`, ok: false };
+      brief = writeBrief(handoff, r.markdown);
+      writeBriefPageBeside(brief, r.page);
+    } else {
+      brief = writeBrief(handoff, isFile ? fs.readFileSync(file!) : `${body}\n`);
+    }
     if (rework) writeRework(handoff);
   } catch (err) {
     return { text: `pi-foreman session: brief to ${target} refused: ${(err as Error).message}`, ok: false };
@@ -1104,7 +1192,7 @@ export function registerSessionOpenTool(
     name: SESSION_OPEN_TOOL,
     label: "Open a session",
     description:
-      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan review passes; at tier heavy the owner then approves the plan at its checkpoint); a session with an approved plan: no planFirst. Refused in subagent children.",
+      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. The brief is a markdown or text file, or an `.html` page written from the brief skeleton (the owner reads the rendered page in the dialog; the session reads a generated text copy). Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan review passes; at tier heavy the owner then approves the plan at its checkpoint); a session with an approved plan: no planFirst. Refused in subagent children.",
     parameters: OPEN_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
