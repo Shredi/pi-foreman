@@ -15,7 +15,7 @@ import type { ReviewRecord } from "../reviews.ts";
 import type { Spawner } from "../spawn.ts";
 
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[] }> };
-const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attach2-")));
+const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attach2-")));
 execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
 execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=n", "commit", "-q", "--allow-empty", "-m", "x"], { cwd: repo });
 const HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
@@ -94,7 +94,7 @@ test("files: .mp4 and .gif are refused as attach_type; an animated WebP (VP8X fl
 test("files: a path inside .workflow/ is accepted; a symlink inside the checkout that points outside is refused", () => {
   put(".workflow/screenshots/s.png", PNG);
   assert.ok("files" in checkAttach([{ path: ".workflow/screenshots/s.png" }], repo));
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attach2-out-")));
+  const outside = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attach2-out-")));
   try {
     fs.writeFileSync(path.join(outside, "o.png"), PNG);
     fs.rmSync(path.join(repo, "lnk.png"), { force: true });

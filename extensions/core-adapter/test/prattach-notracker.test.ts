@@ -13,7 +13,7 @@ import type { ReviewRecord } from "../reviews.ts";
 import type { Spawner } from "../spawn.ts";
 
 type Tool = { name: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[] }> };
-const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attach3-")));
+const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-attach3-")));
 execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
 execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=n", "commit", "-q", "--allow-empty", "-m", "x"], { cwd: repo });
 const HEAD = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();

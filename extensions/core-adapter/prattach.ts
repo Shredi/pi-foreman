@@ -180,8 +180,8 @@ export function githubUploadHost(host: string): boolean {
  * The review test of an attach list: the newest code review recorded for `head` in the checkout `top` must be a `[pre-pr]` PASS whose `attach` holds every file
  * with the sha256 it has now. It applies whatever ceremony.reviewBeforePr says, and also when the upload would degrade.
  */
-export function attachRefusal(tool: string, records: readonly ReviewRecord[], top: string, head: string | null, files: readonly AttachRef[]): { reason: "attach_unreviewed"; message: string } | null {
-  const newest = head ? records.findLast((r) => r.kind !== "plan" && r.head === head && r.cwd === top) : undefined;
+export function attachRefusal(tool: string, records: readonly ReviewRecord[], top: string, head: string | null, files: readonly AttachRef[], platform: string = process.platform): { reason: "attach_unreviewed"; message: string } | null {
+  const newest = head ? records.findLast((r) => r.kind !== "plan" && r.head === head && r.cwd !== undefined && under(platform, r.cwd, top) && under(platform, top, r.cwd)) : undefined;
   const held = newest && newest.verdict === "pass" && newest.occasion === "pre-pr" ? (newest.attach ?? []) : [];
   const open = files.filter((f) => !held.some((a) => a.path === f.path && a.sha256 === f.sha256)).map((f) => f.path);
   if (open.length === 0) return null;
