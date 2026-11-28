@@ -112,7 +112,7 @@ const config = { presence: { enabled: false }, providers: { fake: { review: { mo
 async function rig(t: T, role: string, mode: string, registerRound: (c: Awaited<ReturnType<typeof r11Rig>>) => string | null, cwd?: (c: { project: string }) => string) {
   let judged = 0;
   const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => { judged++; return { content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }; } };
-  const perms = { mode, allow: ["Bash(*)", "Write", "Edit"] };
+  const perms = { mode, allow: ["Bash(*)", "Write", "Edit"], classifier: { allow: ["Anything at all."] } };
   const prev = process.env[BINDINGS_ENV];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role, launchId: "l1", kind: "first", workspace: "", perms: { mode, childDeny: true } } });
   t.after(() => {

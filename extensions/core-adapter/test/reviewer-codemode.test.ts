@@ -30,7 +30,7 @@ const ALLOW = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
 async function reviewerInRound(t: T) {
   let judged = 0;
   const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => { judged++; return { content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }; } };
-  const perms = { mode: "auto", allow: ["Bash(*)", "Write", "Edit", "mcp__*"] };
+  const perms = { mode: "auto", allow: ["Bash(*)", "Write", "Edit", "mcp__*"], classifier: { allow: ["Anything at all."] } };
   const prev = process.env[BINDINGS_ENV];
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "parent-session", role: "reviewer", launchId: "l1", kind: "first", workspace: "", perms: { mode: "auto", childDeny: true } } });
   t.after(() => {

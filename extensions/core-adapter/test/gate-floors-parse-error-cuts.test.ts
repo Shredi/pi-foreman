@@ -49,7 +49,7 @@ async function gateRig(t: T, role: string | null) {
   let dialogs = 0;
   const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with comment"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
   const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => (judged++, { content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
-  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui, [RIG_PERMISSIONS]: { mode: "auto", allow: ["Bash(*)"] } }, config, child: role !== null });
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui, [RIG_PERMISSIONS]: { mode: "auto", allow: ["Bash(*)"], classifier: { allow: ["Anything at all."] } } }, config, child: role !== null });
   return async (command: string): Promise<string> => {
     const d0 = dialogs;
     const j0 = judged;

@@ -11,7 +11,7 @@ const ALLOW = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
 const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: ALLOW }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
 const ROLES = ["explorer", "builder", "reviewer"];
 const config = { presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } } };
-const perms = { mode: "auto", allow: ["Bash(*)", "Write", "Edit", "pr_create"] };
+const perms = { mode: "auto", allow: ["Bash(*)", "Write", "Edit", "pr_create"], classifier: { allow: ["Anything at all."] } };
 
 async function child(t: T) {
   const prev = process.env[BINDINGS_ENV];
