@@ -19,8 +19,8 @@ export const PROSE_MAX = 300;
 export const PROTECTED_NOTE_MAX = 200;
 /** Above this many allow sentences the doctor warns that each judge call gets slower and dearer; nothing is skipped. */
 export const ALLOW_WARN_ENTRIES = 40;
-/** Characters an allow sentence may not hold: C0/C1 controls, line and paragraph separators, bidi controls, zero-width characters. */
-const HIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/;
+/** Characters an allow sentence may not hold: C0/C1 controls, line and paragraph separators, bidi controls, zero-width characters, and every other Unicode format character (category Cf, such as U+061C, U+2060-2064, tag characters), plus U+180E. */
+const HIDDEN_CHARS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u180e\p{Cf}]/u;
 
 /** The check mode of one protected entry; it can only tighten `gate.protected.check` (model < read-only < ask). */
 export type ProtectedCheckMode = "model" | "read-only" | "ask";

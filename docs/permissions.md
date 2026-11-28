@@ -538,7 +538,7 @@ One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`:
 | `default` | a built-in allow | the built-in name |
 | `classifier` | the judge cleared a judge-first call | `judge` (the row names the `danger-*` label in its reason; a clear that cited one of your allow sentences also carries `sentence: "A2#1b2c3d4e"`, the id and the first 8 hex of the sentence's sha256, so the row stays meaningful after renumbering); a call that needs the owner is logged by the `dialog` layer |
 | `protected` | the protected check allowed or denied | `protected:P2`, or `protected:P2;classifier.deny:D1` for a deny |
-| `cache` | the judge's cached clear was reused | `judge:danger-git` |
+| `cache` | the judge's cached clear was reused | `judge` (the trace label keeps `judge:<danger>[:sentence:A<n>]`) |
 | `mode` | no floor, built-in allow or judge-first entry named the call, so it ran | `mode:no-rule` |
 | `dialog` | an owner answered | the `danger-*` name or the cause |
 | `child-ask` | a parent answered or timed out for a child | the run id and the outcome (an answer carries the dialog answer, for example `allow-once`) |

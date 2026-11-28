@@ -117,3 +117,13 @@ test("a non-string entry is skipped with a notice; a non-list key invalidates th
   assert.deepEqual(bad.s.resolve().allow, []);
   assert.ok(bad.s.drainNotices().some((m) => m.includes("classifier.allow must be a list of strings")));
 });
+
+test("more hidden format characters skip the entry: U+061C, U+2060-2064, U+180E, U+00AD, tag characters; plain text and non-ASCII letters stay", () => {
+  for (const bad of ["a؜b", "a⁠b", "a⁡b", "a⁢b", "a⁣b", "a⁤b", "a᠎b", "a­b", "a\u{e0041}b"]) {
+    const r = store({ user: allow("good", bad) }).s.resolve();
+    assert.deepEqual(r.allow.map((e) => e.text), ["good"], JSON.stringify(bad));
+    assert.equal(r.allowNotes.length, 1, JSON.stringify(bad));
+  }
+  const fine = "Prüfe uptime auf host.example.net – größer 日本語";
+  assert.deepEqual(store({ user: allow(fine) }).s.resolve().allow.map((e) => e.text), [fine]);
+});

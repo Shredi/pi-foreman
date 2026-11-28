@@ -1020,7 +1020,6 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
 | [auto-review-overlay](#auto-review-overlay) | `/foreman perms` |
-| [allow-sentences](#allow-sentences) | `/foreman perms` |
 | [knowledge](#knowledge) | `foreman knowledge` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status`, `foreman test-run` |

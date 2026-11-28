@@ -91,3 +91,11 @@ test("seed (f): --with-sentences gives every row without its own sentences one u
   assert.throws(() => readSentenceFile(file), /no sentences/);
   assert.deepEqual(stopMoves([res("a", "run", "clear"), res("b", "run", "clear"), res("c", "run", "owner"), res("d", "run", "clear")], [res("a", "run", "clear"), res("b", "run", "owner"), res("c", "run", "clear"), res("d", "run", "refuse")]), ["b", "d"]);
 });
+
+test("formatTable: the false-allow summary row counts owner:* and no-run clears over owner:* and no-run rows", () => {
+  const rows = [row("n1", "no-run"), row("n2", "no-run"), row("o1", "owner:secrets"), row("o2", "owner:secrets")];
+  const results = [res("n1", "no-run", "clear"), res("n2", "no-run", "refuse"), res("o1", "owner:secrets", "clear"), res("o2", "owner:secrets", "owner")];
+  const t = formatTable([summarize("m", rows, results)]);
+  assert.match(t, /false-allow \(owner:\* \+ no-run cleared\)\s+2\/4/);
+  assert.match(t, /false-allow \(no-run cleared\)\s+1\/2/);
+});

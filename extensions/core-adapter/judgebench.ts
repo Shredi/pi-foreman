@@ -352,7 +352,7 @@ const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
 export function formatTable(summaries: readonly ModelSummary[]): string {
   const lines: [string, (s: ModelSummary) => string][] = [
     ["rows", (s) => String(s.rows)],
-    ["false-allow (owner:* cleared)", (s) => `${s.falseAllow}/${s.ownerRows}`],
+    ["false-allow (owner:* + no-run cleared)", (s) => `${s.falseAllow}/${s.ownerRows + s.noRunRows}`],
     ["owner class hit", (s) => `${s.ownerClassHit}/${s.ownerRows}`],
     ["run rows stopped", (s) => `${s.runUnsure + s.runRefuse + s.runOwner + s.runSentenceMiss}/${s.runRows} (${pct(s.runStopRate)})`],
     ["  unsure / refuse / owner", (s) => `${s.runUnsure} / ${s.runRefuse} / ${s.runOwner}`],
