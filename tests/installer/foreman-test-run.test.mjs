@@ -1156,3 +1156,229 @@ test("a detached run's command sees TMPDIR inside a pf-run- root, removed by the
   // the worker's start swept the old entry (a run mode), proving the sweep ran in the worker and not in the control calls
   assert.ok(!fs.existsSync(path.join(b, "pf-old-control")));
 });
+
+// --- signals sent to the wrapper itself ---
+
+const POSIX_ONLY = { skip: process.platform === "win32" && "POSIX signals" };
+/** A command that ignores SIGTERM and SIGHUP, starts a grandchild doing the same, and records the grandchild's pid. */
+function stubbornTree(pidFile) {
+  const grand = `process.on("SIGTERM", () => {}); process.on("SIGHUP", () => {}); require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+  return `process.on("SIGTERM", () => {}); process.on("SIGHUP", () => {}); require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grand)}], { stdio: "ignore" }); setInterval(() => {}, 1000)`;
+}
+
+test("SIGTERM to a running wrapper stops the whole tree, releases the lock, exits 143 and lets a queued caller run", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  try {
+    const holder = launch(dir, dir, execArgs(stubbornTree(pidFile)));
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    const second = launch(dir, dir, execArgs(touchMarker(dir)));
+    const sid = await waitFor(() => second.id());
+    await waitFor(() => recordOf(dir, sid)?.state === "waiting");
+    const sent = Date.now();
+    holder.child.kill("SIGTERM");
+    assert.equal(await holder.done, 143);
+    assert.ok(Date.now() - sent < 15_000, "the wrapper exited promptly");
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.equal(await second.done, 0);
+    assert.ok(fs.existsSync(marker(dir)), "the queued caller ran");
+    assert.ok(!fs.existsSync(lockFile(dir)));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SIGHUP to a running wrapper stops the whole tree, releases the lock and exits 129", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  try {
+    const holder = launch(dir, dir, execArgs(stubbornTree(pidFile)));
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    holder.child.kill("SIGHUP");
+    assert.equal(await holder.done, 129);
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.ok(!fs.existsSync(lockFile(dir)));
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("SIGHUP to a queued wrapper drops its ticket and does not block a later caller", POSIX_ONLY, async () => {
+  const dir = tmp();
+  try {
+    const holder = launch(dir, dir, execArgs(`setInterval(() => {}, 1000)`));
+    await waitFor(() => holder.id() && recordOf(dir, holder.id())?.state === "running");
+    const waiter = launch(dir, dir, execArgs(touchMarker(dir)));
+    const wid = await waitFor(() => waiter.id());
+    await waitFor(() => recordOf(dir, wid)?.state === "waiting" && tickets(dir).length === 1);
+    waiter.child.kill("SIGHUP");
+    assert.equal(await waiter.done, 129);
+    assert.deepEqual(tickets(dir), []);
+    assert.equal(recordOf(dir, wid), undefined);
+    const later = launch(dir, dir, execArgs(touchMarker(dir)));
+    const lid = await waitFor(() => later.id());
+    await waitFor(() => recordOf(dir, lid)?.state === "waiting");
+    holder.child.kill("SIGINT");
+    assert.equal(await holder.done, 130);
+    assert.equal(await later.done, 0);
+    assert.ok(fs.existsSync(marker(dir)), "the later caller ran");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("nodeTestArgs forwards --test-shard to node, before --test", () => {
+  assert.deepEqual(nodeTestArgs(["--import", "./h.mjs", "--test-shard=2/3", "a/*.ts", "b/*.ts"], 2), ["--import", "./h.mjs", "--test-shard=2/3", "--test", "--test-concurrency=2", "a/*.ts", "b/*.ts"]);
+});
+
+// --- a caller that dies without signalling the wrapper (orphaned to ppid 1) ---
+
+/** Starts the wrapper behind an intermediate `sh` (`"$@" & wait`); killing the sh orphans the wrapper. `wrapperPid()` reads the pid from the wrapper's id line. */
+function launchBehindSh(dir, args) {
+  const child = spawn("sh", ["-c", '"$@" & wait', "sh", process.execPath, SCRIPT, ...args], { cwd: dir, env: env(dir), stdio: ["ignore", "pipe", "pipe"] });
+  const h = { child, err: "", wrapperPid: () => Number(/foreman_test_run: run \S+ \(pid (\d+),/.exec(h.err)?.[1]) || undefined, id: () => /foreman_test_run: run (\S+) \(pid/.exec(h.err)?.[1] };
+  child.stderr.on("data", (d) => (h.err += d));
+  child.stdout.on("data", () => {});
+  return h;
+}
+/** Like `gone`, with a longer bound (a stubborn tree is killed after the 5 s grace). */
+const goneWithin = async (pid, ms) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+};
+const killQuiet = (pid, sig = "SIGKILL") => {
+  try {
+    process.kill(pid, sig);
+  } catch {}
+};
+
+test("a queued wrapper whose caller was SIGKILLed leaves the queue and a later caller gets the lock", POSIX_ONLY, async () => {
+  const dir = tmp();
+  let h;
+  try {
+    const holder = launch(dir, dir, execArgs(`setTimeout(() => process.exit(0), 4000)`));
+    await waitFor(() => holder.id() && recordOf(dir, holder.id())?.state === "running");
+    h = launchBehindSh(dir, execArgs(touchMarker(dir)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    await waitFor(() => recordOf(dir, h.id())?.state === "waiting" && tickets(dir).length === 1);
+    h.child.kill("SIGKILL");
+    assert.ok(await gone(wpid), "the orphaned wrapper exited");
+    assert.deepEqual(tickets(dir), []);
+    assert.equal(recordOf(dir, h.id()), undefined);
+    assert.ok(!fs.existsSync(marker(dir)), "the orphan ran nothing");
+    assert.match(h.err, /caller gone/);
+    const later = launch(dir, dir, execArgs(touchMarker(dir)));
+    assert.equal(await holder.done, 0);
+    assert.equal(await later.done, 0);
+    assert.ok(fs.existsSync(marker(dir)), "the later caller ran");
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a running wrapper whose caller was SIGKILLed stops its tree, releases the lock and exits", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  let h;
+  try {
+    h = launchBehindSh(dir, execArgs(stubbornTree(pidFile)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    h.child.kill("SIGKILL");
+    assert.ok(await goneWithin(wpid, 20_000), "the orphaned wrapper exited");
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.ok(!fs.existsSync(lockFile(dir)));
+    assert.match(h.err, /caller gone/);
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    if (fs.existsSync(pidFile)) killQuiet(Number(fs.readFileSync(pidFile, "utf8")));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+const historyExit = (dir, id) => {
+  const f = path.join(dir, "test-history", "history.jsonl");
+  if (!fs.existsSync(f)) return undefined;
+  const line = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((r) => r.id === id);
+  return line?.exit;
+};
+
+test("a running wrapper whose caller is gone with closed pipes still kills a SIGTERM-ignoring tree, removes the lock and exits 125", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const pidFile = path.join(dir, "grandchild.pid");
+  let h;
+  try {
+    h = launchBehindSh(dir, execArgs(stubbornTree(pidFile)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    const id = await waitFor(() => h.id());
+    await waitFor(() => fs.existsSync(pidFile) && fs.readFileSync(pidFile, "utf8"));
+    const grandPid = Number(fs.readFileSync(pidFile, "utf8"));
+    h.child.stdout.destroy();
+    h.child.stderr.destroy();
+    h.child.kill("SIGKILL");
+    assert.ok(await goneWithin(wpid, 20_000), "the orphaned wrapper exited");
+    assert.ok(await gone(grandPid), "the grandchild is gone");
+    assert.ok(!fs.existsSync(lockFile(dir)), "the lock file is removed");
+    assert.equal(await waitFor(() => historyExit(dir, id)), 125);
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    if (fs.existsSync(pidFile)) killQuiet(Number(fs.readFileSync(pidFile, "utf8")));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a queued wrapper whose caller is gone with closed pipes leaves the queue and exits 125", POSIX_ONLY, async () => {
+  const dir = tmp();
+  let h;
+  try {
+    const holder = launch(dir, dir, execArgs(`setTimeout(() => process.exit(0), 4000)`));
+    await waitFor(() => holder.id() && recordOf(dir, holder.id())?.state === "running");
+    h = launchBehindSh(dir, execArgs(touchMarker(dir)));
+    const wpid = await waitFor(() => h.wrapperPid());
+    const id = await waitFor(() => h.id());
+    await waitFor(() => recordOf(dir, id)?.state === "waiting" && tickets(dir).length === 1);
+    h.child.stdout.destroy();
+    h.child.stderr.destroy();
+    h.child.kill("SIGKILL");
+    assert.ok(await gone(wpid), "the orphaned wrapper exited");
+    assert.deepEqual(tickets(dir), []);
+    assert.equal(recordOf(dir, id), undefined);
+    assert.equal(await waitFor(() => historyExit(dir, id)), 125);
+    assert.ok(!fs.existsSync(marker(dir)), "the orphan ran nothing");
+    assert.equal(await holder.done, 0);
+    const later = await finish(run(dir, "process.exit(0)"));
+    assert.equal(later.code, 0);
+  } finally {
+    if (h?.wrapperPid()) killQuiet(h.wrapperPid());
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a detached run is orphaned by design and still completes after its caller exited", POSIX_ONLY, async () => {
+  const dir = tmp();
+  const e = env(dir);
+  const launched = await spawnExec({ ...e, FOREMAN_TEST_DETACH: "1" }, `setTimeout(() => { require("fs").writeFileSync(${JSON.stringify(marker(dir))}, "x"); }, 1500)`);
+  assert.equal(launched.code, 0, launched.err);
+  const id = /run ([a-z0-9-]+) detached/.exec(launched.out)[1];
+  const w = await finish(spawn(process.execPath, [SCRIPT, "--wait", id, "--max", "30"], { env: e, stdio: ["ignore", "pipe", "pipe"] }));
+  assert.equal(w.code, 0, w.out + w.err);
+  assert.ok(fs.existsSync(marker(dir)), "the command ran to the end");
+});

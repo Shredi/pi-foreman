@@ -29,6 +29,11 @@ FIXTURE = {
 }
 
 
+def offline(name):
+    """Registry stub: main never reaches the network, so a slow fetch cannot age the 90 s heartbeat window."""
+    raise OSError("offline")
+
+
 class OlderSessions(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
@@ -70,11 +75,11 @@ class OlderSessions(unittest.TestCase):
         lock.write_text(json.dumps({"schema": 1, "packages": []}), encoding="utf-8")
         out = io.StringIO()
         with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": self.d}), contextlib.redirect_stdout(out):
-            self.assertEqual(uc.main(["--lock", str(lock), "--json"]), 0)
+            self.assertEqual(uc.main(["--lock", str(lock), "--json"], offline), 0)
         self.assertEqual([s["sessionId"] for s in json.loads(out.getvalue())["olderSessions"]], ["mine"])
         out = io.StringIO()
         with mock.patch.dict(os.environ, {"PI_CODING_AGENT_DIR": os.path.join(self.d, "empty")}), contextlib.redirect_stdout(out):
-            self.assertEqual(uc.main(["--lock", str(lock), "--json"]), 0)
+            self.assertEqual(uc.main(["--lock", str(lock), "--json"], offline), 0)
         self.assertEqual(json.loads(out.getvalue())["olderSessions"], [])
 
 

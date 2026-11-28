@@ -1677,46 +1677,55 @@ export function blankComments(command: string): string {
   }
 }
 
+/** A stack overflow as V8 reports it: a RangeError, or a SyntaxError "Invalid regular expression: ...: Stack overflow" when the regexp engine runs out of stack. */
+const isStackOverflow = (e: unknown): boolean => e instanceof RangeError || (e instanceof SyntaxError && /Stack overflow/.test(e.message));
+
+const startScope = (command: string, opts: ShellParseOptions): Scope => {
+  const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, ...(opts.noCalls ? {} : { funcs: new Map() }), budget: { walks: 0, cmds: 0, starts: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
+  return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
+};
+
+// `tooDeep`: a block, subshell or definition nested past the parser's limit is no syntax error (a shell runs it): the line is unread, so judge-first, never an allow
+const unreadableLine = (command: string, opts: ShellParseOptions, tooDeep = false): ShellSegment[] => {
+  const sc = startScope(command, opts);
+  seg(sc, "", [], "parse_error");
+  if (tooDeep) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
+  return sc.run.out;
+};
+
 /**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
- * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
- * one `parse_error` segment marked `tooDeep` (judge-first), none of the partial ones. Any other error propagates.
+ * Any stack overflow anywhere in the parse or the walk (a RangeError, or the regexp engine's "Stack overflow" SyntaxError; a line too deep for the stack is the case that occurs)
+ * is the same: one `parse_error` segment marked `tooDeep` (judge-first), none of the partial ones. Any other error propagates.
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
-  const start = (): Scope => {
-    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, strings: [], root: command, ...(opts.noCalls ? {} : { funcs: new Map() }), budget: { walks: 0, cmds: 0, starts: 0 }, resolved: new Set(), flow: { dyn: false, any: false, cond: 0 } };
-    return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, docs: [], reason: null };
-  };
-  // `tooDeep`: a block, subshell or definition nested past the parser's limit is no syntax error (a shell runs it): the line is unread, so judge-first, never an allow
-  const unreadable = (tooDeep = false): ShellSegment[] => {
-    const sc = start();
-    seg(sc, "", [], "parse_error");
-    if (tooDeep) Object.defineProperty(sc.run.out[sc.run.out.length - 1], "tooDeep", { value: true, enumerable: false });
-    return sc.run.out;
-  };
-  const sc = start();
+  try {
+    return parseShellUnguarded(command, opts);
+  } catch (e) {
+    if (isStackOverflow(e)) return unreadableLine(command, opts, true);
+    throw e;
+  }
+}
+
+function parseShellUnguarded(command: string, opts: ShellParseOptions): ShellSegment[] {
+  const unreadable = (tooDeep = false): ShellSegment[] => unreadableLine(command, opts, tooDeep);
+  const sc = startScope(command, opts);
   let script: Script | undefined;
   let overflow = false;
   try {
     script = (opts.parse ?? parse)(command);
   } catch (e) {
     script = undefined;
-    overflow = e instanceof RangeError;
+    overflow = isStackOverflow(e);
   }
   if (!script || (script as any).errors?.length) return unreadable(overflow || ((script as any)?.errors as { message?: string }[] | undefined)?.some((e) => /nesting depth exceeded/.test(e.message ?? "")) === true);
-  try {
-    const an = analyse(command);
-    sc.run.rebound = an.rebound;
-    sc.run.unsafe = an.unsafe;
-    sc.run.seed = opts.rebound;
-    walkScript(script, command, sc);
-    // a segment that names a function the line defines, but was walked before the definition was known (one made inside a later `eval`): its body was not walked
-    for (const x of sc.run.out) if (x.opaque !== "function_def" && sc.run.funcs?.has(x.program) && !sc.run.resolved?.has(x)) Object.defineProperty(x, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
-  } catch (e) {
-    // a stack overflow in the walk is a line too deep to read, like nesting past the parser's limit: judge-first, never an allow
-    if (e instanceof RangeError) return unreadable(true);
-    throw e;
-  }
+  const an = analyse(command);
+  sc.run.rebound = an.rebound;
+  sc.run.unsafe = an.unsafe;
+  sc.run.seed = opts.rebound;
+  walkScript(script, command, sc);
+  // a segment that names a function the line defines, but was walked before the definition was known (one made inside a later `eval`): its body was not walked
+  for (const x of sc.run.out) if (x.opaque !== "function_def" && sc.run.funcs?.has(x.program) && !sc.run.resolved?.has(x)) Object.defineProperty(x, "programUnknown", { value: true, enumerable: false, configurable: true, writable: true });
   Object.defineProperty(sc.run.out, "strings", { value: sc.run.strings, enumerable: false });
   return sc.run.out;
 }

@@ -1,6 +1,8 @@
 // Run with a small `--stack-size`: parses a harmless line at stack depths that end in a stack overflow somewhere inside parseShell, and prints what came back.
+import { writeSync } from "node:fs";
 import { parseShell } from "../../shellast.ts";
 
+Error.stackTraceLimit = Infinity;
 let total = 0;
 const probe = () => {
   total++;
@@ -17,10 +19,22 @@ function at(depth, line) {
     const segs = parseShell(line, { platform: "linux" });
     return { segments: segs.length, opaque: segs[0]?.opaque ?? null, tooDeep: !!segs[0]?.tooDeep };
   } catch (e) {
-    return { threw: e?.constructor?.name ?? "?" };
+    // only keep the error here: reading its stack takes stack this frame may not have; it is classified after the scan
+    thrown.push(e);
+    return { threw: e?.constructor?.name ?? "?", at: thrown.length - 1 };
   }
 }
+const thrown = [];
+// the stack of an error that left parseShell, read once the scan is over: `inBody` is whether the error came out of the guarded parse or walk (a hole in the guard); otherwise it came
+// from the call itself or from the backstop's own few frames (a caller with no room left for them), which no guard can answer
+function classify(r) {
+  const e = thrown[r.at];
+  const stack = String(e?.stack ?? "");
+  return { threw: r.threw, inBody: /parseShellUnguarded/.test(stack), top: /^\s+at (\S+)/m.exec(stack.split("\n").slice(1).join("\n"))?.[1] ?? "?" };
+}
 const line = "echo $(echo $(echo hi)); ls | wc -l";
+// JSON and the output path are initialised here with full stack, not inside the low-stack scan or the final write (parseShell is not warmed up: that changes its frame sizes and the scan)
+JSON.stringify({ warm: [1, "a", null, true] });
 const results = [];
 // the burner recursion leaves less and less stack for the parse as `k` shrinks: walk the headroom k up one frame at a time from "no room" until the parse reads the whole line, then a long run of full reads further,
 // so the transition zone where the parse itself runs out is covered on any platform (frame sizes differ by engine tier)
@@ -42,4 +56,5 @@ for (; k < total - 60; k++) {
     if (++run >= 300) break;
   } else run = 0;
 }
-console.log(JSON.stringify({ total, scannedTo: k, fullAt, results }));
+// fs.writeSync does not touch the lazily created process.stdout stream, whose setup needs stack the low-stack process may not have
+writeSync(1, JSON.stringify({ total, scannedTo: k, fullAt, results: results.map((r) => (r.threw ? classify(r) : r)) }) + "\n");

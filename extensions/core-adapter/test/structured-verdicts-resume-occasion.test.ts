@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { tick, world, type WorldOpts } from "./_r46world.ts";
+import { world, type WorldOpts } from "./_r46world.ts";
 
 type W = ReturnType<typeof world>;
 type Rig = Awaited<ReturnType<W["adapter"]>>;
@@ -22,6 +22,16 @@ async function setup(t: Parameters<typeof world>[0], o: WorldOpts = {}) {
   return { w, a };
 }
 
+/**
+ * Waits for what a run end set going: the end handler returns before the ledger marks (a python child) and the review record land. The settle gate awaits the same chain the production
+ * stop guard does ("PASS marks and the comment-only check land before the stop guard reads the ledger"), so afterwards a mark that was going to land has landed, and a mark absent now is no late one.
+ */
+const landed = async (a: Rig): Promise<void> => {
+  const settled = a.fire("agent_before_settle", { outcome: "completed", entries: [] });
+  assert.ok(settled !== undefined, "agent_before_settle handler is not registered");
+  await settled;
+};
+
 async function resume(a: Rig, target: string, runId: string): Promise<void> {
   const id = `res-${runId}`;
   const input = { action: "resume", id: target, message: "finish the review" };
@@ -37,11 +47,11 @@ async function resumedPass(t: Parameters<typeof world>[0], task: string, extra: 
   const first = await a.reviewLaunch(task, extra);
   assert.equal(first.blocked, null, String(first.blocked));
   await a.endEvent(reviewEnd(`run-${first.id}`, "timed-out"));
-  await tick(100);
+  await landed(a);
   await resume(a, `run-${first.id}`, "run-resumed");
   assert.ok(a.record(first.id, PASS), "the folder takes the record");
   await a.endEvent(reviewEnd("run-resumed", "completed"));
-  await tick(600);
+  await landed(a);
   return { w, a };
 }
 

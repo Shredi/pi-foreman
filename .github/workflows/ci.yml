@@ -11,12 +11,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   test:
+    # Linux legs only; the macOS leg is the test-macos job below (three shards).
     strategy:
       fail-fast: false
       matrix:
         include:
           - {os: ubuntu-latest, node: "22"}
-          - {os: macos-latest, node: "22"}
           - {os: ubuntu-latest, node: "26"}
     name: test (${{ matrix.os }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }})
     runs-on: ${{ matrix.os }}
@@ -48,21 +48,56 @@ jobs:
       - name: typescript lint (oxlint)
         if: runner.os == 'Linux' && matrix.node == '22'
         run: npm run lint:ts
-      # The spawn guard (no npm, no titled node process; scripts/foreman_test_run.mjs) matters on macOS, so only the macOS leg runs it.
-      - name: node tests under the spawn guard (adapter and herdr-app mods)
-        if: runner.os == 'macOS'
-        run: npm run test:node
       - name: adapter tests
-        if: runner.os != 'macOS'
         run: node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test "extensions/core-adapter/test/*.test.ts"
       - name: herdr-app mod model tests
-        if: runner.os != 'macOS'
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
       - name: installer tests (dry-run, idempotent second run, remove)
         run: node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"
       - name: typescript type check (extensions, Pi 1.6.1 types)
         if: runner.os == 'Linux'
         run: npx tsc --noEmit -p tsconfig.json
+  test-macos:
+    # The macOS leg is three shards that run at once, split like test-windows. Shard 1/3 runs the python, core pin check, installer and herdr-app mod tests; the adapter tests (extensions/core-adapter/test/*.test.ts and test/retired/*.test.ts, the files `npm run test:node` runs) are split over shards 2/3 and 3/3 with node's --test-shard (deterministic, by file order).
+    # The node steps run under the spawn guard (no npm, no titled node process; scripts/foreman_test_run.mjs, which forwards --test-shard to node; the lock is off in CI). Limit 50 min, as test-windows, until shard timings are measured.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: "1/3"}
+          - {shard: "2/3", adapter-shard: "1/2"}
+          - {shard: "3/3", adapter-shard: "2/2"}
+    name: test (macos-latest, ${{ matrix.shard }})
+    runs-on: macos-latest
+    timeout-minutes: 50
+    steps:
+      # full history: the sizing test reads the base commit's foreman.md
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: install bundled packages (pi-subagents, intercom)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: python unit tests
+        if: matrix.shard == '1/3'
+        run: python -m unittest discover -s tests -v
+      - name: core pin check
+        if: matrix.shard == '1/3'
+        run: python scripts/pull_core.py --check
+      - name: herdr-app mod model tests under the spawn guard
+        if: matrix.shard == '1/3'
+        run: node scripts/foreman_test_run.mjs --import ./extensions/core-adapter/test/_hermetic-env.mjs "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
+      - name: installer tests (dry-run, idempotent second run, remove)
+        if: matrix.shard == '1/3'
+        run: node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"
+      - name: adapter tests under the spawn guard (one macOS shard)
+        if: matrix.shard != '1/3'
+        run: node scripts/foreman_test_run.mjs --import ./extensions/core-adapter/test/_hermetic-env.mjs --test-shard=${{ matrix.adapter-shard }} "extensions/core-adapter/test/*.test.ts" "extensions/core-adapter/test/retired/*.test.ts"
   test-windows:
     # The Windows leg is three shards that run at once. Shard 1/3 runs the python, herdr, installer and shim steps; the adapter tests are split over shards 2/3 and 3/3 with node's --test-shard (deterministic, by file order).
     # Measured over two runs: shard 1/3 13 to 16 min, 2/3 18 to 20 min, 3/3 15 to 24 min; the limit is about twice the slowest shard.
@@ -348,8 +383,8 @@ jobs:
         run: |
           java -cp "$RUNNER_TEMP/tla2tools.jar" tlc2.TLC -config PermissionFlow.cfg -workers auto -metadir "$RUNNER_TEMP/tlc-states-permission" PermissionFlow.tla
   ci-ok:
-    # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it). A matrix job's result is the aggregate of its legs, so a failed, cancelled or skipped Windows shard fails ci-ok too.
-    needs: [test, test-windows, replay, bench-smoke, fresh-install, review-gates-model]
+    # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it). A matrix job's result is the aggregate of its legs, so a failed, cancelled or skipped Windows or macOS shard fails ci-ok too.
+    needs: [test, test-macos, test-windows, replay, bench-smoke, fresh-install, review-gates-model]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
