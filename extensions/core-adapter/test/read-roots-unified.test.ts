@@ -73,6 +73,7 @@ test("main session: a clean read in the harness state dir is a default; pages/ro
   assert.equal(pathDecide("write", { path: path.join(state, "gate", "log.jsonl") }, wt, r), undefined, "reads only");
   assert.match(rule(g("bash", { command: `tail -n 3 ${path.join(state, "gate", "log.jsonl")}` }, r)) ?? "", /^default-read/);
   assert.notEqual(rule(g("bash", { command: `cat ${path.join(state, "pages", "roots", "x.json")}` }, r)), "default-read");
-  const k = g("bash", { command: `tail -n 3 ${path.join(state, "gate", "log.jsonl")}` }, kid());
+  // the bash text spells the path with `/`: bash eats the backslashes of a raw `C:\\...` word, so that word never names the file (on win32 the main-session read above is the same)
+  const k = g("bash", { command: `tail -n 3 ${path.join(state, "gate", "log.jsonl").replace(/\\/g, "/")}` }, kid());
   assert.ok(k && "block" in k && k.rule === "selfmod-state-read");
 });

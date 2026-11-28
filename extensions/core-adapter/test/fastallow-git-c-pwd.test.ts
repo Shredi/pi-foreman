@@ -21,7 +21,7 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 const child = (command: string): { block?: boolean; rule?: string } | undefined =>
   gateEvaluate("bash", { command }, wt, {
-    env: (c) => baseFloorEnv(c, { child: true, home: path.join(root, "h"), platform: "linux", writeRoots: [c, root], scratch: [sc] }),
+    env: (c) => baseFloorEnv(c, { child: true, home: path.join(root, "h"), platform: process.platform, writeRoots: [c, root], scratch: [sc] }),
     roots: () => ({ worktree: wt, scratch: [sc], tmp: [], scratchBase: path.dirname(path.dirname(sc)), owned: [], install: [], roundFlow: [], handoffs: [], child: true, role: "builder", tmpAccess: false }),
   }).result as { block?: boolean; rule?: string } | undefined;
 
