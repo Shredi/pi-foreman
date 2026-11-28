@@ -4,7 +4,8 @@
 // pressure sampler's state file, as in the slash command.
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { isMainModule } from "./mainmodule.ts";
 import { get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import { requiredChildExtensions } from "./childext.ts";
 import { addonHeadLines, addonTailLines, bridgeLines, childExtensionFileLines, compactionLines, configLines, installLines, permissionLines, pressureLines, profileLines, subagentsLines, trackerLine, unusedKeyLines } from "./doctorlines.ts";
@@ -116,6 +117,6 @@ export async function main(argv: string[], out: (s: string) => void, err: (s: st
   return lines.some((l) => l.startsWith("FAIL")) ? 1 : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   process.exitCode = await main(process.argv.slice(2), (s) => process.stdout.write(s), (s) => process.stderr.write(s));
 }
